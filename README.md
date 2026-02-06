@@ -6,7 +6,7 @@ A self-custody Bitcoin wallet for Android built with [BDK](https://bitcoindevkit
 
 ### Wallet
 - Multi-wallet support with BIP39 seed phrases (12–24 words) and optional passphrase
-- Watch-only wallets via extended public key (xpub/ypub/zpub/tpub)
+- Watch-only wallets via extended public key (xpub/zpub)
 - Legacy (P2PKH), Native SegWit (P2WPKH), and Taproot (P2TR) address types
 - Custom derivation paths
 
