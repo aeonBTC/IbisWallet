@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Night theme - same as day theme since app is always dark -->
+    <style name="Theme.IbisWallet" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- Primary brand color - Bitcoin Orange -->
+        <item name="colorPrimary">#F7931A</item>
+        <item name="colorPrimaryVariant">#D4770C</item>
+        <item name="colorOnPrimary">#0D1117</item>
+        <!-- Secondary brand color -->
+        <item name="colorSecondary">#2DD4BF</item>
+        <item name="colorSecondaryVariant">#14B8A6</item>
+        <item name="colorOnSecondary">#0D1117</item>
+        <!-- Background and surface colors -->
+        <item name="android:colorBackground">#0D1117</item>
+        <item name="colorSurface">#161B22</item>
+        <item name="colorOnSurface">#F0F6FC</item>
+        <!-- Status bar color -->
+        <item name="android:statusBarColor">#0D1117</item>
+        <item name="android:navigationBarColor">#161B22</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+    </style>
+</resources>

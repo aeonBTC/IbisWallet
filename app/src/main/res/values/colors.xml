@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bitcoin Orange -->
+    <color name="bitcoin_orange">#FFF7931A</color>
+    <color name="bitcoin_orange_light">#FFFFB347</color>
+    <color name="bitcoin_orange_dark">#FFD4770C</color>
+    
+    <!-- Dark theme backgrounds -->
+    <color name="dark_background">#FF0D1117</color>
+    <color name="dark_surface">#FF161B22</color>
+    <color name="dark_surface_variant">#FF21262D</color>
+    <color name="dark_card">#FF1C2128</color>
+    
+    <!-- Accent colors -->
+    <color name="accent_teal">#FF2DD4BF</color>
+    <color name="accent_green">#FF22C55E</color>
+    <color name="accent_red">#FFEF4444</color>
+    
+    <!-- Text colors -->
+    <color name="text_primary">#FFF0F6FC</color>
+    <color name="text_secondary">#FF8B949E</color>
+    <color name="text_tertiary">#FF6E7681</color>
+    
+    <!-- Border and divider -->
+    <color name="border_color">#FF30363D</color>
+    
+    <!-- Legacy colors -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

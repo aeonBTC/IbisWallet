@@ -1,0 +1,179 @@
+package github.aeonbtc.ibiswallet.tor
+
+import android.content.BroadcastReceiver
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.ServiceConnection
+import android.os.Build
+import android.os.IBinder
+import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.torproject.jni.TorService
+
+/**
+ * Manages the Tor service lifecycle and state
+ */
+class TorManager(private val context: Context) {
+    
+    companion object {
+        private const val TAG = "TorManager"
+        const val SOCKS_PORT = 9050
+        const val SOCKS_HOST = "127.0.0.1"
+    }
+    
+    private val _torState = MutableStateFlow(TorState())
+    val torState: StateFlow<TorState> = _torState.asStateFlow()
+    
+    private var torService: TorService? = null
+    private var isBound = false
+    
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            Log.d(TAG, "Tor service connected")
+            torService = (service as TorService.LocalBinder).service
+            _torState.value = _torState.value.copy(
+                status = TorStatus.CONNECTING,
+                statusMessage = "Bootstrapping..."
+            )
+            // Status updates will come through the broadcast receiver
+        }
+        
+        override fun onServiceDisconnected(name: ComponentName?) {
+            Log.d(TAG, "Tor service disconnected")
+            torService = null
+            _torState.value = _torState.value.copy(
+                status = TorStatus.DISCONNECTED,
+                statusMessage = "Disconnected",
+                socksPort = null
+            )
+        }
+    }
+    
+    private val statusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val status = intent?.getStringExtra(TorService.EXTRA_STATUS) ?: return
+            Log.d(TAG, "Tor status update: $status")
+            
+            val torStatus = when {
+                // "ON" means Tor is fully connected and ready
+                status.equals("ON", ignoreCase = true) -> TorStatus.CONNECTED
+                status.contains("NOTICE Bootstrapped 100%", ignoreCase = true) -> TorStatus.CONNECTED
+                status.equals("STARTING", ignoreCase = true) -> TorStatus.STARTING
+                status.equals("STOPPING", ignoreCase = true) -> TorStatus.DISCONNECTED
+                status.equals("OFF", ignoreCase = true) -> TorStatus.DISCONNECTED
+                status.contains("Bootstrapped", ignoreCase = true) -> TorStatus.CONNECTING
+                status.contains("WARN", ignoreCase = true) -> TorStatus.CONNECTING
+                status.contains("ERR", ignoreCase = true) -> TorStatus.ERROR
+                else -> _torState.value.status
+            }
+            
+            val displayMessage = when (status) {
+                "ON" -> "Connected"
+                "OFF" -> "Disconnected"
+                "STARTING" -> "Starting..."
+                "STOPPING" -> "Stopping..."
+                else -> status.take(100)
+            }
+            
+            _torState.value = _torState.value.copy(
+                status = torStatus,
+                statusMessage = displayMessage,
+                socksPort = if (torStatus == TorStatus.CONNECTED) SOCKS_PORT else null
+            )
+        }
+    }
+    
+    /**
+     * Start the Tor service
+     */
+    fun start() {
+        if (_torState.value.status == TorStatus.CONNECTED || 
+            _torState.value.status == TorStatus.CONNECTING) {
+            Log.d(TAG, "Tor is already running or starting")
+            return
+        }
+        
+        Log.d(TAG, "Starting Tor service")
+        _torState.value = _torState.value.copy(
+            status = TorStatus.STARTING,
+            statusMessage = "Starting Tor..."
+        )
+        
+        // Register status receiver
+        val filter = IntentFilter(TorService.ACTION_STATUS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            context.registerReceiver(statusReceiver, filter)
+        }
+        
+        // Bind to Tor service
+        val intent = Intent(context, TorService::class.java)
+        context.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        isBound = true
+    }
+    
+    /**
+     * Stop the Tor service
+     */
+    fun stop() {
+        Log.d(TAG, "Stopping Tor service")
+        
+        if (isBound) {
+            try {
+                context.unbindService(serviceConnection)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error unbinding Tor service", e)
+            }
+            isBound = false
+        }
+        
+        try {
+            context.unregisterReceiver(statusReceiver)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error unregistering Tor status receiver", e)
+        }
+        
+        torService = null
+        _torState.value = TorState(
+            status = TorStatus.DISCONNECTED,
+            statusMessage = "Stopped"
+        )
+    }
+    
+    /**
+     * Check if Tor is ready for use
+     */
+    fun isReady(): Boolean = _torState.value.status == TorStatus.CONNECTED
+    
+    /**
+     * Get the SOCKS proxy address for use with network connections
+     */
+    fun getSocksProxy(): String? {
+        return if (isReady()) "$SOCKS_HOST:$SOCKS_PORT" else null
+    }
+}
+
+/**
+ * Represents the current state of the Tor service
+ */
+data class TorState(
+    val status: TorStatus = TorStatus.DISCONNECTED,
+    val statusMessage: String = "Not started",
+    val socksPort: Int? = null
+)
+
+/**
+ * Possible states of the Tor service
+ */
+enum class TorStatus {
+    DISCONNECTED,
+    STARTING,
+    CONNECTING,
+    CONNECTED,
+    ERROR
+}
