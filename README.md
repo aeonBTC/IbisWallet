@@ -1,12 +1,14 @@
 # Ibis Wallet
 
-A self-custody Bitcoin wallet for Android built with [BDK](https://bitcoindevkit.org/ and designed for experienced users who value privacy and control.
+A self-custody Bitcoin wallet for Android built with [BDK](https://bitcoindevkit.org/). Designed for experienced users who value privacy and control.
 
 ## Features
 
 ### Wallet
-- Multi-wallet support with BIP39 seed phrases (12–24 words) and optional passphrase
-- Watch-only wallets via extended public key (xpub/zpub)
+- Generate new wallets with BIP39 CSPRNG entropy (12 or 24 words)
+- Import existing wallets via seed phrase, extended public key, or encrypted backup file
+- Multi-wallet support with optional BIP39 passphrase
+- Watch-only wallets via extended public key (xpub/zpub/)
 - Legacy (P2PKH), Native SegWit (P2WPKH), and Taproot (P2TR) address types
 - Custom derivation paths
 
@@ -17,6 +19,14 @@ A self-custody Bitcoin wallet for Android built with [BDK](https://bitcoindevkit
 - Coin control (select specific UTXOs)
 - Transaction labels
 - RBF fee bumping and CPFP for unconfirmed transactions
+
+### PSBT / Hardware Wallet Signing
+- Create unsigned PSBTs from watch-only wallets for external signing
+- Export PSBTs as animated BC-UR QR codes (`ur:crypto-psbt`) for hardware wallets
+- Scan signed PSBTs or raw transactions back via animated multi-frame QR scanner
+- Compatible with Keystone, Foundation Passport, SeedSigner, Jade, ColdCard, BitBox02, and other BC-UR capable devices
+- Also accepts single-frame base64 PSBT and raw transaction hex
+- Copy unsigned PSBT to clipboard for file-based signing workflows
 
 ### Receive
 - QR code generation with optional BIP21 amount encoding
@@ -65,6 +75,7 @@ Requires Android Studio with JDK 17.
 - **Jetpack Compose** + Material 3 — UI
 - **tor-android** 0.4.8.16 — Built-in Tor
 - **ZXing** — QR code generation and scanning
+- **Hummingbird** 1.7.2 — BC-UR encoding/decoding for animated PSBT QR codes
 - **OkHttp** — HTTP client for fee/price APIs
 - **EncryptedSharedPreferences** — Secure local storage
 
