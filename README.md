@@ -1,6 +1,6 @@
 # Ibis Wallet
 
-A self-custody Bitcoin wallet for Android built with [BDK](https://bitcoindevkit.org/) and Jetpack Compose. Designed for experienced users who value privacy and control.
+A self-custody Bitcoin wallet for Android built with [BDK](https://bitcoindevkit.org/ and designed for experienced users who value privacy and control.
 
 ## Features
 
