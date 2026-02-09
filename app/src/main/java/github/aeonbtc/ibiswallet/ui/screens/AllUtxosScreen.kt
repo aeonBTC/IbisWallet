@@ -1,9 +1,8 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,7 +56,9 @@ import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.SecureClipboard
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -67,6 +68,7 @@ fun AllUtxosScreen(
     denomination: String = SecureStorage.DENOMINATION_BTC,
     btcPrice: Double? = null,
     privacyMode: Boolean = false,
+    spendUnconfirmed: Boolean = true,
     onFreezeUtxo: (String, Boolean) -> Unit = { _, _ -> },
     onSendFromUtxo: (UtxoInfo) -> Unit = {},
     onBack: () -> Unit = {}
@@ -177,6 +179,7 @@ fun AllUtxosScreen(
                         useSats = useSats,
                         btcPrice = btcPrice,
                         privacyMode = privacyMode,
+                        spendUnconfirmed = spendUnconfirmed,
                         onFreeze = {
                             // Update local state immediately for responsive UI
                             val index = localUtxos.indexOfFirst { it.outpoint == utxo.outpoint }
@@ -208,11 +211,12 @@ private fun UtxoCard(
     useSats: Boolean,
     btcPrice: Double? = null,
     privacyMode: Boolean = false,
+    spendUnconfirmed: Boolean = true,
     onFreeze: () -> Unit,
     onSend: () -> Unit
 ) {
     val context = LocalContext.current
-    val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    
     var showCopiedAddress by remember { mutableStateOf(false) }
     var showCopiedOutpoint by remember { mutableStateOf(false) }
     
@@ -311,13 +315,16 @@ private fun UtxoCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(
-                    onClick = {
-                        val clip = ClipData.newPlainText("Address", utxo.address)
-                        clipboardManager.setPrimaryClip(clip)
-                        showCopiedAddress = true
-                    },
-                    modifier = Modifier.size(32.dp)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurfaceVariant)
+                        .clickable {
+                            SecureClipboard.copyAndScheduleClear(context, "Address", utxo.address)
+                            showCopiedAddress = true
+                        }
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
@@ -362,13 +369,16 @@ private fun UtxoCard(
                     color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                     modifier = Modifier.weight(1f)
                 )
-                IconButton(
-                    onClick = {
-                        val clip = ClipData.newPlainText("Outpoint", utxo.outpoint)
-                        clipboardManager.setPrimaryClip(clip)
-                        showCopiedOutpoint = true
-                    },
-                    modifier = Modifier.size(32.dp)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurfaceVariant)
+                        .clickable {
+                            SecureClipboard.copyAndScheduleClear(context, "Outpoint", utxo.outpoint)
+                            showCopiedOutpoint = true
+                        }
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
@@ -410,21 +420,22 @@ private fun UtxoCard(
                     )
                 }
                 
+                val canSend = !utxo.isFrozen && (utxo.isConfirmed || spendUnconfirmed)
                 TextButton(
                     onClick = onSend,
-                    enabled = !utxo.isFrozen,
+                    enabled = canSend,
                     modifier = Modifier.weight(1f)
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
                         contentDescription = null,
-                        tint = if (utxo.isFrozen) TextSecondary else AccentGreen,
+                        tint = if (canSend) AccentGreen else TextSecondary,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
                         text = "Send",
-                        color = if (utxo.isFrozen) TextSecondary else AccentGreen
+                        color = if (canSend) AccentGreen else TextSecondary
                     )
                 }
             }

@@ -9,8 +9,12 @@ import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.ElectrumConfig
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.SecureRandom
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
 
 /**
  * Secure storage for sensitive wallet data using Android's EncryptedSharedPreferences
@@ -104,6 +108,7 @@ class SecureStorage(context: Context) {
             put("isWatchOnly", wallet.isWatchOnly)
             put("network", wallet.network.name)
             put("createdAt", wallet.createdAt)
+            wallet.masterFingerprint?.let { put("masterFingerprint", it) }
         }
         
         regularPrefs.edit { putString("${KEY_WALLET_PREFIX}${wallet.id}", walletJson.toString()) }
@@ -143,7 +148,10 @@ class SecureStorage(context: Context) {
                 derivationPath = jsonObject.optString("derivationPath", addressType.defaultPath),
                 isWatchOnly = jsonObject.optBoolean("isWatchOnly", false),
                 network = network,
-                createdAt = jsonObject.optLong("createdAt", System.currentTimeMillis())
+                createdAt = jsonObject.optLong("createdAt", System.currentTimeMillis()),
+                masterFingerprint = jsonObject.optString("masterFingerprint", null.toString()).let {
+                    if (it == "null" || it.isBlank()) null else it
+                }
             )
         } catch (_: Exception) {
             null
@@ -151,19 +159,24 @@ class SecureStorage(context: Context) {
     }
     
     /**
-     * Get the currently active wallet metadata
-     */
-    @Suppress("unused")
-    fun getActiveWalletMetadata(): StoredWallet? {
-        val activeId = getActiveWalletId() ?: return null
-        return getWalletMetadata(activeId)
-    }
-    
-    /**
      * Get all stored wallets
      */
     fun getAllWallets(): List<StoredWallet> {
         return getWalletIds().mapNotNull { getWalletMetadata(it) }
+    }
+    
+    /**
+     * Edit wallet metadata (name and optionally master fingerprint for watch-only wallets)
+     */
+    fun editWallet(walletId: String, newName: String, newFingerprint: String? = null): Boolean {
+        val wallet = getWalletMetadata(walletId) ?: return false
+        val updated = if (wallet.isWatchOnly && newFingerprint != null) {
+            wallet.copy(name = newName, masterFingerprint = newFingerprint.ifBlank { null })
+        } else {
+            wallet.copy(name = newName)
+        }
+        saveWalletMetadata(updated)
+        return true
     }
     
     /**
@@ -210,25 +223,6 @@ class SecureStorage(context: Context) {
         securePrefs.edit { remove("${KEY_MNEMONIC_PREFIX}${walletId}") }
     }
     
-    // Legacy single-wallet methods for backward compatibility
-    @Deprecated("Use saveMnemonic(walletId, mnemonic) instead")
-    fun saveMnemonic(mnemonic: String) {
-        val activeId = getActiveWalletId() ?: return
-        saveMnemonic(activeId, mnemonic)
-    }
-    
-    @Deprecated("Use getMnemonic(walletId) instead")
-    fun getMnemonic(): String? {
-        val activeId = getActiveWalletId() ?: return null
-        return getMnemonic(activeId)
-    }
-    
-    @Deprecated("Use hasMnemonic(walletId) instead")
-    fun hasMnemonic(): Boolean {
-        val activeId = getActiveWalletId() ?: return false
-        return hasMnemonic(activeId)
-    }
-    
     // ==================== Extended Public Key (per wallet) ====================
     
     /**
@@ -259,19 +253,6 @@ class SecureStorage(context: Context) {
         securePrefs.edit { remove("${KEY_EXTENDED_KEY_PREFIX}${walletId}") }
     }
     
-    // Legacy single-wallet methods
-    @Deprecated("Use hasExtendedKey(walletId) instead")
-    fun hasExtendedKey(): Boolean {
-        val activeId = getActiveWalletId() ?: return false
-        return hasExtendedKey(activeId)
-    }
-    
-    @Deprecated("Use getExtendedKey(walletId) instead")
-    fun getExtendedKey(): String? {
-        val activeId = getActiveWalletId() ?: return null
-        return getExtendedKey(activeId)
-    }
-    
     // ==================== Passphrase Storage (per wallet) ====================
     
     /**
@@ -295,28 +276,10 @@ class SecureStorage(context: Context) {
         securePrefs.edit { remove("${KEY_PASSPHRASE_PREFIX}${walletId}") }
     }
     
-    // Legacy single-wallet methods
-    @Deprecated("Use getPassphrase(walletId) instead")
-    fun getPassphrase(): String? {
-        val activeId = getActiveWalletId() ?: return null
-        return getPassphrase(activeId)
-    }
-    
     // ==================== Network Configuration ====================
     
-    @Suppress("unused")
     fun saveNetwork(network: WalletNetwork) {
         regularPrefs.edit { putString(KEY_NETWORK, network.name) }
-    }
-    
-    @Suppress("unused")
-    fun getNetwork(): WalletNetwork {
-        val networkName = regularPrefs.getString(KEY_NETWORK, WalletNetwork.BITCOIN.name)
-        return try {
-            WalletNetwork.valueOf(networkName ?: WalletNetwork.BITCOIN.name)
-        } catch (_: IllegalArgumentException) {
-            WalletNetwork.BITCOIN
-        }
     }
     
     // ==================== Electrum Server Configuration (Multi-Server) ====================
@@ -439,44 +402,65 @@ class SecureStorage(context: Context) {
      * Delete an Electrum server
      */
     fun deleteElectrumServer(serverId: String) {
+        // Delete the stored TOFU certificate fingerprint for this server
+        val config = getElectrumServer(serverId)
+        if (config != null) {
+            deleteServerCertFingerprint(config.cleanUrl(), config.port)
+        }
+
         regularPrefs.edit { remove("${KEY_SERVER_PREFIX}${serverId}") }
         removeServerId(serverId)
         
-        // If this was the active server, clear active
+        // If this was the active server, clear active (do not auto-assign another)
         if (getActiveServerId() == serverId) {
-            val remainingIds = getServerIds()
-            setActiveServerId(remainingIds.firstOrNull())
+            setActiveServerId(null)
         }
     }
     
+    // ==================== Server Certificate TOFU ====================
+
     /**
-     * Check if any Electrum server is configured
+     * Save the trusted certificate SHA-256 fingerprint for a server.
+     * Keyed by host:port for persistence across server renames.
      */
-    fun hasElectrumServer(): Boolean {
-        return getServerIds().isNotEmpty()
+    fun saveServerCertFingerprint(host: String, port: Int, fingerprint: String) {
+        val key = "${KEY_SERVER_CERT_PREFIX}${host}:${port}"
+        securePrefs.edit { putString(key, fingerprint) }
     }
-    
-    // Legacy methods for backward compatibility
-    @Deprecated("Use saveElectrumServer instead")
-    fun saveElectrumConfig(config: ElectrumConfig) {
-        // Convert to new format with generated ID if needed
-        val serverId = if (config.id.isNullOrBlank()) java.util.UUID.randomUUID().toString() else config.id
-        val serverName = if (config.name.isNullOrBlank()) config.url else config.name
-        val newConfig = config.copy(id = serverId, name = serverName)
-        saveElectrumServer(newConfig)
-        setActiveServerId(serverId)
+
+    /**
+     * Get the stored certificate fingerprint for a server.
+     * Returns null if this is the first connection (no TOFU record).
+     */
+    fun getServerCertFingerprint(host: String, port: Int): String? {
+        val key = "${KEY_SERVER_CERT_PREFIX}${host}:${port}"
+        return securePrefs.getString(key, null)
     }
-    
-    @Deprecated("Use getActiveElectrumServer instead")
-    fun getElectrumConfig(): ElectrumConfig? {
-        return getActiveElectrumServer()
+
+    /**
+     * Delete the stored certificate fingerprint for a server.
+     */
+    fun deleteServerCertFingerprint(host: String, port: Int) {
+        val key = "${KEY_SERVER_CERT_PREFIX}${host}:${port}"
+        securePrefs.edit { remove(key) }
     }
-    
-    @Deprecated("Use hasElectrumServer instead")
-    fun hasElectrumConfig(): Boolean {
-        return hasElectrumServer()
+
+    /**
+     * Check if default Electrum servers have been seeded.
+     * Returns false only on first app launch before any servers exist.
+     */
+    fun hasDefaultServersSeeded(): Boolean {
+        return regularPrefs.getBoolean(KEY_DEFAULT_SERVERS_SEEDED, false)
     }
-    
+
+    /**
+     * Mark that default Electrum servers have been seeded.
+     * Called after seeding defaults on first launch.
+     */
+    fun setDefaultServersSeeded(seeded: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_DEFAULT_SERVERS_SEEDED, seeded) }
+    }
+
     // ==================== Last Sync Time (per wallet) ====================
     
     fun saveLastSyncTime(walletId: String, timestamp: Long) {
@@ -488,19 +472,6 @@ class SecureStorage(context: Context) {
         return if (regularPrefs.contains(key)) {
             regularPrefs.getLong(key, 0)
         } else null
-    }
-    
-    // Legacy single-wallet methods
-    @Deprecated("Use saveLastSyncTime(walletId, timestamp) instead")
-    fun saveLastSyncTime(timestamp: Long) {
-        val activeId = getActiveWalletId() ?: return
-        saveLastSyncTime(activeId, timestamp)
-    }
-    
-    @Deprecated("Use getLastSyncTime(walletId) instead")
-    fun getLastSyncTime(): Long? {
-        val activeId = getActiveWalletId() ?: return null
-        return getLastSyncTime(activeId)
     }
     
     // ==================== Full Sync Tracking ====================
@@ -655,8 +626,8 @@ class SecureStorage(context: Context) {
      */
     fun getFeeSource(): String {
         val source = regularPrefs.getString(KEY_FEE_SOURCE, FEE_SOURCE_OFF) ?: FEE_SOURCE_OFF
-        // Migrate old onion/custom settings to OFF
-        return if (source == "MEMPOOL_ONION" || source == "CUSTOM") {
+        // Migrate old onion setting to OFF (custom is now supported)
+        return if (source == "MEMPOOL_ONION") {
             FEE_SOURCE_OFF
         } else {
             source
@@ -671,15 +642,56 @@ class SecureStorage(context: Context) {
     }
     
     /**
-     * Get the full fee source URL based on selected option
-     * Returns null if fee estimation is disabled (OFF)
+     * Get the full fee source URL based on selected option.
+     * Returns null if fee estimation is disabled or uses Electrum.
+     * Custom server is assumed to be a mempool.space-compatible instance.
      */
     fun getFeeSourceUrl(): String? {
         return when (getFeeSource()) {
             FEE_SOURCE_OFF -> null
             FEE_SOURCE_MEMPOOL -> "https://mempool.space"
+            FEE_SOURCE_ELECTRUM -> null // Electrum uses the connected client, not a URL
+            FEE_SOURCE_CUSTOM -> getCustomFeeSourceUrl()?.ifBlank { null }
             else -> null
         }
+    }
+    
+    /**
+     * Whether fee estimation should use the connected Electrum server
+     */
+    fun isElectrumFeeSource(): Boolean {
+        return getFeeSource() == FEE_SOURCE_ELECTRUM
+    }
+    
+    /**
+     * Get the custom fee source server URL (mempool.space-compatible instance)
+     */
+    fun getCustomFeeSourceUrl(): String? {
+        return regularPrefs.getString(KEY_FEE_SOURCE_CUSTOM_URL, null)
+    }
+    
+    /**
+     * Set the custom fee source server URL
+     */
+    fun setCustomFeeSourceUrl(url: String) {
+        regularPrefs.edit { putString(KEY_FEE_SOURCE_CUSTOM_URL, url) }
+    }
+    
+    // ==================== Spend Unconfirmed ====================
+    
+    /**
+     * Get whether spending unconfirmed UTXOs is allowed.
+     * Default is true (allow spending unconfirmed).
+     */
+    fun getSpendUnconfirmed(): Boolean {
+        return regularPrefs.getBoolean(KEY_SPEND_UNCONFIRMED, true)
+    }
+    
+    /**
+     * Set whether spending unconfirmed UTXOs is allowed.
+     */
+    fun setSpendUnconfirmed(enabled: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_SPEND_UNCONFIRMED, enabled) }
     }
     
     // ==================== BTC/USD Price Source ====================
@@ -761,6 +773,14 @@ class SecureStorage(context: Context) {
     }
     
     /**
+     * Save a pending label for a PSBT (to be applied when broadcast)
+     */
+    fun savePendingPsbtLabel(walletId: String, psbtKey: String, label: String) {
+        val key = "${KEY_PENDING_PSBT_LABEL_PREFIX}${walletId}_$psbtKey"
+        regularPrefs.edit { putString(key, label) }
+    }
+    
+    /**
      * Get all transaction labels for a wallet
      */
     fun getAllTransactionLabels(walletId: String): Map<String, String> {
@@ -775,6 +795,37 @@ class SecureStorage(context: Context) {
         }
         
         return labels
+    }
+    
+    // ==================== Transaction First-Seen Timestamps ====================
+    
+    /**
+     * Get the first-seen timestamp for a pending transaction.
+     * Returns null if not stored yet.
+     */
+    fun getTxFirstSeen(walletId: String, txid: String): Long? {
+        val key = "${KEY_TX_FIRST_SEEN_PREFIX}${walletId}_$txid"
+        val value = regularPrefs.getLong(key, -1L)
+        return if (value == -1L) null else value
+    }
+    
+    /**
+     * Store the first-seen timestamp for a pending transaction.
+     * Only writes if no value is stored yet (preserves the original first-seen time).
+     */
+    fun setTxFirstSeenIfAbsent(walletId: String, txid: String, timestamp: Long) {
+        val key = "${KEY_TX_FIRST_SEEN_PREFIX}${walletId}_$txid"
+        if (regularPrefs.getLong(key, -1L) == -1L) {
+            regularPrefs.edit { putLong(key, timestamp) }
+        }
+    }
+    
+    /**
+     * Remove first-seen timestamp for a transaction (e.g. when confirmed or dropped).
+     */
+    fun removeTxFirstSeen(walletId: String, txid: String) {
+        val key = "${KEY_TX_FIRST_SEEN_PREFIX}${walletId}_$txid"
+        regularPrefs.edit { remove(key) }
     }
     
     // ==================== Frozen UTXOs ====================
@@ -861,25 +912,90 @@ class SecureStorage(context: Context) {
     }
     
     /**
-     * Save the PIN code (encrypted)
+     * Save the PIN code (hashed with PBKDF2 + random salt)
      */
     fun savePin(pin: String) {
-        securePrefs.edit { putString(KEY_PIN_CODE, pin) }
+        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val hash = hashPin(pin, salt)
+        securePrefs.edit {
+            putString(KEY_PIN_CODE, Base64.encodeToString(hash, Base64.NO_WRAP))
+            putString(KEY_PIN_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
+        }
+        regularPrefs.edit {
+            putInt(KEY_PIN_LENGTH, pin.length)
+            remove(KEY_PIN_FAILED_ATTEMPTS)
+            remove(KEY_PIN_LOCKOUT_UNTIL)
+        }
     }
     
     /**
-     * Get the stored PIN code
-     */
-    fun getPin(): String? {
-        return securePrefs.getString(KEY_PIN_CODE, null)
-    }
-    
-    /**
-     * Verify if the provided PIN matches the stored PIN
+     * Verify if the provided PIN matches the stored PIN hash.
+     * Implements rate limiting: locks out after MAX_PIN_ATTEMPTS with exponential backoff.
+     * Returns false if locked out.
      */
     fun verifyPin(pin: String): Boolean {
-        val storedPin = getPin()
-        return storedPin != null && storedPin == pin
+        // Check lockout
+        val lockoutUntil = regularPrefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+        if (lockoutUntil > 0 && System.currentTimeMillis() < lockoutUntil) {
+            return false // Still locked out
+        }
+        
+        val storedHash = securePrefs.getString(KEY_PIN_CODE, null) ?: return false
+        val storedSaltStr = securePrefs.getString(KEY_PIN_SALT, null)
+        
+        // Migration: if no salt exists, this is an old plaintext PIN
+        if (storedSaltStr == null) {
+            val matches = storedHash == pin
+            if (matches) {
+                // Migrate to hashed format on successful verification
+                savePin(pin)
+            }
+            return matches
+        }
+        
+        val salt = Base64.decode(storedSaltStr, Base64.NO_WRAP)
+        val inputHash = hashPin(pin, salt)
+        val storedHashBytes = Base64.decode(storedHash, Base64.NO_WRAP)
+        
+        // Constant-time comparison to prevent timing attacks
+        val matches = constantTimeEquals(inputHash, storedHashBytes)
+        
+        if (matches) {
+            // Reset failed attempts on success
+            regularPrefs.edit {
+                remove(KEY_PIN_FAILED_ATTEMPTS)
+                remove(KEY_PIN_LOCKOUT_UNTIL)
+            }
+        } else {
+            // Increment failed attempts and apply lockout if needed
+            val attempts = regularPrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
+            regularPrefs.edit { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
+            
+            if (attempts >= MAX_PIN_ATTEMPTS) {
+                // Exponential backoff: 30s, 60s, 120s, 240s, ...
+                val lockoutMs = 30_000L * (1L shl (attempts - MAX_PIN_ATTEMPTS).coerceAtMost(6))
+                regularPrefs.edit {
+                    putLong(KEY_PIN_LOCKOUT_UNTIL, System.currentTimeMillis() + lockoutMs)
+                }
+            }
+        }
+        
+        return matches
+    }
+    
+    /**
+     * Get the stored PIN length hint (for UI display of dot indicators).
+     * Returns null if no PIN is set.
+     */
+    fun getStoredPinLength(): Int? {
+        if (!hasPin()) return null
+        // If we have a stored length, use it
+        val length = regularPrefs.getInt(KEY_PIN_LENGTH, -1)
+        if (length > 0) return length
+        // Legacy: unhashed PIN stored directly, length can be read
+        val stored = securePrefs.getString(KEY_PIN_CODE, null) ?: return null
+        if (!securePrefs.contains(KEY_PIN_SALT)) return stored.length
+        return null // Unknown length for migrated PINs without stored length
     }
     
     /**
@@ -890,10 +1006,33 @@ class SecureStorage(context: Context) {
     }
     
     /**
-     * Clear PIN code
+     * Clear PIN code and reset lockout
      */
     fun clearPin() {
-        securePrefs.edit { remove(KEY_PIN_CODE) }
+        securePrefs.edit {
+            remove(KEY_PIN_CODE)
+            remove(KEY_PIN_SALT)
+        }
+        regularPrefs.edit {
+            remove(KEY_PIN_LENGTH)
+            remove(KEY_PIN_FAILED_ATTEMPTS)
+            remove(KEY_PIN_LOCKOUT_UNTIL)
+        }
+    }
+    
+    private fun hashPin(pin: String, salt: ByteArray): ByteArray {
+        val keySpec = PBEKeySpec(pin.toCharArray(), salt, PIN_PBKDF2_ITERATIONS, PIN_HASH_LENGTH)
+        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+        return factory.generateSecret(keySpec).encoded
+    }
+    
+    private fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {
+        if (a.size != b.size) return false
+        var result = 0
+        for (i in a.indices) {
+            result = result or (a[i].toInt() xor b[i].toInt())
+        }
+        return result == 0
     }
     
     /**
@@ -943,11 +1082,14 @@ class SecureStorage(context: Context) {
         regularPrefs.edit { putLong(KEY_LAST_BACKGROUND_TIME, time) }
     }
     
-    // ==================== Clear All Data ====================
+    // ==================== Screenshot Prevention ====================
     
-    fun clearAllData() {
-        securePrefs.edit { clear() }
-        regularPrefs.edit { clear() }
+    fun getDisableScreenshots(): Boolean {
+        return regularPrefs.getBoolean(KEY_DISABLE_SCREENSHOTS, true)
+    }
+    
+    fun setDisableScreenshots(disabled: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_DISABLE_SCREENSHOTS, disabled) }
     }
     
     companion object {
@@ -974,6 +1116,8 @@ class SecureStorage(context: Context) {
         private const val KEY_SERVER_IDS = "server_ids"
         private const val KEY_ACTIVE_SERVER_ID = "active_server_id"
         private const val KEY_SERVER_PREFIX = "server_config_"
+        private const val KEY_SERVER_CERT_PREFIX = "server_cert_"
+        private const val KEY_DEFAULT_SERVERS_SEEDED = "default_servers_seeded"
         
         // Tor settings
         private const val KEY_TOR_ENABLED = "tor_enabled"
@@ -993,8 +1137,11 @@ class SecureStorage(context: Context) {
         
         // Fee estimation settings
         private const val KEY_FEE_SOURCE = "fee_source"
+        private const val KEY_FEE_SOURCE_CUSTOM_URL = "fee_source_custom_url"
         const val FEE_SOURCE_OFF = "OFF"
         const val FEE_SOURCE_MEMPOOL = "MEMPOOL_SPACE"
+        const val FEE_SOURCE_ELECTRUM = "ELECTRUM_SERVER"
+        const val FEE_SOURCE_CUSTOM = "CUSTOM"
         
         // BTC/USD price source settings
         private const val KEY_PRICE_SOURCE = "price_source"
@@ -1008,13 +1155,30 @@ class SecureStorage(context: Context) {
         // Transaction labels
         private const val KEY_TX_LABEL_PREFIX = "tx_label_"
         
+        // Pending PSBT labels (for watch-only wallet transactions awaiting signing)
+        private const val KEY_PENDING_PSBT_LABEL_PREFIX = "pending_psbt_label_"
+        
+        // Transaction first-seen timestamps (for pending txs)
+        private const val KEY_TX_FIRST_SEEN_PREFIX = "tx_first_seen_"
+        
+        // Spend only confirmed UTXOs
+        private const val KEY_SPEND_UNCONFIRMED = "spend_unconfirmed"
+        
         // Frozen UTXOs
         private const val KEY_FROZEN_UTXOS_PREFIX = "frozen_utxos_"
         
         // Security settings
         private const val KEY_SECURITY_METHOD = "security_method"
         private const val KEY_PIN_CODE = "pin_code"
+        private const val KEY_PIN_SALT = "pin_salt"
+        private const val KEY_PIN_LENGTH = "pin_length"
+        private const val KEY_PIN_FAILED_ATTEMPTS = "pin_failed_attempts"
+        private const val KEY_PIN_LOCKOUT_UNTIL = "pin_lockout_until"
+        private const val PIN_PBKDF2_ITERATIONS = 150_000
+        private const val PIN_HASH_LENGTH = 256
+        private const val MAX_PIN_ATTEMPTS = 5
         private const val KEY_LOCK_TIMING = "lock_timing"
         private const val KEY_LAST_BACKGROUND_TIME = "last_background_time"
+        private const val KEY_DISABLE_SCREENSHOTS = "disable_screenshots"
     }
 }

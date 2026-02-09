@@ -7,25 +7,36 @@ enum class AddressType(
     val displayName: String,
     val description: String,
     val bip: Int,
-    val defaultPath: String
+    val defaultPath: String,
+    val accountPath: String // Account-level derivation path without m/ prefix (for descriptor origin)
 ) {
     LEGACY(
         displayName = "Legacy",
-        description = "Legacy addresses start with a '1'",
+        description = "P2PKH - Legacy addresses start with '1'",
         bip = 44,
-        defaultPath = "m/44'/0'/0'/0"
+        defaultPath = "m/44'/0'/0'/0",
+        accountPath = "44'/0'/0'"
+    ),
+    NESTED_SEGWIT(
+        displayName = "Wrapped",
+        description = "P2SH-P2WPKH - Wrapped SegWit addresses start with '3'",
+        bip = 49,
+        defaultPath = "m/49'/0'/0'/0",
+        accountPath = "49'/0'/0'"
     ),
     SEGWIT(
         displayName = "SegWit",
-        description = "SegWit addresses start with 'bc1q'",
+        description = "P2WPKH - Native SegWit addresses start with 'bc1q'",
         bip = 84,
-        defaultPath = "m/84'/0'/0'/0"
+        defaultPath = "m/84'/0'/0'/0",
+        accountPath = "84'/0'/0'"
     ),
     TAPROOT(
         displayName = "Taproot",
-        description = "Taproot addresses start with 'bc1p'",
+        description = "P2TR - Taproot addresses start with 'bc1p'",
         bip = 86,
-        defaultPath = "m/86'/0'/0'/0"
+        defaultPath = "m/86'/0'/0'/0",
+        accountPath = "86'/0'/0'"
     )
 }
 
@@ -39,7 +50,8 @@ data class StoredWallet(
     val derivationPath: String,
     val isWatchOnly: Boolean = false,
     val network: WalletNetwork = WalletNetwork.BITCOIN,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val masterFingerprint: String? = null // Master key fingerprint (8 hex chars) for watch-only wallets
 )
 
 /**
@@ -59,13 +71,35 @@ data class WalletState(
     val wallets: List<StoredWallet> = emptyList(),
     val activeWallet: StoredWallet? = null,
     val balanceSats: ULong = 0UL,
-    val pendingBalanceSats: ULong = 0UL,
+    val pendingIncomingSats: ULong = 0UL,
+    val pendingOutgoingSats: ULong = 0UL,
     val transactions: List<TransactionDetails> = emptyList(),
     val currentAddress: String? = null,
     val currentAddressInfo: ReceiveAddressInfo? = null,
     val isSyncing: Boolean = false,
+    val isFullSyncing: Boolean = false,
+    val syncProgress: SyncProgress? = null,
     val lastSyncTimestamp: Long? = null,
+    val blockHeight: UInt? = null,
     val error: String? = null
+)
+
+/**
+ * Granular sync progress across the entire sync pipeline.
+ *
+ * Phases (with approximate overall progress weights):
+ *   0%–50%  Scanning addresses (BDK inspectSpks callback)
+ *  50%–60%  Applying updates
+ *  60%–70%  Saving to database
+ *  70%–90%  Processing transactions (expensive for large wallets)
+ *  90%–100% Refreshing address cache
+ */
+data class SyncProgress(
+    val current: ULong = 0UL,
+    val total: ULong = 0UL,
+    val keychain: String? = null,
+    /** Human-readable label for the current pipeline step */
+    val status: String? = null
 )
 
 /**
@@ -75,7 +109,7 @@ data class TransactionDetails(
     val txid: String,
     val amountSats: Long, // Positive for received, negative for sent
     val fee: ULong?,
-    val vsize: ULong? = null, // Virtual size in vBytes for fee rate calculation
+    val weight: ULong? = null, // Transaction weight in WU for fee rate calculation
     val confirmationTime: ConfirmationTime?,
     val isConfirmed: Boolean,
     val timestamp: Long?,
@@ -85,13 +119,16 @@ data class TransactionDetails(
     val changeAmount: ULong? = null, // Amount returned as change
     val isSelfTransfer: Boolean = false // True when sending to yourself (all outputs are yours)
 ) {
-    /**
-     * Calculate fee rate in sat/vB
-     */
+    /** Ceiled vsize = ceil(weight / 4) matching Bitcoin Core / mempool.space */
+    val vsize: Double?
+        get() = if (weight != null && weight > 0UL) kotlin.math.ceil(weight.toDouble() / 4.0) else null
+
+    /** Fee rate in sat/vB using ceiled vsize */
     val feeRate: Double?
-        get() = if (fee != null && vsize != null && vsize > 0UL) {
-            fee.toDouble() / vsize.toDouble()
-        } else null
+        get() {
+            val vs = vsize
+            return if (fee != null && vs != null && vs > 0.0) fee.toDouble() / vs else null
+        }
 }
 
 /**
@@ -123,14 +160,10 @@ data class ElectrumConfig(
     val useSsl: Boolean = false,
     val useTor: Boolean = false
 ) {
-    companion object {
-        const val TOR_SOCKS_PROXY = "127.0.0.1:9050"
-    }
-    
     /**
      * Get the clean host URL (strip any protocol prefix)
      */
-    private fun cleanUrl(): String {
+    fun cleanUrl(): String {
         return url
             .removePrefix("tcp://")
             .removePrefix("ssl://")
@@ -164,13 +197,6 @@ data class ElectrumConfig(
         return cleanUrl().endsWith(".onion")
     }
     
-    /**
-     * Check if this config requires Tor to work
-     * .onion addresses always require Tor
-     */
-    fun requiresTor(): Boolean {
-        return isOnionAddress()
-    }
 }
 
 /**
@@ -191,7 +217,8 @@ data class WalletImportConfig(
     val passphrase: String? = null,
     val customDerivationPath: String? = null,
     val network: WalletNetwork = WalletNetwork.BITCOIN,
-    val isWatchOnly: Boolean = false
+    val isWatchOnly: Boolean = false,
+    val masterFingerprint: String? = null // Master key fingerprint (8 hex chars) for hardware wallet PSBT signing
 )
 
 /**
@@ -226,7 +253,6 @@ data class UtxoInfo(
     val amountSats: ULong,
     val label: String? = null,
     val isConfirmed: Boolean,
-    val confirmations: UInt = 0u,
     val isFrozen: Boolean = false
 )
 
@@ -234,12 +260,25 @@ data class UtxoInfo(
  * Fee rate estimates from mempool API
  */
 data class FeeEstimates(
-    val fastestFee: Double,    // ~1 block target
-    val halfHourFee: Double,   // ~3 blocks target
-    val hourFee: Double,       // ~6 blocks target
-    val minimumFee: Double,    // Minimum relay fee
-    val timestamp: Long = System.currentTimeMillis()
-)
+    val fastestFee: Double,    // High priority target
+    val halfHourFee: Double,   // Medium priority target
+    val hourFee: Double,       // Low priority target
+    val minimumFee: Double,    // Minimum/economy fee
+    val timestamp: Long = System.currentTimeMillis(),
+    val source: FeeEstimateSource = FeeEstimateSource.MEMPOOL_SPACE
+) {
+    /** True when all priority levels report the same rate (common in low-fee mempools via Electrum) */
+    val isUniform: Boolean
+        get() = fastestFee == halfHourFee && halfHourFee == hourFee
+}
+
+/**
+ * Where the fee estimates came from — affects UI labels
+ */
+enum class FeeEstimateSource {
+    MEMPOOL_SPACE,
+    ELECTRUM_SERVER
+}
 
 /**
  * Result wrapper for fee estimation
@@ -249,4 +288,58 @@ sealed class FeeEstimationResult {
     data class Error(val message: String) : FeeEstimationResult()
     data object Loading : FeeEstimationResult()
     data object Disabled : FeeEstimationResult()
+}
+
+/**
+ * A single recipient in a transaction (address + amount).
+ * Used for both single and multi-recipient sends.
+ */
+data class Recipient(
+    val address: String,
+    val amountSats: ULong
+)
+
+/**
+ * Details extracted from a created PSBT for display purposes.
+ * Contains the actual fee/amounts computed by BDK's TxBuilder,
+ * which may differ from the client-side estimates shown on the send screen.
+ */
+data class PsbtDetails(
+    val psbtBase64: String,
+    val feeSats: ULong,
+    val recipientAddress: String,
+    val recipientAmountSats: ULong,
+    val changeAmountSats: ULong?,
+    val totalInputSats: ULong
+)
+
+/**
+ * Result of a dry-run transaction build for accurate fee estimation.
+ * Built by BDK's TxBuilder without signing or broadcasting.
+ */
+data class DryRunResult(
+    val feeSats: Long,
+    val changeSats: Long,
+    val hasChange: Boolean,
+    val numInputs: Int,
+    val txVBytes: Double,
+    val effectiveFeeRate: Double,
+    val recipientAmountSats: Long,
+    val error: String? = null // Non-null when the dry-run failed (e.g. insufficient funds)
+) {
+    val isError: Boolean get() = error != null
+
+    companion object {
+        /** Create an error-only result when TxBuilder.finish() fails */
+        fun error(message: String) = DryRunResult(
+            feeSats = 0L,
+            changeSats = 0L,
+            hasChange = false,
+            numInputs = 0,
+            txVBytes = 0.0,
+            effectiveFeeRate = 0.0,
+            recipientAmountSats = 0L,
+            error = message
+        )
+    }
 }

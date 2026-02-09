@@ -18,8 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
@@ -27,6 +26,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -71,7 +71,10 @@ fun ElectrumConfigScreen(
     onTorEnabledChange: (Boolean) -> Unit = {},
     // Disconnect support
     onDisconnect: () -> Unit = {},
-    onCancelConnection: () -> Unit = {}
+    onCancelConnection: () -> Unit = {},
+    // Server info
+    serverVersion: String? = null,
+    blockHeight: UInt? = null
 ) {
     var serverUrl by remember { mutableStateOf("") }
     var serverPort by remember { mutableStateOf("50001") }
@@ -91,13 +94,15 @@ fun ElectrumConfigScreen(
     if (showQrScanner) {
         QrScannerDialog(
             onCodeScanned = { code: String ->
-                // Parse address:port format
-                val parsed = parseServerAddress(code)
-                serverUrl = parsed.first
-                if (parsed.second != null) {
-                    serverPort = parsed.second.toString()
-                    // Auto-detect SSL based on port
-                    useSsl = parsed.second == 50002
+                val parsed = github.aeonbtc.ibiswallet.util.QrFormatParser.parseServerQr(code)
+                serverUrl = parsed.host
+                if (parsed.port != null) {
+                    serverPort = parsed.port.toString()
+                }
+                if (parsed.ssl != null) {
+                    useSsl = parsed.ssl
+                } else if (parsed.port != null) {
+                    useSsl = parsed.port == 50002
                 }
                 showQrScanner = false
             },
@@ -179,39 +184,38 @@ fun ElectrumConfigScreen(
         
             // 1. Add Server Button (at top, always visible)
             OutlinedButton(
-                onClick = { showAddServerForm = true },
+                onClick = { if (!showAddServerForm) showAddServerForm = true },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !showAddServerForm,
                 shape = RoundedCornerShape(8.dp),
+                enabled = !showAddServerForm,
                 colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (showAddServerForm) TextSecondary.copy(alpha = 0.5f) else BitcoinOrange
+                    contentColor = BitcoinOrange,
+                    disabledContentColor = BitcoinOrange.copy(alpha = 0.4f)
                 ),
-                border = ButtonDefaults.outlinedButtonBorder(enabled = !showAddServerForm).copy(
-                    brush = androidx.compose.ui.graphics.SolidColor(
-                        if (showAddServerForm) BorderColor.copy(alpha = 0.5f) else BitcoinOrange.copy(alpha = 0.5f)
-                    )
+                border = BorderStroke(
+                    1.dp,
+                    if (!showAddServerForm) BorderColor.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
                 )
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Add Server")
             }
             
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // 2. Current Server / Connection Status Card (always shown)
             val activeServer = savedServers.find { it.id == activeServerId }
             CurrentServerCard(
-                serverName = activeServer?.displayName(),
-                serverAddress = activeServer?.let { "${it.url}:${it.port}" },
+                server = activeServer,
                 isConnecting = isConnecting,
                 isConnected = isConnected,
-                useSsl = activeServer?.useSsl ?: false,
-                isOnion = activeServer?.isOnionAddress() ?: false,
+                serverVersion = serverVersion,
+                blockHeight = blockHeight,
                 onConnect = { activeServerId?.let { onConnectToServer(it) } },
                 onDisconnect = onDisconnect,
                 onCancelConnection = onCancelConnection,
@@ -240,7 +244,7 @@ fun ElectrumConfigScreen(
             
             // 4. Saved Servers Section
             if (savedServers.isNotEmpty()) {
-                var showSavedServers by remember { mutableStateOf(false) }
+                var showSavedServers by remember { mutableStateOf(activeServerId == null) }
 
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -263,12 +267,12 @@ fun ElectrumConfigScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Dns,
+                                    imageVector = Icons.Default.Storage,
                                     contentDescription = null,
                                     tint = BitcoinOrange,
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
-                                Spacer(modifier = Modifier.width(12.dp))
+                                Spacer(modifier = Modifier.width(10.dp))
                                 Text(
                                     text = "Saved Servers",
                                     style = MaterialTheme.typography.titleMedium,
@@ -429,16 +433,80 @@ fun ElectrumConfigScreen(
 }
 
 /**
+ * Protocol badge (SSL / TCP)
+ */
+@Composable
+private fun ProtocolBadge(useSsl: Boolean) {
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = if (useSsl) SuccessGreen.copy(alpha = 0.15f) else TextSecondary.copy(alpha = 0.15f),
+        border = BorderStroke(1.dp, if (useSsl) SuccessGreen.copy(alpha = 0.4f) else TextSecondary.copy(alpha = 0.3f))
+    ) {
+        Text(
+            text = if (useSsl) "SSL" else "TCP",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (useSsl) SuccessGreen else TextSecondary,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+/**
+ * Tor badge
+ */
+@Composable
+private fun TorBadge() {
+    val purple = androidx.compose.ui.graphics.Color(0xFF9B59B6)
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = purple.copy(alpha = 0.15f),
+        border = BorderStroke(1.dp, purple.copy(alpha = 0.4f))
+    ) {
+        Text(
+            text = "Tor",
+            style = MaterialTheme.typography.labelSmall,
+            color = purple,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+        )
+    }
+}
+
+/**
+ * Labeled detail row for server info
+ */
+@Composable
+private fun ServerDetailRow(label: String, value: String, monospace: Boolean = false) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+            modifier = Modifier.width(72.dp)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            fontFamily = if (monospace) androidx.compose.ui.text.font.FontFamily.Monospace else null,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+/**
  * Current Server Card - shows connection state and server info
  */
 @Composable
 private fun CurrentServerCard(
-    serverName: String?,
-    serverAddress: String?,
+    server: ElectrumConfig?,
     isConnecting: Boolean,
     isConnected: Boolean,
-    useSsl: Boolean,
-    isOnion: Boolean,
+    serverVersion: String? = null,
+    blockHeight: UInt? = null,
     onConnect: () -> Unit = {},
     onDisconnect: () -> Unit = {},
     onCancelConnection: () -> Unit = {},
@@ -470,12 +538,12 @@ private fun CurrentServerCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Link,
+                        imageVector = Icons.Default.Cloud,
                         contentDescription = null,
                         tint = BitcoinOrange,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(22.dp)
                     )
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Text(
                         text = "Current Server",
                         style = MaterialTheme.typography.titleMedium,
@@ -488,8 +556,7 @@ private fun CurrentServerCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Connect button - status indicator that can reconnect
-                    val canConnect = serverName != null && !isConnected && !isConnecting
+                    val canConnect = server != null && !isConnected && !isConnecting
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
@@ -538,7 +605,7 @@ private fun CurrentServerCard(
                         }
                     }
                     
-                    // Disconnect/Cancel button - prominent X
+                    // Disconnect/Cancel button
                     if (isConnected || isConnecting) {
                         Box(
                             modifier = Modifier
@@ -566,79 +633,98 @@ private fun CurrentServerCard(
                 }
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
             // Server details or empty state
-            if (serverName != null && serverAddress != null) {
+            if (server != null) {
                 val serverBorderColor = when {
                     isConnected -> SuccessGreen
                     isConnecting -> BitcoinOrange
                     else -> BorderColor
                 }
 
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(SuccessGreen.copy(alpha = 0.15f))
-                        .then(
-                            Modifier.border(
-                                width = 1.5.dp,
-                                color = serverBorderColor,
-                                shape = RoundedCornerShape(12.dp)
-                            )
-                        )
-                        .padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = serverName,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = serverAddress,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f, fill = false)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (useSsl) "SSL" else "TCP",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
-                            )
-                            if (isOnion) {
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Image(
-                                    painter = painterResource(id = R.drawable.tor_icon),
-                                    contentDescription = "Onion",
-                                    modifier = Modifier.size(14.dp)
-                                )
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            when {
+                                isConnected -> SuccessGreen.copy(alpha = 0.08f)
+                                isConnecting -> BitcoinOrange.copy(alpha = 0.08f)
+                                else -> DarkSurfaceVariant
                             }
+                        )
+                        .border(
+                            width = 1.dp,
+                            color = serverBorderColor,
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // Name row with badges and edit button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Name:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                            modifier = Modifier.width(72.dp)
+                        )
+                        Text(
+                            text = server.displayName(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        ProtocolBadge(useSsl = server.useSsl)
+                        if (server.isOnionAddress()) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            TorBadge()
                         }
-                    }
-                    if (onEdit != null) {
-                        IconButton(
-                            onClick = onEdit,
-                            modifier = Modifier.size(32.dp)
-                        ) {
+                        if (onEdit != null) {
+                            Spacer(modifier = Modifier.width(4.dp))
                             Icon(
                                 imageVector = Icons.Default.Edit,
                                 contentDescription = "Edit server",
                                 tint = TextSecondary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier
+                                    .size(18.dp)
+                                    .clickable(onClick = onEdit)
                             )
                         }
+                    }
+                    // Address
+                    ServerDetailRow(
+                        label = "Address:",
+                        value = server.cleanUrl(),
+                        monospace = true
+                    )
+                    // Port
+                    ServerDetailRow(
+                        label = "Port:",
+                        value = server.port.toString(),
+                        monospace = true
+                    )
+                    // Software (only when connected)
+                    if (isConnected && serverVersion != null) {
+                        ServerDetailRow(
+                            label = "Software:",
+                            value = serverVersion
+                        )
+                    }
+                    // Block height (only when connected)
+                    if (isConnected && blockHeight != null && blockHeight > 0u) {
+                        ServerDetailRow(
+                            label = "Block:",
+                            value = "%,d".format(blockHeight.toInt())
+                        )
                     }
                 }
             } else {
@@ -646,7 +732,7 @@ private fun CurrentServerCard(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(RoundedCornerShape(8.dp))
                         .background(DarkSurfaceVariant)
                         .padding(16.dp),
                     contentAlignment = Alignment.Center
@@ -663,7 +749,7 @@ private fun CurrentServerCard(
 }
 
 /**
- * Individual saved server item - styled like ManageWalletsScreen
+ * Individual saved server item
  */
 @Composable
 private fun SavedServerItem(
@@ -674,15 +760,13 @@ private fun SavedServerItem(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val isSelected = isActive
-    
-    val cardColor = if (isSelected) {
-        BitcoinOrange.copy(alpha = 0.15f)
+    val cardColor = if (isActive) {
+        BitcoinOrange.copy(alpha = 0.10f)
     } else {
         DarkSurfaceVariant
     }
     
-    val borderColor = if (isSelected) {
+    val borderColor = if (isActive) {
         BitcoinOrange
     } else {
         BorderColor
@@ -692,103 +776,106 @@ private fun SavedServerItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onConnect() },
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = cardColor),
-        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
+        border = BorderStroke(1.dp, borderColor)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             // Server info
             Column(
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
+                // Name row with status badge
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
                         text = server.displayName(),
-                        style = MaterialTheme.typography.bodyLarge,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onBackground,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
                     )
-                    if (isSelected) {
+                    if (isActive) {
                         Spacer(modifier = Modifier.width(8.dp))
-                        val badgeText = when {
-                            isConnected -> "Active"
-                            else -> "Selected"
-                        }
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = BitcoinOrange
+                            color = if (isConnected) SuccessGreen else BitcoinOrange
                         ) {
                             Text(
-                                text = badgeText,
+                                text = if (isConnected) "Active" else "Selected",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = DarkBackground,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
                 }
-                
-                Spacer(modifier = Modifier.height(4.dp))
-                
+                // Address + port + badges
                 Row(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${server.url}:${server.port}",
+                        text = "${server.cleanUrl()}:${server.port}",
                         style = MaterialTheme.typography.bodySmall,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                         color = TextSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (server.useSsl) "SSL" else "TCP",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
-                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    ProtocolBadge(useSsl = server.useSsl)
                     if (server.isOnionAddress()) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Image(
-                            painter = painterResource(id = R.drawable.tor_icon),
-                            contentDescription = "Onion",
-                            modifier = Modifier.size(12.dp)
-                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        TorBadge()
                     }
                 }
             }
             
-            Spacer(modifier = Modifier.width(4.dp))
+            Spacer(modifier = Modifier.width(10.dp))
             
             // Edit button
-            IconButton(
-                onClick = onEdit
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(DarkSurface)
+                    .clickable { onEdit() }
             ) {
                 Icon(
                     imageVector = Icons.Default.Edit,
                     contentDescription = "Edit",
                     tint = TextSecondary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
             
+            Spacer(modifier = Modifier.width(8.dp))
+            
             // Delete button
-            IconButton(
-                onClick = onDelete
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(DarkSurface)
+                    .clickable { onDelete() }
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
                     contentDescription = "Delete",
                     tint = TextSecondary,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(16.dp)
                 )
             }
         }
@@ -922,7 +1009,7 @@ private fun ServerConfigDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
                     text = "Name",
@@ -1038,7 +1125,7 @@ private fun ServerConfigDialog(
                             color = MaterialTheme.colorScheme.onBackground
                         )
                         Text(
-                            text = "Encrypt connection (port 50002)",
+                            text = "Encrypt connection",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary
                         )
@@ -1079,29 +1166,4 @@ private fun ServerConfigDialog(
             }
         }
     )
-}
-
-/**
- * Parse server address from QR code
- * Supports formats: address:port, address (defaults to null port)
- */
-private fun parseServerAddress(input: String): Pair<String, Int?> {
-    val trimmed = input.trim()
-    
-    // Check for address:port format
-    val lastColonIndex = trimmed.lastIndexOf(':')
-    
-    if (lastColonIndex > 0) {
-        val potentialPort = trimmed.substring(lastColonIndex + 1)
-        val port = potentialPort.toIntOrNull()
-        
-        // Valid port found
-        if (port != null && port in 1..65535) {
-            val address = trimmed.substring(0, lastColonIndex)
-            return Pair(address, port)
-        }
-    }
-    
-    // No valid port found, return address only
-    return Pair(trimmed, null)
 }

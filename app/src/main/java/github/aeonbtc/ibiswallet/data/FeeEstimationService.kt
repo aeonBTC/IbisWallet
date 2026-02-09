@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet.data
 
 import android.util.Log
+import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.model.FeeEstimates
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,7 +24,7 @@ class FeeEstimationService {
         private const val TOR_PROXY_HOST = "127.0.0.1"
         private const val TOR_PROXY_PORT = 9050
         private const val TIMEOUT_SECONDS = 30L
-        private const val TOR_TIMEOUT_SECONDS = 60L
+        private const val TOR_TIMEOUT_SECONDS = 30L
     }
     
     /**
@@ -49,7 +50,7 @@ class FeeEstimationService {
                 if (preciseResult.isSuccess) {
                     return@withContext preciseResult
                 }
-                Log.d(TAG, "Precise endpoint failed, trying recommended endpoint")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Precise endpoint failed, trying recommended endpoint")
             }
             
             // Use recommended endpoint (either as fallback or primary)
@@ -63,7 +64,7 @@ class FeeEstimationService {
             Result.failure(Exception("Failed to fetch fee estimates: $error"))
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching fee estimates", e)
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching fee estimates", e)
             Result.failure(e)
         }
     }
@@ -92,7 +93,7 @@ class FeeEstimationService {
     ): Result<FeeEstimates> {
         return try {
             val url = "${baseUrl.trimEnd('/')}$endpoint"
-            Log.d(TAG, "Fetching fees from: $url")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Fetching fees from: $url")
             
             val request = Request.Builder()
                 .url(url)
@@ -114,7 +115,7 @@ class FeeEstimationService {
             Result.success(estimates)
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error fetching from $endpoint", e)
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching from $endpoint", e)
             Result.failure(e)
         }
     }

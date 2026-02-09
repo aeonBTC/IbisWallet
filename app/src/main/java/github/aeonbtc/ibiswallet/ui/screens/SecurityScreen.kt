@@ -23,9 +23,9 @@ import androidx.compose.ui.unit.sp
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.*
-import kotlinx.coroutines.delay
 
-private const val PIN_LENGTH = 5
+private const val MIN_PIN_LENGTH = 4
+private const val MAX_PIN_LENGTH = 12
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -33,10 +33,12 @@ fun SecurityScreen(
     currentSecurityMethod: SecureStorage.SecurityMethod = SecureStorage.SecurityMethod.NONE,
     currentLockTiming: SecureStorage.LockTiming = SecureStorage.LockTiming.WHEN_MINIMIZED,
     isBiometricAvailable: Boolean = false,
+    screenshotsDisabled: Boolean = false,
     onSetPinCode: (String) -> Unit = {},
     onEnableBiometric: () -> Unit = {},
     onDisableSecurity: () -> Unit = {},
     onLockTimingChange: (SecureStorage.LockTiming) -> Unit = {},
+    onScreenshotsDisabledChange: (Boolean) -> Unit = {},
     onBack: () -> Unit = {}
 ) {
     var showPinSetup by remember { mutableStateOf(false) }
@@ -178,7 +180,7 @@ fun SecurityScreen(
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Text(
-                                    text = "$PIN_LENGTH-digit unlock code",
+                                    text = "$MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit unlock code",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary
                                 )
@@ -215,6 +217,45 @@ fun SecurityScreen(
                         LockTimingDropdown(
                             currentTiming = currentLockTiming,
                             onTimingSelected = onLockTimingChange
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Screenshot Prevention
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkCard)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Disable Screenshots",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "Blocks screenshots and app previews",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
+
+                        SquareToggle(
+                            checked = screenshotsDisabled,
+                            onCheckedChange = onScreenshotsDisabledChange
                         )
                     }
                 }
@@ -272,16 +313,6 @@ private fun PinSetupScreen(
     var confirmPin by remember { mutableStateOf("") }
     var step by remember { mutableIntStateOf(1) } // 1 = enter PIN, 2 = confirm PIN
     var error by remember { mutableStateOf<String?>(null) }
-    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    
-    // Handle delayed transitions so user can see the 5th dot
-    LaunchedEffect(pendingAction) {
-        pendingAction?.let { action ->
-            delay(200)
-            action()
-            pendingAction = null
-        }
-    }
 
     Box(
         modifier = Modifier
@@ -330,7 +361,7 @@ private fun PinSetupScreen(
 
             Text(
                 text = when {
-                    step == 1 -> "Enter a $PIN_LENGTH-digit PIN"
+                    step == 1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
                     else -> "Enter the PIN again to confirm"
                 },
                 style = MaterialTheme.typography.bodyLarge,
@@ -341,19 +372,27 @@ private fun PinSetupScreen(
 
             // PIN dots indicator
             Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val currentPin = if (step == 1) pin else confirmPin
-                repeat(PIN_LENGTH) { index ->
+                val targetLength = if (step == 2) pin.length else MIN_PIN_LENGTH
+                repeat(currentPin.length) {
                     Box(
                         modifier = Modifier
-                            .size(16.dp)
+                            .size(14.dp)
                             .clip(CircleShape)
-                            .background(
-                                if (index < currentPin.length) BitcoinOrange
-                                else BorderColor
-                            )
+                            .background(BitcoinOrange)
+                    )
+                }
+                // Show empty dots up to target length
+                val emptyDots = (targetLength - currentPin.length).coerceAtLeast(0)
+                repeat(emptyDots) {
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .clip(CircleShape)
+                            .background(BorderColor)
                     )
                 }
             }
@@ -380,32 +419,15 @@ private fun PinSetupScreen(
             // Number pad
             PinNumberPad(
                 onNumberClick = { number ->
+                    val maxLen = if (step == 2) pin.length else MAX_PIN_LENGTH
                     val currentPin = if (step == 1) pin else confirmPin
-                    if (currentPin.length < PIN_LENGTH && pendingAction == null) {
+                    if (currentPin.length < maxLen) {
                         if (step == 1) {
                             pin += number
                             error = null
-                            
-                            // Auto-advance when PIN is complete (with delay)
-                            if (pin.length == PIN_LENGTH) {
-                                pendingAction = { step = 2 }
-                            }
                         } else {
                             confirmPin += number
                             error = null
-                            
-                            // Auto-advance when PIN is complete (with delay)
-                            if (confirmPin.length == PIN_LENGTH) {
-                                pendingAction = {
-                                    // Verify PINs match
-                                    if (pin == confirmPin) {
-                                        onPinSet(pin)
-                                    } else {
-                                        error = "PINs don't match, try again"
-                                        confirmPin = ""
-                                    }
-                                }
-                            }
                         }
                     }
                 },
@@ -417,7 +439,23 @@ private fun PinSetupScreen(
                         confirmPin = confirmPin.dropLast(1)
                         error = null
                     }
-                }
+                },
+                onConfirmClick = if (step == 1 && pin.length >= MIN_PIN_LENGTH) {
+                    {
+                        step = 2
+                        error = null
+                    }
+                } else if (step == 2 && confirmPin.length == pin.length) {
+                    {
+                        if (pin == confirmPin) {
+                            onPinSet(pin)
+                        } else {
+                            error = "PINs don't match, try again"
+                            confirmPin = ""
+                        }
+                    }
+                } else null,
+                confirmLabel = if (step == 1) "Next" else "Confirm"
             )
 
             Spacer(modifier = Modifier.height(48.dp))
@@ -428,7 +466,9 @@ private fun PinSetupScreen(
 @Composable
 private fun PinNumberPad(
     onNumberClick: (String) -> Unit,
-    onBackspaceClick: () -> Unit
+    onBackspaceClick: () -> Unit,
+    onConfirmClick: (() -> Unit)? = null,
+    confirmLabel: String = "Confirm"
 ) {
     val numbers = listOf(
         listOf("1", "2", "3"),
@@ -495,6 +535,29 @@ private fun PinNumberPad(
                     }
                 }
             }
+        }
+        
+        // Confirm button row below the number pad
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        Button(
+            onClick = { onConfirmClick?.invoke() },
+            enabled = onConfirmClick != null,
+            modifier = Modifier
+                .width(240.dp)
+                .height(48.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = BitcoinOrange,
+                contentColor = DarkBackground,
+                disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                disabledContentColor = DarkBackground.copy(alpha = 0.5f)
+            )
+        ) {
+            Text(
+                text = confirmLabel,
+                style = MaterialTheme.typography.titleMedium
+            )
         }
     }
 }

@@ -1,6 +1,5 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -40,8 +39,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -56,7 +53,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -68,12 +64,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import kotlin.math.roundToLong
-import github.aeonbtc.ibiswallet.data.model.AddressType
+import github.aeonbtc.ibiswallet.data.model.DryRunResult
+import github.aeonbtc.ibiswallet.data.model.FeeEstimateSource
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
+import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.WalletState
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
-import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -102,13 +99,22 @@ fun SendScreen(
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
     minFeeRate: Double = 1.0,
     preSelectedUtxo: UtxoInfo? = null,
+    spendUnconfirmed: Boolean = true,
     btcPrice: Double? = null,
     privacyMode: Boolean = false,
+    isWatchOnly: Boolean = false,
     draft: SendScreenDraft = SendScreenDraft(),
     onRefreshFees: () -> Unit = {},
     onClearPreSelectedUtxo: () -> Unit = {},
     onUpdateDraft: (SendScreenDraft) -> Unit = {},
-    onSend: (address: String, amountSats: ULong, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, isMaxSend: Boolean) -> Unit = { _, _, _, _, _, _ -> }
+    dryRunResult: DryRunResult? = null,
+    onEstimateFee: (address: String, amountSats: ULong, feeRate: Float, selectedUtxos: List<UtxoInfo>?, isMaxSend: Boolean) -> Unit = { _, _, _, _, _ -> },
+    onEstimateFeeMulti: (recipients: List<Recipient>, feeRate: Float, selectedUtxos: List<UtxoInfo>?) -> Unit = { _, _, _ -> },
+    onClearDryRun: () -> Unit = {},
+    onSend: (address: String, amountSats: ULong, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, isMaxSend: Boolean, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _, _, _ -> },
+    onSendMulti: (recipients: List<Recipient>, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _ -> },
+    onCreatePsbt: (address: String, amountSats: ULong, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, isMaxSend: Boolean, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _, _, _ -> },
+    onCreatePsbtMulti: (recipients: List<Recipient>, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _ -> }
 ) {
     // Initialize state from draft
     var recipientAddress by remember { mutableStateOf(draft.recipientAddress) }
@@ -134,7 +140,13 @@ fun SendScreen(
         }
     }
     
-    // Max mode state
+    // Multi-recipient mode
+    var isMultiMode by remember { mutableStateOf(false) }
+    var showMultiDialog by remember { mutableStateOf(false) }
+    // Each entry is (address, amountInput) pair — mutable state list for dynamic rows
+    val multiRecipients = remember { mutableStateListOf<Pair<String, String>>() }
+    
+    // Max mode state (disabled in multi-recipient mode)
     var isMaxMode by remember { mutableStateOf(draft.isMaxSend) }
     
     // Label state
@@ -224,84 +236,105 @@ fun SendScreen(
         walletState.balanceSats.toLong()
     }
     
-    // Transaction size calculation based on Bitcoin Optech standards
-    // https://bitcoinops.org/en/tools/calc-size/
-    val addressType = walletState.activeWallet?.addressType ?: AddressType.SEGWIT
-    val numInputs = if (selectedUtxos.isNotEmpty()) selectedUtxos.size else 1
+    // Build multi-recipient list for fee estimation
+    val multiRecipientList = remember(multiRecipients.toList(), useSats, isUsdMode, btcPrice) {
+        multiRecipients.mapNotNull { (addr, amt) ->
+            val addrErr = validateBitcoinAddress(addr)
+            if (addr.isNotBlank() && addrErr == null && amt.isNotBlank()) {
+                val sats = try {
+                    when {
+                        isUsdMode && btcPrice != null && btcPrice > 0 ->
+                            ((amt.toDoubleOrNull() ?: 0.0) / btcPrice * 100_000_000).roundToLong().toULong()
+                        useSats -> amt.replace(",", "").toLongOrNull()?.toULong() ?: 0UL
+                        else -> ((amt.toDoubleOrNull() ?: 0.0) * 100_000_000).roundToLong().toULong()
+                    }
+                } catch (_: Exception) { 0UL }
+                if (sats > 0UL) Recipient(addr, sats) else null
+            } else null
+        }
+    }
+    val multiTotalSats = multiRecipientList.sumOf { it.amountSats.toLong() }
     
-    // Input sizes (vbytes) - per Bitcoin Optech calculator
-    val inputSize = when (addressType) {
-        AddressType.LEGACY -> 148.0   // P2PKH
-        AddressType.SEGWIT -> 68.0    // P2WPKH
-        AddressType.TAPROOT -> 57.5   // P2TR keypath
+    // Fee estimation from BDK dry-run (sole source of truth)
+    // The dry-run builds a real PSBT via TxBuilder.finish(), giving exact fees,
+    // vBytes, change, and input count. No heuristic guessing needed.
+    val dryRunOk = dryRunResult != null && !dryRunResult.isError
+    val dryRunError = dryRunResult?.error
+    val estimatedFeeSats = if (dryRunOk) dryRunResult!!.feeSats else null
+    val estimatedVBytes = if (dryRunOk) dryRunResult!!.txVBytes else null
+    
+    // --- Single-mode: trigger BDK dry-run when address, amount, or fee rate changes ---
+    val selectedUtxoSnapshot = selectedUtxos.toList()
+    LaunchedEffect(recipientAddress, amountSats, feeRate, selectedUtxoSnapshot, isMaxMode, isMultiMode) {
+        if (isMultiMode) return@LaunchedEffect  // handled by the multi-mode effect below
+        if (!walletState.isInitialized) { onClearDryRun(); return@LaunchedEffect }
+        kotlinx.coroutines.delay(150)
+        if (isAddressValid && (amountSats > 0 || isMaxMode)) {
+            onEstimateFee(
+                recipientAddress,
+                amountSats.roundToLong().toULong(),
+                feeRate,
+                if (selectedUtxoSnapshot.isNotEmpty()) selectedUtxoSnapshot else null,
+                isMaxMode
+            )
+        } else {
+            onClearDryRun()
+        }
     }
     
-    // Output sizes (vbytes) - per Bitcoin Optech calculator
-    // Use recipient address type for recipient output, wallet type for change
-    val recipientOutputSize = when {
-        recipientAddress.startsWith("1") -> 34.0      // P2PKH
-        recipientAddress.startsWith("3") -> 32.0      // P2SH
-        recipientAddress.lowercase().startsWith("bc1q") -> 31.0  // P2WPKH
-        recipientAddress.lowercase().startsWith("bc1p") -> 43.0  // P2TR
-        else -> 31.0 // Default to P2WPKH
+    // --- Multi-mode: trigger BDK dry-run when recipients or fee rate changes ---
+    LaunchedEffect(multiRecipientList, feeRate, selectedUtxoSnapshot, isMultiMode) {
+        if (!isMultiMode) return@LaunchedEffect  // handled by the single-mode effect above
+        if (!walletState.isInitialized) { onClearDryRun(); return@LaunchedEffect }
+        kotlinx.coroutines.delay(150)
+        if (multiRecipientList.isNotEmpty()) {
+            onEstimateFeeMulti(
+                multiRecipientList,
+                feeRate,
+                if (selectedUtxoSnapshot.isNotEmpty()) selectedUtxoSnapshot else null
+            )
+        } else {
+            onClearDryRun()
+        }
     }
     
-    val changeOutputSize = when (addressType) {
-        AddressType.LEGACY -> 34.0   // P2PKH
-        AddressType.SEGWIT -> 31.0   // P2WPKH
-        AddressType.TAPROOT -> 43.0  // P2TR
+    // Clear dry-run when switching modes so stale results don't linger.
+    // Use a ref to skip the initial composition; only clear on actual mode switches.
+    val prevMultiMode = remember { mutableStateOf(isMultiMode) }
+    LaunchedEffect(isMultiMode) {
+        if (prevMultiMode.value != isMultiMode) {
+            prevMultiMode.value = isMultiMode
+            onClearDryRun()
+        }
     }
     
-    // Overhead (vbytes) - per Bitcoin Optech calculator
-    val overhead = when (addressType) {
-        AddressType.LEGACY -> 10.0   // 4 + 1 + 1 + 4
-        AddressType.SEGWIT -> 10.5   // includes segwit marker/flag
-        AddressType.TAPROOT -> 10.5  // includes segwit marker/flag
-    }
-    
-    // Calculate estimated transaction size and fee
-    val estimatedVBytesWithChange = overhead + (numInputs * inputSize) + recipientOutputSize + changeOutputSize
-    val estimatedVBytesNoChange = overhead + (numInputs * inputSize) + recipientOutputSize
-    
-    val estimatedFeeSatsWithChange = (estimatedVBytesWithChange * feeRate).toLong()
-    val estimatedFeeSatsNoChange = (estimatedVBytesNoChange * feeRate).toLong()
-    
-    // Determine if there will be change (dust threshold = 546 sats)
-    val potentialChange = availableSats - amountSats.roundToLong() - estimatedFeeSatsWithChange
-    val hasChange = potentialChange > 546
-    
-    val estimatedFeeSats = if (hasChange) estimatedFeeSatsWithChange else estimatedFeeSatsNoChange
-    val estimatedVBytes = if (hasChange) estimatedVBytesWithChange else estimatedVBytesNoChange
-    
-    // Calculate remaining balance after send
-    val totalSpend = amountSats.roundToLong() + estimatedFeeSats
-    val remainingAfterSend = if (amountSats > 0) {
+    val totalSpend = amountSats.roundToLong() + (estimatedFeeSats ?: 0L)
+    val remainingAfterSend = if (amountSats > 0 && estimatedFeeSats != null) {
         maxOf(0L, availableSats - totalSpend)
     } else {
         availableSats
     }
     
-    // In max mode, we always have enough funds (by definition)
-    // Otherwise check if total spend is within available balance
-    val hasEnoughFunds = amountSats > 0 && (isMaxMode || totalSpend <= availableSats)
+    // Dry-run is the authority on whether funds are sufficient.
+    val hasEnoughFunds = if (isMultiMode) {
+        multiRecipientList.isNotEmpty() && dryRunOk
+    } else {
+        amountSats > 0 && dryRunOk
+    }
     val canSend = walletState.isInitialized && 
-                  isAddressValid && 
+                  (if (isMultiMode) multiRecipientList.size >= 2 else isAddressValid) &&
                   hasEnoughFunds && 
                   !uiState.isSending
     
-    // Calculate max amount based on current fee rate
-    val calculateMaxSats = { ->
-        // For max send, we don't have change output
-        val txVBytes = overhead + (numInputs * inputSize) + recipientOutputSize
-        val feeSats = (txVBytes * feeRate).toLong()
-        
-        maxOf(0L, availableSats - feeSats)
-    }
-    
-    // Update max amount when fee rate changes and max mode is active
-    LaunchedEffect(feeRate, availableSats, isMaxMode, isUsdMode) {
-        if (isMaxMode) {
-            val maxSats = calculateMaxSats()
+    // --- Max mode: update displayed amount when dry-run returns exact recipient amount ---
+    LaunchedEffect(feeRate, availableSats, isMaxMode, isUsdMode, dryRunResult, selectedUtxoSnapshot) {
+        if (isMaxMode && !isMultiMode) {
+            val maxSats = if (dryRunOk) {
+                dryRunResult!!.recipientAmountSats
+            } else {
+                // Rough estimate while dry-run is pending
+                maxOf(0L, availableSats - (feeRate.toLong() * 150))
+            }
             amountInput = when {
                 isUsdMode && btcPrice != null && btcPrice > 0 -> {
                     val usdValue = (maxSats.toDouble() / 100_000_000.0) * btcPrice
@@ -321,6 +354,7 @@ fun SendScreen(
             useSats = useSats,
             btcPrice = btcPrice,
             privacyMode = privacyMode,
+            spendUnconfirmed = spendUnconfirmed,
             onUtxoToggle = { utxo ->
                 if (selectedUtxos.contains(utxo)) {
                     selectedUtxos.remove(utxo)
@@ -330,12 +364,31 @@ fun SendScreen(
             },
             onSelectAll = {
                 selectedUtxos.clear()
-                selectedUtxos.addAll(spendableUtxos)
+                val selectableUtxos = if (spendUnconfirmed) spendableUtxos else spendableUtxos.filter { it.isConfirmed }
+                selectedUtxos.addAll(selectableUtxos)
             },
             onClearAll = {
                 selectedUtxos.clear()
             },
             onDismiss = { showCoinControl = false }
+        )
+    }
+    
+    // Multi-recipient editing dialog
+    if (showMultiDialog) {
+        MultiRecipientDialog(
+            recipients = multiRecipients,
+            useSats = useSats,
+            isUsdMode = isUsdMode,
+            btcPrice = btcPrice,
+            privacyMode = privacyMode,
+            availableSats = availableSats,
+            estimatedFeeSats = estimatedFeeSats,
+            dryRunError = dryRunError,
+            validRecipientCount = multiRecipientList.size,
+            totalSendingSats = multiTotalSats,
+            onDone = { showMultiDialog = false },
+            onDismiss = { showMultiDialog = false }
         )
     }
     
@@ -375,34 +428,74 @@ fun SendScreen(
     }
     
     // Send Confirmation Dialog
+    // Auto-close confirmation dialog when send completes (isSending goes false)
+    var wasSending by remember { mutableStateOf(false) }
+    LaunchedEffect(uiState.isSending) {
+        if (wasSending && !uiState.isSending) {
+            showConfirmDialog = false
+        }
+        wasSending = uiState.isSending
+    }
+    
     if (showConfirmDialog) {
-        // Check if recipient address belongs to our wallet (self-transfer)
-        val isSelfTransfer = recipientAddress in walletAddresses
+        val utxoSelection = if (selectedUtxos.isNotEmpty()) selectedUtxos.toList() else null
+        val txLabel = if (showLabelField && labelText.isNotBlank()) labelText else null
         
-        SendConfirmationDialog(
-            recipientAddress = recipientAddress,
-            amountSats = amountSats.roundToLong().toULong(),
-            feeRate = feeRate,
-            selectedUtxos = if (selectedUtxos.isNotEmpty()) selectedUtxos.toList() else null,
-            availableSats = availableSats,
-            useSats = useSats,
-            privacyMode = privacyMode,
-            addressType = walletState.activeWallet?.addressType ?: AddressType.SEGWIT,
-            label = if (showLabelField && labelText.isNotBlank()) labelText else null,
-            isSelfTransfer = isSelfTransfer,
-            onConfirm = {
-                showConfirmDialog = false
-                onSend(
-                    recipientAddress,
-                    amountSats.roundToLong().toULong(),
-                    feeRate,
-                    if (selectedUtxos.isNotEmpty()) selectedUtxos.toList() else null,
-                    if (showLabelField && labelText.isNotBlank()) labelText else null,
-                    isMaxMode
-                )
-            },
-            onDismiss = { showConfirmDialog = false }
-        )
+        if (isMultiMode) {
+            // Multi-recipient confirmation
+            MultiRecipientConfirmationDialog(
+                recipients = multiRecipientList,
+                feeRate = feeRate,
+                useSats = useSats,
+                selectedUtxos = utxoSelection,
+                privacyMode = privacyMode,
+                isWatchOnly = isWatchOnly,
+                dryRunResult = dryRunResult,
+                label = txLabel,
+                isSending = uiState.isSending,
+                sendStatus = uiState.sendStatus,
+                onConfirm = {
+                    val fee = dryRunResult?.feeSats
+                    if (isWatchOnly) {
+                        showConfirmDialog = false
+                        onCreatePsbtMulti(multiRecipientList, feeRate, utxoSelection, txLabel, fee)
+                    } else {
+                        onSendMulti(multiRecipientList, feeRate, utxoSelection, txLabel, fee)
+                    }
+                },
+                onDismiss = { if (!uiState.isSending) showConfirmDialog = false }
+            )
+        } else {
+            // Single-recipient confirmation
+            val isSelfTransfer = recipientAddress in walletAddresses
+            
+            SendConfirmationDialog(
+                recipientAddress = recipientAddress,
+                amountSats = amountSats.roundToLong().toULong(),
+                feeRate = feeRate,
+                selectedUtxos = utxoSelection,
+                useSats = useSats,
+                privacyMode = privacyMode,
+                label = txLabel,
+                isSelfTransfer = isSelfTransfer,
+                isWatchOnly = isWatchOnly,
+                dryRunResult = dryRunResult,
+                isSending = uiState.isSending,
+                sendStatus = uiState.sendStatus,
+                onConfirm = {
+                    val address = recipientAddress
+                    val amount = amountSats.roundToLong().toULong()
+                    val fee = dryRunResult?.feeSats
+                    if (isWatchOnly) {
+                        showConfirmDialog = false
+                        onCreatePsbt(address, amount, feeRate, utxoSelection, txLabel, isMaxMode, fee)
+                    } else {
+                        onSend(address, amount, feeRate, utxoSelection, txLabel, isMaxMode, fee)
+                    }
+                },
+                onDismiss = { if (!uiState.isSending) showConfirmDialog = false }
+            )
+        }
     }
     
     Column(
@@ -467,57 +560,278 @@ fun SendScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Recipient Address Field
-                Text(
-                    text = "Recipient Address",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = TextSecondary
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = recipientAddress,
-                    onValueChange = { recipientAddress = it },
+                // Recipient Address header with Multiple toggle
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = {
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Recipient Address",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = TextSecondary
+                    )
+                    Card(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = walletState.isInitialized) {
+                                if (!isMultiMode) {
+                                    // Entering multi mode — seed from current single fields
+                                    isMultiMode = true
+                                    isMaxMode = false
+                                    multiRecipients.clear()
+                                    if (recipientAddress.isNotBlank() || amountInput.isNotBlank()) {
+                                        multiRecipients.add(Pair(recipientAddress, amountInput))
+                                    }
+                                    multiRecipients.add(Pair("", ""))
+                                    if (multiRecipients.size < 2) multiRecipients.add(Pair("", ""))
+                                    showMultiDialog = true
+                                } else {
+                                    // Exiting multi mode
+                                    isMultiMode = false
+                                    multiRecipients.clear()
+                                }
+                            },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isMultiMode) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface
+                        ),
+                        border = BorderStroke(1.dp, if (isMultiMode) BitcoinOrange else BorderColor)
+                    ) {
                         Text(
-                            "Enter Bitcoin address",
-                            color = TextSecondary.copy(alpha = 0.5f)
+                            text = if (isMultiMode) "Multiple (${multiRecipientList.size})" else "Multiple",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (isMultiMode) BitcoinOrange else TextSecondary,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
                         )
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = { showQrScanner = true }) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR Code",
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(22.dp)
-                            )
+                    }
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                
+                if (isMultiMode) {
+                    // Summary of recipients — tap to edit
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showMultiDialog = true },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                        border = BorderStroke(1.dp, BorderColor)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp)
+                        ) {
+                            if (multiRecipientList.isEmpty()) {
+                                Text(
+                                    text = "Tap to add recipients",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary.copy(alpha = 0.5f)
+                                )
+                            } else {
+                                multiRecipientList.forEachIndexed { i, r ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = r.address.take(10) + "..." + r.address.takeLast(6),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onBackground,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Text(
+                                            text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(r.amountSats, useSats) + if (useSats) " sats" else " BTC",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = BitcoinOrange
+                                        )
+                                    }
+                                    if (i < multiRecipientList.lastIndex) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Total (${multiRecipientList.size} recipients)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextSecondary
+                                    )
+                                    Text(
+                                        text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(multiTotalSats.toULong(), useSats) + if (useSats) " sats" else " BTC",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+                            }
                         }
-                    },
-                    supportingText = if (addressValidationError != null && recipientAddress.isNotBlank()) {
-                        {
+                    }
+                    
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Tap to edit recipients",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary.copy(alpha = 0.6f)
+                    )
+                    
+                    // --- Multi-recipient balance & fee summary ---
+                    Spacer(modifier = Modifier.height(12.dp))
+                    
+                    // Show dry-run error (insufficient funds, dust, etc.)
+                    if (multiRecipientList.isNotEmpty() && dryRunError != null) {
+                        Text(
+                            text = dryRunError,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = WarningYellow
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+                    
+                    val multiFeeSats = estimatedFeeSats ?: 0L
+                    val multiTotalWithFee = multiTotalSats + multiFeeSats
+                    val multiRemaining = availableSats - multiTotalWithFee
+                    val multiOverBudget = multiRemaining < 0 && multiRecipientList.isNotEmpty()
+                    
+                    // Available row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Available",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = addressValidationError,
-                                color = AccentRed
+                                text = if (privacyMode) HIDDEN_AMOUNT else "${formatAmount(availableSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                            if (btcPrice != null && btcPrice > 0 && !privacyMode) {
+                                Text(
+                                    text = " · ${formatUsd((availableSats.toDouble() / 100_000_000.0) * btcPrice)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary.copy(alpha = 0.7f)
+                                )
+                            }
+                            if (selectedUtxos.isNotEmpty()) {
+                                Text(
+                                    text = " (${selectedUtxos.size} UTXO${if (selectedUtxos.size > 1) "s" else ""})",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+                            }
+                        }
+                    }
+                    
+                    // Fee row (only when dry-run has run)
+                    if (estimatedFeeSats != null && multiRecipientList.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Est. fee",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (privacyMode) HIDDEN_AMOUNT else "${formatAmount(estimatedFeeSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = BitcoinOrange
+                                )
+                                if (estimatedVBytes != null) {
+                                    Text(
+                                        text = " (${formatVBytes(estimatedVBytes)} vB)",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary.copy(alpha = 0.7f)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Remaining row
+                    if (multiRecipientList.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Remaining",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                            Text(
+                                text = if (privacyMode) HIDDEN_AMOUNT else "${formatAmount(maxOf(0L, multiRemaining).toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Medium,
+                                color = if (multiOverBudget) AccentRed else TextSecondary
                             )
                         }
-                    } else null,
-                    isError = addressValidationError != null && recipientAddress.isNotBlank(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = if (addressValidationError != null && recipientAddress.isNotBlank()) AccentRed else BitcoinOrange,
-                        unfocusedBorderColor = if (addressValidationError != null && recipientAddress.isNotBlank()) AccentRed else BorderColor,
-                        errorBorderColor = AccentRed,
-                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                        cursorColor = BitcoinOrange
-                    ),
-                    enabled = walletState.isInitialized
-                )
+                    }
+                } else {
+                    // Single recipient
+                    OutlinedTextField(
+                        value = recipientAddress,
+                        onValueChange = { recipientAddress = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = {
+                            Text(
+                                "Enter Bitcoin address",
+                                color = TextSecondary.copy(alpha = 0.5f)
+                            )
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { showQrScanner = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = "Scan QR Code",
+                                    tint = BitcoinOrange,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        },
+                        supportingText = if (addressValidationError != null && recipientAddress.isNotBlank()) {
+                            {
+                                Text(
+                                    text = addressValidationError,
+                                    color = AccentRed
+                                )
+                            }
+                        } else null,
+                        isError = addressValidationError != null && recipientAddress.isNotBlank(),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = if (addressValidationError != null && recipientAddress.isNotBlank()) AccentRed else BitcoinOrange,
+                            unfocusedBorderColor = if (addressValidationError != null && recipientAddress.isNotBlank()) AccentRed else BorderColor,
+                            errorBorderColor = AccentRed,
+                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                            cursorColor = BitcoinOrange
+                        ),
+                        enabled = walletState.isInitialized
+                    )
+                }
                 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Amount section (hidden in multi-recipient mode — each row has its own amount)
+                if (!isMultiMode) {
                 // Amount label with USD toggle
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -631,11 +945,11 @@ fun SendScreen(
                     enabled = walletState.isInitialized
                 )
 
-                // Show insufficient funds warning
-                if (amountInput.isNotBlank() && !hasEnoughFunds && amountSats > 0) {
+                // Show dry-run error (insufficient funds, dust limit, etc.)
+                if (amountInput.isNotBlank() && dryRunError != null && amountSats > 0) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = if (privacyMode) "Insufficient funds" else "Insufficient funds (need ${formatAmount(totalSpend.toULong(), useSats)} ${if (useSats) "sats" else "BTC"} including fee)",
+                        text = dryRunError,
                         style = MaterialTheme.typography.bodySmall,
                         color = WarningYellow
                     )
@@ -687,16 +1001,18 @@ fun SendScreen(
                                     isMaxMode = false
                                     amountInput = ""
                                 } else {
-                                    // Click max - fill max amount
+                                    // Click max — sets the flag; the max-mode LaunchedEffect
+                                    // will fill amountInput with the exact value from dry-run.
+                                    // Use rough estimate as an immediate placeholder.
                                     isMaxMode = true
-                                    val maxSats = calculateMaxSats()
+                                    val roughMaxSats = maxOf(0L, availableSats - (feeRate.toLong() * 150))
                                     amountInput = when {
                                         isUsdMode && btcPrice != null && btcPrice > 0 -> {
-                                            val usdValue = (maxSats.toDouble() / 100_000_000.0) * btcPrice
+                                            val usdValue = (roughMaxSats.toDouble() / 100_000_000.0) * btcPrice
                                             String.format(java.util.Locale.US, "%.2f", usdValue)
                                         }
-                                        useSats -> maxSats.toString()
-                                        else -> formatBtc(maxSats.toULong())
+                                        useSats -> roughMaxSats.toString()
+                                        else -> formatBtc(roughMaxSats.toULong())
                                     }
                                 }
                             },
@@ -714,6 +1030,7 @@ fun SendScreen(
                         )
                     }
                 }
+                } // end if (!isMultiMode)
 
 
                 // Label row with button and inline field
@@ -773,6 +1090,7 @@ fun SendScreen(
                 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                val showFeeEstimate = if (isMultiMode) multiRecipientList.isNotEmpty() else (amountSats > 0 || isMaxMode)
                 FeeRateSection(
                     feeEstimationState = feeEstimationState,
                     currentFeeRate = feeRate,
@@ -780,8 +1098,8 @@ fun SendScreen(
                     onFeeRateChange = { feeRate = it },
                     onRefreshFees = onRefreshFees,
                     enabled = walletState.isInitialized,
-                    estimatedFeeSats = if (amountSats > 0) estimatedFeeSats else null,
-                    estimatedVBytes = if (amountSats > 0) estimatedVBytes else null,
+                    estimatedFeeSats = if (showFeeEstimate) estimatedFeeSats else null,
+                    estimatedVBytes = if (showFeeEstimate) estimatedVBytes else null,
                     useSats = useSats,
                     btcPrice = btcPrice,
                     privacyMode = privacyMode
@@ -791,7 +1109,7 @@ fun SendScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-        if (walletState.isInitialized && !uiState.isConnected) {
+        if (walletState.isInitialized && !uiState.isConnected && !isWatchOnly) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -831,7 +1149,12 @@ fun SendScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
         
-        val isButtonEnabled = canSend && uiState.isConnected && !uiState.isSending
+        // Watch-only wallets can create PSBTs without Electrum connection
+        val isButtonEnabled = if (isWatchOnly) {
+            canSend && walletState.isInitialized && !uiState.isSending
+        } else {
+            canSend && uiState.isConnected && !uiState.isSending
+        }
 
         OutlinedButton(
             onClick = { showConfirmDialog = true },
@@ -856,7 +1179,7 @@ fun SendScreen(
                     strokeWidth = 2.dp
                 )
             } else {
-                Text("Review Transaction")
+                Text(if (isWatchOnly) "Review PSBT" else "Review Transaction")
             }
         }
 
@@ -874,6 +1197,7 @@ private fun CoinControlDialog(
     useSats: Boolean,
     btcPrice: Double? = null,
     privacyMode: Boolean = false,
+    spendUnconfirmed: Boolean = true,
     onUtxoToggle: (UtxoInfo) -> Unit,
     onSelectAll: () -> Unit,
     onClearAll: () -> Unit,
@@ -961,19 +1285,24 @@ private fun CoinControlDialog(
                 ) {
                     items(utxos, key = { it.outpoint }) { utxo ->
                         val isSelected = selectedUtxos.contains(utxo)
+                        val isDisabled = !utxo.isConfirmed && !spendUnconfirmed
                         
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { onUtxoToggle(utxo) },
+                                .then(
+                                    if (isDisabled) Modifier
+                                    else Modifier.clickable { onUtxoToggle(utxo) }
+                                ),
                             shape = RoundedCornerShape(8.dp),
                             colors = CardDefaults.cardColors(
-                                containerColor = if (isSelected) 
-                                    BitcoinOrange.copy(alpha = 0.15f) 
-                                else 
-                                    DarkCard
+                                containerColor = when {
+                                    isDisabled -> DarkCard.copy(alpha = 0.4f)
+                                    isSelected -> BitcoinOrange.copy(alpha = 0.15f)
+                                    else -> DarkCard
+                                }
                             ),
-                            border = if (isSelected) 
+                            border = if (isSelected && !isDisabled) 
                                 BorderStroke(1.dp, BitcoinOrange.copy(alpha = 0.5f))
                             else 
                                 null
@@ -985,12 +1314,16 @@ private fun CoinControlDialog(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = if (isSelected) 
+                                    imageVector = if (isSelected && !isDisabled) 
                                         Icons.Default.CheckCircle 
                                     else 
                                         Icons.Default.RadioButtonUnchecked,
                                     contentDescription = if (isSelected) "Selected" else "Not selected",
-                                    tint = if (isSelected) BitcoinOrange else TextSecondary,
+                                    tint = when {
+                                        isDisabled -> TextSecondary.copy(alpha = 0.3f)
+                                        isSelected -> BitcoinOrange
+                                        else -> TextSecondary
+                                    },
                                     modifier = Modifier.size(24.dp)
                                 )
                                 
@@ -1002,14 +1335,14 @@ private fun CoinControlDialog(
                                             text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(utxo.amountSats, useSats) + if (useSats) " sats" else " BTC",
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.Medium,
-                                            color = MaterialTheme.colorScheme.onBackground
+                                            color = if (isDisabled) MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f) else MaterialTheme.colorScheme.onBackground
                                         )
                                         if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                                             val usdValue = (utxo.amountSats.toDouble() / 100_000_000.0) * btcPrice
                                             Text(
                                                 text = " · ${formatUsd(usdValue)}",
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = TextSecondary
+                                                color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary
                                             )
                                         }
                                     }
@@ -1018,7 +1351,7 @@ private fun CoinControlDialog(
                                         text = "${utxo.address.take(12)}...${utxo.address.takeLast(8)}",
                                         style = MaterialTheme.typography.bodySmall,
                                         fontFamily = FontFamily.Monospace,
-                                        color = TextSecondary,
+                                        color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
@@ -1027,7 +1360,7 @@ private fun CoinControlDialog(
                                         Text(
                                             text = "Label: ${utxo.label}",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = AccentTeal,
+                                            color = if (isDisabled) AccentTeal.copy(alpha = 0.4f) else AccentTeal,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
@@ -1039,16 +1372,19 @@ private fun CoinControlDialog(
                                         .clip(RoundedCornerShape(4.dp))
                                         .background(
                                             if (utxo.isConfirmed) 
-                                                SuccessGreen.copy(alpha = 0.2f)
+                                                SuccessGreen.copy(alpha = if (isDisabled) 0.1f else 0.2f)
                                             else 
-                                                BitcoinOrange.copy(alpha = 0.2f)
+                                                BitcoinOrange.copy(alpha = if (isDisabled) 0.1f else 0.2f)
                                         )
                                         .padding(horizontal = 6.dp, vertical = 2.dp)
                                 ) {
                                     Text(
                                         text = if (utxo.isConfirmed) "Confirmed" else "Pending",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = if (utxo.isConfirmed) SuccessGreen else BitcoinOrange
+                                        color = if (utxo.isConfirmed) 
+                                            SuccessGreen.copy(alpha = if (isDisabled) 0.4f else 1f)
+                                        else 
+                                            BitcoinOrange.copy(alpha = if (isDisabled) 0.4f else 1f)
                                     )
                                 }
                             }
@@ -1087,46 +1423,23 @@ private fun SendConfirmationDialog(
     amountSats: ULong,
     feeRate: Float,
     selectedUtxos: List<UtxoInfo>?,
-    availableSats: Long,
     useSats: Boolean,
     privacyMode: Boolean = false,
-    addressType: AddressType,
     label: String? = null,
     isSelfTransfer: Boolean = false,
+    isWatchOnly: Boolean = false,
+    dryRunResult: DryRunResult? = null,
+    isSending: Boolean = false,
+    sendStatus: String? = null,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    // Calculate estimated fee - per Bitcoin Optech calculator
-    val numInputs = selectedUtxos?.size ?: 1
-    val numOutputs = 2 // recipient + change
-    
-    val inputSize = when (addressType) {
-        AddressType.LEGACY -> 148.0
-        AddressType.SEGWIT -> 68.0
-        AddressType.TAPROOT -> 57.5
-    }
-    
-    val outputSize = when (addressType) {
-        AddressType.LEGACY -> 34.0
-        AddressType.SEGWIT -> 31.0
-        AddressType.TAPROOT -> 43.0
-    }
-    
-    val overhead = when (addressType) {
-        AddressType.LEGACY -> 10.0
-        AddressType.SEGWIT -> 10.5
-        AddressType.TAPROOT -> 10.5
-    }
-    
-    // Calculate change amount
-    val changeSats = availableSats - amountSats.toLong() - ((overhead + (numInputs * inputSize) + (2 * outputSize)) * feeRate).toLong()
-    val hasChange = changeSats > 546 // Dust threshold
-
-    // Adjust outputs based on whether there's change
-    val actualNumOutputs = if (hasChange) 2 else 1
-    val estimatedVBytes = overhead + (numInputs * inputSize) + (actualNumOutputs * outputSize)
-    val estimatedFeeSats = (estimatedVBytes * feeRate).toLong()
-    val actualChangeSats = if (hasChange) availableSats - amountSats.toLong() - estimatedFeeSats else 0L
+    // Dry-run result is the sole source of truth for fee/change/vBytes.
+    // The confirmation dialog is only reachable when canSend==true, which requires dryRunOk.
+    val estimatedFeeSats = dryRunResult?.feeSats ?: 0L
+    val estimatedVBytes = dryRunResult?.txVBytes ?: 0.0
+    val actualChangeSats = dryRunResult?.changeSats ?: 0L
+    val hasChange = dryRunResult?.hasChange ?: false
     val totalSats = amountSats.toLong() + estimatedFeeSats
     
     Dialog(
@@ -1146,7 +1459,7 @@ private fun SendConfirmationDialog(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = "Confirm Transaction",
+                    text = if (isWatchOnly) "Confirm PSBT" else "Confirm Transaction",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
@@ -1159,7 +1472,7 @@ private fun SendConfirmationDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isSelfTransfer) "Destination" else "To",
+                        text = if (isSelfTransfer) "Destination" else "Sending To",
                         style = MaterialTheme.typography.labelMedium,
                         color = TextSecondary
                     )
@@ -1215,12 +1528,12 @@ private fun SendConfirmationDialog(
                 ) {
                     Column {
                         Text(
-                            text = "Amount",
+                            text = "Sending:",
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary
                         )
                         Text(
-                            text = recipientAddress.take(14) + "..." + recipientAddress.takeLast(8),
+                            text = recipientAddress.take(8)+ "..." + recipientAddress.takeLast(8),
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = TextSecondary.copy(alpha = 0.7f)
@@ -1246,7 +1559,7 @@ private fun SendConfirmationDialog(
                     ) {
                         Column {
                             Text(
-                                text = "Change",
+                                text = "Change:",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary
                             )
@@ -1274,12 +1587,12 @@ private fun SendConfirmationDialog(
                 ) {
                     Column {
                         Text(
-                            text = "Network Fee",
+                            text = "Network Fee:",
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary
                         )
                         Text(
-                            text = "${formatFeeRate(feeRate)} sat/vB • ~${if (estimatedVBytes % 1.0 == 0.0) estimatedVBytes.toInt() else estimatedVBytes} vB",
+                            text = "${formatFeeRate(feeRate)} sat/vB • ${formatVBytes(estimatedVBytes)} vB",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary.copy(alpha = 0.7f)
                         )
@@ -1342,20 +1655,43 @@ private fun SendConfirmationDialog(
                         .fillMaxWidth()
                         .height(48.dp),
                     shape = RoundedCornerShape(8.dp),
+                    enabled = !isSending,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = BitcoinOrange,
-                        contentColor = DarkBackground
+                        contentColor = DarkBackground,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.5f),
+                        disabledContentColor = DarkBackground.copy(alpha = 0.7f)
                     )
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.Send,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    if (isSending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = DarkBackground,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isWatchOnly) "Create PSBT" else "Send Bitcoin",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+                
+                // Send status text
+                if (isSending && sendStatus != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Send Bitcoin",
-                        style = MaterialTheme.typography.titleMedium
+                        text = sendStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
                 
@@ -1364,11 +1700,12 @@ private fun SendConfirmationDialog(
                 // Cancel button
                 TextButton(
                     onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isSending
                 ) {
                     Text(
                         text = "Cancel",
-                        color = TextSecondary
+                        color = if (isSending) TextSecondary.copy(alpha = 0.3f) else TextSecondary
                     )
                 }
             }
@@ -1407,6 +1744,12 @@ private fun formatFeeRate(rate: Double): String {
 }
 
 private fun formatFeeRate(rate: Float): String = formatFeeRate(rate.toDouble())
+
+private fun formatVBytes(vBytes: Double): String {
+    // Show up to 2 decimal places, trim trailing zeros: 256.75, 140.5, 154
+    val formatted = String.format(Locale.US, "%.2f", vBytes)
+    return formatted.trimEnd('0').trimEnd('.')
+}
 
 private enum class FeeRateOption {
     FASTEST,
@@ -1461,9 +1804,15 @@ private fun FeeRateSection(
             )
             
             if (feeEstimationState !is FeeEstimationResult.Disabled) {
-                IconButton(
-                    onClick = onRefreshFees,
-                    enabled = enabled && feeEstimationState !is FeeEstimationResult.Loading
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurfaceVariant)
+                        .clickable(enabled = enabled && feeEstimationState !is FeeEstimationResult.Loading) {
+                            onRefreshFees()
+                        }
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
@@ -1471,7 +1820,8 @@ private fun FeeRateSection(
                         tint = if (feeEstimationState is FeeEstimationResult.Loading) 
                             TextSecondary.copy(alpha = 0.5f) 
                         else 
-                            BitcoinOrange
+                            BitcoinOrange,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -1479,12 +1829,12 @@ private fun FeeRateSection(
         
         // Show estimated fee when amount is entered
         if (estimatedFeeSats != null && estimatedVBytes != null) {
-            val vBytesDisplay = if (estimatedVBytes % 1.0 == 0.0) estimatedVBytes.toInt().toString() else estimatedVBytes.toString()
+            val vBytesDisplay = formatVBytes(estimatedVBytes)
             val usdFee = if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                 " · ${formatUsd((estimatedFeeSats.toDouble() / 100_000_000.0) * btcPrice)}"
             } else ""
             Text(
-                text = if (privacyMode) "Est. fee: $HIDDEN_AMOUNT (~$vBytesDisplay vB)" else "Est. fee: ${formatAmount(estimatedFeeSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}$usdFee (~$vBytesDisplay vB)",
+                text = if (privacyMode) "Est. fee: $HIDDEN_AMOUNT ($vBytesDisplay vB)" else "Est. fee: ${formatAmount(estimatedFeeSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}$usdFee ($vBytesDisplay vB)",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary
             )
@@ -1570,13 +1920,19 @@ private fun FeeRateSection(
             
             is FeeEstimationResult.Success -> {
                 val feeEstimates = feeEstimationState.estimates
+                val isElectrum = feeEstimates.source == FeeEstimateSource.ELECTRUM_SERVER
+                
+                // Electrum targets are wider (2/6/12 blocks) vs mempool.space (1/3/6)
+                val fastLabel = if (isElectrum) "~2 blocks" else "~1 block"
+                val medLabel = if (isElectrum) "~6 blocks" else "~3 blocks"
+                val slowLabel = if (isElectrum) "~12 blocks" else "~6 blocks"
                 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FeeTargetButton(
-                        label = "~1 block",
+                        label = fastLabel,
                         feeRate = feeEstimates.fastestFee,
                         isSelected = selectedOption == FeeRateOption.FASTEST,
                         onClick = {
@@ -1589,7 +1945,7 @@ private fun FeeRateSection(
                     )
                     
                     FeeTargetButton(
-                        label = "~3 blocks",
+                        label = medLabel,
                         feeRate = feeEstimates.halfHourFee,
                         isSelected = selectedOption == FeeRateOption.HALF_HOUR,
                         onClick = {
@@ -1602,7 +1958,7 @@ private fun FeeRateSection(
                     )
                     
                     FeeTargetButton(
-                        label = "~6 blocks",
+                        label = slowLabel,
                         feeRate = feeEstimates.hourFee,
                         isSelected = selectedOption == FeeRateOption.HOUR,
                         onClick = {
@@ -1612,6 +1968,16 @@ private fun FeeRateSection(
                         },
                         enabled = enabled,
                         modifier = Modifier.weight(1f)
+                    )
+                }
+                
+                // Hint when Electrum estimates are uniform (low-fee mempool)
+                if (isElectrum && feeEstimates.isUniform) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Server reports same rate for all targets (low fee environment)",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
                     )
                 }
                 
@@ -1969,5 +2335,606 @@ private fun validateBech32Address(address: String, isBech32m: Boolean): String? 
         null // Valid
     } else {
         "Invalid checksum"
+    }
+}
+
+/**
+ * Full-screen dialog for editing multiple recipients.
+ * Scrollable list of address+amount rows with add/remove.
+ */
+@Composable
+private fun MultiRecipientDialog(
+    recipients: MutableList<Pair<String, String>>,
+    useSats: Boolean,
+    isUsdMode: Boolean,
+    btcPrice: Double? = null,
+    privacyMode: Boolean = false,
+    availableSats: Long = 0L,
+    estimatedFeeSats: Long? = null,
+    dryRunError: String? = null,
+    validRecipientCount: Int = 0,
+    totalSendingSats: Long = 0L,
+    onDone: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = DarkSurface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Recipients (${recipients.size})",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    TextButton(onClick = onDone) {
+                        Text("Done", color = BitcoinOrange)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Scrollable list of recipient rows
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    recipients.forEachIndexed { index, (addr, amt) ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(containerColor = DarkCard)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "#${index + 1}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextSecondary
+                                    )
+                                    if (recipients.size > 2) {
+                                        TextButton(
+                                            onClick = { recipients.removeAt(index) },
+                                            contentPadding = PaddingValues(0.dp)
+                                        ) {
+                                            Text(
+                                                "Remove",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = AccentRed
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                OutlinedTextField(
+                                    value = addr,
+                                    onValueChange = { recipients[index] = Pair(it, amt) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    placeholder = { Text("Bitcoin address", color = TextSecondary.copy(alpha = 0.5f)) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(8.dp),
+                                    textStyle = MaterialTheme.typography.bodySmall,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = BitcoinOrange,
+                                        unfocusedBorderColor = BorderColor,
+                                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                        cursorColor = BitcoinOrange
+                                    )
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                OutlinedTextField(
+                                    value = amt,
+                                    onValueChange = { value ->
+                                        val filtered = when {
+                                            isUsdMode -> if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d{0,2}$"))) value else amt
+                                            useSats -> if (value.isEmpty() || value.matches(Regex("^\\d*$"))) value else amt
+                                            else -> if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d{0,8}$"))) value else amt
+                                        }
+                                        recipients[index] = Pair(addr, filtered)
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    placeholder = {
+                                        Text(
+                                            when {
+                                                isUsdMode -> "Amount (USD)"
+                                                useSats -> "Amount (sats)"
+                                                else -> "Amount (BTC)"
+                                            },
+                                            color = TextSecondary.copy(alpha = 0.5f)
+                                        )
+                                    },
+                                    leadingIcon = if (isUsdMode) {{ Text("$", color = TextSecondary) }} else null,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(8.dp),
+                                    textStyle = MaterialTheme.typography.bodySmall,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = BitcoinOrange,
+                                        unfocusedBorderColor = BorderColor,
+                                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                        cursorColor = BitcoinOrange
+                                    )
+                                )
+
+                                // Show validation error for address
+                                val addrErr = if (addr.isNotBlank()) validateBitcoinAddress(addr) else null
+                                if (addrErr != null) {
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = addrErr,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = AccentRed
+                                    )
+                                }
+                            }
+                        }
+
+                        if (index < recipients.lastIndex) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Add Recipient button
+                OutlinedButton(
+                    onClick = { recipients.add(Pair("", "")) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, BorderColor),
+                    contentPadding = PaddingValues(vertical = 10.dp)
+                ) {
+                    Text(
+                        text = "+ Add Recipient",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = TextSecondary
+                    )
+                }
+                
+                // --- Balance / Fee footer ---
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(BorderColor)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                
+                // Show dry-run error
+                if (dryRunError != null && validRecipientCount > 0) {
+                    Text(
+                        text = dryRunError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarningYellow
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
+                
+                val feeSats = estimatedFeeSats ?: 0L
+                val totalWithFee = totalSendingSats + feeSats
+                val remaining = availableSats - totalWithFee
+                val overBudget = remaining < 0 && validRecipientCount > 0
+                
+                // Sending total
+                if (validRecipientCount > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Sending ($validRecipientCount recipients)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
+                        Text(
+                            text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(totalSendingSats.toULong(), useSats) + if (useSats) " sats" else " BTC",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
+                
+                // Fee
+                if (estimatedFeeSats != null && validRecipientCount > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Est. fee",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
+                        Text(
+                            text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(estimatedFeeSats.toULong(), useSats) + if (useSats) " sats" else " BTC",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = BitcoinOrange
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
+                
+                // Available
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Available",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                    Text(
+                        text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(availableSats.toULong(), useSats) + if (useSats) " sats" else " BTC",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                
+                // Remaining
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Remaining",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = TextSecondary
+                    )
+                    Text(
+                        text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(maxOf(0L, remaining).toULong(), useSats) + if (useSats) " sats" else " BTC",
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.Bold,
+                        color = if (overBudget) AccentRed else SuccessGreen
+                    )
+                }
+                
+                // Over-budget warning
+                if (overBudget) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Total exceeds available balance by ${formatAmount((-remaining).toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = AccentRed
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Confirmation dialog for multi-recipient transactions.
+ */
+@Composable
+private fun MultiRecipientConfirmationDialog(
+    recipients: List<Recipient>,
+    feeRate: Float,
+    useSats: Boolean,
+    selectedUtxos: List<UtxoInfo>?,
+    privacyMode: Boolean = false,
+    isWatchOnly: Boolean = false,
+    dryRunResult: DryRunResult? = null,
+    label: String? = null,
+    isSending: Boolean = false,
+    sendStatus: String? = null,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val feeSats = dryRunResult?.feeSats ?: 0L
+    val estimatedVBytes = dryRunResult?.txVBytes ?: 0.0
+    val changeSats = dryRunResult?.changeSats ?: 0L
+    val hasChange = dryRunResult?.hasChange ?: false
+    val totalRecipientSats = recipients.sumOf { it.amountSats.toLong() }
+    val totalSats = totalRecipientSats + feeSats
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = DarkSurface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = if (isWatchOnly) "Confirm PSBT" else "Confirm Transaction",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Sending To
+                Text(
+                    text = "Sending To (${recipients.size} recipients)",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TextSecondary
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Recipient addresses (scrollable)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    recipients.forEach { r ->
+                        Text(
+                            text = r.address,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onBackground,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                    }
+                }
+
+                // Label (if provided)
+                if (!label.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Label",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = AccentTeal
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Divider
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(BorderColor)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Per-recipient amounts
+                recipients.forEach { r ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Sending:",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary
+                            )
+                            Text(
+                                text = r.address.take(8) + "..." + r.address.takeLast(8),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = TextSecondary.copy(alpha = 0.7f)
+                            )
+                        }
+                        Text(
+                            text = if (privacyMode) HIDDEN_AMOUNT else "-${formatAmount(r.amountSats, useSats)} ${if (useSats) "sats" else "BTC"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = AccentRed
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                // Change (if applicable)
+                if (hasChange && changeSats > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text(
+                                text = "Change:",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary
+                            )
+                            Text(
+                                text = "Returned to your wallet",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary.copy(alpha = 0.7f)
+                            )
+                        }
+                        Text(
+                            text = if (privacyMode) HIDDEN_AMOUNT else "+${formatAmount(changeSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = SuccessGreen
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                // Network Fee
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = "Network Fee:",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary
+                        )
+                        Text(
+                            text = "${formatFeeRate(feeRate)} sat/vB • ${formatVBytes(estimatedVBytes)} vB",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary.copy(alpha = 0.7f)
+                        )
+                    }
+                    Text(
+                        text = if (privacyMode) HIDDEN_AMOUNT else "-${formatAmount(feeSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = BitcoinOrange
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Divider
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(BorderColor)
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Total
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Total",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = if (privacyMode) HIDDEN_AMOUNT else "-${formatAmount(totalSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = AccentRed
+                    )
+                }
+
+                // Selected UTXOs info
+                if (selectedUtxos != null && selectedUtxos.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Spending from ${selectedUtxos.size} selected UTXO${if (selectedUtxos.size > 1) "s" else ""}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Confirm button
+                Button(
+                    onClick = onConfirm,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = !isSending,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        contentColor = DarkBackground,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.5f),
+                        disabledContentColor = DarkBackground.copy(alpha = 0.7f)
+                    )
+                ) {
+                    if (isSending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = DarkBackground,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Send,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isWatchOnly) "Create PSBT" else "Send Bitcoin",
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    }
+                }
+
+                // Send status text
+                if (isSending && sendStatus != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = sendStatus,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Cancel button
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isSending
+                ) {
+                    Text(
+                        text = "Cancel",
+                        color = if (isSending) TextSecondary.copy(alpha = 0.3f) else TextSecondary
+                    )
+                }
+            }
+        }
     }
 }

@@ -18,6 +18,7 @@ sealed class Screen(val route: String) {
     // Drawer screens
     data object ManageWallets : Screen("manage_wallets")
     data object ImportWallet : Screen("import_wallet")
+    data object GenerateWallet : Screen("generate_wallet")
     data object ElectrumConfig : Screen("electrum_config")
     data object Settings : Screen("settings")
     data object Security : Screen("security")
@@ -26,6 +27,9 @@ sealed class Screen(val route: String) {
     // Address and UTXO screens
     data object AllAddresses : Screen("all_addresses")
     data object AllUtxos : Screen("all_utxos")
+    
+    // PSBT signing flow (watch-only wallets)
+    data object PsbtExport : Screen("psbt_export")
 }
 
 data class BottomNavItem(

@@ -1,13 +1,13 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,13 +18,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Search
@@ -57,7 +61,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -67,19 +78,21 @@ import com.google.zxing.qrcode.QRCodeWriter
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.KeychainType
 import github.aeonbtc.ibiswallet.data.model.WalletAddress
-import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.SecureClipboard
 import java.text.NumberFormat
 import java.util.Locale
 
-private const val USED_ADDRESS_LIMIT = 20
+private const val ADDRESS_DISPLAY_LIMIT = 20
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,7 +102,9 @@ fun AllAddressesScreen(
     usedAddresses: List<WalletAddress>,
     denomination: String = SecureStorage.DENOMINATION_BTC,
     privacyMode: Boolean = false,
-    onGenerateReceiveAddress: suspend () -> String? = { null }
+    onGenerateReceiveAddress: suspend () -> String? = { null },
+    onSaveLabel: (address: String, label: String) -> Unit = { _, _ -> },
+    onDeleteLabel: (address: String) -> Unit = { }
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var showAllUsed by remember { mutableStateOf(false) }
@@ -177,13 +192,41 @@ fun AllAddressesScreen(
         }
     }
     
-    // Filter used addresses by search query
-    val filteredUsedAddresses = remember(usedAddresses, searchQuery) {
+    // Receive/Change: oldest-first, capped at 20; search bypasses the cap
+    val displayedReceiveAddresses = remember(receiveAddresses, searchQuery) {
+        if (searchQuery.isBlank()) receiveAddresses.take(ADDRESS_DISPLAY_LIMIT)
+        else {
+            val query = searchQuery.lowercase()
+            receiveAddresses.filter { addr ->
+                addr.address.lowercase().contains(query) ||
+                addr.label?.lowercase()?.contains(query) == true
+            }
+        }
+    }
+    val displayedChangeAddresses = remember(changeAddresses, searchQuery) {
+        if (searchQuery.isBlank()) changeAddresses.take(ADDRESS_DISPLAY_LIMIT)
+        else {
+            val query = searchQuery.lowercase()
+            changeAddresses.filter { addr ->
+                addr.address.lowercase().contains(query) ||
+                addr.label?.lowercase()?.contains(query) == true
+            }
+        }
+    }
+    
+    // Used: sort funded addresses to top, then empty; filter by search query
+    val sortedUsedAddresses = remember(usedAddresses) {
+        usedAddresses.sortedWith(
+            compareByDescending<WalletAddress> { it.balanceSats > 0UL }
+                .thenByDescending { it.balanceSats }
+        )
+    }
+    val filteredUsedAddresses = remember(sortedUsedAddresses, searchQuery) {
         if (searchQuery.isBlank()) {
-            usedAddresses
+            sortedUsedAddresses
         } else {
             val query = searchQuery.lowercase()
-            usedAddresses.filter { addr ->
+            sortedUsedAddresses.filter { addr ->
                 addr.address.lowercase().contains(query) ||
                 addr.label?.lowercase()?.contains(query) == true
             }
@@ -195,19 +238,19 @@ fun AllAddressesScreen(
         if (searchQuery.isNotBlank() || showAllUsed) {
             filteredUsedAddresses
         } else {
-            filteredUsedAddresses.take(USED_ADDRESS_LIMIT)
+            filteredUsedAddresses.take(ADDRESS_DISPLAY_LIMIT)
         }
     }
     
     val hasMoreUsedAddresses = searchQuery.isBlank() && 
         !showAllUsed && 
-        filteredUsedAddresses.size > USED_ADDRESS_LIMIT
+        filteredUsedAddresses.size > ADDRESS_DISPLAY_LIMIT
     
     val currentAddresses = when (selectedTab) {
-        0 -> receiveAddresses
-        1 -> changeAddresses
+        0 -> displayedReceiveAddresses
+        1 -> displayedChangeAddresses
         2 -> displayedUsedAddresses
-        else -> receiveAddresses
+        else -> displayedReceiveAddresses
     }
     
     Column(
@@ -226,11 +269,8 @@ fun AllAddressesScreen(
                     selected = selectedTab == index,
                     onClick = { 
                         selectedTab = index
-                        // Reset show all when switching away from Used tab
-                        if (index != 2) {
-                            showAllUsed = false
-                            searchQuery = ""
-                        }
+                        showAllUsed = false
+                        searchQuery = ""
                     },
                     label = { 
                         Text(
@@ -250,9 +290,8 @@ fun AllAddressesScreen(
         
         Spacer(modifier = Modifier.height(12.dp))
         
-        // Search field for Used tab
-        if (selectedTab == 2) {
-            OutlinedTextField(
+        // Search field
+        OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 placeholder = { Text("Search address or label") },
@@ -283,10 +322,9 @@ fun AllAddressesScreen(
                     focusedBorderColor = BitcoinOrange
                 ),
                 modifier = Modifier.fillMaxWidth()
-            )
-            
-            Spacer(modifier = Modifier.height(12.dp))
-        }
+        )
+        
+        Spacer(modifier = Modifier.height(12.dp))
         
         if (currentAddresses.isEmpty()) {
             Box(
@@ -315,7 +353,9 @@ fun AllAddressesScreen(
                         privacyMode = privacyMode,
                         isUsedTab = selectedTab == 2,
                         onShowQr = { showQrForAddress = address.address },
-                        onCopy = { /* Handled inside AddressCard */ }
+                        onCopy = { /* Handled inside AddressCard */ },
+                        onSaveLabel = { label -> onSaveLabel(address.address, label) },
+                        onDeleteLabel = { onDeleteLabel(address.address) }
                     )
                 }
                 
@@ -327,34 +367,10 @@ fun AllAddressesScreen(
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
-                                text = "Show All (${filteredUsedAddresses.size} total)",
+                                text = "Show All (${filteredUsedAddresses.size - ADDRESS_DISPLAY_LIMIT} more)",
                                 color = BitcoinOrange
                             )
                         }
-                    }
-                }
-                
-                // Generate button on Receive tab only (inside scroll)
-                if (selectedTab == 0) {
-                    item {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedButton(
-                            onClick = {
-                                coroutineScope.launch {
-                                    val newAddress = onGenerateReceiveAddress()
-                                    scrollToAddress = newAddress
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = BitcoinOrange
-                            ),
-                            border = BorderStroke(1.dp, BitcoinOrange.copy(alpha = 0.5f))
-                        ) {
-                            Text("Generate New Address")
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
                     }
                 }
             }
@@ -369,11 +385,16 @@ private fun AddressCard(
     privacyMode: Boolean = false,
     isUsedTab: Boolean = false,
     onShowQr: () -> Unit,
-    onCopy: () -> Unit
+    onCopy: () -> Unit,
+    onSaveLabel: (String) -> Unit = {},
+    onDeleteLabel: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    
     var showCopied by remember(address.address) { mutableStateOf(false) }
+    var isEditingLabel by remember(address.address) { mutableStateOf(false) }
+    var labelDraft by remember(address.address, address.label) { mutableStateOf(address.label ?: "") }
+    val focusRequester = remember { FocusRequester() }
     
     // Auto-dismiss copy notification after 3 seconds
     LaunchedEffect(showCopied, address.address) {
@@ -381,6 +402,11 @@ private fun AddressCard(
             kotlinx.coroutines.delay(3000)
             showCopied = false
         }
+    }
+    
+    // Auto-focus the label field when editing starts
+    LaunchedEffect(isEditingLabel) {
+        if (isEditingLabel) focusRequester.requestFocus()
     }
     
     val typeName = if (address.keychain == KeychainType.EXTERNAL) "Receive" else "Change"
@@ -411,12 +437,124 @@ private fun AddressCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Header with index
-            Text(
-                text = "$typeName #${address.index + 1u}",
-                style = MaterialTheme.typography.labelMedium,
-                color = BitcoinOrange
-            )
+            // Header row: index left, label right
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "$typeName #${address.index + 1u}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = BitcoinOrange
+                )
+                
+                if (isEditingLabel) {
+                    // Inline editor in the header
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        BasicTextField(
+                            value = labelDraft,
+                            onValueChange = { if (it.length <= 50) labelDraft = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontSize = MaterialTheme.typography.labelSmall.fontSize
+                            ),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    val trimmed = labelDraft.trim()
+                                    if (trimmed.isNotEmpty()) onSaveLabel(trimmed)
+                                    isEditingLabel = false
+                                }
+                            ),
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            BorderColor.copy(alpha = 0.3f),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    if (labelDraft.isEmpty()) {
+                                        Text(
+                                            text = "Enter label",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = TextSecondary.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                            modifier = Modifier
+                                .widthIn(max = 140.dp)
+                                .focusRequester(focusRequester)
+                        )
+                        
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Save",
+                            tint = SuccessGreen,
+                            modifier = Modifier
+                                .padding(start = 4.dp)
+                                .size(18.dp)
+                                .clickable {
+                                    val trimmed = labelDraft.trim()
+                                    if (trimmed.isNotEmpty()) onSaveLabel(trimmed)
+                                    isEditingLabel = false
+                                }
+                        )
+                        
+
+                    }
+                } else {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val hasLabel = !address.label.isNullOrEmpty()
+                        
+                        // Label button: matches SendScreen Card style
+                        Card(
+                            modifier = Modifier
+                                .widthIn(max = 160.dp)
+                                .clickable {
+                                    labelDraft = address.label ?: ""
+                                    isEditingLabel = true
+                                },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (hasLabel) AccentTeal.copy(alpha = 0.15f) else DarkSurface
+                            ),
+                            border = BorderStroke(1.dp, if (hasLabel) AccentTeal else BorderColor)
+                        ) {
+                            Text(
+                                text = address.label ?: "+ Label",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (hasLabel) AccentTeal else TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                        
+                        // Red X to delete (only when label exists)
+                        if (hasLabel) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Remove label",
+                                tint = ErrorRed,
+                                modifier = Modifier
+                                    .padding(start = 4.dp)
+                                    .size(16.dp)
+                                    .clickable { onDeleteLabel() }
+                            )
+                        }
+                    }
+                }
+            }
             
             Spacer(modifier = Modifier.height(8.dp))
             
@@ -435,30 +573,43 @@ private fun AddressCard(
                     modifier = Modifier.weight(1f)
                 )
                 
-                IconButton(
-                    onClick = onShowQr,
-                    modifier = Modifier.size(36.dp)
+                Spacer(modifier = Modifier.width(6.dp))
+                
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurfaceVariant)
+                        .clickable { onShowQr() }
                 ) {
                     Icon(
                         imageVector = Icons.Default.QrCode,
                         contentDescription = "Show QR",
-                        tint = TextSecondary
+                        tint = TextSecondary,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
                 
-                IconButton(
-                    onClick = {
-                        val clip = ClipData.newPlainText("Address", address.address)
-                        clipboardManager.setPrimaryClip(clip)
-                        showCopied = true
-                        onCopy()
-                    },
-                    modifier = Modifier.size(36.dp)
+                Spacer(modifier = Modifier.width(6.dp))
+                
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurfaceVariant)
+                        .clickable {
+                            SecureClipboard.copyAndScheduleClear(context, "Address", address.address)
+                            showCopied = true
+                            onCopy()
+                        }
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
                         contentDescription = "Copy",
-                        tint = if (showCopied) BitcoinOrange else TextSecondary
+                        tint = if (showCopied) BitcoinOrange else TextSecondary,
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }
@@ -468,18 +619,6 @@ private fun AddressCard(
                     text = "Copied to clipboard!",
                     style = MaterialTheme.typography.bodySmall,
                     color = BitcoinOrange
-                )
-            }
-            
-            // Label (if exists)
-            if (!address.label.isNullOrEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = address.label,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = AccentTeal,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
                 )
             }
             

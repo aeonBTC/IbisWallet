@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet.data
 
 import android.util.Log
+import github.aeonbtc.ibiswallet.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -17,6 +18,7 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
+import github.aeonbtc.ibiswallet.util.TofuTrustManager
 
 /**
  * Service for querying Electrum server relay fee via JSON-RPC
@@ -31,6 +33,7 @@ class ElectrumFeatureService {
     companion object {
         private const val TAG = "ElectrumFeatureService"
         private const val TIMEOUT_MS = 15000L
+        private const val TOR_TIMEOUT_MS = 30000L
         private const val TOR_PROXY_HOST = "127.0.0.1"
         private const val TOR_PROXY_PORT = 9050
         
@@ -46,10 +49,10 @@ class ElectrumFeatureService {
         
         /**
          * Create an SSL socket factory that accepts all certificates.
-         * Used for querying server features from servers with self-signed certs.
-         * This is safe since we're only reading non-sensitive server capabilities.
+         * Used as fallback for .onion connections where Tor provides transport security.
+         * For clearnet servers, prefer using a TofuTrustManager-backed factory.
          */
-        private fun createTrustAllSSLSocketFactory(): SSLSocketFactory {
+        fun createTrustAllSSLSocketFactory(): SSLSocketFactory {
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
                 override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                 override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -75,14 +78,16 @@ class ElectrumFeatureService {
         host: String,
         port: Int,
         useSSL: Boolean,
-        useTorProxy: Boolean
+        useTorProxy: Boolean,
+        sslSocketFactory: SSLSocketFactory? = null
     ): Double = withContext(Dispatchers.IO) {
         try {
-            withTimeout(TIMEOUT_MS) {
-                queryRelayFee(host, port, useSSL, useTorProxy)
+            val timeoutMs = if (useTorProxy) TOR_TIMEOUT_MS else TIMEOUT_MS
+            withTimeout(timeoutMs) {
+                queryRelayFee(host, port, useSSL, useTorProxy, timeoutMs, sslSocketFactory)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to query relay fee: ${e.message}")
+            if (BuildConfig.DEBUG) Log.e(TAG, "Failed to query relay fee: ${e.message}")
             DEFAULT_MIN_FEE_RATE
         }
     }
@@ -91,13 +96,15 @@ class ElectrumFeatureService {
         host: String,
         port: Int,
         useSSL: Boolean,
-        useTorProxy: Boolean
+        useTorProxy: Boolean,
+        timeoutMs: Long,
+        sslSocketFactory: SSLSocketFactory? = null
     ): Double {
         var socket: Socket? = null
         var connectedSocket: Socket? = null
         try {
-            Log.d(TAG, "Querying relay fee: host=$host, port=$port, ssl=$useSSL, tor=$useTorProxy")
-            
+            if (BuildConfig.DEBUG) Log.d(TAG, "Querying relay fee: host=$host, port=$port, ssl=$useSSL, tor=$useTorProxy")
+
             // Create socket (with Tor proxy if needed)
             socket = if (useTorProxy) {
                 val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(TOR_PROXY_HOST, TOR_PROXY_PORT))
@@ -105,24 +112,22 @@ class ElectrumFeatureService {
             } else {
                 Socket()
             }
-            
+
             // Connect - use createUnresolved for Tor so the proxy handles DNS (required for .onion)
             val address = if (useTorProxy) {
                 InetSocketAddress.createUnresolved(host, port)
             } else {
                 InetSocketAddress(host, port)
             }
-            socket.connect(address, TIMEOUT_MS.toInt())
-            socket.soTimeout = TIMEOUT_MS.toInt()
-            Log.d(TAG, "Socket connected to $host:$port")
+            socket.connect(address, timeoutMs.toInt())
+            socket.soTimeout = timeoutMs.toInt()
+            if (BuildConfig.DEBUG) Log.d(TAG, "Socket connected to $host:$port")
             
             // Upgrade to SSL if needed
             connectedSocket = if (useSSL) {
-                // Use trust-all SSL factory since many Electrum servers use self-signed certs
-                // This is safe since we're only querying non-sensitive server capabilities
-                val sslSocketFactory = createTrustAllSSLSocketFactory()
-                val sslSocket = sslSocketFactory.createSocket(socket, host, port, true)
-                Log.d(TAG, "SSL socket created (trust-all for self-signed certs)")
+                val factory = sslSocketFactory ?: createTrustAllSSLSocketFactory()
+                val sslSocket = factory.createSocket(socket, host, port, true)
+                if (BuildConfig.DEBUG) Log.d(TAG, "SSL socket created (trust-all for self-signed certs)")
                 sslSocket
             } else {
                 socket
@@ -142,13 +147,13 @@ class ElectrumFeatureService {
                 })
             }
             
-            Log.d(TAG, "Sending version request: ${versionRequest.toString()}")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Sending version request: ${versionRequest.toString()}")
             writer.println(versionRequest.toString())
             writer.flush()
             
             // Read version response
             val versionResponse = reader.readLine()
-            Log.d(TAG, "Version response: $versionResponse")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Version response: $versionResponse")
             
             // Now send blockchain.relayfee request
             // This returns the minimum relay fee in BTC per kilobyte
@@ -158,13 +163,13 @@ class ElectrumFeatureService {
                 put("params", org.json.JSONArray())
             }
             
-            Log.d(TAG, "Sending relayfee request: ${request.toString()}")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Sending relayfee request: ${request.toString()}")
             writer.println(request.toString())
             writer.flush()
             
             // Read relayfee response
             val response = reader.readLine()
-            Log.d(TAG, "Relayfee response: $response")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Relayfee response: $response")
             
             if (response != null) {
                 val json = JSONObject(response)
@@ -172,7 +177,7 @@ class ElectrumFeatureService {
                 // Check for error first
                 val error = json.optJSONObject("error")
                 if (error != null) {
-                    Log.e(TAG, "Server returned error: ${error.toString()}")
+                    if (BuildConfig.DEBUG) Log.e(TAG, "Server returned error: ${error.toString()}")
                     return DEFAULT_MIN_FEE_RATE
                 }
                 
@@ -183,31 +188,31 @@ class ElectrumFeatureService {
                 
                 if (relayFeeBtcPerKb < 0) {
                     // Server returned -1 meaning it doesn't have enough info
-                    Log.w(TAG, "Server returned -1 for relayfee, using default")
+                    if (BuildConfig.DEBUG) Log.w(TAG, "Server returned -1 for relayfee, using default")
                     return DEFAULT_MIN_FEE_RATE
                 }
                 
                 // Convert BTC/kB to sat/vB
                 val minFeeRate = relayFeeBtcPerKb * BTC_PER_KB_TO_SAT_PER_VB
                 
-                Log.d(TAG, "Server relay fee: $relayFeeBtcPerKb BTC/kB = $minFeeRate sat/vB")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Server relay fee: $relayFeeBtcPerKb BTC/kB = $minFeeRate sat/vB")
                 
                 // Sanity check - if the value is unreasonably low (< 0.01) or high (> 100), use default
                 if (minFeeRate < 0.01 || minFeeRate > 100.0) {
-                    Log.w(TAG, "Relay fee out of reasonable range ($minFeeRate), using default")
+                    if (BuildConfig.DEBUG) Log.w(TAG, "Relay fee out of reasonable range ($minFeeRate), using default")
                     return DEFAULT_MIN_FEE_RATE
                 }
                 
                 return minFeeRate
             } else {
-                Log.w(TAG, "No response received from server")
+                if (BuildConfig.DEBUG) Log.w(TAG, "No response received from server")
             }
             
-            Log.d(TAG, "Could not parse relay fee, using default")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Could not parse relay fee, using default")
             return DEFAULT_MIN_FEE_RATE
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error querying relay fee: ${e.javaClass.simpleName} - ${e.message}", e)
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error querying relay fee: ${e.javaClass.simpleName} - ${e.message}", e)
             throw e
         } finally {
             try {
@@ -217,13 +222,6 @@ class ElectrumFeatureService {
                 // Ignore close errors
             }
         }
-    }
-    
-    /**
-     * Check if the server supports sub-sat fee rates (< 1.0 sat/vB)
-     */
-    fun supportsSubSatFees(minFeeRate: Double): Boolean {
-        return minFeeRate < 1.0
     }
     
     /**
@@ -252,14 +250,16 @@ class ElectrumFeatureService {
         host: String,
         port: Int,
         useSSL: Boolean,
-        useTorProxy: Boolean
+        useTorProxy: Boolean,
+        sslSocketFactory: SSLSocketFactory? = null
     ): ElectrumTxDetails? = withContext(Dispatchers.IO) {
         try {
-            withTimeout(TIMEOUT_MS) {
-                queryTransactionDetails(txid, host, port, useSSL, useTorProxy)
+            val timeoutMs = if (useTorProxy) TOR_TIMEOUT_MS else TIMEOUT_MS
+            withTimeout(timeoutMs) {
+                queryTransactionDetails(txid, host, port, useSSL, useTorProxy, timeoutMs, sslSocketFactory)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch tx details for $txid: ${e.message}")
+            if (BuildConfig.DEBUG) Log.e(TAG, "Failed to fetch tx details for $txid: ${e.message}")
             null
         }
     }
@@ -269,13 +269,15 @@ class ElectrumFeatureService {
         host: String,
         port: Int,
         useSSL: Boolean,
-        useTorProxy: Boolean
+        useTorProxy: Boolean,
+        timeoutMs: Long,
+        sslSocketFactory: SSLSocketFactory? = null
     ): ElectrumTxDetails? {
         var socket: Socket? = null
         var connectedSocket: Socket? = null
         try {
-            Log.d(TAG, "Querying tx details: txid=$txid, host=$host, port=$port")
-            
+            if (BuildConfig.DEBUG) Log.d(TAG, "Querying tx details: txid=$txid, host=$host, port=$port")
+
             // Create socket (with Tor proxy if needed)
             socket = if (useTorProxy) {
                 val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(TOR_PROXY_HOST, TOR_PROXY_PORT))
@@ -283,20 +285,20 @@ class ElectrumFeatureService {
             } else {
                 Socket()
             }
-            
+
             // Connect
             val address = if (useTorProxy) {
                 InetSocketAddress.createUnresolved(host, port)
             } else {
                 InetSocketAddress(host, port)
             }
-            socket.connect(address, TIMEOUT_MS.toInt())
-            socket.soTimeout = TIMEOUT_MS.toInt()
+            socket.connect(address, timeoutMs.toInt())
+            socket.soTimeout = timeoutMs.toInt()
             
             // Upgrade to SSL if needed
             connectedSocket = if (useSSL) {
-                val sslSocketFactory = createTrustAllSSLSocketFactory()
-                sslSocketFactory.createSocket(socket, host, port, true)
+                val factory = sslSocketFactory ?: createTrustAllSSLSocketFactory()
+                factory.createSocket(socket, host, port, true)
             } else {
                 socket
             }
@@ -327,19 +329,19 @@ class ElectrumFeatureService {
                 })
             }
             
-            Log.d(TAG, "Sending tx request: ${request.toString()}")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Sending tx request: ${request.toString()}")
             writer.println(request.toString())
             writer.flush()
             
             val response = reader.readLine()
-            Log.d(TAG, "Tx response: ${response?.take(500)}")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Tx response: ${response?.take(500)}")
             
             if (response != null) {
                 val json = JSONObject(response)
                 
                 val error = json.optJSONObject("error")
                 if (error != null) {
-                    Log.e(TAG, "Server returned error: ${error.toString()}")
+                    if (BuildConfig.DEBUG) Log.e(TAG, "Server returned error: ${error.toString()}")
                     return null
                 }
                 
@@ -348,13 +350,13 @@ class ElectrumFeatureService {
                 
                 if (result != null) {
                     // Log all available keys to see what the server returns
-                    Log.d(TAG, "Result keys: ${result.keys().asSequence().toList()}")
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Result keys: ${result.keys().asSequence().toList()}")
                     
                     val size = result.optInt("size", -1)
                     val vsize = result.optInt("vsize", -1)
                     val weight = result.optInt("weight", -1)
                     
-                    Log.d(TAG, "Parsed values: size=$size, vsize=$vsize, weight=$weight")
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Parsed values: size=$size, vsize=$vsize, weight=$weight")
                     
                     // If vsize not provided but weight is, calculate it
                     val calculatedVsize = when {
@@ -365,7 +367,7 @@ class ElectrumFeatureService {
                     }
                     
                     if (calculatedVsize > 0) {
-                        Log.d(TAG, "Tx $txid: returning vsize=$calculatedVsize")
+                        if (BuildConfig.DEBUG) Log.d(TAG, "Tx $txid: returning vsize=$calculatedVsize")
                         return ElectrumTxDetails(
                             txid = txid,
                             size = if (size > 0) size else calculatedVsize,
@@ -373,26 +375,26 @@ class ElectrumFeatureService {
                             weight = if (weight > 0) weight else calculatedVsize * 4
                         )
                     } else {
-                        Log.w(TAG, "Tx $txid: no size info available in verbose response")
+                        if (BuildConfig.DEBUG) Log.w(TAG, "Tx $txid: no size info available in verbose response")
                     }
                 } else if (resultString != null && resultString.length > 10) {
                     // Server returned raw hex instead of verbose object
                     // Raw tx size = hex length / 2
                     val rawSize = resultString.length / 2
-                    Log.d(TAG, "Tx $txid: server returned raw hex, size=$rawSize bytes")
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Tx $txid: server returned raw hex, size=$rawSize bytes")
                     // Note: This is the raw size, not vsize. For segwit txs this is inaccurate.
                     // We can't calculate vsize from raw hex without parsing the tx structure.
-                    Log.w(TAG, "Cannot determine vsize from raw hex - server doesn't support verbose mode")
+                    if (BuildConfig.DEBUG) Log.w(TAG, "Cannot determine vsize from raw hex - server doesn't support verbose mode")
                 } else {
-                    Log.w(TAG, "Tx $txid: result is null or not an object/string")
+                    if (BuildConfig.DEBUG) Log.w(TAG, "Tx $txid: result is null or not an object/string")
                 }
             }
             
-            Log.w(TAG, "Could not parse tx details")
+            if (BuildConfig.DEBUG) Log.w(TAG, "Could not parse tx details")
             return null
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error querying tx details: ${e.javaClass.simpleName} - ${e.message}")
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error querying tx details: ${e.javaClass.simpleName} - ${e.message}")
             throw e
         } finally {
             try {

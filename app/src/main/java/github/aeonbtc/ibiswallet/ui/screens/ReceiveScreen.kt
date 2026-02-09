@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.graphics.Bitmap
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -22,18 +23,17 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,21 +44,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
-import android.content.Intent
-import android.widget.Toast
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.WalletState
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
@@ -66,8 +60,8 @@ import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
-import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.SecureClipboard
 import java.util.Locale
 
 @Composable
@@ -81,7 +75,6 @@ fun ReceiveScreen(
     onShowAllAddresses: () -> Unit = {},
     onShowAllUtxos: () -> Unit = {}
 ) {
-    val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     
@@ -256,18 +249,43 @@ Spacer(modifier = Modifier.height(16.dp))
                 
                 Spacer(modifier = Modifier.height(12.dp))
                 
-                // Copy and Share icon buttons
+                // Copy, Refresh (New Address)
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(24.dp)
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    IconButton(
-                        onClick = {
-                            qrContent?.let { content ->
-                                clipboardManager.setText(AnnotatedString(content))
-                                Toast.makeText(context, "Address copied", Toast.LENGTH_SHORT).show()
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(DarkSurface)
+                            .clickable(enabled = walletState.isInitialized) {
+                                onGenerateAddress()
                             }
-                        },
-                        enabled = walletState.currentAddress != null
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Generate New Address",
+                            tint = if (walletState.isInitialized)
+                                BitcoinOrange
+                            else
+                                TextSecondary.copy(alpha = 0.5f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(DarkSurface)
+                            .clickable(enabled = walletState.currentAddress != null) {
+                                qrContent?.let { content ->
+                                    SecureClipboard.copyAndScheduleClear(context, "Address", content)
+                                    Toast.makeText(context, "Address copied", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                     ) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
@@ -276,30 +294,7 @@ Spacer(modifier = Modifier.height(16.dp))
                                 BitcoinOrange
                             else
                                 TextSecondary.copy(alpha = 0.5f),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-                    
-                    IconButton(
-                        onClick = {
-                            qrContent?.let { content ->
-                                val intent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "text/plain"
-                                    putExtra(Intent.EXTRA_TEXT, content)
-                                }
-                                context.startActivity(Intent.createChooser(intent, "Share Address"))
-                            }
-                        },
-                        enabled = walletState.currentAddress != null
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Share,
-                            contentDescription = "Share",
-                            tint = if (walletState.currentAddress != null)
-                                BitcoinOrange
-                            else
-                                TextSecondary.copy(alpha = 0.5f),
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -494,25 +489,7 @@ Spacer(modifier = Modifier.height(16.dp))
             }
         }
         
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // New Address button
-        OutlinedButton(
-            onClick = onGenerateAddress,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            enabled = walletState.isInitialized,
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = BitcoinOrange,
-                disabledContentColor = TextSecondary.copy(alpha = 0.5f)
-            ),
-            border = BorderStroke(
-                1.dp,
-                if (walletState.isInitialized) BitcoinOrange.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
-            )
-        ) {
-            Text("Generate New Address")
-        }
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Show All Addresses and Show All UTXOs buttons
         Row(
@@ -533,7 +510,7 @@ Spacer(modifier = Modifier.height(16.dp))
                     if (walletState.isInitialized) BorderColor.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
                 )
             ) {
-                Text("Show Addresses")
+                Text("All Addresses")
             }
 
             OutlinedButton(
@@ -550,7 +527,7 @@ Spacer(modifier = Modifier.height(16.dp))
                     if (walletState.isInitialized) BorderColor.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
                 )
             ) {
-                Text("Show UTXOs")
+                Text("All UTXOs")
             }
         }
         

@@ -13,6 +13,9 @@ import github.aeonbtc.ibiswallet.data.repository.WalletRepository
 import github.aeonbtc.ibiswallet.tor.TorManager
 import github.aeonbtc.ibiswallet.tor.TorState
 import github.aeonbtc.ibiswallet.tor.TorStatus
+import github.aeonbtc.ibiswallet.util.CertificateFirstUseException
+import github.aeonbtc.ibiswallet.util.CertificateInfo
+import github.aeonbtc.ibiswallet.util.CertificateMismatchException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -52,6 +55,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     
     // Active connection job (cancellable)
     private var connectionJob: Job? = null
+    
+    // Background sync loop job - runs every ~45s while connected
+    private var backgroundSyncJob: Job? = null
     
     // Server state for reactive UI updates
     private val _serversState = MutableStateFlow(ServersState())
@@ -98,6 +104,21 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     // Send screen draft state (persisted while app is open/minimized)
     private val _sendScreenDraft = MutableStateFlow(SendScreenDraft())
     val sendScreenDraft: StateFlow<SendScreenDraft> = _sendScreenDraft.asStateFlow()
+    
+    // PSBT state for watch-only wallet signing flow
+    private val _psbtState = MutableStateFlow(PsbtState())
+    val psbtState: StateFlow<PsbtState> = _psbtState.asStateFlow()
+    
+    // Certificate TOFU state
+    private val _certDialogState = MutableStateFlow<CertDialogState?>(null)
+    val certDialogState: StateFlow<CertDialogState?> = _certDialogState.asStateFlow()
+    
+    // Dry-run fee estimation from BDK TxBuilder
+    private val _dryRunResult = MutableStateFlow<github.aeonbtc.ibiswallet.data.model.DryRunResult?>(null)
+    val dryRunResult: StateFlow<github.aeonbtc.ibiswallet.data.model.DryRunResult?> = _dryRunResult.asStateFlow()
+    private var dryRunJob: kotlinx.coroutines.Job? = null
+    
+
     
     init {
         // Initialize servers state
@@ -170,22 +191,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Import a wallet from mnemonic (simple version for backward compatibility)
+     * Generate a new wallet with a fresh BIP39 mnemonic.
+     * Uses BDK's Mnemonic constructor which sources entropy from the platform's
+     * cryptographically secure random number generator (getrandom on Linux/Android).
      */
-    fun importWallet(
-        mnemonic: String,
-        passphrase: String? = null,
-        network: WalletNetwork = WalletNetwork.BITCOIN
-    ) {
-        val config = WalletImportConfig(
-            name = "Main Wallet",
-            keyMaterial = mnemonic,
-            passphrase = passphrase,
-            network = network
-        )
+    fun generateWallet(config: WalletImportConfig) {
         importWallet(config)
     }
-    
+
     /**
      * Connect to an Electrum server
      * Automatically enables/disables Tor based on server type
@@ -254,9 +267,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         _events.emit(WalletEvent.Error("Connection timed out"))
                     }
                     result is WalletResult.Success -> {
+                        // Query server software version (e.g. "Fulcrum 1.10.0")
+                        val serverVersion = withContext(Dispatchers.IO) {
+                            repository.getServerVersion()
+                        }
                         _uiState.value = _uiState.value.copy(
                             isConnecting = false,
-                            isConnected = true
+                            isConnected = true,
+                            serverVersion = serverVersion
                         )
                         refreshServersState()
                         _events.emit(WalletEvent.Connected)
@@ -264,14 +282,37 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         fetchFeeEstimates()
                         // Auto-sync after connecting
                         sync()
+                        // Start background sync loop (~45s interval)
+                        startBackgroundSync()
                     }
                     result is WalletResult.Error -> {
-                        _uiState.value = _uiState.value.copy(
-                            isConnecting = false,
-                            isConnected = false,
-                            error = result.message
-                        )
-                        _events.emit(WalletEvent.Error(result.message))
+                        _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false)
+                        // Check the full cause chain for TOFU exceptions.
+                        // SSLSocket.startHandshake() wraps TrustManager exceptions
+                        // in SSLHandshakeException, so we need to unwrap.
+                        val firstUse = result.exception?.findCause<CertificateFirstUseException>()
+                        val mismatch = result.exception?.findCause<CertificateMismatchException>()
+                        when {
+                            firstUse != null -> {
+                                _certDialogState.value = CertDialogState(
+                                    certInfo = firstUse.certInfo,
+                                    isFirstUse = true,
+                                    pendingConfig = config
+                                )
+                            }
+                            mismatch != null -> {
+                                _certDialogState.value = CertDialogState(
+                                    certInfo = mismatch.certInfo,
+                                    isFirstUse = false,
+                                    oldFingerprint = mismatch.storedFingerprint,
+                                    pendingConfig = config
+                                )
+                            }
+                            else -> {
+                                _uiState.value = _uiState.value.copy(error = result.message)
+                                _events.emit(WalletEvent.Error(result.message))
+                            }
+                        }
                     }
                 }
             } finally {
@@ -298,12 +339,52 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Full sync for a specific wallet (address discovery scan)
-     * Used by Manage Wallets screen for manual full rescan
+     * Start background sync loop. Runs every ~45s while connected.
+     * Uses the script hash pre-check so it's nearly free when nothing changed.
      */
+    private fun startBackgroundSync() {
+        backgroundSyncJob?.cancel()
+        backgroundSyncJob = viewModelScope.launch {
+            while (true) {
+                delay(BACKGROUND_SYNC_INTERVAL_MS)
+                if (!_uiState.value.isConnected) break
+                repository.sync() // errors are non-fatal, pre-check makes this cheap
+            }
+        }
+    }
+    
+    /**
+     * Stop the background sync loop.
+     */
+    private fun stopBackgroundSync() {
+        backgroundSyncJob?.cancel()
+        backgroundSyncJob = null
+    }
+    
+    /**
+      * Full sync for a specific wallet (address discovery scan).
+      * Used by Manage Wallets screen for manual full rescan.
+      * If the wallet is not active, switches to it first.
+      */
     fun fullSync(walletId: String) {
         viewModelScope.launch {
             _syncingWalletId.value = walletId
+            
+            // Switch to the wallet if it's not already active
+            val activeId = repository.getActiveWalletId()
+            if (walletId != activeId) {
+                when (val switchResult = repository.switchWallet(walletId)) {
+                    is WalletResult.Success -> {
+                        _events.emit(WalletEvent.WalletSwitched)
+                    }
+                    is WalletResult.Error -> {
+                        _events.emit(WalletEvent.Error(switchResult.message))
+                        _syncingWalletId.value = null
+                        return@launch
+                    }
+                }
+            }
+            
             when (val result = repository.requestFullSync(walletId)) {
                 is WalletResult.Success -> {
                     _events.emit(WalletEvent.SyncCompleted)
@@ -333,36 +414,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Get a new change address
-     */
-    fun getNewChangeAddress() {
-        viewModelScope.launch {
-            when (val result = repository.getNewChangeAddress()) {
-                is WalletResult.Success -> {
-                    _events.emit(WalletEvent.AddressGenerated(result.data))
-                }
-                is WalletResult.Error -> {
-                    _events.emit(WalletEvent.Error(result.message))
-                }
-            }
-        }
-    }
-    
-    /**
      * Get a new receiving address (suspend version for direct await)
      */
     suspend fun getNewAddressSuspend(): String? {
         return when (val result = repository.getNewAddress()) {
-            is WalletResult.Success -> result.data
-            is WalletResult.Error -> null
-        }
-    }
-    
-    /**
-     * Get a new change address (suspend version for direct await)
-     */
-    suspend fun getNewChangeAddressSuspend(): String? {
-        return when (val result = repository.getNewChangeAddress()) {
             is WalletResult.Success -> result.data
             is WalletResult.Error -> null
         }
@@ -376,12 +431,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Get label for an address
+     * Delete a label for an address
      */
-    fun getAddressLabel(address: String): String? {
-        return repository.getAddressLabel(address)
+    fun deleteAddressLabel(address: String) {
+        repository.deleteAddressLabel(address)
     }
-    
+
     /**
      * Get all address labels
      */
@@ -448,7 +503,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Clear send screen draft (called on successful send or app close)
      */
-    fun clearSendScreenDraft() {
+    private fun clearSendScreenDraft() {
         _sendScreenDraft.value = SendScreenDraft()
     }
     
@@ -464,27 +519,253 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         feeRate: Float = 1.0f,
         selectedUtxos: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>? = null,
         label: String? = null,
-        isMaxSend: Boolean = false
+        isMaxSend: Boolean = false,
+        precomputedFeeSats: Long? = null
     ) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isSending = true, error = null)
+            _uiState.value = _uiState.value.copy(isSending = true, sendStatus = null, error = null)
             
-            when (val result = repository.sendBitcoin(recipientAddress, amountSats, feeRate, selectedUtxos, label, isMaxSend)) {
+            when (val result = repository.sendBitcoin(
+                recipientAddress, amountSats, feeRate, selectedUtxos, label, isMaxSend,
+                precomputedFeeSats = precomputedFeeSats?.toULong(),
+                onProgress = { status ->
+                    _uiState.value = _uiState.value.copy(sendStatus = status)
+                }
+            )) {
                 is WalletResult.Success -> {
-                    _uiState.value = _uiState.value.copy(isSending = false)
+                    _uiState.value = _uiState.value.copy(isSending = false, sendStatus = null)
                     // Clear send screen draft on successful transaction
                     clearSendScreenDraft()
                     _events.emit(WalletEvent.TransactionSent(result.data))
+                    // Quick sync to update balance and show the new outgoing tx
+                    sync()
                 }
                 is WalletResult.Error -> {
                     _uiState.value = _uiState.value.copy(
                         isSending = false,
+                        sendStatus = null,
                         error = result.message
                     )
                     _events.emit(WalletEvent.Error(result.message))
                 }
             }
         }
+    }
+    
+    /**
+     * Estimate the actual fee using BDK's TxBuilder (dry-run, no network).
+     * Call this when the user changes amount, fee rate, or UTXO selection.
+     */
+    fun estimateFee(
+        recipientAddress: String,
+        amountSats: ULong,
+        feeRate: Float,
+        selectedUtxos: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>? = null,
+        isMaxSend: Boolean = false
+    ) {
+        dryRunJob?.cancel()
+        dryRunJob = viewModelScope.launch {
+            val result = repository.dryRunBuildTx(
+                recipientAddress = recipientAddress,
+                amountSats = amountSats,
+                feeRateSatPerVb = feeRate,
+                selectedUtxos = selectedUtxos,
+                isMaxSend = isMaxSend
+            )
+            _dryRunResult.value = result
+        }
+    }
+    
+    fun clearDryRunResult() {
+        dryRunJob?.cancel()
+        _dryRunResult.value = null
+    }
+    
+    /** Estimate fee for a multi-recipient transaction. */
+    fun estimateFeeMulti(
+        recipients: List<github.aeonbtc.ibiswallet.data.model.Recipient>,
+        feeRate: Float,
+        selectedUtxos: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>? = null
+    ) {
+        dryRunJob?.cancel()
+        dryRunJob = viewModelScope.launch {
+            _dryRunResult.value = repository.dryRunBuildTx(recipients, feeRate, selectedUtxos)
+        }
+    }
+    
+    /** Send to multiple recipients in a single transaction. */
+    fun sendBitcoinMulti(
+        recipients: List<github.aeonbtc.ibiswallet.data.model.Recipient>,
+        feeRate: Float = 1.0f,
+        selectedUtxos: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>? = null,
+        label: String? = null,
+        precomputedFeeSats: Long? = null
+    ) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isSending = true, sendStatus = null, error = null)
+            when (val result = repository.sendBitcoin(
+                recipients, feeRate, selectedUtxos, label,
+                precomputedFeeSats = precomputedFeeSats?.toULong(),
+                onProgress = { status ->
+                    _uiState.value = _uiState.value.copy(sendStatus = status)
+                }
+            )) {
+                is WalletResult.Success -> {
+                    _uiState.value = _uiState.value.copy(isSending = false, sendStatus = null)
+                    clearSendScreenDraft()
+                    _events.emit(WalletEvent.TransactionSent(result.data))
+                    // Quick sync to update balance and show the new outgoing tx
+                    sync()
+                }
+                is WalletResult.Error -> {
+                    _uiState.value = _uiState.value.copy(isSending = false, sendStatus = null, error = result.message)
+                    _events.emit(WalletEvent.Error(result.message))
+                }
+            }
+        }
+    }
+    
+    /** Create PSBT with multiple recipients for watch-only wallets. */
+    fun createPsbtMulti(
+        recipients: List<github.aeonbtc.ibiswallet.data.model.Recipient>,
+        feeRate: Float = 1.0f,
+        selectedUtxos: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>? = null,
+        label: String? = null,
+        precomputedFeeSats: Long? = null
+    ) {
+        viewModelScope.launch {
+            _psbtState.value = _psbtState.value.copy(isCreating = true, error = null)
+            when (val result = repository.createPsbt(recipients, feeRate, selectedUtxos, label, precomputedFeeSats = precomputedFeeSats?.toULong())) {
+                is WalletResult.Success -> {
+                    val details = result.data
+                    _psbtState.value = _psbtState.value.copy(
+                        isCreating = false,
+                        unsignedPsbtBase64 = details.psbtBase64,
+                        pendingLabel = label,
+                        actualFeeSats = details.feeSats,
+                        recipientAddress = details.recipientAddress,
+                        recipientAmountSats = details.recipientAmountSats,
+                        changeAmountSats = details.changeAmountSats,
+                        totalInputSats = details.totalInputSats
+                    )
+                    clearSendScreenDraft()
+                    _events.emit(WalletEvent.PsbtCreated(details.psbtBase64))
+                }
+                is WalletResult.Error -> {
+                    _psbtState.value = _psbtState.value.copy(isCreating = false, error = result.message)
+                    _events.emit(WalletEvent.Error(result.message))
+                }
+            }
+        }
+    }
+    
+    /**
+     * Create an unsigned PSBT for a watch-only wallet.
+     * Does not sign or broadcast - the PSBT is exported for external signing.
+     */
+    fun createPsbt(
+        recipientAddress: String,
+        amountSats: ULong,
+        feeRate: Float = 1.0f,
+        selectedUtxos: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>? = null,
+        label: String? = null,
+        isMaxSend: Boolean = false,
+        precomputedFeeSats: Long? = null
+    ) {
+        viewModelScope.launch {
+            _psbtState.value = _psbtState.value.copy(isCreating = true, error = null)
+            
+            when (val result = repository.createPsbt(recipientAddress, amountSats, feeRate, selectedUtxos, label, isMaxSend, precomputedFeeSats = precomputedFeeSats?.toULong())) {
+                is WalletResult.Success -> {
+                    val details = result.data
+                    _psbtState.value = _psbtState.value.copy(
+                        isCreating = false,
+                        unsignedPsbtBase64 = details.psbtBase64,
+                        pendingLabel = label,
+                        actualFeeSats = details.feeSats,
+                        recipientAddress = details.recipientAddress,
+                        recipientAmountSats = details.recipientAmountSats,
+                        changeAmountSats = details.changeAmountSats,
+                        totalInputSats = details.totalInputSats
+                    )
+                    clearSendScreenDraft()
+                    _events.emit(WalletEvent.PsbtCreated(details.psbtBase64))
+                }
+                is WalletResult.Error -> {
+                    _psbtState.value = _psbtState.value.copy(
+                        isCreating = false,
+                        error = result.message
+                    )
+                    _events.emit(WalletEvent.Error(result.message))
+                }
+            }
+        }
+    }
+    
+    /**
+     * Store signed transaction data for user confirmation before broadcasting.
+     * Called after scanning the signed PSBT/tx back from the hardware wallet.
+     */
+    fun setSignedTransactionData(data: String) {
+        _psbtState.value = _psbtState.value.copy(signedData = data, error = null)
+    }
+    
+    /**
+     * Broadcast the signed transaction after user confirmation.
+     * Uses the signed data previously stored via setSignedTransactionData().
+     */
+    fun confirmBroadcast() {
+        val data = _psbtState.value.signedData ?: return
+        viewModelScope.launch {
+            _psbtState.value = _psbtState.value.copy(isBroadcasting = true, broadcastStatus = null, error = null)
+            val pendingLabel = _psbtState.value.pendingLabel
+            val unsignedPsbt = _psbtState.value.unsignedPsbtBase64
+            
+            val onProgress: (String) -> Unit = { status ->
+                _psbtState.value = _psbtState.value.copy(broadcastStatus = status)
+            }
+            
+            // Auto-detect format: base64 PSBT vs raw tx hex
+            val isHex = data.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+            val result = if (isHex && data.length % 2 == 0 && data.length > 20) {
+                repository.broadcastRawTx(data, pendingLabel, onProgress)
+            } else {
+                repository.broadcastSignedPsbt(data, unsignedPsbt, pendingLabel, onProgress)
+            }
+            
+            when (result) {
+                is WalletResult.Success -> {
+                    _psbtState.value = PsbtState() // Reset PSBT state
+                    _uiState.value = _uiState.value.copy(isSending = false)
+                    _events.emit(WalletEvent.TransactionSent(result.data))
+                    // Quick sync to update balance and show the broadcast tx
+                    sync()
+                }
+                is WalletResult.Error -> {
+                    _psbtState.value = _psbtState.value.copy(
+                        isBroadcasting = false,
+                        broadcastStatus = null,
+                        error = result.message
+                    )
+                    _events.emit(WalletEvent.Error(result.message))
+                }
+            }
+        }
+    }
+    
+    /**
+     * Cancel the pending broadcast and return to the PSBT QR display.
+     * Clears signed data but keeps the unsigned PSBT for re-scanning.
+     */
+    fun cancelBroadcast() {
+        _psbtState.value = _psbtState.value.copy(signedData = null, error = null)
+    }
+    
+    /**
+     * Clear the PSBT state (e.g., when navigating away from PSBT screen)
+     */
+    fun clearPsbtState() {
+        _psbtState.value = PsbtState()
     }
     
     /**
@@ -498,6 +779,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 is WalletResult.Success -> {
                     _uiState.value = _uiState.value.copy(isSending = false)
                     _events.emit(WalletEvent.FeeBumped(result.data))
+                    // Quick sync to update balance and show the replacement tx
+                    sync()
                 }
                 is WalletResult.Error -> {
                     _uiState.value = _uiState.value.copy(
@@ -521,6 +804,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 is WalletResult.Success -> {
                     _uiState.value = _uiState.value.copy(isSending = false)
                     _events.emit(WalletEvent.CpfpCreated(result.data))
+                    // Quick sync to update balance and show the CPFP tx
+                    sync()
                 }
                 is WalletResult.Error -> {
                     _uiState.value = _uiState.value.copy(
@@ -549,33 +834,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     
     /**
      * Fetch transaction vsize from Electrum server
-     * Returns the actual vsize from the network
+     * Returns the fractional vsize (weight / 4.0) from the network
      */
-    suspend fun fetchTransactionVsize(txid: String): Int? {
+    suspend fun fetchTransactionVsize(txid: String): Double? {
         return repository.fetchTransactionVsizeFromElectrum(txid)
-    }
-    
-    /**
-     * Delete the currently active wallet
-     */
-    fun deleteWallet() {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
-            
-            when (val result = repository.deleteWallet()) {
-                is WalletResult.Success -> {
-                    _uiState.value = _uiState.value.copy(isLoading = false)
-                    _events.emit(WalletEvent.WalletDeleted)
-                }
-                is WalletResult.Error -> {
-                    _uiState.value = _uiState.value.copy(
-                        isLoading = false,
-                        error = result.message
-                    )
-                    _events.emit(WalletEvent.Error(result.message))
-                }
-            }
-        }
     }
     
     /**
@@ -599,6 +861,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+    }
+    
+    /**
+     * Edit wallet metadata (name and optionally fingerprint for watch-only)
+     */
+    fun editWallet(walletId: String, newName: String, newFingerprint: String? = null) {
+        repository.editWallet(walletId, newName, newFingerprint)
     }
     
     /**
@@ -629,31 +898,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Clear error state
-     */
-    fun clearError() {
-        _uiState.value = _uiState.value.copy(error = null)
-    }
-    
-    /**
-     * Check if wallet is initialized
-     */
-    fun isWalletInitialized(): Boolean = repository.isWalletInitialized()
-    
-    /**
      * Get stored Electrum config (active server)
      */
     fun getElectrumConfig(): ElectrumConfig? = repository.getElectrumConfig()
-    
-    /**
-     * Get all saved Electrum servers
-     */
-    fun getAllServers(): List<ElectrumConfig> = repository.getAllElectrumServers()
-    
-    /**
-     * Get the active server ID
-     */
-    fun getActiveServerId(): String? = repository.getActiveServerId()
     
     /**
      * Save a new Electrum server
@@ -668,10 +915,19 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Delete an Electrum server
      */
     fun deleteServer(serverId: String) {
+        val wasActive = repository.getActiveServerId() == serverId
         repository.deleteElectrumServer(serverId)
-        // Update connected state if this was the active server
-        if (repository.getActiveServerId() == null) {
-            _uiState.value = _uiState.value.copy(isConnected = false)
+        if (wasActive) {
+            // Stop background sync and cancel any pending connection
+            stopBackgroundSync()
+            connectionJob?.cancel()
+            connectionJob = null
+            _uiState.value = _uiState.value.copy(
+                isConnecting = false,
+                isConnected = false,
+                serverVersion = null,
+                error = null
+            )
         }
         refreshServersState()
         _events.tryEmit(WalletEvent.ServerDeleted)
@@ -751,9 +1007,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         _events.emit(WalletEvent.Error("Connection timed out"))
                     }
                     result is WalletResult.Success -> {
+                        // Query server software version (e.g. "Fulcrum 1.10.0")
+                        val serverVersion = withContext(Dispatchers.IO) {
+                            repository.getServerVersion()
+                        }
                         _uiState.value = _uiState.value.copy(
                             isConnecting = false,
-                            isConnected = true
+                            isConnected = true,
+                            serverVersion = serverVersion
                         )
                         refreshServersState()
                         _events.emit(WalletEvent.Connected)
@@ -761,14 +1022,34 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         fetchFeeEstimates()
                         // Auto-sync after connecting
                         sync()
+                        // Start background sync loop (~45s interval)
+                        startBackgroundSync()
                     }
                     result is WalletResult.Error -> {
-                        _uiState.value = _uiState.value.copy(
-                            isConnecting = false,
-                            isConnected = false,
-                            error = result.message
-                        )
-                        _events.emit(WalletEvent.Error(result.message))
+                        _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false)
+                        val firstUse = result.exception?.findCause<CertificateFirstUseException>()
+                        val mismatch = result.exception?.findCause<CertificateMismatchException>()
+                        when {
+                            firstUse != null -> {
+                                _certDialogState.value = CertDialogState(
+                                    certInfo = firstUse.certInfo,
+                                    isFirstUse = true,
+                                    pendingServerId = serverId
+                                )
+                            }
+                            mismatch != null -> {
+                                _certDialogState.value = CertDialogState(
+                                    certInfo = mismatch.certInfo,
+                                    isFirstUse = false,
+                                    oldFingerprint = mismatch.storedFingerprint,
+                                    pendingServerId = serverId
+                                )
+                            }
+                            else -> {
+                                _uiState.value = _uiState.value.copy(error = result.message)
+                                _events.emit(WalletEvent.Error(result.message))
+                            }
+                        }
                     }
                 }
             } finally {
@@ -778,8 +1059,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Get the key material (mnemonic and/or extended public key) for a wallet
-     */
+      * Get the key material (mnemonic and/or extended public key) for a wallet
+      */
     fun getKeyMaterial(walletId: String): WalletRepository.WalletKeyMaterial? = repository.getKeyMaterial(walletId)
     
     /**
@@ -998,27 +1279,41 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
         val iv = ByteArray(12).also { SecureRandom().nextBytes(it) }
         
-        val keySpec = PBEKeySpec(password.toCharArray(), salt, PBKDF2_ITERATIONS, 256)
-        val secretKey = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(keySpec)
-        val aesKey = SecretKeySpec(secretKey.encoded, "AES")
-        
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, aesKey, GCMParameterSpec(128, iv))
-        val ciphertext = cipher.doFinal(plaintext)
-        
-        return EncryptedPayload(salt, iv, ciphertext)
+        val passwordChars = password.toCharArray()
+        try {
+            val keySpec = PBEKeySpec(passwordChars, salt, PBKDF2_ITERATIONS, 256)
+            val secretKey = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(keySpec)
+            val keyBytes = secretKey.encoded
+            val aesKey = SecretKeySpec(keyBytes, "AES")
+            
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, aesKey, GCMParameterSpec(128, iv))
+            val ciphertext = cipher.doFinal(plaintext)
+            
+            return EncryptedPayload(salt, iv, ciphertext)
+        } finally {
+            // Zero out sensitive data
+            passwordChars.fill('\u0000')
+        }
     }
     
     private fun decryptData(payload: EncryptedPayload, password: String): ByteArray {
-        val keySpec = PBEKeySpec(password.toCharArray(), payload.salt, PBKDF2_ITERATIONS, 256)
-        val secretKey = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(keySpec)
-        val aesKey = SecretKeySpec(secretKey.encoded, "AES")
-        
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(128, payload.iv))
-        return cipher.doFinal(payload.ciphertext)
+        val passwordChars = password.toCharArray()
+        try {
+            val keySpec = PBEKeySpec(passwordChars, payload.salt, PBKDF2_ITERATIONS, 256)
+            val secretKey = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                .generateSecret(keySpec)
+            val keyBytes = secretKey.encoded
+            val aesKey = SecretKeySpec(keyBytes, "AES")
+            
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(128, payload.iv))
+            return cipher.doFinal(payload.ciphertext)
+        } finally {
+            // Zero out sensitive data
+            passwordChars.fill('\u0000')
+        }
     }
     
     // ==================== Tor Management ====================
@@ -1036,6 +1331,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         if (enabled) {
             startTor()
         } else {
+            // Disabling Tor: disconnect from server since the connection
+            // is now broken (Tor proxy is gone). The user can reconnect
+            // if the server is reachable without Tor.
+            if (_uiState.value.isConnected || _uiState.value.isConnecting) {
+                disconnect()
+            }
             stopTor()
         }
     }
@@ -1060,6 +1361,36 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun isTorReady(): Boolean = torManager.isReady()
     
     /**
+     * Accept a server's certificate after user approval (TOFU).
+     * Stores the fingerprint and retries the connection.
+     */
+    fun acceptCertificate() {
+        val state = _certDialogState.value ?: return
+        val certInfo = state.certInfo
+        
+        // Store the approved fingerprint
+        repository.acceptServerCertificate(certInfo.host, certInfo.port, certInfo.sha256Fingerprint)
+        
+        // Clear dialog
+        _certDialogState.value = null
+        
+        // Retry the connection
+        if (state.pendingConfig != null) {
+            connectToElectrum(state.pendingConfig)
+        } else if (state.pendingServerId != null) {
+            connectToServer(state.pendingServerId)
+        }
+    }
+    
+    /**
+     * Reject a server's certificate - cancel the connection attempt.
+     */
+    fun rejectCertificate() {
+        _certDialogState.value = null
+        _uiState.value = _uiState.value.copy(isConnecting = false, error = null)
+    }
+    
+    /**
      * Clean up resources when ViewModel is cleared
      */
     override fun onCleared() {
@@ -1069,26 +1400,23 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Check if currently connected via Tor bridge
-     */
-    fun isUsingTorBridge(): Boolean = repository.isUsingTorBridge()
-    
-    /**
      * Disconnect from the current Electrum server
      */
     fun disconnect() {
+        stopBackgroundSync()
         repository.disconnect()
-        _uiState.value = _uiState.value.copy(isConnected = false)
+        _uiState.value = _uiState.value.copy(isConnected = false, serverVersion = null)
     }
     
     /**
-     * Cancel an in-progress connection attempt
-     */
+      * Cancel an in-progress connection attempt
+      */
     fun cancelConnection() {
+        stopBackgroundSync()
         connectionJob?.cancel()
         connectionJob = null
         repository.disconnect()
-        _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false, error = null)
+        _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false, serverVersion = null, error = null)
     }
     
     // ==================== Display Settings ====================
@@ -1101,22 +1429,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Get the current denomination setting
-     */
-    fun getDenomination(): String = repository.getDenomination()
-    
-    /**
      * Set the denomination preference
      */
     fun setDenomination(denomination: String) {
         repository.setDenomination(denomination)
         _denominationState.value = denomination
     }
-    
-    /**
-     * Check if using sats denomination
-     */
-    fun isUsingSats(): Boolean = repository.isUsingSats()
     
     // ==================== Mempool Server Settings ====================
     
@@ -1139,11 +1457,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun getMempoolUrl(): String = repository.getMempoolUrl()
     
     /**
-     * Check if the current mempool URL is an onion address
-     */
-    fun isMempoolOnionAddress(): Boolean = repository.isMempoolOnionAddress()
-    
-    /**
      * Get the custom mempool URL
      */
     fun getCustomMempoolUrl(): String {
@@ -1157,12 +1470,35 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         repository.setCustomMempoolUrl(url)
     }
     
-    // ==================== Fee Estimation Settings ====================
+    /**
+     * Get the custom fee source server URL
+     */
+    fun getCustomFeeSourceUrl(): String {
+        return repository.getCustomFeeSourceUrl() ?: ""
+    }
     
     /**
-     * Get the current fee source setting
+     * Set the custom fee source server URL
      */
-    fun getFeeSource(): String = repository.getFeeSource()
+    fun setCustomFeeSourceUrl(url: String) {
+        repository.setCustomFeeSourceUrl(url)
+    }
+    
+    // ==================== Spend Unconfirmed ====================
+    
+    /**
+     * Get whether spending unconfirmed UTXOs is allowed
+     */
+    fun getSpendUnconfirmed(): Boolean = repository.getSpendUnconfirmed()
+    
+    /**
+     * Set whether spending unconfirmed UTXOs is allowed
+     */
+    fun setSpendUnconfirmed(enabled: Boolean) {
+        repository.setSpendUnconfirmed(enabled)
+    }
+    
+    // ==================== Fee Estimation Settings ====================
     
     /**
      * Set the fee source preference
@@ -1180,25 +1516,36 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Get the full fee source URL
-     */
-    fun getFeeSourceUrl(): String? = repository.getFeeSourceUrl()
-    
-    /**
      * Fetch fee estimates from the configured source
      * Call this when opening the Send screen
      * Uses precise endpoint only if the connected Electrum server supports sub-sat fees
      */
     fun fetchFeeEstimates() {
-        val feeSourceUrl = repository.getFeeSourceUrl()
+        val feeSource = repository.getFeeSource()
         
-        if (feeSourceUrl == null) {
+        if (feeSource == repository.FEE_SOURCE_OFF) {
             _feeEstimationState.value = FeeEstimationResult.Disabled
             return
         }
         
         viewModelScope.launch {
             _feeEstimationState.value = FeeEstimationResult.Loading
+            
+            if (feeSource == repository.FEE_SOURCE_ELECTRUM) {
+                // Fetch from connected Electrum server via BDK's estimateFee()
+                val result = repository.fetchElectrumFeeEstimates()
+                _feeEstimationState.value = result.fold(
+                    onSuccess = { estimates -> FeeEstimationResult.Success(estimates) },
+                    onFailure = { error -> FeeEstimationResult.Error(error.message ?: "Not connected to server") }
+                )
+                return@launch
+            }
+            
+            // Fetch from mempool.space HTTP API
+            val feeSourceUrl = repository.getFeeSourceUrl() ?: run {
+                _feeEstimationState.value = FeeEstimationResult.Disabled
+                return@launch
+            }
             
             val useTorProxy = feeSourceUrl.contains(".onion")
             
@@ -1217,18 +1564,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 onSuccess = { estimates -> FeeEstimationResult.Success(estimates) },
                 onFailure = { error -> FeeEstimationResult.Error(error.message ?: "Unknown error") }
             )
-        }
-    }
-    
-    /**
-     * Clear fee estimation state (e.g., when leaving Send screen)
-     */
-    fun clearFeeEstimates() {
-        val feeSource = repository.getFeeSource()
-        _feeEstimationState.value = if (feeSource == repository.FEE_SOURCE_OFF) {
-            FeeEstimationResult.Disabled
-        } else {
-            FeeEstimationResult.Loading
         }
     }
     
@@ -1292,16 +1627,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Verify PIN code
-     */
-    fun verifyPin(pin: String): Boolean = repository.verifyPin(pin)
-    
-    /**
-     * Check if PIN is set
-     */
-    fun hasPin(): Boolean = repository.hasPin()
-    
-    /**
      * Clear PIN code
      */
     fun clearPin() {
@@ -1312,11 +1637,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Check if security is enabled
      */
     fun isSecurityEnabled(): Boolean = repository.isSecurityEnabled()
-    
-    /**
-     * Check if biometric is enabled
-     */
-    fun isBiometricEnabled(): Boolean = repository.isBiometricEnabled()
     
     /**
      * Get lock timing setting
@@ -1331,20 +1651,21 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
-     * Get last background time
+     * Get whether screenshots are disabled
      */
-    fun getLastBackgroundTime(): Long = repository.getLastBackgroundTime()
+    fun getDisableScreenshots(): Boolean = repository.getDisableScreenshots()
     
     /**
-     * Set last background time
+     * Set whether screenshots are disabled
      */
-    fun setLastBackgroundTime(time: Long) {
-        repository.setLastBackgroundTime(time)
+    fun setDisableScreenshots(disabled: Boolean) {
+        repository.setDisableScreenshots(disabled)
     }
     
     companion object {
         private const val CONNECTION_TIMEOUT_MS = 30_000L
-        private const val PBKDF2_ITERATIONS = 210_000
+        private const val PBKDF2_ITERATIONS = 600_000
+        private const val BACKGROUND_SYNC_INTERVAL_MS = 120_000L
     }
 }
 
@@ -1356,6 +1677,8 @@ data class WalletUiState(
     val isConnecting: Boolean = false,
     val isConnected: Boolean = false,
     val isSending: Boolean = false,
+    val sendStatus: String? = null,
+    val serverVersion: String? = null,
     val error: String? = null
 )
 
@@ -1373,6 +1696,7 @@ sealed class WalletEvent {
     data class TransactionSent(val txid: String) : WalletEvent()
     data class FeeBumped(val newTxid: String) : WalletEvent()
     data class CpfpCreated(val childTxid: String) : WalletEvent()
+    data class PsbtCreated(val psbtBase64: String) : WalletEvent()
     data class WalletExported(val walletName: String) : WalletEvent()
     data object LabelsRestored : WalletEvent()
     data class Error(val message: String) : WalletEvent()
@@ -1397,3 +1721,48 @@ data class SendScreenDraft(
     val isMaxSend: Boolean = false,
     val selectedUtxoOutpoints: List<String> = emptyList() // Store outpoints to restore selection
 )
+
+/**
+ * State for PSBT creation and signing flow (watch-only wallets)
+ */
+data class PsbtState(
+    val isCreating: Boolean = false,
+    val isBroadcasting: Boolean = false,
+    val broadcastStatus: String? = null,
+    val unsignedPsbtBase64: String? = null,
+    val signedData: String? = null, // Signed PSBT/tx data awaiting broadcast confirmation
+    val pendingLabel: String? = null,
+    val error: String? = null,
+    // Actual transaction details from BDK (not client-side estimates)
+    val actualFeeSats: ULong = 0UL,
+    val recipientAddress: String? = null,
+    val recipientAmountSats: ULong = 0UL,
+    val changeAmountSats: ULong? = null,
+    val totalInputSats: ULong = 0UL
+)
+
+/**
+ * State for the certificate approval/warning dialog (TOFU)
+ */
+data class CertDialogState(
+    val certInfo: CertificateInfo,
+    val isFirstUse: Boolean,          // true = first connection, false = cert changed
+    val oldFingerprint: String? = null, // non-null when cert changed
+    val pendingConfig: ElectrumConfig? = null, // config to retry after approval
+    val pendingServerId: String? = null  // server ID to retry after approval
+)
+
+/**
+ * Walk an exception's cause chain to find a specific exception type.
+ * SSLSocket.startHandshake() wraps TrustManager exceptions in SSLHandshakeException,
+ * so we need to unwrap to find our TOFU exceptions (CertificateFirstUseException, etc.).
+ */
+private inline fun <reified T : Throwable> Throwable.findCause(): T? {
+    var current: Throwable? = this
+    val visited = mutableSetOf<Throwable>()
+    while (current != null && visited.add(current)) {
+        if (current is T) return current
+        current = current.cause
+    }
+    return null
+}

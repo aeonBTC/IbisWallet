@@ -1,6 +1,8 @@
 package github.aeonbtc.ibiswallet.tor
 
 import android.util.Log
+import github.aeonbtc.ibiswallet.BuildConfig
+import github.aeonbtc.ibiswallet.util.TofuTrustManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.selects.select
 import java.io.IOException
@@ -12,34 +14,37 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.net.SocketTimeoutException
-import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
-import java.security.cert.X509Certificate
 
 /**
- * A TCP-to-SOCKS5 bridge that allows BDK (which doesn't support SOCKS5 proxy)
- * to connect to .onion addresses through Tor.
- * 
- * How it works:
- * 1. Opens a local ServerSocket on a random port
- * 2. BDK connects to this local port
- * 3. Bridge creates a SOCKS5 connection through Tor to the actual target
- * 4. Bidirectionally pipes data between BDK and the target server
+ * A local TCP proxy that terminates SSL at the Kotlin/Android layer, allowing
+ * BDK's ElectrumClient to connect via plaintext tcp:// to a local port while
+ * the actual server connection uses SSL handled by Android's native TLS stack.
+ *
+ * This is necessary because BDK's bundled rustls does not work reliably for SSL
+ * on Android. By handling SSL in Kotlin, we get TOFU (Trust-On-First-Use) certificate
+ * verification for self-signed certs (common in Electrum) and Android-native TLS.
+ *
+ * Supports both clearnet and Tor (SOCKS5) connections:
+ *
+ * - Clearnet SSL: Local TCP -> direct SSL socket to server
+ * - Tor SSL:      Local TCP -> SOCKS5 proxy -> SSL socket to server
+ * - Tor TCP:      Not needed (BDK handles SOCKS5 natively for tcp://)
+ * - Clearnet TCP: Not needed (BDK connects directly)
  */
 class TorProxyBridge(
     private val targetHost: String,
     private val targetPort: Int,
     private val useSsl: Boolean = false,
+    private val useTorProxy: Boolean = false,
     private val torSocksHost: String = "127.0.0.1",
     private val torSocksPort: Int = 9050,
     private val connectionTimeoutMs: Int = 60000,
-    private val soTimeoutMs: Int = 60000
+    private val soTimeoutMs: Int = 60000,
+    private val sslTrustManager: TofuTrustManager? = null
 ) {
     companion object {
-        private const val TAG = "TorProxyBridge"
+        private const val TAG = "SslProxyBridge"
         private const val BUFFER_SIZE = 8192
     }
     
@@ -54,12 +59,13 @@ class TorProxyBridge(
     private var targetSocket: Socket? = null
     
     /**
-     * Start the bridge and return the local port to connect to
+     * Start the bridge and return the local port to connect to.
+     * BDK should connect to tcp://127.0.0.1:<returnedPort>
      */
     @Synchronized
     fun start(): Int {
         if (isRunning) {
-            Log.d(TAG, "Bridge already running on port $localPort")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Bridge already running on port $localPort")
             return localPort
         }
         
@@ -72,7 +78,7 @@ class TorProxyBridge(
             localPort = serverSocket!!.localPort
             isRunning = true
             
-            Log.d(TAG, "Bridge started on port $localPort, target: $targetHost:$targetPort (SSL: $useSsl)")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Bridge started on port $localPort, target: $targetHost:$targetPort (SSL: $useSsl, Tor: $useTorProxy)")
             
             // Start accepting connections in background
             bridgeJob = scope.launch {
@@ -81,7 +87,7 @@ class TorProxyBridge(
             
             return localPort
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start bridge", e)
+            if (BuildConfig.DEBUG) Log.e(TAG, "Failed to start bridge", e)
             stop()
             throw e
         }
@@ -92,7 +98,7 @@ class TorProxyBridge(
      */
     @Synchronized
     fun stop() {
-        Log.d(TAG, "Stopping bridge")
+        if (BuildConfig.DEBUG) Log.d(TAG, "Stopping bridge")
         isRunning = false
         
         bridgeJob?.cancel()
@@ -119,105 +125,114 @@ class TorProxyBridge(
     fun getLocalPort(): Int = localPort
     
     /**
-     * Accept connections from BDK and bridge them to the target through Tor
+     * Accept connections from BDK and bridge them to the target
      */
     private suspend fun acceptConnections() = withContext(Dispatchers.IO) {
         while (isRunning && isActive) {
             try {
-                Log.d(TAG, "Waiting for connection on port $localPort...")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Waiting for connection on port $localPort...")
                 
                 // Accept connection from BDK
                 val client = serverSocket?.accept() ?: break
                 client.soTimeout = soTimeoutMs
                 clientSocket = client
                 
-                Log.d(TAG, "Accepted connection from ${client.inetAddress}:${client.port}")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Accepted connection from ${client.inetAddress}:${client.port}")
                 
-                // Create SOCKS5 connection to target through Tor
-                val target = createTorConnection()
+                // Create connection to target (with optional Tor proxy and SSL)
+                val target = createTargetConnection()
                 if (target == null) {
-                    Log.e(TAG, "Failed to create Tor connection to $targetHost:$targetPort")
+                    if (BuildConfig.DEBUG) Log.e(TAG, "Failed to create connection to $targetHost:$targetPort")
                     closeQuietly(client)
                     continue
                 }
                 targetSocket = target
                 
-                Log.d(TAG, "Connected to target $targetHost:$targetPort through Tor")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Connected to target $targetHost:$targetPort (SSL: $useSsl, Tor: $useTorProxy)")
                 
                 // Bridge the connections
                 bridgeConnections(client, target)
                 
             } catch (e: SocketTimeoutException) {
                 // Timeout waiting for connection, continue loop
-                Log.d(TAG, "Accept timeout, continuing...")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Accept timeout, continuing...")
             } catch (e: SocketException) {
                 if (isRunning) {
-                    Log.e(TAG, "Socket exception in accept loop", e)
+                    if (BuildConfig.DEBUG) Log.e(TAG, "Socket exception in accept loop", e)
                 }
                 // Socket was closed, exit loop
                 break
             } catch (e: Exception) {
                 if (isRunning) {
-                    Log.e(TAG, "Error in accept loop", e)
+                    if (BuildConfig.DEBUG) Log.e(TAG, "Error in accept loop", e)
                 }
             }
         }
         
-        Log.d(TAG, "Accept loop ended")
+        if (BuildConfig.DEBUG) Log.d(TAG, "Accept loop ended")
     }
     
     /**
-     * Create a connection to the target through Tor's SOCKS5 proxy
+     * Create a connection to the target server.
+     * - If Tor is enabled, connects through SOCKS5 proxy
+     * - If SSL is enabled, wraps the socket with SSL using Android's TLS stack
+     * - For clearnet+SSL: direct SSL socket to server
+     * - For Tor+SSL: SOCKS5 socket wrapped with SSL
      */
-    private fun createTorConnection(): Socket? {
+    private fun createTargetConnection(): Socket? {
         return try {
-            // Create SOCKS5 proxy
-            val proxy = Proxy(
-                Proxy.Type.SOCKS,
-                InetSocketAddress(torSocksHost, torSocksPort)
-            )
+            val socket = if (useTorProxy) {
+                // Create SOCKS5 proxy connection through Tor
+                val proxy = Proxy(
+                    Proxy.Type.SOCKS,
+                    InetSocketAddress(torSocksHost, torSocksPort)
+                )
+                
+                val proxySocket = Socket(proxy)
+                proxySocket.soTimeout = soTimeoutMs
+                
+                // For .onion addresses, the SOCKS5 proxy (Tor) handles DNS resolution
+                proxySocket.connect(
+                    InetSocketAddress.createUnresolved(targetHost, targetPort),
+                    connectionTimeoutMs
+                )
+                proxySocket
+            } else {
+                // Direct clearnet connection
+                val directSocket = Socket()
+                directSocket.soTimeout = soTimeoutMs
+                directSocket.connect(
+                    InetSocketAddress(targetHost, targetPort),
+                    connectionTimeoutMs
+                )
+                directSocket
+            }
             
-            // Create socket through proxy
-            val socket = Socket(proxy)
-            socket.soTimeout = soTimeoutMs
-            
-            // Connect to target through the proxy
-            // For .onion addresses, the SOCKS5 proxy (Tor) handles DNS resolution
-            socket.connect(
-                InetSocketAddress.createUnresolved(targetHost, targetPort),
-                connectionTimeoutMs
-            )
-            
-            // If SSL is required, wrap the socket
+            // If SSL is required, wrap the socket with Android's TLS
             if (useSsl) {
                 wrapWithSsl(socket)
             } else {
                 socket
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create Tor connection", e)
+            if (BuildConfig.DEBUG) Log.e(TAG, "Failed to create target connection", e)
             null
         }
     }
     
     /**
-     * Wrap a socket with SSL/TLS
-     * For Tor connections to onion addresses, we use a trust-all manager
-     * since onion services often use self-signed certificates
+     * Wrap a socket with SSL/TLS using Android's native TLS stack.
+     * Uses the provided TofuTrustManager for certificate verification,
+     * or a trust-all fallback for .onion connections (Tor provides transport security).
      */
     private fun wrapWithSsl(socket: Socket): SSLSocket {
-        // Create trust manager that accepts all certificates
-        val trustAllCerts = object : X509TrustManager {
-            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        val sslSocketFactory = if (sslTrustManager != null) {
+            TofuTrustManager.createSSLSocketFactory(sslTrustManager)
+        } else {
+            // Fallback for .onion or when no trust manager provided
+            TofuTrustManager.createOnionSSLSocketFactory()
         }
         
-        val trustManagers = arrayOf<TrustManager>(trustAllCerts)
-        val sslContext = SSLContext.getInstance("TLS")
-        sslContext.init(null, trustManagers, null)
-        
-        val sslSocketFactory: SSLSocketFactory = sslContext.socketFactory
         val sslSocket = sslSocketFactory.createSocket(
             socket,
             targetHost,
@@ -225,10 +240,11 @@ class TorProxyBridge(
             true // Auto-close underlying socket
         ) as SSLSocket
         
-        // Start handshake
+        // Start handshake - this triggers TofuTrustManager.checkServerTrusted()
+        // which may throw CertificateFirstUseException or CertificateMismatchException
         sslSocket.startHandshake()
         
-        Log.d(TAG, "SSL handshake completed with $targetHost:$targetPort")
+        if (BuildConfig.DEBUG) Log.d(TAG, "SSL handshake completed with $targetHost:$targetPort")
         return sslSocket
     }
     
@@ -236,7 +252,7 @@ class TorProxyBridge(
      * Bridge two sockets by copying data in both directions
      */
     private suspend fun bridgeConnections(client: Socket, target: Socket) = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Starting bidirectional bridge")
+        if (BuildConfig.DEBUG) Log.d(TAG, "Starting bidirectional bridge")
         
         try {
             // Launch two coroutines to copy data in both directions
@@ -254,10 +270,10 @@ class TorProxyBridge(
                 targetToClient.onAwait {}
             }
             
-            Log.d(TAG, "Bridge connection ended")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Bridge connection ended")
             
         } catch (e: Exception) {
-            Log.e(TAG, "Error in bridge", e)
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error in bridge", e)
         } finally {
             // Clean up both connections
             closeQuietly(client)
@@ -278,7 +294,7 @@ class TorProxyBridge(
             while (true) {
                 val bytesRead = input.read(buffer)
                 if (bytesRead == -1) {
-                    Log.d(TAG, "[$direction] EOF reached, total bytes: $totalBytes")
+                    if (BuildConfig.DEBUG) Log.d(TAG, "[$direction] EOF reached, total bytes: $totalBytes")
                     break
                 }
                 
@@ -287,9 +303,9 @@ class TorProxyBridge(
                 totalBytes += bytesRead
             }
         } catch (e: SocketException) {
-            Log.d(TAG, "[$direction] Socket closed, total bytes: $totalBytes")
+            if (BuildConfig.DEBUG) Log.d(TAG, "[$direction] Socket closed, total bytes: $totalBytes")
         } catch (e: IOException) {
-            Log.d(TAG, "[$direction] IO error: ${e.message}, total bytes: $totalBytes")
+            if (BuildConfig.DEBUG) Log.d(TAG, "[$direction] IO error: ${e.message}, total bytes: $totalBytes")
         }
         
         return totalBytes

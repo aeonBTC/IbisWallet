@@ -9,6 +9,7 @@ import android.content.ServiceConnection
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import github.aeonbtc.ibiswallet.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,7 +34,7 @@ class TorManager(private val context: Context) {
     
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-            Log.d(TAG, "Tor service connected")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Tor service connected")
             torService = (service as TorService.LocalBinder).service
             _torState.value = _torState.value.copy(
                 status = TorStatus.CONNECTING,
@@ -43,12 +44,11 @@ class TorManager(private val context: Context) {
         }
         
         override fun onServiceDisconnected(name: ComponentName?) {
-            Log.d(TAG, "Tor service disconnected")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Tor service disconnected")
             torService = null
             _torState.value = _torState.value.copy(
                 status = TorStatus.DISCONNECTED,
-                statusMessage = "Disconnected",
-                socksPort = null
+                statusMessage = "Disconnected"
             )
         }
     }
@@ -56,7 +56,7 @@ class TorManager(private val context: Context) {
     private val statusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             val status = intent?.getStringExtra(TorService.EXTRA_STATUS) ?: return
-            Log.d(TAG, "Tor status update: $status")
+            if (BuildConfig.DEBUG) Log.d(TAG, "Tor status update: $status")
             
             val torStatus = when {
                 // "ON" means Tor is fully connected and ready
@@ -81,8 +81,7 @@ class TorManager(private val context: Context) {
             
             _torState.value = _torState.value.copy(
                 status = torStatus,
-                statusMessage = displayMessage,
-                socksPort = if (torStatus == TorStatus.CONNECTED) SOCKS_PORT else null
+                statusMessage = displayMessage
             )
         }
     }
@@ -92,12 +91,13 @@ class TorManager(private val context: Context) {
      */
     fun start() {
         if (_torState.value.status == TorStatus.CONNECTED || 
-            _torState.value.status == TorStatus.CONNECTING) {
-            Log.d(TAG, "Tor is already running or starting")
+            _torState.value.status == TorStatus.CONNECTING ||
+            _torState.value.status == TorStatus.STARTING) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "Tor is already running or starting")
             return
         }
         
-        Log.d(TAG, "Starting Tor service")
+        if (BuildConfig.DEBUG) Log.d(TAG, "Starting Tor service")
         _torState.value = _torState.value.copy(
             status = TorStatus.STARTING,
             statusMessage = "Starting Tor..."
@@ -121,13 +121,13 @@ class TorManager(private val context: Context) {
      * Stop the Tor service
      */
     fun stop() {
-        Log.d(TAG, "Stopping Tor service")
+        if (BuildConfig.DEBUG) Log.d(TAG, "Stopping Tor service")
         
         if (isBound) {
             try {
                 context.unbindService(serviceConnection)
             } catch (e: Exception) {
-                Log.e(TAG, "Error unbinding Tor service", e)
+                if (BuildConfig.DEBUG) Log.e(TAG, "Error unbinding Tor service", e)
             }
             isBound = false
         }
@@ -135,7 +135,7 @@ class TorManager(private val context: Context) {
         try {
             context.unregisterReceiver(statusReceiver)
         } catch (e: Exception) {
-            Log.e(TAG, "Error unregistering Tor status receiver", e)
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error unregistering Tor status receiver", e)
         }
         
         torService = null
@@ -150,12 +150,6 @@ class TorManager(private val context: Context) {
      */
     fun isReady(): Boolean = _torState.value.status == TorStatus.CONNECTED
     
-    /**
-     * Get the SOCKS proxy address for use with network connections
-     */
-    fun getSocksProxy(): String? {
-        return if (isReady()) "$SOCKS_HOST:$SOCKS_PORT" else null
-    }
 }
 
 /**
@@ -163,8 +157,7 @@ class TorManager(private val context: Context) {
  */
 data class TorState(
     val status: TorStatus = TorStatus.DISCONNECTED,
-    val statusMessage: String = "Not started",
-    val socksPort: Int? = null
+    val statusMessage: String = "Not started"
 )
 
 /**

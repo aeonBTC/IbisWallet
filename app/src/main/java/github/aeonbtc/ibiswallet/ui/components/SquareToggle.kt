@@ -39,7 +39,9 @@ fun SquareToggle(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     checkedColor: Color = BitcoinOrange,
-    uncheckedColor: Color = DarkSurfaceVariant
+    uncheckedColor: Color = DarkSurfaceVariant,
+    uncheckedBorderColor: Color = BorderColor,
+    uncheckedThumbColor: Color = TextSecondary
 ) {
     val trackWidth = 44.dp
     val trackHeight = 24.dp
@@ -67,9 +69,9 @@ fun SquareToggle(
     // Animate border color
     val borderColor by animateColorAsState(
         targetValue = when {
-            !enabled -> BorderColor.copy(alpha = 0.3f)
+            !enabled -> uncheckedBorderColor.copy(alpha = 0.3f)
             checked -> checkedColor
-            else -> BorderColor
+            else -> uncheckedBorderColor
         },
         animationSpec = tween(durationMillis = 150),
         label = "borderColor"
@@ -78,9 +80,9 @@ fun SquareToggle(
     // Animate thumb color
     val thumbColor by animateColorAsState(
         targetValue = when {
-            !enabled -> TextSecondary.copy(alpha = 0.5f)
+            !enabled -> uncheckedThumbColor.copy(alpha = 0.5f)
             checked -> checkedColor
-            else -> TextSecondary
+            else -> uncheckedThumbColor
         },
         animationSpec = tween(durationMillis = 150),
         label = "thumbColor"

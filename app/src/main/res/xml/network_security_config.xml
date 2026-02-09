@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Cleartext permitted: Ibis only connects to user-configured servers
+         (Electrum, mempool instances). No arbitrary web content is loaded. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

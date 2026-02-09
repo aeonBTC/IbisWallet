@@ -19,19 +19,22 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.ui.theme.*
 import kotlinx.coroutines.delay
 
-private const val PIN_LENGTH = 5
+private const val MIN_PIN_LENGTH = 4
+private const val MAX_PIN_LENGTH = 12
 
 @Composable
 fun LockScreen(
     securityMethod: SecureStorage.SecurityMethod,
     onPinEntered: (String) -> Boolean,
     onBiometricRequest: () -> Unit,
-    isBiometricAvailable: Boolean = false
+    isBiometricAvailable: Boolean = false,
+    storedPinLength: Int? = null
 ) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var attempts by remember { mutableIntStateOf(0) }
     var pendingValidation by remember { mutableStateOf(false) }
+    val pinMaxLength = storedPinLength ?: MAX_PIN_LENGTH
 
     // Auto-trigger biometric on first composition if biometric is the security method
     LaunchedEffect(securityMethod) {
@@ -40,10 +43,10 @@ fun LockScreen(
         }
     }
     
-    // Handle delayed PIN validation so user can see the 5th dot
+    // Handle delayed PIN validation so user can see the last dot
     LaunchedEffect(pendingValidation) {
         if (pendingValidation) {
-            delay(200)
+            delay(75)
             val success = onPinEntered(pin)
             if (!success) {
                 attempts++
@@ -72,14 +75,6 @@ fun LockScreen(
         ) {
             Spacer(modifier = Modifier.height(48.dp))
 
-            // App Icon/Title
-            Text(
-                text = "Ibis Wallet",
-                style = MaterialTheme.typography.headlineMedium,
-                color = BitcoinOrange
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
 
             Text(
                 text = when (securityMethod) {
@@ -91,27 +86,9 @@ fun LockScreen(
                 color = TextSecondary
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
-
-            // PIN dots indicator (shown for both PIN and biometric as fallback)
+            // PIN length counter (no dots shown to avoid leaking PIN length)
             if (securityMethod == SecureStorage.SecurityMethod.PIN || 
                 (securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && pin.isNotEmpty())) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    repeat(PIN_LENGTH) { index ->
-                        Box(
-                            modifier = Modifier
-                                .size(16.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (index < pin.length) BitcoinOrange
-                                    else BorderColor
-                                )
-                        )
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(16.dp))
             }
@@ -161,12 +138,13 @@ fun LockScreen(
             // Number pad
             NumberPad(
                 onNumberClick = { number ->
-                    if (pin.length < PIN_LENGTH && !pendingValidation) {
-                        pin += number
+                    if (pin.length < pinMaxLength && !pendingValidation) {
+                        val newPin = pin + number
+                        pin = newPin
                         error = null
                         
-                        // Auto-submit when PIN is complete (with delay)
-                        if (pin.length == PIN_LENGTH) {
+                        // Auto-submit when PIN reaches the stored length
+                        if (storedPinLength != null && newPin.length == storedPinLength) {
                             pendingValidation = true
                         }
                     }
@@ -177,9 +155,14 @@ fun LockScreen(
                         error = null
                     }
                 },
+                // Show Unlock button only when stored PIN length is unknown (fallback)
+                onConfirmClick = if (storedPinLength == null && pin.length >= MIN_PIN_LENGTH && !pendingValidation) {
+                    { pendingValidation = true }
+                } else null,
                 onBiometricClick = if (isBiometricAvailable && securityMethod == SecureStorage.SecurityMethod.BIOMETRIC) {
                     { onBiometricRequest() }
-                } else null
+                } else null,
+                showConfirmButton = storedPinLength == null
             )
         }
     }
@@ -189,7 +172,9 @@ fun LockScreen(
 private fun NumberPad(
     onNumberClick: (String) -> Unit,
     onBackspaceClick: () -> Unit,
-    onBiometricClick: (() -> Unit)? = null
+    onConfirmClick: (() -> Unit)? = null,
+    onBiometricClick: (() -> Unit)? = null,
+    showConfirmButton: Boolean = true
 ) {
     val numbers = listOf(
         listOf("1", "2", "3"),
@@ -209,7 +194,7 @@ private fun NumberPad(
             ) {
                 row.forEachIndexed { colIndex, number ->
                     when {
-                        // Biometric button in bottom-left
+                        // Bottom-left: biometric or confirm button
                         rowIndex == 3 && colIndex == 0 -> {
                             if (onBiometricClick != null) {
                                 IconButton(
@@ -230,7 +215,7 @@ private fun NumberPad(
                                 Spacer(modifier = Modifier.size(72.dp))
                             }
                         }
-                        // Backspace button in bottom-right
+                        // Bottom-right: confirm button (when available) stacked with backspace
                         rowIndex == 3 && colIndex == 2 -> {
                             IconButton(
                                 onClick = onBackspaceClick,
@@ -272,6 +257,31 @@ private fun NumberPad(
                         }
                     }
                 }
+            }
+        }
+        
+        // Confirm button row below the number pad (hidden when auto-submit is active)
+        if (showConfirmButton) {
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Button(
+                onClick = { onConfirmClick?.invoke() },
+                enabled = onConfirmClick != null,
+                modifier = Modifier
+                    .width(240.dp)
+                    .height(48.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = BitcoinOrange,
+                    contentColor = DarkBackground,
+                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                    disabledContentColor = DarkBackground.copy(alpha = 0.5f)
+                )
+            ) {
+                Text(
+                    text = "Unlock",
+                    style = MaterialTheme.typography.titleMedium
+                )
             }
         }
     }

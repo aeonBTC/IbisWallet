@@ -10,20 +10,20 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode
@@ -39,8 +39,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -54,6 +55,7 @@ import java.util.Date
 import java.util.Locale
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.*
+import github.aeonbtc.ibiswallet.util.SecureClipboard
 
 data class WalletInfo(
     val id: String,
@@ -63,7 +65,8 @@ data class WalletInfo(
     val derivationPath: String,
     val isActive: Boolean = false,
     val isWatchOnly: Boolean = false,
-    val lastFullSyncTime: Long? = null
+    val lastFullSyncTime: Long? = null,
+    val masterFingerprint: String? = null
 )
 
 /**
@@ -75,7 +78,8 @@ data class KeyMaterialInfo(
     val walletName: String,
     val mnemonic: String?,       // Seed phrase (null for watch-only)
     val extendedPublicKey: String?, // xpub/zpub (always available)
-    val isWatchOnly: Boolean
+    val isWatchOnly: Boolean,
+    val masterFingerprint: String? = null // Master key fingerprint (8 hex chars)
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -84,10 +88,12 @@ fun ManageWalletsScreen(
     wallets: List<WalletInfo>,
     onBack: () -> Unit,
     onImportWallet: () -> Unit,
+    onGenerateWallet: () -> Unit,
     onViewWallet: (WalletInfo) -> KeyMaterialInfo?,
     onDeleteWallet: (WalletInfo) -> Unit,
     onSelectWallet: (WalletInfo) -> Unit,
     onExportWallet: (walletId: String, uri: Uri, includeLabels: Boolean, password: String?) -> Unit = { _, _, _, _ -> },
+    onEditWallet: (walletId: String, newName: String, newFingerprint: String?) -> Unit = { _, _, _ -> },
     onFullSync: (WalletInfo) -> Unit = {},
     syncingWalletId: String? = null
 ) {
@@ -95,38 +101,178 @@ fun ManageWalletsScreen(
     var walletToView by remember { mutableStateOf<WalletInfo?>(null) }
     var walletToSync by remember { mutableStateOf<WalletInfo?>(null) }
     var walletToExport by remember { mutableStateOf<WalletInfo?>(null) }
+    var walletToEdit by remember { mutableStateOf<WalletInfo?>(null) }
     var showWarningDialog by remember { mutableStateOf(false) }
     var keyMaterialInfo by remember { mutableStateOf<KeyMaterialInfo?>(null) }
     var showKeyMaterial by remember { mutableStateOf(false) }
     
     // Delete confirmation dialog
     if (walletToDelete != null) {
+        val isWatchOnly = walletToDelete?.isWatchOnly == true
+        var confirmChecked by remember { mutableStateOf(false) }
         AlertDialog(
-            onDismissRequest = { walletToDelete = null },
+            onDismissRequest = { 
+                walletToDelete = null
+                confirmChecked = false
+            },
             title = { 
                 Text(
-                    "Delete Wallet",
+                    if (isWatchOnly) "Remove Watch-Only Wallet" else "Delete Wallet",
                     color = MaterialTheme.colorScheme.onBackground
                 ) 
             },
             text = { 
-                Text(
-                    "Are you sure you want to delete \"${walletToDelete?.name}\"? This action cannot be undone. Make sure you have backed up your recovery phrase.",
-                    color = TextSecondary
-                )
+                Column {
+                    Text(
+                        if (isWatchOnly)
+                            "Remove \"${walletToDelete?.name}\"? You can re-import it later with the same xpub."
+                        else
+                            "Are you sure you want to delete \"${walletToDelete?.name}\"? This action cannot be undone. Make sure you have backed up your recovery phrase.",
+                        color = TextSecondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { confirmChecked = !confirmChecked }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Checkbox(
+                            checked = confirmChecked,
+                            onCheckedChange = { confirmChecked = it },
+                            colors = CheckboxDefaults.colors(
+                                checkedColor = if (isWatchOnly) BitcoinOrange else ErrorRed,
+                                uncheckedColor = TextSecondary
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            if (isWatchOnly) "Confirm removal" else "I understand this cannot be undone",
+                            color = if (confirmChecked) {
+                                if (isWatchOnly) BitcoinOrange else ErrorRed
+                            } else TextSecondary,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         walletToDelete?.let { onDeleteWallet(it) }
                         walletToDelete = null
-                    }
+                        confirmChecked = false
+                    },
+                    enabled = confirmChecked
                 ) {
-                    Text("Delete", color = ErrorRed)
+                    Text(
+                        if (isWatchOnly) "Remove" else "Delete",
+                        color = if (confirmChecked) {
+                            if (isWatchOnly) BitcoinOrange else ErrorRed
+                        } else TextSecondary.copy(alpha = 0.4f)
+                    )
                 }
             },
             dismissButton = {
-                TextButton(onClick = { walletToDelete = null }) {
+                TextButton(onClick = { 
+                    walletToDelete = null
+                    confirmChecked = false
+                }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurface
+        )
+    }
+    
+    // Edit wallet dialog
+    if (walletToEdit != null) {
+        var editName by remember(walletToEdit) { mutableStateOf(walletToEdit!!.name) }
+        var editFingerprint by remember(walletToEdit) {
+            mutableStateOf(walletToEdit!!.masterFingerprint ?: "")
+        }
+        val isWatchOnly = walletToEdit!!.isWatchOnly
+        val fingerprintRegex = remember { Regex("^[0-9a-fA-F]{0,8}$") }
+        val fingerprintValid = editFingerprint.isBlank() || editFingerprint.length == 8
+        val nameChanged = editName.trim().isNotBlank() && editName.trim() != walletToEdit?.name
+        val fingerprintChanged = isWatchOnly &&
+            editFingerprint.trim().lowercase() != (walletToEdit?.masterFingerprint ?: "").lowercase()
+        val canSave = editName.trim().isNotBlank() && fingerprintValid && (nameChanged || fingerprintChanged)
+        
+        AlertDialog(
+            onDismissRequest = { walletToEdit = null },
+            title = {
+                Text(
+                    "Edit Wallet",
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("Wallet Name") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BitcoinOrange,
+                            unfocusedBorderColor = BorderColor,
+                            cursorColor = BitcoinOrange
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (isWatchOnly) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = editFingerprint,
+                            onValueChange = { value ->
+                                if (value.matches(fingerprintRegex)) {
+                                    editFingerprint = value
+                                }
+                            },
+                            label = { Text("Master Fingerprint") },
+                            placeholder = { Text("e.g. 73c5da0a", color = TextSecondary.copy(alpha = 0.4f)) },
+                            singleLine = true,
+                            isError = editFingerprint.isNotBlank() && !fingerprintValid,
+                            supportingText = if (editFingerprint.isNotBlank() && !fingerprintValid) {
+                                { Text("Must be 8 hex characters", color = ErrorRed) }
+                            } else {
+                                { Text("8 hex characters for PSBT key origin", color = TextSecondary.copy(alpha = 0.5f)) }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                cursorColor = BitcoinOrange
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val trimmedName = editName.trim()
+                        val trimmedFp = if (isWatchOnly) editFingerprint.trim().lowercase() else null
+                        if (trimmedName.isNotBlank()) {
+                            walletToEdit?.let { onEditWallet(it.id, trimmedName, trimmedFp) }
+                        }
+                        walletToEdit = null
+                    },
+                    enabled = canSave
+                ) {
+                    Text(
+                        "Save",
+                        color = if (canSave) BitcoinOrange else TextSecondary.copy(alpha = 0.4f)
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { walletToEdit = null }) {
                     Text("Cancel", color = TextSecondary)
                 }
             },
@@ -301,26 +447,49 @@ fun ManageWalletsScreen(
         
         Spacer(modifier = Modifier.height(8.dp))
         
-        // Import wallet button at top
-        OutlinedButton(
-            onClick = onImportWallet,
+        // Generate + Import wallet buttons
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = BitcoinOrange
-            ),
-            border = BorderStroke(1.dp, BitcoinOrange.copy(alpha = 0.5f))
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.Add,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text("Import Wallet")
+            OutlinedButton(
+                onClick = onGenerateWallet,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = BitcoinOrange
+                ),
+                border = BorderStroke(1.dp, BorderColor.copy(alpha = 0.5f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Key,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Generate")
+            }
+
+            OutlinedButton(
+                onClick = onImportWallet,
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = BitcoinOrange
+                ),
+                border = BorderStroke(1.dp, BorderColor.copy(alpha = 0.5f))
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FolderOpen,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Import")
+            }
         }
         
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         
         if (wallets.isEmpty()) {
             // Empty state
@@ -340,7 +509,7 @@ fun ManageWalletsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Import a wallet to get started",
+                        text = "Generate or import a wallet to get started",
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary.copy(alpha = 0.7f)
                     )
@@ -357,6 +526,7 @@ fun ManageWalletsScreen(
                     },
                     onDelete = { walletToDelete = wallet },
                     onExport = { walletToExport = wallet },
+                    onEdit = { walletToEdit = wallet },
                     onClick = { onSelectWallet(wallet) },
                     onSync = { walletToSync = wallet },
                     isSyncing = syncingWalletId == wallet.id
@@ -570,6 +740,10 @@ private fun ExportWalletDialog(
                             singleLine = true,
                             visualTransformation = if (showPassword) VisualTransformation.None
                                 else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(
+                                autoCorrect = false,
+                                keyboardType = KeyboardType.Password
+                            ),
                             trailingIcon = {
                                 IconButton(onClick = { showPassword = !showPassword }) {
                                     Icon(
@@ -598,6 +772,10 @@ private fun ExportWalletDialog(
                             singleLine = true,
                             visualTransformation = if (showPassword) VisualTransformation.None
                                 else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(
+                                autoCorrect = false,
+                                keyboardType = KeyboardType.Password
+                            ),
                             isError = confirmPassword.isNotEmpty() && !passwordsMatch,
                             shape = RoundedCornerShape(8.dp),
                             colors = OutlinedTextFieldDefaults.colors(
@@ -725,7 +903,7 @@ private fun KeyMaterialDialog(
     keyMaterialInfo: KeyMaterialInfo,
     onDismiss: () -> Unit
 ) {
-    val clipboardManager = LocalClipboardManager.current
+    val context = LocalContext.current
     var copied by remember { mutableStateOf(false) }
     var selectedViewType by remember { mutableStateOf<KeyViewType?>(null) }
     var showQrCode by remember { mutableStateOf(false) }
@@ -759,6 +937,14 @@ private fun KeyMaterialDialog(
     LaunchedEffect(selectedViewType, showQrCode) {
         if (selectedViewType != null && currentKeyMaterial != null) {
             qrBitmap = generateQrCode(currentKeyMaterial)
+        }
+    }
+    
+    // Reset copied state after 3 seconds
+    LaunchedEffect(copied) {
+        if (copied) {
+            kotlinx.coroutines.delay(3000)
+            copied = false
         }
     }
     
@@ -875,6 +1061,37 @@ private fun KeyMaterialDialog(
                     }
                 } else {
                     // Revealed state
+                    
+                    // Master fingerprint (shown for all wallet types)
+                    if (keyMaterialInfo.masterFingerprint != null) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = DarkCard)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Master Fingerprint",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary
+                                )
+                                Text(
+                                    text = keyMaterialInfo.masterFingerprint,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onBackground
+                                )
+                            }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    
                     if (showQrCode && currentKeyMaterial != null) {
                         // QR Code display
                         Card(
@@ -937,26 +1154,37 @@ private fun KeyMaterialDialog(
                             )
                         }
                     } else if (selectedViewType == KeyViewType.SEED_PHRASE && words.isNotEmpty()) {
-                        // Seed phrase - show as numbered word grid
+                        // Seed phrase - show as numbered word grid (2 columns)
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
                             colors = CardDefaults.cardColors(containerColor = DarkCard)
                         ) {
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(3),
+                            val half = (words.size + 1) / 2
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(240.dp)
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
                             ) {
-                                itemsIndexed(words) { index, word ->
-                                    WordChip(
-                                        index = index + 1,
-                                        word = word
-                                    )
+                                for (i in 0 until half) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Box(modifier = Modifier.weight(1f)) {
+                                            WordChip(index = i + 1, word = words[i])
+                                        }
+                                        val rightIndex = i + half
+                                        if (rightIndex < words.size) {
+                                            Box(modifier = Modifier.weight(1f)) {
+                                                WordChip(
+                                                    index = rightIndex + 1,
+                                                    word = words[rightIndex]
+                                                )
+                                            }
+                                        } else {
+                                            Spacer(modifier = Modifier.weight(1f))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -973,7 +1201,7 @@ private fun KeyMaterialDialog(
                         OutlinedButton(
                             onClick = {
                                 currentKeyMaterial?.let {
-                                    clipboardManager.setText(AnnotatedString(it))
+                                    SecureClipboard.copyAndScheduleClear(context, "Key Material", it)
                                     copied = true
                                 }
                             },
@@ -984,13 +1212,13 @@ private fun KeyMaterialDialog(
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
                                 contentDescription = null,
-                                tint = if (copied) SuccessGreen else TextSecondary,
+                                tint = if (copied) BitcoinOrange else TextSecondary,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = if (copied) "Copied!" else "Copy",
-                                color = if (copied) SuccessGreen else TextSecondary
+                                color = if (copied) BitcoinOrange else TextSecondary
                             )
                         }
                         
@@ -1012,7 +1240,7 @@ private fun KeyMaterialDialog(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (showQrCode) "Text" else "QR Code",
+                                text = "QR Code",
                                 color = if (showQrCode) BitcoinOrange else TextSecondary
                             )
                         }
@@ -1033,7 +1261,7 @@ private fun KeyMaterialDialog(
                     
                     if (copied) {
                         Text(
-                            text = "Remember to clear your clipboard after use!",
+                            text = "Clipboard will auto-clear in 30 seconds.",
                             style = MaterialTheme.typography.bodySmall,
                             color = ErrorRed.copy(alpha = 0.8f),
                             textAlign = TextAlign.Center,
@@ -1086,29 +1314,24 @@ private fun WordChip(
     index: Int,
     word: String
 ) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = DarkSurfaceVariant,
-        border = BorderStroke(1.dp, BorderColor)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "$index.",
-                style = MaterialTheme.typography.labelSmall,
-                color = TextSecondary.copy(alpha = 0.6f),
-                modifier = Modifier.width(20.dp)
-            )
-            Text(
-                text = word,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onBackground
-            )
-        }
+        Text(
+            text = "$index.",
+            style = MaterialTheme.typography.labelSmall,
+            color = TextSecondary.copy(alpha = 0.6f),
+            modifier = Modifier.width(24.dp)
+        )
+        Text(
+            text = word,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1
+        )
     }
 }
 
@@ -1119,6 +1342,7 @@ private fun WalletCard(
     onView: () -> Unit,
     onDelete: () -> Unit,
     onExport: () -> Unit,
+    onEdit: () -> Unit,
     onClick: () -> Unit,
     onSync: () -> Unit = {},
     isSyncing: Boolean = false
@@ -1177,53 +1401,91 @@ private fun WalletCard(
                 }
                 
                 Row {
-                    IconButton(
-                        onClick = onSync,
-                        modifier = Modifier.size(40.dp),
-                        enabled = !isSyncing
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurface)
+                            .clickable(enabled = !isSyncing) { onSync() }
                     ) {
                         if (isSyncing) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
+                                modifier = Modifier.size(12.dp),
                                 color = BitcoinOrange,
-                                strokeWidth = 2.dp
+                                strokeWidth = 1.5.dp
                             )
                         } else {
                             Icon(
                                 imageVector = Icons.Default.Sync,
                                 contentDescription = "Full Sync",
-                                tint = TextSecondary
+                                tint = TextSecondary,
+                                modifier = Modifier.size(14.dp)
                             )
                         }
                     }
-                    IconButton(
-                        onClick = onView,
-                        modifier = Modifier.size(40.dp)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurface)
+                            .clickable { onEdit() }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "Edit Wallet",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurface)
+                            .clickable { onView() }
                     ) {
                         Icon(
                             imageVector = Icons.Default.Visibility,
                             contentDescription = "View Seed Phrase",
-                            tint = TextSecondary
+                            tint = TextSecondary,
+                            modifier = Modifier.size(14.dp)
                         )
                     }
-                    IconButton(
-                        onClick = onExport,
-                        modifier = Modifier.size(40.dp)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurface)
+                            .clickable { onExport() }
                     ) {
                         Icon(
                             imageVector = Icons.Default.Download,
                             contentDescription = "Export Wallet",
-                            tint = TextSecondary
+                            tint = TextSecondary,
+                            modifier = Modifier.size(14.dp)
                         )
                     }
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier.size(40.dp)
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurface)
+                            .clickable { onDelete() }
                     ) {
                         Icon(
                             imageVector = Icons.Default.Delete,
                             contentDescription = "Delete",
-                            tint = TextSecondary
+                            tint = TextSecondary,
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                 }
@@ -1244,6 +1506,16 @@ private fun WalletCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary.copy(alpha = 0.7f)
             )
+            
+            if (wallet.masterFingerprint != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                Text(
+                    text = "Fingerprint: ${wallet.masterFingerprint}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary.copy(alpha = 0.7f)
+                )
+            }
             
             // Last full sync time
             val lastSyncText = if (wallet.lastFullSyncTime != null) {

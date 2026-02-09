@@ -12,8 +12,8 @@ android {
         applicationId = "github.aeonbtc.ibiswallet"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -29,7 +29,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -68,7 +69,6 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
-    implementation(libs.material)
     
     // ViewModel
     implementation(libs.androidx.lifecycle.viewmodel.compose)
@@ -78,7 +78,6 @@ dependencies {
     
     // Security & Storage
     implementation(libs.androidx.security.crypto)
-    implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.biometric)
     
     // Coroutines
@@ -98,6 +97,9 @@ dependencies {
     
     // HTTP Client
     implementation(libs.okhttp)
+    
+    // BC-UR (Uniform Resources) for animated QR codes (PSBT exchange with hardware wallets)
+    implementation(libs.hummingbird)
     
     // Testing
     testImplementation(libs.junit)

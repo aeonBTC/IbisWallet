@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricManager
@@ -30,7 +31,18 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
+        // Prevent tapjacking/overlay attacks
+        window.decorView.filterTouchesWhenObscured = true
+        
         secureStorage = SecureStorage(this)
+        
+        // Apply screenshot prevention if enabled
+        if (secureStorage.getDisableScreenshots()) {
+            window.setFlags(
+                WindowManager.LayoutParams.FLAG_SECURE,
+                WindowManager.LayoutParams.FLAG_SECURE
+            )
+        }
         
         // Check if security is enabled - always locked on fresh start
         val securityMethod = secureStorage.getSecurityMethod()
@@ -46,7 +58,9 @@ class MainActivity : FragmentActivity() {
                     color = DarkBackground
                 ) {
                     if (isUnlocked) {
-                        IbisWalletApp()
+                        IbisWalletApp(
+                            onLockApp = { isUnlocked = false }
+                        )
                     } else {
                         val biometricManager = BiometricManager.from(this)
                         val isBiometricAvailable = biometricManager.canAuthenticate(
@@ -66,7 +80,8 @@ class MainActivity : FragmentActivity() {
                             onBiometricRequest = {
                                 showBiometricPrompt()
                             },
-                            isBiometricAvailable = isBiometricAvailable
+                            isBiometricAvailable = isBiometricAvailable,
+                            storedPinLength = secureStorage.getStoredPinLength()
                         )
                     }
                 }

@@ -1,8 +1,5 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import android.content.ClipData
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
@@ -21,22 +18,24 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -44,30 +43,37 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.FeeEstimateSource
+import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
 import github.aeonbtc.ibiswallet.data.model.WalletState
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
@@ -75,24 +81,19 @@ import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrangeLight
+import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
+import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
-import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 
 /**
  * Method for speeding up a transaction
@@ -121,10 +122,10 @@ fun BalanceScreen(
     onBumpFee: (String, Float) -> Unit = { _, _ -> },
     onCpfp: (String, Float) -> Unit = { _, _ -> },
     onSaveTransactionLabel: (String, String) -> Unit = { _, _ -> },
-    onFetchTxVsize: suspend (String) -> Int? = { null },
+    onFetchTxVsize: suspend (String) -> Double? = { null },
     onRefreshFees: () -> Unit = {},
     onSync: () -> Unit = {},
-    onImportWallet: () -> Unit = {}
+    onManageWallets: () -> Unit = {}
 ) {
     // State for selected transaction dialog
     var selectedTransaction by remember { mutableStateOf<TransactionDetails?>(null) }
@@ -132,6 +133,9 @@ fun BalanceScreen(
     // Search state
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    
+    // Transaction display limit (progressive loading)
+    var displayLimit by remember { mutableIntStateOf(50) }
     
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     
@@ -213,14 +217,17 @@ fun BalanceScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary
                         )
-                        IconButton(
-                            onClick = onSync,
-                            enabled = walletState.isInitialized && !walletState.isSyncing,
-                            modifier = Modifier.size(28.dp)
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(DarkSurfaceVariant)
+                                .clickable(enabled = walletState.isInitialized && !walletState.isSyncing) { onSync() }
                         ) {
                             if (walletState.isSyncing) {
                                 CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(20.dp),
                                     color = BitcoinOrange,
                                     strokeWidth = 2.dp
                                 )
@@ -229,7 +236,7 @@ fun BalanceScreen(
                                     imageVector = Icons.Default.Sync,
                                     contentDescription = "Sync",
                                     tint = if (walletState.isInitialized) TextSecondary else TextSecondary.copy(alpha = 0.3f),
-                                    modifier = Modifier.size(16.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
                         }
@@ -267,12 +274,22 @@ fun BalanceScreen(
                             )
                         }
                         
-                        // Pending (only if there is pending balance)
-                        if (walletState.pendingBalanceSats > 0UL) {
+                        // Pending incoming (green)
+                        if (walletState.pendingIncomingSats > 0UL) {
                             Text(
-                                text = if (privacyMode) "$HIDDEN_AMOUNT pending" else "+${formatAmount(walletState.pendingBalanceSats, useSats)} pending",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = BitcoinOrange,
+                                text = if (privacyMode) "$HIDDEN_AMOUNT pending" else "+${formatAmount(walletState.pendingIncomingSats, useSats)} pending",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = SuccessGreen,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
+
+                        // Pending outgoing (red)
+                        if (walletState.pendingOutgoingSats > 0UL) {
+                            Text(
+                                text = if (privacyMode) "$HIDDEN_AMOUNT pending" else "-${formatAmount(walletState.pendingOutgoingSats, useSats)} pending",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = ErrorRed,
                                 modifier = Modifier.padding(top = 6.dp)
                             )
                         }
@@ -312,7 +329,7 @@ fun BalanceScreen(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         Button(
-                            onClick = onImportWallet,
+                            onClick = onManageWallets,
                             modifier = Modifier.height(48.dp),
                             shape = RoundedCornerShape(8.dp),
                             border = BorderStroke(1.dp, BitcoinOrangeLight),
@@ -345,12 +362,16 @@ fun BalanceScreen(
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-                IconButton(
-                    onClick = { 
-                        isSearchActive = !isSearchActive
-                        if (!isSearchActive) searchQuery = ""
-                    },
-                    modifier = Modifier.size(32.dp)
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurfaceVariant)
+                        .clickable {
+                            isSearchActive = !isSearchActive
+                            if (!isSearchActive) searchQuery = ""
+                        }
                 ) {
                     Icon(
                         imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
@@ -384,7 +405,7 @@ fun BalanceScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
         
-        // Filter transactions based on search query
+        // Filter transactions based on search query (always searches ALL transactions)
         val filteredTransactions = if (searchQuery.isBlank()) {
             walletState.transactions
         } else {
@@ -399,6 +420,17 @@ fun BalanceScreen(
                 address.lowercase().contains(query)
             }
         }
+
+        // When searching, show all results; otherwise apply display limit
+        val isSearching = searchQuery.isNotBlank()
+        val visibleTransactions = if (isSearching) {
+            filteredTransactions
+        } else {
+            filteredTransactions.take(displayLimit)
+        }
+        val totalCount = filteredTransactions.size
+        val visibleCount = visibleTransactions.size
+        val hasMore = !isSearching && visibleCount < totalCount
         
         if (filteredTransactions.isEmpty()) {
             item {
@@ -440,7 +472,7 @@ fun BalanceScreen(
                 }
             }
         } else {
-            items(filteredTransactions) { tx ->
+            items(visibleTransactions) { tx ->
                 // Look up label: first check transaction label, then address label
                 val label = transactionLabels[tx.txid] 
                     ?: tx.address?.let { addressLabels[it] }
@@ -454,6 +486,33 @@ fun BalanceScreen(
                     onClick = { selectedTransaction = tx }
                 )
                 Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Progressive "Show More" / "Show All" buttons
+            if (hasMore) {
+                item {
+                    val remaining = totalCount - visibleCount
+                    TextButton(
+                        onClick = {
+                            if (displayLimit <= 50) {
+                                displayLimit = 150
+                            } else {
+                                displayLimit = Int.MAX_VALUE
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (displayLimit <= 50)
+                                "Show More"
+                            else
+                                "Show All ($remaining remaining)",
+                            color = TextSecondary
+                        )
+                    }
+                }
             }
         }
         
@@ -531,21 +590,29 @@ private fun TransactionItem(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                // Date and time (or Pending if no timestamp)
+                // Date and time
                 Text(
-                    text = transaction.timestamp?.let { formatDateTime(it) } ?: "Pending",
+                    text = transaction.timestamp?.let { formatDateTime(it) } ?: "",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = if (transaction.timestamp != null) TextSecondary else BitcoinOrange
+                    color = TextSecondary
                 )
             }
             
             // Amount and status
             Column(horizontalAlignment = Alignment.End) {
+                val amountText = if (privacyMode) {
+                    HIDDEN_AMOUNT
+                } else {
+                    val sign = if (isReceived) "+" else "-"
+                    val amount = formatAmount(absSats, useSats)
+                    if (useSats) "$sign$amount sats" else "$sign$amount"
+                }
                 Text(
-                    text = if (privacyMode) HIDDEN_AMOUNT else "${if (isReceived) "+" else "-"}${formatAmount(absSats, useSats)} ${if (useSats) "sats" else ""}",
+                    text = amountText,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isReceived) AccentGreen else AccentRed
+                    color = if (isReceived) AccentGreen else AccentRed,
+                    textAlign = TextAlign.End
                 )
                 // USD value
                 if (btcPrice != null && btcPrice > 0 && !privacyMode) {
@@ -553,17 +620,17 @@ private fun TransactionItem(
                     Text(
                         text = formatUsd(usdValue),
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        color = TextSecondary,
+                        textAlign = TextAlign.End
                     )
                 }
-                // Confirmed status (only show when confirmed, pending is shown on left)
-                if (transaction.isConfirmed) {
-                    Text(
-                        text = "Confirmed",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
-                    )
-                }
+                // Pending / Confirmed status
+                Text(
+                    text = if (transaction.isConfirmed) "Confirmed" else "Pending",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (transaction.isConfirmed) TextSecondary else BitcoinOrange,
+                    textAlign = TextAlign.End
+                )
             }
         }
     }
@@ -589,10 +656,6 @@ private fun formatSatsAmount(sats: ULong): String {
     return NumberFormat.getNumberInstance(Locale.US).format(sats.toLong())
 }
 
-private fun formatSats(sats: Long): String {
-    return NumberFormat.getNumberInstance(Locale.US).format(kotlin.math.abs(sats))
-}
-
 private const val HIDDEN_AMOUNT = "****"
 
 /**
@@ -606,13 +669,8 @@ private fun formatAmount(sats: ULong, useSats: Boolean): String {
     }
 }
 
-private fun formatTimestamp(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MMM dd, HH:mm", Locale.getDefault())
-    return sdf.format(Date(timestamp))
-}
-
 private fun formatFullTimestamp(timestamp: Long): String {
-    val sdf = SimpleDateFormat("MMMM dd, yyyy 'at' HH:mm:ss", Locale.getDefault())
+    val sdf = SimpleDateFormat("MMM d, yyyy HH:mm", Locale.getDefault())
     return sdf.format(Date(timestamp))
 }
 
@@ -621,6 +679,14 @@ private fun formatFullTimestamp(timestamp: Long): String {
  */
 private fun formatFeeRate(rate: Double): String {
     val formatted = String.format(Locale.US, "%.2f", rate)
+    return formatted.trimEnd('0').trimEnd('.')
+}
+
+/**
+ * Format vBytes - up to 2 decimal places, removes trailing zeros: 109.25, 140.5, 154
+ */
+private fun formatVBytes(vBytes: Double): String {
+    val formatted = String.format(Locale.US, "%.2f", vBytes)
     return formatted.trimEnd('0').trimEnd('.')
 }
 
@@ -641,7 +707,7 @@ fun TransactionDetailDialog(
     canCpfp: Boolean = false,
     availableBalance: ULong = 0UL,
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
-    onFetchVsize: suspend (String) -> Int? = { null },
+    onFetchVsize: suspend (String) -> Double? = { null },
     onRefreshFees: () -> Unit = {},
     onSpeedUp: ((SpeedUpMethod, Float) -> Unit)? = null,
     onSaveLabel: (String) -> Unit = {},
@@ -649,7 +715,7 @@ fun TransactionDetailDialog(
 ) {
     val context = LocalContext.current
     val isReceived = transaction.amountSats > 0
-    val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    
     
     // State for showing copy confirmation
     var showCopiedTxid by remember { mutableStateOf(false) }
@@ -686,8 +752,8 @@ fun TransactionDetailDialog(
     var isEditingLabel by remember { mutableStateOf(false) }
     var labelText by remember { mutableStateOf(label ?: "") }
     
-    // State for fetched vsize from Electrum (more accurate than BDK's vsize)
-    var fetchedVsize by remember { mutableStateOf<Int?>(null) }
+    // State for fetched vsize from Electrum (fractional: weight/4.0)
+    var fetchedVsize by remember { mutableStateOf<Double?>(null) }
     
     // Fetch actual vsize from Electrum when dialog opens (for sent transactions with fee info)
     LaunchedEffect(transaction.txid) {
@@ -719,7 +785,7 @@ fun TransactionDetailDialog(
     
     // Speed Up dialog
     if (showSpeedUpDialog && speedUpMethod != null && onSpeedUp != null) {
-        val dialogVsize = fetchedVsize?.toLong() ?: transaction.vsize?.toLong()
+        val dialogVsize = fetchedVsize ?: transaction.vsize
         // For CPFP, the spendable output is either the received amount or the change amount
         val isReceived = transaction.amountSats > 0
         val cpfpSpendableOutput = if (isReceived) {
@@ -877,7 +943,7 @@ fun TransactionDetailDialog(
                             .fillMaxWidth()
                             .padding(12.dp)
                     ) {
-                        // Status section (includes confirmation status, block height, date/time)
+                        // Status section
                         Column {
                             Text(
                                 text = "Status",
@@ -886,52 +952,36 @@ fun TransactionDetailDialog(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = if (transaction.isConfirmed) 
-                                        Icons.Default.CheckCircle 
-                                    else 
-                                        Icons.Default.Schedule,
-                                    contentDescription = null,
-                                    tint = if (transaction.isConfirmed) AccentGreen else BitcoinOrange,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = if (transaction.isConfirmed) "Confirmed" else "Pending",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = if (transaction.isConfirmed) AccentGreen else BitcoinOrange
-                                )
-                            }
-                            // Block height (left) and Date/Time (right)
-                            if (transaction.isConfirmed && transaction.confirmationTime != null && transaction.timestamp != null) {
-                                Spacer(modifier = Modifier.height(4.dp))
                                 Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        text = "Block ${transaction.confirmationTime.height}",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = TextSecondary
+                                    Icon(
+                                        imageVector = if (transaction.isConfirmed)
+                                            Icons.Default.CheckCircle
+                                        else
+                                            Icons.Default.Schedule,
+                                        contentDescription = null,
+                                        tint = if (transaction.isConfirmed) AccentGreen else BitcoinOrange,
+                                        modifier = Modifier.size(18.dp)
                                     )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = if (transaction.isConfirmed) "Confirmed" else "Pending",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = if (transaction.isConfirmed) AccentGreen else BitcoinOrange
+                                    )
+                                }
+                                if (transaction.timestamp != null) {
                                     Text(
                                         text = formatFullTimestamp(transaction.timestamp * 1000),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary
                                     )
                                 }
-                            } else if (transaction.timestamp != null) {
-                                // Just date/time for pending (aligned right)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = formatFullTimestamp(transaction.timestamp * 1000),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TextSecondary,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    textAlign = TextAlign.End
-                                )
                             }
                         }
                         
@@ -960,13 +1010,16 @@ fun TransactionDetailDialog(
                                     color = MaterialTheme.colorScheme.onBackground,
                                     modifier = Modifier.weight(1f)
                                 )
-                                IconButton(
-                                    onClick = {
-                                        val clip = ClipData.newPlainText("Transaction ID", transaction.txid)
-                                        clipboardManager.setPrimaryClip(clip)
-                                        showCopiedTxid = true
-                                    },
-                                    modifier = Modifier.size(32.dp)
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(DarkSurfaceVariant)
+                                        .clickable {
+                                            SecureClipboard.copyAndScheduleClear(context, "Transaction ID", transaction.txid)
+                                            showCopiedTxid = true
+                                        }
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.ContentCopy,
@@ -1032,13 +1085,16 @@ fun TransactionDetailDialog(
                                             )
                                         }
                                     }
-                                    IconButton(
-                                        onClick = {
-                                            val clip = ClipData.newPlainText("Address", transaction.address)
-                                            clipboardManager.setPrimaryClip(clip)
-                                            showCopiedAddress = true
-                                        },
-                                        modifier = Modifier.size(32.dp)
+                                    Box(
+                                        contentAlignment = Alignment.Center,
+                                        modifier = Modifier
+                                            .size(32.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DarkSurfaceVariant)
+                                            .clickable {
+                                                SecureClipboard.copyAndScheduleClear(context, "Address", transaction.address)
+                                                showCopiedAddress = true
+                                            }
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ContentCopy,
@@ -1092,13 +1148,16 @@ fun TransactionDetailDialog(
                                                 )
                                             }
                                         }
-                                        IconButton(
-                                            onClick = {
-                                                val clip = ClipData.newPlainText("Change Address", transaction.changeAddress)
-                                                clipboardManager.setPrimaryClip(clip)
-                                                showCopiedChangeAddress = true
-                                            },
-                                            modifier = Modifier.size(32.dp)
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .size(32.dp)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(DarkSurfaceVariant)
+                                                .clickable {
+                                                    SecureClipboard.copyAndScheduleClear(context, "Change Address", transaction.changeAddress)
+                                                    showCopiedChangeAddress = true
+                                                }
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.ContentCopy,
@@ -1134,17 +1193,17 @@ fun TransactionDetailDialog(
                                     color = TextSecondary
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
-                                // Use fetched vsize from Electrum if available, otherwise fall back to BDK's vsize
-                                val displayVsize: Long? = fetchedVsize?.toLong() ?: transaction.vsize?.toLong()
-                                // Recalculate fee rate using the actual vsize
-                                val displayFeeRate = if (displayVsize != null && displayVsize > 0L) {
-                                    transaction.fee!!.toDouble() / displayVsize.toDouble()
+                                // Use fetched vsize from Electrum if available, otherwise fall back to BDK's weight/4.0
+                                val displayVsize: Double? = fetchedVsize ?: transaction.vsize
+                                // Recalculate fee rate using the fractional vsize
+                                val displayFeeRate = if (displayVsize != null && displayVsize > 0.0) {
+                                    transaction.fee!!.toDouble() / displayVsize
                                 } else {
                                     transaction.feeRate
                                 }
                                 if (displayFeeRate != null && displayVsize != null) {
                                     Text(
-                                        text = "${formatFeeRate(displayFeeRate)} sat/vB • $displayVsize vB",
+                                        text = "${formatFeeRate(displayFeeRate)} sat/vB • ${formatVBytes(displayVsize)} vB",
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontFamily = FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onBackground
@@ -1414,7 +1473,7 @@ private fun SpeedUpDialog(
     method: SpeedUpMethod,
     currentFee: ULong?,
     currentFeeRate: Double?,
-    vsize: Long?,
+    vsize: Double?,
     availableBalance: ULong = 0UL,
     cpfpSpendableOutput: ULong = 0UL,
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
@@ -1650,7 +1709,7 @@ private fun SpeedUpDialog(
                                 )
                                 if (method == SpeedUpMethod.CPFP) {
                                     Text(
-                                        text = "(~${estimatedChildVsize}vB × ${kotlin.math.ceil(feeRate.toDouble()).toLong()} sat/vB)",
+                                        text = "(${estimatedChildVsize} vB × ${kotlin.math.ceil(feeRate.toDouble()).toLong()} sat/vB)",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = TextSecondary
                                     )
@@ -1664,7 +1723,7 @@ private fun SpeedUpDialog(
                                     val changeBack = fundsForFee.toLong() - additionalCost
                                     if (canAfford && changeBack > dustLimit) {
                                         Text(
-                                            text = if (privacyMode) "You'll receive back: $HIDDEN_AMOUNT" else "You'll receive back: ~${formatAmount(changeBack.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
+                                            text = if (privacyMode) "You'll receive back: $HIDDEN_AMOUNT" else "You'll receive back: ${formatAmount(changeBack.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = AccentGreen
                                         )
@@ -1680,7 +1739,7 @@ private fun SpeedUpDialog(
                                             color = ErrorRed
                                         )
                                         Text(
-                                            text = if (privacyMode) "Need: $HIDDEN_AMOUNT (fee + dust)" else "Need: ~${formatAmount(needed.toULong(), useSats)} ${if (useSats) "sats" else "BTC"} (fee + dust)",
+                                            text = if (privacyMode) "Need: $HIDDEN_AMOUNT (fee + dust)" else "Need: ${formatAmount(needed.toULong(), useSats)} ${if (useSats) "sats" else "BTC"} (fee + dust)",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = ErrorRed
                                         )
@@ -1717,10 +1776,13 @@ private fun SpeedUpDialog(
                             style = MaterialTheme.typography.labelMedium,
                             color = TextSecondary
                         )
-                        IconButton(
-                            onClick = onRefreshFees,
-                            enabled = feeEstimationState !is FeeEstimationResult.Loading,
-                            modifier = Modifier.size(24.dp)
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(DarkSurfaceVariant)
+                                .clickable(enabled = feeEstimationState !is FeeEstimationResult.Loading) { onRefreshFees() }
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
@@ -1753,12 +1815,15 @@ private fun SpeedUpDialog(
                             )
                         }
                     } else if (estimates != null) {
+                        val isElectrum = estimates.source == FeeEstimateSource.ELECTRUM_SERVER
+                        val fastLabel = if (isElectrum) "~2 blocks" else "~1 block"
+                        val medLabel = if (isElectrum) "~6 blocks" else "~3 blocks"
+                        val slowLabel = if (isElectrum) "~12 blocks" else "~6 blocks"
+                        
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // ~1 block card
-                            // ~1 block card
                             val isSelected1 = selectedFeeOption == "fastest"
                             Card(
                                 onClick = { 
@@ -1779,7 +1844,7 @@ private fun SpeedUpDialog(
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
-                                        text = "~1 block",
+                                        text = fastLabel,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (isSelected1) MaterialTheme.colorScheme.onBackground else TextSecondary
                                     )
@@ -1797,7 +1862,6 @@ private fun SpeedUpDialog(
                                     )
                                 }
                             }
-                            // ~3 blocks card
                             val isSelected3 = selectedFeeOption == "halfHour"
                             Card(
                                 onClick = { 
@@ -1818,7 +1882,7 @@ private fun SpeedUpDialog(
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
-                                        text = "~3 blocks",
+                                        text = medLabel,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (isSelected3) MaterialTheme.colorScheme.onBackground else TextSecondary
                                     )
@@ -1836,7 +1900,6 @@ private fun SpeedUpDialog(
                                     )
                                 }
                             }
-                            // ~6 blocks card
                             val isSelected6 = selectedFeeOption == "hour"
                             Card(
                                 onClick = { 
@@ -1857,7 +1920,7 @@ private fun SpeedUpDialog(
                                     horizontalAlignment = Alignment.CenterHorizontally
                                 ) {
                                     Text(
-                                        text = "~6 blocks",
+                                        text = slowLabel,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (isSelected6) MaterialTheme.colorScheme.onBackground else TextSecondary
                                     )
@@ -1875,6 +1938,15 @@ private fun SpeedUpDialog(
                                     )
                                 }
                             }
+                        }
+                        
+                        if (isElectrum && estimates.isUniform) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Server reports same rate for all targets (low fee environment)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
                         }
                     }
                 }
@@ -1921,34 +1993,6 @@ private fun SpeedUpDialog(
                     )
                 }
             }
-        }
-    }
-}
-
-/**
- * Helper composable for detail rows
- */
-@Composable
-private fun DetailRow(
-    label: String,
-    value: String? = null,
-    content: @Composable (() -> Unit)? = null
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = TextSecondary
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        if (content != null) {
-            content()
-        } else if (value != null) {
-            Text(
-                text = value,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
         }
     }
 }

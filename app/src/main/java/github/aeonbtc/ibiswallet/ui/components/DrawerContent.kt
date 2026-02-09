@@ -27,12 +27,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
-
 import androidx.compose.ui.unit.dp
+import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
-import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 
 sealed class DrawerItem(
@@ -137,7 +136,7 @@ fun DrawerContent(
             Spacer(modifier = Modifier.height(16.dp))
             
             Text(
-                text = "Version 1.0.0",
+                text = "Version ${BuildConfig.VERSION_NAME}",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary.copy(alpha = 0.6f),
                 modifier = Modifier.padding(horizontal = 24.dp)

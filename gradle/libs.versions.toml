@@ -5,16 +5,13 @@ coreKtx = "1.15.0"
 junit = "4.13.2"
 junitVersion = "1.2.1"
 espressoCore = "3.6.1"
-appcompat = "1.7.0"
-material = "1.12.0"
 lifecycleRuntimeKtx = "2.8.7"
 activityCompose = "1.9.3"
 composeBom = "2024.12.01"
 navigationCompose = "2.8.5"
 material3 = "1.3.1"
-bdk = "1.0.0-beta.6"
+bdk = "2.3.0"
 securityCrypto = "1.1.0-alpha06"
-datastorePreferences = "1.1.1"
 coroutines = "1.9.0"
 lifecycleViewmodelCompose = "2.8.7"
 zxing = "3.5.3"
@@ -22,14 +19,13 @@ cameraX = "1.3.4"
 torAndroid = "0.4.8.16"
 okhttp = "4.12.0"
 biometric = "1.1.0"
+hummingbird = "1.7.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }
-androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
-material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
@@ -44,7 +40,6 @@ androidx-material-icons-extended = { group = "androidx.compose.material", name =
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 bdk-android = { group = "org.bitcoindevkit", name = "bdk-android", version.ref = "bdk" }
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
-androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastorePreferences" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycleViewmodelCompose" }
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
@@ -55,6 +50,7 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 tor-android = { group = "info.guardianproject", name = "tor-android", version.ref = "torAndroid" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+hummingbird = { group = "com.sparrowwallet", name = "hummingbird", version.ref = "hummingbird" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
