@@ -2,7 +2,10 @@
 
 A self-custody Bitcoin wallet for Android, inspired by [Sparrow Wallet](https://sparrowwallet.com/) but built for mobile. Designed for experienced users — no hand-holding, no training wheels.
 
-Built with [BDK](https://bitcoindevkit.org/).
+<img width="200" height="444" alt="Screenshot_20260209_000530" src="https://github.com/user-attachments/assets/7f122a48-7ff4-4670-bab9-275a91564013" />
+<img width="200" height="444" alt="Screenshot_20260209_002731" src="https://github.com/user-attachments/assets/a02f2867-e396-42c9-85b8-ce2dfc0438c7" />
+<img width="200" height="444" alt="Screenshot_20260209_000059" src="https://github.com/user-attachments/assets/da22755b-f86d-4923-b31d-669997a43e63" />
+<img width="200" height="444" alt="Screenshot_20260209_002804" src="https://github.com/user-attachments/assets/8b6ea96c-f569-473c-8b38-3ad7a08d47a4" />
 
 ## Key Features
 
@@ -21,6 +24,7 @@ Built with [BDK](https://bitcoindevkit.org/).
 - **PIN & biometrics** — configurable lock timing, screenshot prevention
 - **BIP21 & QR scanning** — supports SeedQR, CompactSeedQR, animated BC-UR, ColdCard/Specter JSON, plain addresses, server addresses
 - **Block explorer** — mempool.space (clearnet or onion) or custom instance
+- **Built with** [BDK](https://bitcoindevkit.org/).
 
 ## Building
 
