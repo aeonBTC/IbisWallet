@@ -15,7 +15,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 
 - **Multi-wallet** — create, import, and switch between wallets
 - **Watch-only wallets** — import xpub/zpub, output descriptors, ColdCard JSON, Specter JSON, or QR codes
-- **Hardware wallet signing** — animated QR codes for PSBTs, compatible with SeedSigner, ColdCard, Keystone, Passport, Jade, BitBox02
+- **Hardware wallet signing** — animated QR codes for PSBTs, compatible with SeedSigner, ColdCard, Keystone, Passport, Jade
 - **Coin control** — select specific UTXOs, freeze/unfreeze, send from individual outputs
 - **RBF & CPFP** — bump fees on unconfirmed transactions, both outgoing and incoming
 - **Multi-recipient** — batch multiple outputs in a single transaction
