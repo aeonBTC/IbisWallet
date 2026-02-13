@@ -31,6 +31,7 @@ class TorManager(private val context: Context) {
     
     private var torService: TorService? = null
     private var isBound = false
+    private var isReceiverRegistered = false
     
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -110,6 +111,7 @@ class TorManager(private val context: Context) {
         } else {
             context.registerReceiver(statusReceiver, filter)
         }
+        isReceiverRegistered = true
         
         // Bind to Tor service
         val intent = Intent(context, TorService::class.java)
@@ -132,10 +134,13 @@ class TorManager(private val context: Context) {
             isBound = false
         }
         
-        try {
-            context.unregisterReceiver(statusReceiver)
-        } catch (e: Exception) {
-            if (BuildConfig.DEBUG) Log.e(TAG, "Error unregistering Tor status receiver", e)
+        if (isReceiverRegistered) {
+            try {
+                context.unregisterReceiver(statusReceiver)
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.e(TAG, "Error unregistering Tor status receiver", e)
+            }
+            isReceiverRegistered = false
         }
         
         torService = null
@@ -149,6 +154,31 @@ class TorManager(private val context: Context) {
      * Check if Tor is ready for use
      */
     fun isReady(): Boolean = _torState.value.status == TorStatus.CONNECTED
+    
+    /**
+     * Wipe all Tor data from disk (relay descriptors, circuit state, cached
+     * consensus, keys). Call stop() first to unbind the service, then delete
+     * the data directory. Used during auto-wipe to eliminate forensic traces
+     * of Tor usage.
+     */
+    fun wipeTorData() {
+        // Stop Tor if running
+        stop()
+        // The tor-android library stores data in <filesDir>/app_torservice/
+        try {
+            val torDataDir = java.io.File(context.filesDir, "app_torservice")
+            if (torDataDir.exists()) {
+                torDataDir.deleteRecursively()
+            }
+            // Also check the cache directory for any Tor temp files
+            val torCacheDir = java.io.File(context.cacheDir, "tor")
+            if (torCacheDir.exists()) {
+                torCacheDir.deleteRecursively()
+            }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error wiping Tor data: ${e.message}")
+        }
+    }
     
 }
 

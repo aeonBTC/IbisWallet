@@ -4,9 +4,21 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -16,12 +28,32 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -30,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
@@ -53,6 +86,7 @@ import org.bitcoindevkit.WordCount
 fun GenerateWalletScreen(
     onGenerate: (config: WalletImportConfig) -> Unit,
     onBack: () -> Unit,
+    existingWalletNames: List<String> = emptyList(),
     isLoading: Boolean = false,
     error: String? = null
 ) {
@@ -120,7 +154,16 @@ fun GenerateWalletScreen(
         }
     }
 
-    val canCreate = walletName.isNotBlank() && generatedMnemonic != null && backedUp && !isLoading
+    // Auto-generate wallet name based on address type with incremental suffix
+    val autoWalletName = remember(selectedAddressType, existingWalletNames) {
+        val base = selectedAddressType.displayName
+        val count = existingWalletNames.count { name ->
+            name == base || name.matches(Regex("${Regex.escape(base)}_(\\d+)"))
+        }
+        if (count == 0) base else "${base}_${count + 1}"
+    }
+
+    val canCreate = generatedMnemonic != null && backedUp && !isLoading
 
     Column(
         modifier = Modifier
@@ -174,7 +217,7 @@ fun GenerateWalletScreen(
                     value = walletName,
                     onValueChange = { walletName = it },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("My Wallet", color = TextSecondary.copy(alpha = 0.5f)) },
+                    placeholder = { Text(autoWalletName, color = TextSecondary.copy(alpha = 0.5f)) },
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -329,7 +372,9 @@ fun GenerateWalletScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(36.dp),
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { usePassphrase = !usePassphrase },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
@@ -403,7 +448,9 @@ fun GenerateWalletScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(36.dp),
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { useCustomPath = !useCustomPath },
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Checkbox(
@@ -464,29 +511,20 @@ fun GenerateWalletScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         // Generate / Seed phrase display
         if (generatedMnemonic == null) {
-            Surface(
+            IbisButton(
                 onClick = { generateMnemonic() },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = BitcoinOrange.copy(alpha = 0.10f),
-                border = BorderStroke(1.dp, BitcoinOrange.copy(alpha = 0.3f))
             ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Text(
-                        text = "Generate Seed Phrase",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = BitcoinOrange
-                    )
-                }
+                Text(
+                    text = "Generate Seed Phrase",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
             }
         } else {
             // Seed phrase display
@@ -601,7 +639,10 @@ fun GenerateWalletScreen(
 
             // Backup confirmation checkbox
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { backedUp = !backedUp },
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Checkbox(
@@ -626,8 +667,9 @@ fun GenerateWalletScreen(
                 onClick = {
                     val passphraseValue = if (usePassphrase && passphrase.isNotBlank()) passphrase else null
                     val customPathValue = if (useCustomPath && customPath.isNotBlank()) customPath else null
+                    val finalName = walletName.trim().ifBlank { autoWalletName }
                     val config = WalletImportConfig(
-                        name = walletName.trim(),
+                        name = finalName,
                         keyMaterial = generatedMnemonic!!,
                         addressType = selectedAddressType,
                         passphrase = passphraseValue,

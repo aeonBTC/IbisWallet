@@ -28,7 +28,6 @@ object QrFormatParser {
 
     private const val TAG = "QrFormatParser"
     private var cachedWordlist: List<String>? = null
-    private var cachedWordSet: Set<String>? = null
 
     /**
      * Load the BIP39 English wordlist from assets. Cached after first load.
@@ -39,7 +38,6 @@ object QrFormatParser {
             BufferedReader(InputStreamReader(stream)).readLines()
         }
         cachedWordlist = words
-        cachedWordSet = words.toSet()
         return words
     }
 

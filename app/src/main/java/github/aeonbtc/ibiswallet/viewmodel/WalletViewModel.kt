@@ -3,6 +3,7 @@ package github.aeonbtc.ibiswallet.viewmodel
 import android.app.Application
 import android.net.Uri
 import android.util.Base64
+
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import github.aeonbtc.ibiswallet.data.BtcPriceService
@@ -89,8 +90,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     // Minimum fee rate from connected Electrum server
     val minFeeRate: StateFlow<Double> = repository.minFeeRate
     
-    // Privacy mode - hides all amounts when active (resets each session)
-    private val _privacyMode = MutableStateFlow(false)
+    // Privacy mode - hides all amounts when active (persisted across sessions)
+    private val _privacyMode = MutableStateFlow(repository.getPrivacyMode())
     val privacyMode: StateFlow<Boolean> = _privacyMode.asStateFlow()
     
     // Pre-selected UTXO for coin control (set from AllUtxosScreen)
@@ -117,6 +118,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private val _dryRunResult = MutableStateFlow<github.aeonbtc.ibiswallet.data.model.DryRunResult?>(null)
     val dryRunResult: StateFlow<github.aeonbtc.ibiswallet.data.model.DryRunResult?> = _dryRunResult.asStateFlow()
     private var dryRunJob: kotlinx.coroutines.Job? = null
+    
+    // Manual broadcast state (standalone tx broadcast, not tied to any wallet)
+    private val _manualBroadcastState = MutableStateFlow(ManualBroadcastState())
+    val manualBroadcastState: StateFlow<ManualBroadcastState> = _manualBroadcastState.asStateFlow()
+    
+    // Duress mode state (not persisted — resets on app restart which forces re-auth via lock screen)
+    private val _isDuressMode = MutableStateFlow(false)
+    val isDuressMode: StateFlow<Boolean> = _isDuressMode.asStateFlow()
     
 
     
@@ -209,45 +218,46 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.value = _uiState.value.copy(isConnecting = true, error = null)
             
             try {
-                // Auto-toggle Tor based on server type
+                // Auto-enable Tor for .onion addresses, auto-disable for clearnet
+                // (but keep Tor alive if the active fee source is .onion)
+                val feeSourceNeedsTor = isFeeSourceOnion()
                 if (config.isOnionAddress()) {
-                    // Enable Tor for .onion addresses
                     repository.setTorEnabled(true)
-                    
-                    // Start Tor if not already running
-                    if (!torManager.isReady()) {
-                        torManager.start()
-                        
-                        // Wait for Tor to be ready
-                        var attempts = 0
-                        while (!torManager.isReady() && attempts < 120) {
-                            delay(500)
-                            attempts++
-                            
-                            if (torState.value.status == TorStatus.ERROR) {
-                                _uiState.value = _uiState.value.copy(
-                                    isConnecting = false,
-                                    error = "Tor failed to start: ${torState.value.statusMessage}"
-                                )
-                                _events.emit(WalletEvent.Error("Tor failed to start"))
-                                return@launch
-                            }
-                        }
-                        
-                        if (!torManager.isReady()) {
+                } else if (repository.isTorEnabled()) {
+                    // Switching to clearnet — Electrum won't use Tor proxy
+                    repository.setTorEnabled(false)
+                    // Only stop the Tor service if nothing else needs it
+                    if (!feeSourceNeedsTor) {
+                        torManager.stop()
+                    }
+                }
+                val needsTor = config.isOnionAddress()
+
+                if (needsTor && !torManager.isReady()) {
+                    torManager.start()
+
+                    var attempts = 0
+                    while (!torManager.isReady() && attempts < 120) {
+                        delay(500)
+                        attempts++
+
+                        if (torState.value.status == TorStatus.ERROR) {
                             _uiState.value = _uiState.value.copy(
                                 isConnecting = false,
-                                error = "Tor connection timed out"
+                                error = "Tor failed to start: ${torState.value.statusMessage}"
                             )
-                            _events.emit(WalletEvent.Error("Tor connection timed out"))
+                            _events.emit(WalletEvent.Error("Tor failed to start"))
                             return@launch
                         }
                     }
-                } else {
-                    // Disable Tor for clearnet addresses
-                    if (repository.isTorEnabled()) {
-                        repository.setTorEnabled(false)
-                        torManager.stop()
+
+                    if (!torManager.isReady()) {
+                        _uiState.value = _uiState.value.copy(
+                            isConnecting = false,
+                            error = "Tor connection timed out"
+                        )
+                        _events.emit(WalletEvent.Error("Tor connection timed out"))
+                        return@launch
                     }
                 }
                 
@@ -280,10 +290,17 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         _events.emit(WalletEvent.Connected)
                         // Refresh fee estimates (server may support sub-sat fees)
                         fetchFeeEstimates()
-                        // Auto-sync after connecting
-                        sync()
-                        // Start background sync loop (~45s interval)
+                        // Background sync as safety net / keep-alive.
+                        // Start BEFORE subscriptions so it runs even if the
+                        // subscription socket fails (critical for Tor where
+                        // the third circuit may not establish).
                         startBackgroundSync()
+                        // Smart sync + real-time subscriptions (Sparrow-style).
+                        // Runs in the background — does NOT block the connection
+                        // flow. Creates a third upstream socket for push
+                        // notifications. Over Tor this takes 3-10s extra.
+                        // If it fails, background sync polling covers us.
+                        launchSubscriptions()
                     }
                     result is WalletResult.Error -> {
                         _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false)
@@ -327,6 +344,15 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun sync() {
         viewModelScope.launch {
+            // Watch address wallets use Electrum-only sync
+            if (repository.isWatchAddressWallet()) {
+                val activeId = repository.getActiveWalletId() ?: return@launch
+                when (val result = repository.syncWatchAddress(activeId)) {
+                    is WalletResult.Success -> _events.emit(WalletEvent.SyncCompleted)
+                    is WalletResult.Error -> _events.emit(WalletEvent.Error(result.message))
+                }
+                return@launch
+            }
             when (val result = repository.sync()) {
                 is WalletResult.Success -> {
                     _events.emit(WalletEvent.SyncCompleted)
@@ -341,14 +367,28 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Start background sync loop. Runs every ~45s while connected.
      * Uses the script hash pre-check so it's nearly free when nothing changed.
+     * Also acts as a keep-alive: if the server connection is dead, marks
+     * isConnected=false so the UI reflects reality without waiting for user action.
      */
     private fun startBackgroundSync() {
         backgroundSyncJob?.cancel()
+        var consecutiveFailures = 0
         backgroundSyncJob = viewModelScope.launch {
             while (true) {
                 delay(BACKGROUND_SYNC_INTERVAL_MS)
                 if (!_uiState.value.isConnected) break
-                repository.sync() // errors are non-fatal, pre-check makes this cheap
+                when (repository.sync()) {
+                    is WalletResult.Success -> consecutiveFailures = 0
+                    is WalletResult.Error -> {
+                        consecutiveFailures++
+                        // 2 consecutive failures = connection is dead, update UI
+                        if (consecutiveFailures >= 2) {
+                            _uiState.value = _uiState.value.copy(isConnected = false)
+                            _events.emit(WalletEvent.Error("Server connection lost"))
+                            break
+                        }
+                    }
+                }
             }
         }
     }
@@ -359,6 +399,43 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private fun stopBackgroundSync() {
         backgroundSyncJob?.cancel()
         backgroundSyncJob = null
+    }
+
+    /**
+     * Launch real-time subscriptions in the background (fire-and-forget).
+     *
+     * Creates a third upstream socket for Electrum push notifications.
+     * Over Tor this takes 3-10s to establish the circuit, so it MUST NOT
+     * block the connection flow. If subscriptions fail (e.g., Tor circuit
+     * doesn't establish), the background sync polling covers us.
+     *
+     * Also handles the initial sync: if needsFullSync is set (first import),
+     * runs full sync first. Otherwise compares subscription statuses to
+     * persisted cache and only syncs if changes were detected.
+     */
+    private fun launchSubscriptions() {
+        viewModelScope.launch {
+            val subResult = withContext(Dispatchers.IO) {
+                repository.startRealTimeSubscriptions()
+            }
+            when (subResult) {
+                WalletRepository.SubscriptionResult.SYNCED,
+                WalletRepository.SubscriptionResult.FULL_SYNCED ->
+                    _events.emit(WalletEvent.SyncCompleted)
+                WalletRepository.SubscriptionResult.NO_CHANGES -> { }
+                WalletRepository.SubscriptionResult.FAILED -> {
+                    // Subscription socket failed (common over Tor).
+                    // Background sync polling is already running as fallback.
+                    // Run a one-time sync so the wallet is up-to-date.
+                    when (val syncResult = repository.sync()) {
+                        is WalletResult.Success ->
+                            _events.emit(WalletEvent.SyncCompleted)
+                        is WalletResult.Error ->
+                            _events.emit(WalletEvent.Error(syncResult.message))
+                    }
+                }
+            }
+        }
     }
     
     /**
@@ -385,7 +462,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
             
-            when (val result = repository.requestFullSync(walletId)) {
+            // Watch address wallets use Electrum-only sync
+            val result = if (repository.isWatchAddressWallet()) {
+                repository.syncWatchAddress(walletId)
+            } else {
+                repository.requestFullSync(walletId)
+            }
+            
+            when (result) {
                 is WalletResult.Success -> {
                     _events.emit(WalletEvent.SyncCompleted)
                 }
@@ -769,6 +853,36 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
     
     /**
+     * Broadcast a manually provided signed transaction (raw hex or signed PSBT).
+     * Standalone — the transaction may not belong to any loaded wallet.
+     */
+    fun broadcastManualTransaction(data: String) {
+        viewModelScope.launch {
+            _manualBroadcastState.value = ManualBroadcastState(isBroadcasting = true)
+            val result = repository.broadcastManualData(data) { status ->
+                _manualBroadcastState.value = _manualBroadcastState.value.copy(
+                    broadcastStatus = status
+                )
+            }
+            when (result) {
+                is WalletResult.Success -> {
+                    _manualBroadcastState.value = ManualBroadcastState(txid = result.data)
+                }
+                is WalletResult.Error -> {
+                    _manualBroadcastState.value = ManualBroadcastState(error = result.message)
+                }
+            }
+        }
+    }
+    
+    /**
+     * Clear the manual broadcast state (e.g., when navigating away)
+     */
+    fun clearManualBroadcastState() {
+        _manualBroadcastState.value = ManualBroadcastState()
+    }
+    
+    /**
      * Bump fee of an unconfirmed transaction using RBF
      */
     fun bumpFee(txid: String, newFeeRate: Float) {
@@ -881,9 +995,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 is WalletResult.Success -> {
                     _uiState.value = _uiState.value.copy(isLoading = false)
                     _events.emit(WalletEvent.WalletSwitched)
-                    // Sync the newly active wallet if connected
+                    // Re-subscribe new wallet's addresses and sync if needed
                     if (_uiState.value.isConnected) {
-                        sync()
+                        launchSubscriptions()
                     }
                 }
                 is WalletResult.Error -> {
@@ -947,47 +1061,47 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 val servers = repository.getAllElectrumServers()
                 val serverConfig = servers.find { it.id == serverId }
                 
-                if (serverConfig != null) {
-                    // Auto-toggle Tor based on server type
-                    if (serverConfig.isOnionAddress()) {
-                        // Enable Tor for .onion addresses
-                        repository.setTorEnabled(true)
-                        
-                        // Start Tor if not already running
-                        if (!torManager.isReady()) {
-                            torManager.start()
-                            
-                            // Wait for Tor to be ready
-                            var attempts = 0
-                            while (!torManager.isReady() && attempts < 120) {
-                                delay(500)
-                                attempts++
-                                
-                                if (torState.value.status == TorStatus.ERROR) {
-                                    _uiState.value = _uiState.value.copy(
-                                        isConnecting = false,
-                                        error = "Tor failed to start: ${torState.value.statusMessage}"
-                                    )
-                                    _events.emit(WalletEvent.Error("Tor failed to start"))
-                                    return@launch
-                                }
-                            }
-                            
-                            if (!torManager.isReady()) {
-                                _uiState.value = _uiState.value.copy(
-                                    isConnecting = false,
-                                    error = "Tor connection timed out"
-                                )
-                                _events.emit(WalletEvent.Error("Tor connection timed out"))
-                                return@launch
-                            }
+                // Auto-enable Tor for .onion addresses, auto-disable for clearnet
+                // (but keep Tor alive if the active fee source is .onion)
+                val isOnion = serverConfig?.isOnionAddress() == true
+                val feeSourceNeedsTor = isFeeSourceOnion()
+                if (isOnion) {
+                    repository.setTorEnabled(true)
+                } else if (repository.isTorEnabled()) {
+                    // Switching to clearnet — Electrum won't use Tor proxy
+                    repository.setTorEnabled(false)
+                    // Only stop the Tor service if nothing else needs it
+                    if (!feeSourceNeedsTor) {
+                        torManager.stop()
+                    }
+                }
+                val needsTor = isOnion
+
+                if (needsTor && !torManager.isReady()) {
+                    torManager.start()
+
+                    var attempts = 0
+                    while (!torManager.isReady() && attempts < 120) {
+                        delay(500)
+                        attempts++
+
+                        if (torState.value.status == TorStatus.ERROR) {
+                            _uiState.value = _uiState.value.copy(
+                                isConnecting = false,
+                                error = "Tor failed to start: ${torState.value.statusMessage}"
+                            )
+                            _events.emit(WalletEvent.Error("Tor failed to start"))
+                            return@launch
                         }
-                    } else {
-                        // Disable Tor for clearnet addresses
-                        if (repository.isTorEnabled()) {
-                            repository.setTorEnabled(false)
-                            torManager.stop()
-                        }
+                    }
+
+                    if (!torManager.isReady()) {
+                        _uiState.value = _uiState.value.copy(
+                            isConnecting = false,
+                            error = "Tor connection timed out"
+                        )
+                        _events.emit(WalletEvent.Error("Tor connection timed out"))
+                        return@launch
                     }
                 }
                 
@@ -1020,10 +1134,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         _events.emit(WalletEvent.Connected)
                         // Refresh fee estimates (server may support sub-sat fees)
                         fetchFeeEstimates()
-                        // Auto-sync after connecting
-                        sync()
-                        // Start background sync loop (~45s interval)
                         startBackgroundSync()
+                        launchSubscriptions()
                     }
                     result is WalletResult.Error -> {
                         _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false)
@@ -1425,7 +1537,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Toggle privacy mode (hides all monetary amounts)
      */
     fun togglePrivacyMode() {
-        _privacyMode.value = !_privacyMode.value
+        val newValue = !_privacyMode.value
+        _privacyMode.value = newValue
+        repository.setPrivacyMode(newValue)
     }
     
     /**
@@ -1475,6 +1589,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun getCustomFeeSourceUrl(): String {
         return repository.getCustomFeeSourceUrl() ?: ""
+    }
+    
+    /**
+     * Check if the currently active fee source URL is a .onion address.
+     * Returns false if fee source is off, Electrum, or a clearnet URL.
+     */
+    fun isFeeSourceOnion(): Boolean {
+        return repository.getFeeSourceUrl()?.contains(".onion") == true
     }
     
     /**
@@ -1549,10 +1671,26 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             
             val useTorProxy = feeSourceUrl.contains(".onion")
             
-            // If Tor is required but not ready, show error
-            if (useTorProxy && !torManager.isReady()) {
-                _feeEstimationState.value = FeeEstimationResult.Error("Tor is required but not connected")
-                return@launch
+            // If Tor is required, ensure it's running — fee source manages its own Tor needs
+            if (useTorProxy) {
+                if (!torManager.isReady()) {
+                    torManager.start()
+                    var torAttempts = 0
+                    while (!torManager.isReady() && torAttempts < 120) {
+                        delay(500)
+                        torAttempts++
+                        if (torState.value.status == TorStatus.ERROR) {
+                            _feeEstimationState.value = FeeEstimationResult.Error("Tor failed to start")
+                            return@launch
+                        }
+                    }
+                    if (!torManager.isReady()) {
+                        _feeEstimationState.value = FeeEstimationResult.Error("Tor connection timed out")
+                        return@launch
+                    }
+                }
+                // Wait for the SOCKS proxy to be ready to accept connections
+                delay(500)
             }
             
             // Only use precise fees if the connected server supports sub-sat fee rates
@@ -1662,10 +1800,228 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         repository.setDisableScreenshots(disabled)
     }
     
+    // ==================== Duress PIN / Decoy Wallet ====================
+    
+    /**
+     * Check if duress mode is enabled in settings
+     */
+    fun isDuressEnabled(): Boolean = repository.isDuressEnabled()
+    
+    /**
+     * Set up a duress wallet with a PIN and mnemonic.
+     * Creates the decoy wallet, saves the duress PIN, and enables duress mode.
+     */
+    fun setupDuress(
+        pin: String,
+        mnemonic: String,
+        passphrase: String?,
+        customDerivationPath: String? = null,
+        addressType: AddressType = AddressType.SEGWIT,
+        onSuccess: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            when (val result = repository.createDuressWallet(mnemonic, passphrase, customDerivationPath, addressType)) {
+                is WalletResult.Success -> {
+                    repository.saveDuressPin(pin)
+                    repository.setDuressEnabled(true)
+                    onSuccess()
+                }
+                is WalletResult.Error -> {
+                    onError(result.message)
+                }
+            }
+        }
+    }
+    
+    /**
+     * Disable duress mode: delete the decoy wallet and clear all duress data
+     */
+    fun disableDuress(onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            _isDuressMode.value = false
+            repository.deleteDuressWallet()
+            onComplete()
+        }
+    }
+    
+    /**
+     * Enter duress mode: switch to the decoy wallet.
+     * Called when the duress PIN is entered on the lock screen.
+     */
+    fun enterDuressMode() {
+        viewModelScope.launch {
+            val result = repository.switchToDuressWallet()
+            if (result is WalletResult.Success) {
+                _isDuressMode.value = true
+                if (_uiState.value.isConnected) {
+                    launchSubscriptions()
+                }
+            } else {
+                // Duress wallet no longer exists — clean up stale config
+                _isDuressMode.value = false
+                repository.deleteDuressWallet()
+            }
+        }
+    }
+    
+    /**
+     * Exit duress mode: switch back to the real wallet.
+     * Called when the real PIN or biometric is used on the lock screen.
+     */
+    fun exitDuressMode() {
+        if (!_isDuressMode.value) return
+        viewModelScope.launch {
+            _isDuressMode.value = false
+            repository.switchToRealWallet()
+            if (_uiState.value.isConnected) {
+                launchSubscriptions()
+            }
+        }
+    }
+    
+    /**
+     * Get the duress wallet ID (for filtering wallet lists)
+     */
+    fun getDuressWalletId(): String? = repository.getDuressWalletId()
+    
+    // ==================== Auto-Wipe ====================
+    
+    /**
+     * Get the auto-wipe threshold setting
+     */
+    fun getAutoWipeThreshold(): SecureStorage.AutoWipeThreshold = repository.getAutoWipeThreshold()
+    
+    /**
+     * Set the auto-wipe threshold
+     */
+    fun setAutoWipeThreshold(threshold: SecureStorage.AutoWipeThreshold) {
+        repository.setAutoWipeThreshold(threshold)
+    }
+    
+    // ==================== Cloak Mode ====================
+    
+    fun isCloakModeEnabled(): Boolean = repository.isCloakModeEnabled()
+    
+    fun enableCloakMode(code: String) {
+        repository.setCloakCode(code)
+        repository.setCloakModeEnabled(true)
+        repository.setPendingIconAlias(SecureStorage.ALIAS_CALCULATOR)
+    }
+    
+    fun disableCloakMode() {
+        repository.clearCloakData()
+        // clearCloakData already schedules the alias swap back to default
+    }
+    
+    /**
+     * Wipe all wallet data. Called when auto-wipe threshold is reached.
+     * Clears clipboard, stops Tor and deletes its data, wipes all wallet
+     * databases and preferences, and deletes the Electrum cache DB file.
+     */
+    fun wipeAllData(onComplete: () -> Unit = {}) {
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            
+            // Clear clipboard to prevent sensitive data (addresses, PSBTs) from surviving wipe
+            try {
+                val clipboard = app.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                    as android.content.ClipboardManager
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    clipboard.clearPrimaryClip()
+                } else {
+                    clipboard.setPrimaryClip(
+                        android.content.ClipData.newPlainText("", "")
+                    )
+                }
+            } catch (_: Exception) { }
+            
+            // Stop Tor and wipe its data directory (relay descriptors, circuit state, etc.)
+            try {
+                torManager.wipeTorData()
+            } catch (_: Exception) { }
+            
+            // Wipe all wallet data (BDK databases, preferences, Electrum cache tables, in-memory state)
+            repository.wipeAllData()
+            
+            // Delete the Electrum cache database file (not just cleared rows)
+            // to prevent forensic recovery from SQLite free pages
+            try {
+                app.deleteDatabase("electrum_cache.db")
+            } catch (_: Exception) { }
+            
+            onComplete()
+        }
+    }
+    
+    // ==================== Sweep Private Key ====================
+    
+    private val _sweepState = MutableStateFlow(SweepState())
+    val sweepState: StateFlow<SweepState> = _sweepState.asStateFlow()
+    
+    fun scanWifBalances(wif: String) {
+        viewModelScope.launch {
+            _sweepState.value = SweepState(isScanning = true, scanProgress = "Scanning...")
+            when (val result = repository.scanWifBalances(wif) { progress ->
+                _sweepState.value = _sweepState.value.copy(scanProgress = progress)
+            }) {
+                is WalletResult.Success -> {
+                    _sweepState.value = _sweepState.value.copy(
+                        isScanning = false,
+                        scanResults = result.data,
+                        scanProgress = null
+                    )
+                }
+                is WalletResult.Error -> {
+                    _sweepState.value = _sweepState.value.copy(
+                        isScanning = false,
+                        error = result.message,
+                        scanProgress = null
+                    )
+                }
+            }
+        }
+    }
+    
+    fun sweepPrivateKey(wif: String, destination: String, feeRate: Float) {
+        viewModelScope.launch {
+            _sweepState.value = _sweepState.value.copy(isSweeping = true, sweepProgress = "Building transactions...")
+            when (val result = repository.sweepPrivateKey(wif, destination, feeRate) { progress ->
+                _sweepState.value = _sweepState.value.copy(sweepProgress = progress)
+            }) {
+                is WalletResult.Success -> {
+                    _sweepState.value = _sweepState.value.copy(
+                        isSweeping = false,
+                        sweepTxids = result.data,
+                        sweepProgress = null
+                    )
+                    for (txid in result.data) {
+                        _events.emit(WalletEvent.TransactionSent(txid))
+                    }
+                    // Quick sync to update balance with the incoming swept funds
+                    sync()
+                }
+                is WalletResult.Error -> {
+                    _sweepState.value = _sweepState.value.copy(
+                        isSweeping = false,
+                        error = result.message,
+                        sweepProgress = null
+                    )
+                }
+            }
+        }
+    }
+    
+    fun resetSweepState() {
+        _sweepState.value = SweepState()
+    }
+    
+    fun isWifPrivateKey(input: String): Boolean = repository.isWifPrivateKey(input)
+    
     companion object {
         private const val CONNECTION_TIMEOUT_MS = 30_000L
         private const val PBKDF2_ITERATIONS = 600_000
-        private const val BACKGROUND_SYNC_INTERVAL_MS = 120_000L
+        private const val BACKGROUND_SYNC_INTERVAL_MS = 300_000L
     }
 }
 
@@ -1700,6 +2056,23 @@ sealed class WalletEvent {
     data class WalletExported(val walletName: String) : WalletEvent()
     data object LabelsRestored : WalletEvent()
     data class Error(val message: String) : WalletEvent()
+}
+
+/**
+ * State for sweep private key operations
+ */
+data class SweepState(
+    val isScanning: Boolean = false,
+    val isSweeping: Boolean = false,
+    val scanResults: List<WalletRepository.SweepScanResult> = emptyList(),
+    val sweepTxids: List<String> = emptyList(),
+    val scanProgress: String? = null,
+    val sweepProgress: String? = null,
+    val error: String? = null
+) {
+    val totalBalanceSats: ULong get() = scanResults.sumOf { it.balanceSats.toLong() }.toULong()
+    val hasBalance: Boolean get() = scanResults.isNotEmpty()
+    val isComplete: Boolean get() = sweepTxids.isNotEmpty()
 }
 
 /**
@@ -1739,6 +2112,16 @@ data class PsbtState(
     val recipientAmountSats: ULong = 0UL,
     val changeAmountSats: ULong? = null,
     val totalInputSats: ULong = 0UL
+)
+
+/**
+ * State for manual transaction broadcast (standalone, not tied to any wallet).
+ */
+data class ManualBroadcastState(
+    val isBroadcasting: Boolean = false,
+    val broadcastStatus: String? = null,
+    val txid: String? = null,
+    val error: String? = null
 )
 
 /**

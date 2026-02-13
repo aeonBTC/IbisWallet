@@ -24,16 +24,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.WalletState
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -182,8 +179,6 @@ fun ReceiveScreen(
             .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(16.dp))
-        
         // QR Code Card
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -253,26 +248,6 @@ Spacer(modifier = Modifier.height(16.dp))
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(DarkSurface)
-                            .clickable(enabled = walletState.isInitialized) {
-                                onGenerateAddress()
-                            }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Generate New Address",
-                            tint = if (walletState.isInitialized)
-                                BitcoinOrange
-                            else
-                                TextSecondary.copy(alpha = 0.5f),
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
 
                     Box(
                         contentAlignment = Alignment.Center,
@@ -297,6 +272,27 @@ Spacer(modifier = Modifier.height(16.dp))
                             modifier = Modifier.size(20.dp)
                         )
                     }
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(DarkSurface)
+                            .clickable(enabled = walletState.isInitialized) {
+                                onGenerateAddress()
+                            }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Generate New Address",
+                            tint = if (walletState.isInitialized)
+                                BitcoinOrange
+                            else
+                                TextSecondary.copy(alpha = 0.5f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+
                 }
                 
                 // Toggle switches for Amount and Label
@@ -305,6 +301,8 @@ Spacer(modifier = Modifier.height(16.dp))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showAmountField = !showAmountField }
                             .padding(vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -439,6 +437,8 @@ Spacer(modifier = Modifier.height(16.dp))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showLabelField = !showLabelField }
                             .padding(vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -496,36 +496,18 @@ Spacer(modifier = Modifier.height(16.dp))
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            OutlinedButton(
+            IbisButton(
                 onClick = onShowAllAddresses,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(8.dp),
                 enabled = walletState.isInitialized,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = TextSecondary,
-                    disabledContentColor = TextSecondary.copy(alpha = 0.5f)
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (walletState.isInitialized) BorderColor.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
-                )
             ) {
                 Text("All Addresses")
             }
 
-            OutlinedButton(
+            IbisButton(
                 onClick = onShowAllUtxos,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(8.dp),
                 enabled = walletState.isInitialized,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = TextSecondary,
-                    disabledContentColor = TextSecondary.copy(alpha = 0.5f)
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (walletState.isInitialized) BorderColor.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
-                )
             ) {
                 Text("All UTXOs")
             }

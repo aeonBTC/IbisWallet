@@ -28,7 +28,8 @@ fun LockScreen(
     onPinEntered: (String) -> Boolean,
     onBiometricRequest: () -> Unit,
     isBiometricAvailable: Boolean = false,
-    storedPinLength: Int? = null
+    storedPinLength: Int? = null,
+    isDuressWithBiometric: Boolean = false
 ) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -37,8 +38,9 @@ fun LockScreen(
     val pinMaxLength = storedPinLength ?: MAX_PIN_LENGTH
 
     // Auto-trigger biometric on first composition if biometric is the security method
+    // Skip auto-trigger in duress+biometric mode (the C button is the hidden trigger)
     LaunchedEffect(securityMethod) {
-        if (securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && isBiometricAvailable) {
+        if (securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && isBiometricAvailable && !isDuressWithBiometric) {
             onBiometricRequest()
         }
     }
@@ -46,11 +48,11 @@ fun LockScreen(
     // Handle delayed PIN validation so user can see the last dot
     LaunchedEffect(pendingValidation) {
         if (pendingValidation) {
-            delay(75)
+            delay(5)
             val success = onPinEntered(pin)
             if (!success) {
                 attempts++
-                error = if (attempts >= 3) {
+                error = if (attempts >= 6) {
                     "Too many attempts"
                 } else {
                     "Incorrect PIN"
@@ -77,37 +79,60 @@ fun LockScreen(
 
 
             Text(
-                text = when (securityMethod) {
-                    SecureStorage.SecurityMethod.BIOMETRIC -> "Authenticate to continue"
-                    SecureStorage.SecurityMethod.PIN -> "Enter PIN to unlock"
-                    SecureStorage.SecurityMethod.NONE -> ""
+                text = when {
+                    isDuressWithBiometric -> "Enter PIN to unlock"
+                    securityMethod == SecureStorage.SecurityMethod.BIOMETRIC -> "Authenticate to continue"
+                    securityMethod == SecureStorage.SecurityMethod.PIN -> "Enter PIN to unlock"
+                    else -> ""
                 },
                 style = MaterialTheme.typography.bodyLarge,
                 color = TextSecondary
             )
 
-            // PIN length counter (no dots shown to avoid leaking PIN length)
-            if (securityMethod == SecureStorage.SecurityMethod.PIN || 
-                (securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && pin.isNotEmpty())) {
-
-                Spacer(modifier = Modifier.height(16.dp))
+            // PIN dots indicator - fixed height container to prevent layout jumps
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (pin.isNotEmpty()) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        repeat(pin.length) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(BitcoinOrange)
+                            )
+                        }
+                    }
+                }
             }
 
-            // Error message
-            if (error != null) {
-                Text(
-                    text = error!!,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ErrorRed,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(modifier = Modifier.height(16.dp))
+            // Error message - fixed height to prevent layout jumps
+            Box(
+                modifier = Modifier.height(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                if (error != null) {
+                    Text(
+                        text = error!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ErrorRed,
+                        textAlign = TextAlign.Center
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Biometric button (for biometric mode or as fallback option)
-            if (securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && isBiometricAvailable) {
+            // Hidden in duress+biometric mode — the C button is the secret trigger
+            if (securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && isBiometricAvailable && !isDuressWithBiometric) {
                 IconButton(
                     onClick = { onBiometricRequest() },
                     modifier = Modifier
@@ -159,8 +184,16 @@ fun LockScreen(
                 onConfirmClick = if (storedPinLength == null && pin.length >= MIN_PIN_LENGTH && !pendingValidation) {
                     { pendingValidation = true }
                 } else null,
-                onBiometricClick = if (isBiometricAvailable && securityMethod == SecureStorage.SecurityMethod.BIOMETRIC) {
+                onBiometricClick = if (isBiometricAvailable && securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && !isDuressWithBiometric) {
                     { onBiometricRequest() }
+                } else null,
+                // In duress+biometric mode, the "C" button clears input and triggers biometric
+                onClearWithBiometricClick = if (isDuressWithBiometric && isBiometricAvailable) {
+                    {
+                        pin = ""
+                        error = null
+                        onBiometricRequest()
+                    }
                 } else null,
                 showConfirmButton = storedPinLength == null
             )
@@ -174,6 +207,7 @@ private fun NumberPad(
     onBackspaceClick: () -> Unit,
     onConfirmClick: (() -> Unit)? = null,
     onBiometricClick: (() -> Unit)? = null,
+    onClearWithBiometricClick: (() -> Unit)? = null,
     showConfirmButton: Boolean = true
 ) {
     val numbers = listOf(
@@ -194,9 +228,28 @@ private fun NumberPad(
             ) {
                 row.forEachIndexed { colIndex, number ->
                     when {
-                        // Bottom-left: biometric or confirm button
+                        // Bottom-left: "C" (clear+biometric) button, biometric button, or empty
                         rowIndex == 3 && colIndex == 0 -> {
-                            if (onBiometricClick != null) {
+                            if (onClearWithBiometricClick != null) {
+                                // Disguised "C" button — looks like a clear button,
+                                // actually clears input and triggers biometric prompt
+                                Button(
+                                    onClick = onClearWithBiometricClick,
+                                    modifier = Modifier.size(72.dp),
+                                    shape = CircleShape,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = DarkCard,
+                                        contentColor = TextSecondary
+                                    ),
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Text(
+                                        text = "C",
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontSize = 28.sp
+                                    )
+                                }
+                            } else if (onBiometricClick != null) {
                                 IconButton(
                                     onClick = onBiometricClick,
                                     modifier = Modifier

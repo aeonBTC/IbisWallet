@@ -87,10 +87,13 @@ import github.aeonbtc.ibiswallet.navigation.bottomNavItems
 import github.aeonbtc.ibiswallet.ui.components.CertificateDialog
 import github.aeonbtc.ibiswallet.ui.components.DrawerContent
 import github.aeonbtc.ibiswallet.ui.components.DrawerItem
+import github.aeonbtc.ibiswallet.ui.components.WalletSelectorDropdown
+import github.aeonbtc.ibiswallet.ui.components.WalletSelectorPanel
 import github.aeonbtc.ibiswallet.ui.screens.AboutScreen
 import github.aeonbtc.ibiswallet.ui.screens.AllAddressesScreen
 import github.aeonbtc.ibiswallet.ui.screens.AllUtxosScreen
 import github.aeonbtc.ibiswallet.ui.screens.BalanceScreen
+import github.aeonbtc.ibiswallet.ui.screens.BroadcastTransactionScreen
 import github.aeonbtc.ibiswallet.ui.screens.ElectrumConfigScreen
 import github.aeonbtc.ibiswallet.ui.screens.GenerateWalletScreen
 import github.aeonbtc.ibiswallet.ui.screens.ImportWalletScreen
@@ -100,7 +103,9 @@ import github.aeonbtc.ibiswallet.ui.screens.ReceiveScreen
 import github.aeonbtc.ibiswallet.ui.screens.SecurityScreen
 import github.aeonbtc.ibiswallet.ui.screens.PsbtScreen
 import github.aeonbtc.ibiswallet.ui.screens.SendScreen
+import github.aeonbtc.ibiswallet.ui.screens.parseBip21Uri
 import github.aeonbtc.ibiswallet.ui.screens.SettingsScreen
+import github.aeonbtc.ibiswallet.ui.screens.SweepPrivateKeyScreen
 import github.aeonbtc.ibiswallet.ui.screens.WalletInfo
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -111,8 +116,10 @@ import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
+import github.aeonbtc.ibiswallet.ui.theme.TorPurple
 import github.aeonbtc.ibiswallet.tor.TorStatus
 import github.aeonbtc.ibiswallet.viewmodel.WalletEvent
+import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import kotlinx.coroutines.launch
 
@@ -146,13 +153,22 @@ fun IbisWalletApp(
     val psbtState by viewModel.psbtState.collectAsState()
     val certDialogState by viewModel.certDialogState.collectAsState()
     val dryRunResult by viewModel.dryRunResult.collectAsState()
+    val isDuressMode by viewModel.isDuressMode.collectAsState()
     
     // Global labels version counter - bumped when labels may have changed
     // (wallet imported with backup labels, wallet switched, sync completed)
     var labelsVersion by remember { mutableIntStateOf(0) }
     
+    // Wallet selector dropdown state
+    var walletSelectorExpanded by remember { mutableStateOf(false) }
+
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+
+    // Close wallet picker when navigating to a different screen
+    LaunchedEffect(currentDestination?.route) {
+        walletSelectorExpanded = false
+    }
     
     // Check if we're on a main screen (with bottom nav)
     val isMainScreen = currentDestination?.route in listOf(
@@ -235,9 +251,26 @@ fun IbisWalletApp(
         )
     }
     
-    // Build wallet list for ManageWallets screen from all wallets in state
+    // Existing wallet names for auto-naming on import/generate screens
+    val existingWalletNames = walletState.wallets.map { it.name }
+
+    // Filter wallets based on duress mode:
+    // - In duress mode: show only the duress wallet
+    // - Not in duress mode: hide the duress wallet
+    val duressWalletId = remember(isDuressMode) { viewModel.getDuressWalletId() }
+    val filteredWallets = remember(walletState.wallets, isDuressMode, duressWalletId) {
+        if (isDuressMode) {
+            walletState.wallets.filter { it.id == duressWalletId }
+        } else {
+            walletState.wallets.filter { it.id != duressWalletId }
+        }
+    }
+
+    // Build wallet list for ManageWallets screen from filtered wallets
     val activeWalletId = walletState.activeWallet?.id
-    val wallets = walletState.wallets.map { storedWallet ->
+    val wallets = filteredWallets.map { storedWallet ->
+        val isWatchAddress = storedWallet.derivationPath == "single" && storedWallet.isWatchOnly
+        val isPrivateKey = storedWallet.derivationPath == "single" && !storedWallet.isWatchOnly
         WalletInfo(
             id = storedWallet.id,
             name = storedWallet.name,
@@ -246,6 +279,8 @@ fun IbisWalletApp(
             derivationPath = storedWallet.derivationPath,
             isActive = storedWallet.id == activeWalletId,
             isWatchOnly = storedWallet.isWatchOnly,
+            isWatchAddress = isWatchAddress,
+            isPrivateKey = isPrivateKey,
             lastFullSyncTime = viewModel.getLastFullSyncTime(storedWallet.id),
             masterFingerprint = storedWallet.masterFingerprint
         )
@@ -344,14 +379,26 @@ fun IbisWalletApp(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(
-                                    text = if (isSubScreenWithTopBar) subScreenTitle 
-                                           else walletState.activeWallet?.name ?: "Ibis Wallet",
-                                    style = MaterialTheme.typography.titleLarge,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
+                                if (isSubScreenWithTopBar) {
+                                    Text(
+                                        text = subScreenTitle,
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = MaterialTheme.colorScheme.onBackground
+                                    )
+                                } else {
+                                    WalletSelectorDropdown(
+                                        activeWallet = walletState.activeWallet,
+                                        wallets = filteredWallets,
+                                        expanded = walletSelectorExpanded,
+                                        onToggle = { walletSelectorExpanded = !walletSelectorExpanded },
+                                        onDismiss = { walletSelectorExpanded = false },
+                                        onSelectWallet = { walletId ->
+                                            viewModel.switchWallet(walletId)
+                                        }
+                                    )
+                                }
                                 if (isMainScreen && isSecurityEnabled) {
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
                                     IconButton(
                                         onClick = onLockApp,
                                         modifier = Modifier.size(32.dp)
@@ -359,8 +406,8 @@ fun IbisWalletApp(
                                         Icon(
                                             imageVector = Icons.Default.Lock,
                                             contentDescription = "Lock app",
-                                            tint = TextSecondary,
-                                            modifier = Modifier.size(18.dp)
+                                            tint = BitcoinOrange,
+                                            modifier = Modifier.size(22.dp)
                                         )
                                     }
                                 }
@@ -397,6 +444,8 @@ fun IbisWalletApp(
                                 ConnectionStatusIndicator(
                                     isConnected = uiState.isConnected,
                                     isConnecting = uiState.isConnecting,
+                                    torStatus = torState.status,
+                                    isOnionServer = electrumConfig?.isOnionAddress() ?: false,
                                     onClick = { showConnectionStatusDialog = true }
                                 )
                             }
@@ -409,57 +458,55 @@ fun IbisWalletApp(
                 }
             },
             bottomBar = {
-                if (isMainScreen || isDrawerScreen) {
-                    NavigationBar(
-                        containerColor = DarkSurface,
-                        contentColor = MaterialTheme.colorScheme.onSurface
-                    ) {
-                        bottomNavItems.forEach { item ->
-                            val selected = currentDestination?.hierarchy?.any { 
-                                it.route == item.screen.route 
-                            } == true
-                            
-                            NavigationBarItem(
-                                icon = {
-                                    Icon(
-                                        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
-                                        contentDescription = item.title
-                                    )
-                                },
-                                label = {
-                                    Text(
-                                        text = item.title,
-                                        style = MaterialTheme.typography.labelMedium
-                                    )
-                                },
-                                selected = selected,
-                                onClick = {
-                                    // Only navigate if not already on this screen
-                                    if (currentDestination?.route != item.screen.route) {
-                                        navController.navigate(item.screen.route) {
-                                            popUpTo(navController.graph.findStartDestination().id) {
-                                                inclusive = false
-                                            }
+                NavigationBar(
+                    containerColor = DarkSurface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ) {
+                    bottomNavItems.forEach { item ->
+                        val selected = currentDestination?.hierarchy?.any {
+                            it.route == item.screen.route
+                        } == true
+
+                        NavigationBarItem(
+                            icon = {
+                                Icon(
+                                    imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                    contentDescription = item.title
+                                )
+                            },
+                            label = {
+                                Text(
+                                    text = item.title,
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            },
+                            selected = selected,
+                            onClick = {
+                                // Only navigate if not already on this screen
+                                if (currentDestination?.route != item.screen.route) {
+                                    navController.navigate(item.screen.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            inclusive = false
                                         }
                                     }
-                                },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = BitcoinOrange,
-                                    selectedTextColor = BitcoinOrange,
-                                    unselectedIconColor = TextSecondary,
-                                    unselectedTextColor = TextSecondary,
-                                    indicatorColor = Color.Transparent
-                                )
+                                }
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = BitcoinOrange,
+                                selectedTextColor = BitcoinOrange,
+                                unselectedIconColor = TextSecondary,
+                                unselectedTextColor = TextSecondary,
+                                indicatorColor = Color.Transparent
                             )
-                        }
+                        )
                     }
                 }
             }
         ) { innerPadding ->
+            Box(modifier = Modifier.padding(innerPadding)) {
             NavHost(
                 navController = navController,
                 startDestination = Screen.Balance.route,
-                modifier = Modifier.padding(innerPadding),
                 enterTransition = { fadeIn(animationSpec = tween(200)) },
                 exitTransition = { fadeOut(animationSpec = tween(200)) },
                 popEnterTransition = { fadeIn(animationSpec = tween(200)) },
@@ -516,7 +563,17 @@ fun IbisWalletApp(
                         onFetchTxVsize = { txid -> viewModel.fetchTransactionVsize(txid) },
                         onRefreshFees = { viewModel.fetchFeeEstimates() },
                         onSync = { viewModel.sync() },
-                        onManageWallets = { navController.navigate(Screen.ManageWallets.route) }
+                        onManageWallets = { navController.navigate(Screen.ManageWallets.route) },
+                        onScanQrResult = { code ->
+                            val bip21 = parseBip21Uri(code)
+                            viewModel.updateSendScreenDraft(
+                                SendScreenDraft(
+                                    recipientAddress = bip21.address,
+                                    label = bip21.label ?: ""
+                                )
+                            )
+                            navController.navigate(Screen.Send.route)
+                        }
                     )
                 }
                 composable(Screen.Send.route) {
@@ -573,6 +630,9 @@ fun IbisWalletApp(
                         },
                         onCreatePsbtMulti = { recipients, feeRate, selectedUtxos, label, precomputedFeeSats ->
                             viewModel.createPsbtMulti(recipients, feeRate, selectedUtxos, label, precomputedFeeSats)
+                        },
+                        onNavigateToBroadcast = {
+                            navController.navigate(Screen.BroadcastTransaction.route)
                         }
                     )
                 }
@@ -596,7 +656,9 @@ fun IbisWalletApp(
                                     mnemonic = keyMaterial.mnemonic,
                                     extendedPublicKey = keyMaterial.extendedPublicKey,
                                     isWatchOnly = keyMaterial.isWatchOnly,
-                                    masterFingerprint = wallet.masterFingerprint
+                                    masterFingerprint = wallet.masterFingerprint,
+                                    privateKey = keyMaterial.privateKey,
+                                    watchAddress = keyMaterial.watchAddress
                                 )
                             }
                         },
@@ -636,6 +698,8 @@ fun IbisWalletApp(
                             viewModel.parseBackupFile(uri, password)
                         },
                         onBack = { navController.popBackStack() },
+                        onSweepPrivateKey = { navController.navigate(Screen.SweepPrivateKey.route) },
+                        existingWalletNames = existingWalletNames,
                         isLoading = uiState.isLoading,
                         error = uiState.error
                     )
@@ -652,8 +716,31 @@ fun IbisWalletApp(
                             viewModel.generateWallet(config)
                         },
                         onBack = { navController.popBackStack() },
+                        existingWalletNames = existingWalletNames,
                         isLoading = uiState.isLoading,
                         error = uiState.error
+                    )
+                }
+                composable(
+                    route = Screen.SweepPrivateKey.route,
+                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
+                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                ) {
+                    val sweepState by viewModel.sweepState.collectAsState()
+                    SweepPrivateKeyScreen(
+                        sweepState = sweepState,
+                        isConnected = uiState.isConnected,
+                        onScanBalances = { wif -> viewModel.scanWifBalances(wif) },
+                        onSweep = { wif, dest, rate -> viewModel.sweepPrivateKey(wif, dest, rate) },
+                        onReset = { viewModel.resetSweepState() },
+                        onBack = { navController.popBackStack() },
+                        currentReceiveAddress = walletState.currentAddress,
+                        isWifValid = { viewModel.isWifPrivateKey(it) },
+                        feeEstimationState = feeEstimationState,
+                        minFeeRate = minFeeRate,
+                        onRefreshFees = { viewModel.fetchFeeEstimates() }
                     )
                 }
                 composable(
@@ -682,6 +769,7 @@ fun IbisWalletApp(
                         torState = torState,
                         isTorEnabled = viewModel.isTorEnabled(),
                         onTorEnabledChange = { enabled -> viewModel.setTorEnabled(enabled) },
+                        isActiveServerOnion = viewModel.getElectrumConfig()?.isOnionAddress() == true,
                         serverVersion = uiState.serverVersion,
                         blockHeight = walletState.blockHeight
                     )
@@ -710,19 +798,25 @@ fun IbisWalletApp(
                         },
                         currentFeeSource = feeSource,
                         onFeeSourceChange = { newSource ->
+                            val wasOnion = viewModel.isFeeSourceOnion()
                             viewModel.setFeeSource(newSource)
+                            // If switching away from .onion fee source, stop Tor
+                            // if Electrum doesn't need it either
+                            if (wasOnion && !viewModel.isFeeSourceOnion() && !viewModel.isTorEnabled()) {
+                                viewModel.stopTor()
+                            }
                         },
                         customFeeSourceUrl = customFeeSourceUrl,
                         onCustomFeeSourceUrlSave = { newUrl ->
+                            val wasOnion = viewModel.isFeeSourceOnion()
                             customFeeSourceUrl = newUrl
                             viewModel.setCustomFeeSourceUrl(newUrl)
-                            // Auto-enable and start Tor for .onion addresses
-                            if (newUrl.contains(".onion")) {
-                                if (!viewModel.isTorEnabled()) {
-                                    viewModel.setTorEnabled(true)
-                                } else if (!viewModel.isTorReady()) {
-                                    viewModel.startTor()
-                                }
+                            if (newUrl.contains(".onion") && !viewModel.isTorReady()) {
+                                // Start Tor for .onion fee source
+                                viewModel.startTor()
+                            } else if (wasOnion && !newUrl.contains(".onion") && !viewModel.isTorEnabled()) {
+                                // Switched from .onion to clearnet — stop Tor if Electrum doesn't need it
+                                viewModel.stopTor()
                             }
                         },
                         currentPriceSource = priceSource,
@@ -738,6 +832,7 @@ fun IbisWalletApp(
                             customMempoolUrl = newUrl
                             viewModel.setCustomMempoolUrl(newUrl)
                         },
+                        torStatus = torState.status,
                         onBack = { navController.popBackStack() }
                     )
                 }
@@ -752,6 +847,10 @@ fun IbisWalletApp(
                     var securityMethod by remember { mutableStateOf(viewModel.getSecurityMethod()) }
                     var lockTiming by remember { mutableStateOf(viewModel.getLockTiming()) }
                     var screenshotsDisabled by remember { mutableStateOf(viewModel.getDisableScreenshots()) }
+                    var duressEnabled by remember { mutableStateOf(viewModel.isDuressEnabled()) }
+                    var autoWipeThreshold by remember { mutableStateOf(viewModel.getAutoWipeThreshold()) }
+                    var cloakModeEnabled by remember { mutableStateOf(viewModel.isCloakModeEnabled()) }
+                    val isDuressMode by viewModel.isDuressMode.collectAsState()
                     
                     // Check if device has biometric hardware
                     val biometricManager = androidx.biometric.BiometricManager.from(context)
@@ -765,6 +864,11 @@ fun IbisWalletApp(
                         currentLockTiming = lockTiming,
                         isBiometricAvailable = isBiometricAvailable,
                         screenshotsDisabled = screenshotsDisabled,
+                        isDuressEnabled = duressEnabled,
+                        isDuressMode = isDuressMode,
+                        hasWallet = walletState.wallets.isNotEmpty(),
+                        autoWipeThreshold = autoWipeThreshold,
+                        isCloakModeEnabled = cloakModeEnabled,
                         onSetPinCode = { pin ->
                             viewModel.savePin(pin)
                             viewModel.setSecurityMethod(SecureStorage.SecurityMethod.PIN)
@@ -777,6 +881,15 @@ fun IbisWalletApp(
                             isSecurityEnabled = true
                         },
                         onDisableSecurity = {
+                            // Disabling security also disables duress
+                            if (duressEnabled) {
+                                viewModel.disableDuress {
+                                    duressEnabled = false
+                                }
+                            }
+                            // Disabling security also disables auto-wipe
+                            viewModel.setAutoWipeThreshold(SecureStorage.AutoWipeThreshold.DISABLED)
+                            autoWipeThreshold = SecureStorage.AutoWipeThreshold.DISABLED
                             viewModel.clearPin()
                             viewModel.setSecurityMethod(SecureStorage.SecurityMethod.NONE)
                             securityMethod = SecureStorage.SecurityMethod.NONE
@@ -800,6 +913,40 @@ fun IbisWalletApp(
                                     android.view.WindowManager.LayoutParams.FLAG_SECURE
                                 )
                             }
+                        },
+                        onSetupDuress = { pin, mnemonic, passphrase, customDerivationPath, addressType ->
+                            viewModel.setupDuress(
+                                pin = pin,
+                                mnemonic = mnemonic,
+                                passphrase = passphrase,
+                                customDerivationPath = customDerivationPath,
+                                addressType = addressType,
+                                onSuccess = { duressEnabled = true },
+                                onError = { errorMsg ->
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(
+                                            message = "Duress setup failed: $errorMsg"
+                                        )
+                                    }
+                                }
+                            )
+                        },
+                        onDisableDuress = {
+                            viewModel.disableDuress {
+                                duressEnabled = false
+                            }
+                        },
+                        onAutoWipeThresholdChange = { threshold ->
+                            viewModel.setAutoWipeThreshold(threshold)
+                            autoWipeThreshold = threshold
+                        },
+                        onEnableCloakMode = { code ->
+                            viewModel.enableCloakMode(code)
+                            cloakModeEnabled = true
+                        },
+                        onDisableCloakMode = {
+                            viewModel.disableCloakMode()
+                            cloakModeEnabled = false
                         },
                         onBack = { navController.popBackStack() }
                     )
@@ -900,6 +1047,46 @@ fun IbisWalletApp(
                         }
                     )
                 }
+                composable(
+                    route = Screen.BroadcastTransaction.route,
+                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
+                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
+                ) {
+                    val manualBroadcastState by viewModel.manualBroadcastState.collectAsState()
+                    
+                    BroadcastTransactionScreen(
+                        broadcastState = manualBroadcastState,
+                        isConnected = uiState.isConnected,
+                        onBroadcast = { data ->
+                            viewModel.broadcastManualTransaction(data)
+                        },
+                        onClear = {
+                            viewModel.clearManualBroadcastState()
+                        },
+                        onBack = {
+                            navController.popBackStack()
+                        }
+                    )
+                }
+            }
+
+            // Wallet selector overlay panel
+            if (isMainScreen) {
+                WalletSelectorPanel(
+                    activeWallet = walletState.activeWallet,
+                    wallets = filteredWallets,
+                    expanded = walletSelectorExpanded,
+                    onDismiss = { walletSelectorExpanded = false },
+                    onSelectWallet = { walletId ->
+                        viewModel.switchWallet(walletId)
+                    },
+                    onManageWallets = {
+                        navController.navigate(Screen.ManageWallets.route)
+                    }
+                )
+            }
             }
         }
     }
@@ -951,62 +1138,12 @@ private fun FullSyncProgressDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Status text
+                // Status text — use pipeline status from syncProgress if available
                 Text(
-                    text = "Scanning addresses...",
+                    text = syncProgress?.status ?: "Scanning addresses...",
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary
                 )
-
-                // Progress details
-                if (syncProgress != null) {
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Info card
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(DarkCard)
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        if (syncProgress.keychain != null) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "Keychain",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextTertiary
-                                )
-                                Text(
-                                    text = syncProgress.keychain!!,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onBackground
-                                )
-                            }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = "Addresses checked",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextTertiary
-                            )
-                            Text(
-                                text = "${syncProgress.current}",
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onBackground
-                            )
-                        }
-                    }
-                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -1027,9 +1164,17 @@ private fun FullSyncProgressDialog(
 private fun ConnectionStatusIndicator(
     isConnected: Boolean,
     isConnecting: Boolean,
+    torStatus: TorStatus = TorStatus.DISCONNECTED,
+    isOnionServer: Boolean = false,
     onClick: () -> Unit
 ) {
+    // Show Tor bootstrap progress when connecting to an onion server
+    // and Tor is not yet ready
+    val isTorBootstrapping = isConnecting && isOnionServer &&
+        torStatus != TorStatus.CONNECTED
+
     val statusColor = when {
+        isTorBootstrapping -> TorPurple
         isConnecting -> BitcoinOrange
         isConnected -> SuccessGreen
         else -> ErrorRed
@@ -1037,8 +1182,7 @@ private fun ConnectionStatusIndicator(
 
     Box(
         modifier = Modifier
-            .padding(end = 8.dp)
-            .offset(y = 4.dp)
+            .padding(end = 12.dp)
             .clip(RoundedCornerShape(8.dp))
             .border(
                 width = 1.dp,
@@ -1056,7 +1200,7 @@ private fun ConnectionStatusIndicator(
             if (isConnecting) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(12.dp),
-                    color = BitcoinOrange,
+                    color = statusColor,
                     strokeWidth = 1.5.dp
                 )
             } else {
@@ -1070,6 +1214,7 @@ private fun ConnectionStatusIndicator(
             Spacer(modifier = Modifier.width(6.dp))
             Text(
                 text = when {
+                    isTorBootstrapping -> "Starting Tor"
                     isConnecting -> "Connecting"
                     isConnected -> "Connected"
                     else -> "Disconnected"
@@ -1164,8 +1309,7 @@ private fun ConnectionStatusDialog(
                         }
                         // Tor badge - only for onion servers
                         if (isOnion) {
-                            val purple = Color(0xFF9B59B6)
-                            val torColor = if (isTorActive) purple else TextSecondary
+                            val torColor = if (isTorActive) TorPurple else TextSecondary
                             Surface(
                                 shape = RoundedCornerShape(4.dp),
                                 color = torColor.copy(alpha = 0.15f),
@@ -1179,7 +1323,7 @@ private fun ConnectionStatusDialog(
                                         modifier = Modifier
                                             .size(6.dp)
                                             .clip(CircleShape)
-                                            .background(if (isTorActive) purple else TextSecondary.copy(alpha = 0.5f))
+                                            .background(if (isTorActive) TorPurple else TextSecondary.copy(alpha = 0.5f))
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
@@ -1270,7 +1414,7 @@ private fun ConnectionStatusDialog(
                         )
                     ) {
                         Text(
-                            text = if (serverUrl != null) "Change Server" else "Configure Sever",
+                            text = if (serverUrl != null) "Change Server" else "Configure Server",
                             style = MaterialTheme.typography.bodySmall
                         )
                     }

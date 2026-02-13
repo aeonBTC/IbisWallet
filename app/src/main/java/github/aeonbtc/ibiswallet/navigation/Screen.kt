@@ -30,6 +30,12 @@ sealed class Screen(val route: String) {
     
     // PSBT signing flow (watch-only wallets)
     data object PsbtExport : Screen("psbt_export")
+    
+    // Sweep private key
+    data object SweepPrivateKey : Screen("sweep_private_key")
+    
+    // Manual transaction broadcast
+    data object BroadcastTransaction : Screen("broadcast_transaction")
 }
 
 data class BottomNavItem(

@@ -11,28 +11,61 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,22 +73,28 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-
-import androidx.compose.ui.unit.dp
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.SquareToggle
+import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
+import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrangeLight
+import github.aeonbtc.ibiswallet.ui.theme.BorderColor
+import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
+import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
+import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
+import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.SecureClipboard
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import github.aeonbtc.ibiswallet.ui.components.SquareToggle
-import github.aeonbtc.ibiswallet.ui.theme.*
-import github.aeonbtc.ibiswallet.util.SecureClipboard
 
 data class WalletInfo(
     val id: String,
@@ -65,6 +104,8 @@ data class WalletInfo(
     val derivationPath: String,
     val isActive: Boolean = false,
     val isWatchOnly: Boolean = false,
+    val isWatchAddress: Boolean = false,
+    val isPrivateKey: Boolean = false,
     val lastFullSyncTime: Long? = null,
     val masterFingerprint: String? = null
 )
@@ -76,10 +117,12 @@ data class WalletInfo(
  */
 data class KeyMaterialInfo(
     val walletName: String,
-    val mnemonic: String?,       // Seed phrase (null for watch-only)
-    val extendedPublicKey: String?, // xpub/zpub (always available)
+    val mnemonic: String?,       // Seed phrase (null for watch-only, WIF, watch address)
+    val extendedPublicKey: String?, // xpub/zpub (always available for HD wallets)
     val isWatchOnly: Boolean,
-    val masterFingerprint: String? = null // Master key fingerprint (8 hex chars)
+    val masterFingerprint: String? = null, // Master key fingerprint (8 hex chars)
+    val privateKey: String? = null,        // WIF private key (single-key wallets)
+    val watchAddress: String? = null       // Single watched address
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -452,14 +495,9 @@ fun ManageWalletsScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            OutlinedButton(
+            IbisButton(
                 onClick = onGenerateWallet,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = BitcoinOrange
-                ),
-                border = BorderStroke(1.dp, BorderColor.copy(alpha = 0.5f))
             ) {
                 Icon(
                     imageVector = Icons.Default.Key,
@@ -470,17 +508,12 @@ fun ManageWalletsScreen(
                 Text("Generate")
             }
 
-            OutlinedButton(
+            IbisButton(
                 onClick = onImportWallet,
                 modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = BitcoinOrange
-                ),
-                border = BorderStroke(1.dp, BorderColor.copy(alpha = 0.5f))
             ) {
                 Icon(
-                    imageVector = Icons.Default.FolderOpen,
+                    imageVector = Icons.Default.FileDownload,
                     contentDescription = null,
                     modifier = Modifier.size(18.dp)
                 )
@@ -546,7 +579,9 @@ fun ManageWalletsScreen(
  */
 private enum class KeyViewType {
     SEED_PHRASE,
-    EXTENDED_PUBLIC_KEY
+    EXTENDED_PUBLIC_KEY,
+    PRIVATE_KEY,
+    WATCH_ADDRESS
 }
 
 @Composable
@@ -666,7 +701,10 @@ private fun ExportWalletDialog(
                 
                 // Include Labels toggle
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { includeLabels = !includeLabels },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -692,7 +730,10 @@ private fun ExportWalletDialog(
                 
                 // Encrypt Backup toggle
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { encryptBackup = !encryptBackup },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -912,17 +953,23 @@ private fun KeyMaterialDialog(
     val isWatchOnly = keyMaterialInfo.isWatchOnly
     val hasSeedPhrase = keyMaterialInfo.mnemonic != null
     val hasXpub = keyMaterialInfo.extendedPublicKey != null
+    val hasPrivateKey = keyMaterialInfo.privateKey != null
+    val hasWatchAddress = keyMaterialInfo.watchAddress != null
     
     // Current key material based on selection
     val currentKeyMaterial = when (selectedViewType) {
         KeyViewType.SEED_PHRASE -> keyMaterialInfo.mnemonic
         KeyViewType.EXTENDED_PUBLIC_KEY -> keyMaterialInfo.extendedPublicKey
+        KeyViewType.PRIVATE_KEY -> keyMaterialInfo.privateKey
+        KeyViewType.WATCH_ADDRESS -> keyMaterialInfo.watchAddress
         null -> null
     }
     
     val title = when (selectedViewType) {
         KeyViewType.SEED_PHRASE -> "Seed Phrase"
         KeyViewType.EXTENDED_PUBLIC_KEY -> "Extended Public Key"
+        KeyViewType.PRIVATE_KEY -> "Private Key"
+        KeyViewType.WATCH_ADDRESS -> "Watched Address"
         null -> "View Key Material"
     }
     
@@ -1000,19 +1047,10 @@ private fun KeyMaterialDialog(
                             Spacer(modifier = Modifier.height(20.dp))
                             
                             // Seed Phrase button
-                            OutlinedButton(
+                            IbisButton(
                                 onClick = { selectedViewType = KeyViewType.SEED_PHRASE },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
                                 enabled = hasSeedPhrase,
-                                border = BorderStroke(
-                                    1.dp, 
-                                    if (hasSeedPhrase) BitcoinOrange.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
-                                ),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = BitcoinOrange,
-                                    disabledContentColor = TextSecondary.copy(alpha = 0.4f)
-                                )
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Visibility,
@@ -1035,19 +1073,10 @@ private fun KeyMaterialDialog(
                             Spacer(modifier = Modifier.height(12.dp))
                             
                             // Extended Public Key button
-                            OutlinedButton(
+                            IbisButton(
                                 onClick = { selectedViewType = KeyViewType.EXTENDED_PUBLIC_KEY },
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
                                 enabled = hasXpub,
-                                border = BorderStroke(
-                                    1.dp, 
-                                    if (hasXpub) BitcoinOrange.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
-                                ),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = BitcoinOrange,
-                                    disabledContentColor = TextSecondary.copy(alpha = 0.4f)
-                                )
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Visibility,
@@ -1056,6 +1085,40 @@ private fun KeyMaterialDialog(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("Extended Public Key")
+                            }
+                            
+                            // Private Key button (WIF wallets)
+                            if (hasPrivateKey) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                IbisButton(
+                                    onClick = { selectedViewType = KeyViewType.PRIVATE_KEY },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Visibility,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Private Key (WIF)")
+                                }
+                            }
+                            
+                            // Watch Address button
+                            if (hasWatchAddress) {
+                                Spacer(modifier = Modifier.height(12.dp))
+                                IbisButton(
+                                    onClick = { selectedViewType = KeyViewType.WATCH_ADDRESS },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Visibility,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Watched Address")
+                                }
                             }
                         }
                     }
@@ -1494,18 +1557,25 @@ private fun WalletCard(
             Spacer(modifier = Modifier.height(4.dp))
             
             Text(
-                text = "${wallet.typeDescription}  -  ${if (wallet.isWatchOnly) "Watch Only" else "Seed Phrase"}",
+                text = "${wallet.typeDescription}  -  ${when {
+                    wallet.isWatchAddress -> "Watch Address"
+                    wallet.isPrivateKey -> "Private Key"
+                    wallet.isWatchOnly -> "Watch Only"
+                    else -> "Seed Phrase"
+                }}",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary
             )
             
             Spacer(modifier = Modifier.height(4.dp))
             
-            Text(
-                text = "Derivation Path: ${wallet.derivationPath}",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary.copy(alpha = 0.7f)
-            )
+            if (wallet.derivationPath != "single") {
+                Text(
+                    text = "Derivation Path: ${wallet.derivationPath}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary.copy(alpha = 0.7f)
+                )
+            }
             
             if (wallet.masterFingerprint != null) {
                 Spacer(modifier = Modifier.height(4.dp))

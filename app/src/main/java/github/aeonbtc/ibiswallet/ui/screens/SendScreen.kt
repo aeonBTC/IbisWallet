@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,12 +27,13 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.Refresh
+
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -65,11 +67,11 @@ import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import kotlin.math.roundToLong
 import github.aeonbtc.ibiswallet.data.model.DryRunResult
-import github.aeonbtc.ibiswallet.data.model.FeeEstimateSource
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.WalletState
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
@@ -79,11 +81,10 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
-import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
-import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
+import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
 import java.util.Locale
@@ -114,7 +115,8 @@ fun SendScreen(
     onSend: (address: String, amountSats: ULong, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, isMaxSend: Boolean, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _, _, _ -> },
     onSendMulti: (recipients: List<Recipient>, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _ -> },
     onCreatePsbt: (address: String, amountSats: ULong, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, isMaxSend: Boolean, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _, _, _ -> },
-    onCreatePsbtMulti: (recipients: List<Recipient>, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _ -> }
+    onCreatePsbtMulti: (recipients: List<Recipient>, feeRate: Float, selectedUtxos: List<UtxoInfo>?, label: String?, precomputedFeeSats: Long?) -> Unit = { _, _, _, _, _ -> },
+    onNavigateToBroadcast: () -> Unit = {}
 ) {
     // Initialize state from draft
     var recipientAddress by remember { mutableStateOf(draft.recipientAddress) }
@@ -505,8 +507,6 @@ fun SendScreen(
             .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(modifier = Modifier.height(16.dp))
-        
         // Send Form Card
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -852,9 +852,39 @@ fun SendScreen(
                         Card(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { 
+                                .clickable {
+                                    // Convert current amount when switching modes
+                                    if (amountInput.isNotEmpty() && btcPrice != null && btcPrice > 0) {
+                                        val currentSats = when {
+                                            isUsdMode -> {
+                                                // Converting from USD to BTC/sats
+                                                val usdAmount = amountInput.toDoubleOrNull() ?: 0.0
+                                                (usdAmount / btcPrice * 100_000_000).toLong()
+                                            }
+                                            useSats -> {
+                                                // Already in sats, keep as is
+                                                amountInput.replace(",", "").toLongOrNull() ?: 0L
+                                            }
+                                            else -> {
+                                                // Converting from BTC to USD
+                                                val btcAmount = amountInput.toDoubleOrNull() ?: 0.0
+                                                (btcAmount * 100_000_000).toLong()
+                                            }
+                                        }
+                                        amountInput = if (!isUsdMode) {
+                                            // Switching to USD mode
+                                            val usdValue = (currentSats / 100_000_000.0) * btcPrice
+                                            String.format("%.2f", usdValue)
+                                        } else {
+                                            // Switching to BTC/sats mode
+                                            if (useSats) {
+                                                currentSats.toString()
+                                            } else {
+                                                String.format("%.8f", currentSats / 100_000_000.0)
+                                            }
+                                        }
+                                    }
                                     isUsdMode = !isUsdMode
-                                    amountInput = "" // Clear input when switching modes
                                     isMaxMode = false
                                 },
                             shape = RoundedCornerShape(8.dp),
@@ -867,7 +897,7 @@ fun SendScreen(
                                 text = if (isUsdMode) "USD" else "USD",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = if (isUsdMode) BitcoinOrange else TextSecondary,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                             )
                         }
                     }
@@ -1091,7 +1121,7 @@ fun SendScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 val showFeeEstimate = if (isMultiMode) multiRecipientList.isNotEmpty() else (amountSats > 0 || isMaxMode)
-                FeeRateSection(
+                github.aeonbtc.ibiswallet.ui.components.FeeRateSection(
                     feeEstimationState = feeEstimationState,
                     currentFeeRate = feeRate,
                     minFeeRate = minFeeRate,
@@ -1102,7 +1132,11 @@ fun SendScreen(
                     estimatedVBytes = if (showFeeEstimate) estimatedVBytes else null,
                     useSats = useSats,
                     btcPrice = btcPrice,
-                    privacyMode = privacyMode
+                    privacyMode = privacyMode,
+                    formatAmount = ::formatAmount,
+                    formatUsd = ::formatUsd,
+                    formatVBytesDisplay = ::formatVBytes,
+                    hiddenAmount = HIDDEN_AMOUNT
                 )
             }
         }
@@ -1126,7 +1160,7 @@ fun SendScreen(
                 )
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
         }
         
         if (!walletState.isInitialized) {
@@ -1156,21 +1190,12 @@ fun SendScreen(
             canSend && uiState.isConnected && !uiState.isSending
         }
 
-        OutlinedButton(
+        IbisButton(
             onClick = { showConfirmDialog = true },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp),
-            shape = RoundedCornerShape(8.dp),
             enabled = isButtonEnabled,
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = BitcoinOrange,
-                disabledContentColor = TextSecondary.copy(alpha = 0.5f)
-            ),
-            border = BorderStroke(
-                1.dp,
-                if (isButtonEnabled) BitcoinOrange.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
-            )
         ) {
             if (uiState.isSending) {
                 CircularProgressIndicator(
@@ -1182,8 +1207,41 @@ fun SendScreen(
                 Text(if (isWatchOnly) "Review PSBT" else "Review Transaction")
             }
         }
+        
+        Spacer(modifier = Modifier.height(14.dp))
 
-        Spacer(modifier = Modifier.height(48.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            HorizontalDivider(
+                modifier = Modifier.weight(1f),
+                color = BorderColor
+            )
+            Text(
+                text = "or",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.padding(horizontal = 12.dp)
+            )
+            HorizontalDivider(
+                modifier = Modifier.weight(1f),
+                color = BorderColor
+            )
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        
+        IbisButton(
+            onClick = onNavigateToBroadcast,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+        ) {
+            Text("Manual Broadcast")
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
@@ -1459,7 +1517,7 @@ private fun SendConfirmationDialog(
                     .padding(16.dp)
             ) {
                 Text(
-                    text = if (isWatchOnly) "Confirm PSBT" else "Confirm Transaction",
+                    text = if (isWatchOnly) "Review PSBT" else "Review Transaction",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground
@@ -1677,7 +1735,7 @@ private fun SendConfirmationDialog(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (isWatchOnly) "Create PSBT" else "Send Bitcoin",
+                            text = if (isWatchOnly) "Build PSBT" else "Send Bitcoin",
                             style = MaterialTheme.typography.titleMedium
                         )
                     }
@@ -1737,399 +1795,16 @@ private fun formatUsd(amount: Double): String {
     return format.format(amount)
 }
 
-private fun formatFeeRate(rate: Double): String {
-    // Format up to 2 decimal places, trim trailing zeros
-    val formatted = String.format(Locale.US, "%.2f", rate)
-    return formatted.trimEnd('0').trimEnd('.')
-}
-
-private fun formatFeeRate(rate: Float): String = formatFeeRate(rate.toDouble())
-
 private fun formatVBytes(vBytes: Double): String {
     // Show up to 2 decimal places, trim trailing zeros: 256.75, 140.5, 154
     val formatted = String.format(Locale.US, "%.2f", vBytes)
     return formatted.trimEnd('0').trimEnd('.')
 }
 
-private enum class FeeRateOption {
-    FASTEST,
-    HALF_HOUR,
-    HOUR,
-    CUSTOM
-}
-
-@Composable
-private fun FeeRateSection(
-    feeEstimationState: FeeEstimationResult,
-    currentFeeRate: Float,
-    minFeeRate: Double,
-    onFeeRateChange: (Float) -> Unit,
-    onRefreshFees: () -> Unit,
-    enabled: Boolean,
-    estimatedFeeSats: Long? = null,
-    estimatedVBytes: Double? = null,
-    useSats: Boolean = true,
-    btcPrice: Double? = null,
-    privacyMode: Boolean = false
-) {
-    var selectedOption by remember { mutableStateOf(FeeRateOption.HALF_HOUR) }
-    var customFeeInput by remember { mutableStateOf<String?>(null) }
-    
-    val minFeeFloat = minFeeRate.toFloat()
-    
-    val estimates = (feeEstimationState as? FeeEstimationResult.Success)?.estimates
-    
-    androidx.compose.runtime.LaunchedEffect(estimates) {
-        if (estimates != null && selectedOption != FeeRateOption.CUSTOM) {
-            val newRate = when (selectedOption) {
-                FeeRateOption.FASTEST -> estimates.fastestFee.toFloat()
-                FeeRateOption.HALF_HOUR -> estimates.halfHourFee.toFloat()
-                FeeRateOption.HOUR -> estimates.hourFee.toFloat()
-                FeeRateOption.CUSTOM -> currentFeeRate
-            }
-            onFeeRateChange(newRate.coerceAtLeast(minFeeFloat))
-        }
-    }
-    
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Fee Rate",
-                style = MaterialTheme.typography.labelLarge,
-                color = TextSecondary
-            )
-            
-            if (feeEstimationState !is FeeEstimationResult.Disabled) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(DarkSurfaceVariant)
-                        .clickable(enabled = enabled && feeEstimationState !is FeeEstimationResult.Loading) {
-                            onRefreshFees()
-                        }
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Refresh fees",
-                        tint = if (feeEstimationState is FeeEstimationResult.Loading) 
-                            TextSecondary.copy(alpha = 0.5f) 
-                        else 
-                            BitcoinOrange,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-        }
-        
-        // Show estimated fee when amount is entered
-        if (estimatedFeeSats != null && estimatedVBytes != null) {
-            val vBytesDisplay = formatVBytes(estimatedVBytes)
-            val usdFee = if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                " · ${formatUsd((estimatedFeeSats.toDouble() / 100_000_000.0) * btcPrice)}"
-            } else ""
-            Text(
-                text = if (privacyMode) "Est. fee: $HIDDEN_AMOUNT ($vBytesDisplay vB)" else "Est. fee: ${formatAmount(estimatedFeeSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}$usdFee ($vBytesDisplay vB)",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
-            )
-        }
-        
-        Spacer(modifier = Modifier.height(8.dp))
-
-        when (feeEstimationState) {
-            is FeeEstimationResult.Disabled -> {
-                if (customFeeInput == null) {
-                    customFeeInput = formatFeeRate(currentFeeRate)
-                }
-                ManualFeeInput(
-                    value = customFeeInput ?: "",
-                    onValueChange = { input ->
-                        customFeeInput = input
-                        input.toFloatOrNull()?.let { onFeeRateChange(it.coerceAtLeast(minFeeFloat)) }
-                    },
-                    enabled = enabled,
-                    minFeeRate = minFeeRate
-                )
-            }
-            
-            is FeeEstimationResult.Loading -> {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = BitcoinOrange,
-                        strokeWidth = 2.dp
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = "Loading fee estimates...",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
-                    )
-                }
-            }
-            
-            is FeeEstimationResult.Error -> {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = WarningYellow.copy(alpha = 0.1f)
-                    )
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp)
-                    ) {
-                        Text(
-                            text = "Failed to load fee estimates",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = WarningYellow
-                        )
-                        Text(
-                            text = feeEstimationState.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-                
-                Spacer(modifier = Modifier.height(6.dp))
-
-                if (customFeeInput == null) {
-                    customFeeInput = formatFeeRate(currentFeeRate)
-                }
-                ManualFeeInput(
-                    value = customFeeInput ?: "",
-                    onValueChange = { input ->
-                        customFeeInput = input
-                        input.toFloatOrNull()?.let { onFeeRateChange(it.coerceAtLeast(minFeeFloat)) }
-                    },
-                    enabled = enabled,
-                    minFeeRate = minFeeRate
-                )
-            }
-            
-            is FeeEstimationResult.Success -> {
-                val feeEstimates = feeEstimationState.estimates
-                val isElectrum = feeEstimates.source == FeeEstimateSource.ELECTRUM_SERVER
-                
-                // Electrum targets are wider (2/6/12 blocks) vs mempool.space (1/3/6)
-                val fastLabel = if (isElectrum) "~2 blocks" else "~1 block"
-                val medLabel = if (isElectrum) "~6 blocks" else "~3 blocks"
-                val slowLabel = if (isElectrum) "~12 blocks" else "~6 blocks"
-                
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    FeeTargetButton(
-                        label = fastLabel,
-                        feeRate = feeEstimates.fastestFee,
-                        isSelected = selectedOption == FeeRateOption.FASTEST,
-                        onClick = {
-                            selectedOption = FeeRateOption.FASTEST
-                            customFeeInput = null
-                            onFeeRateChange(feeEstimates.fastestFee.toFloat().coerceAtLeast(minFeeFloat))
-                        },
-                        enabled = enabled,
-                        modifier = Modifier.weight(1f)
-                    )
-                    
-                    FeeTargetButton(
-                        label = medLabel,
-                        feeRate = feeEstimates.halfHourFee,
-                        isSelected = selectedOption == FeeRateOption.HALF_HOUR,
-                        onClick = {
-                            selectedOption = FeeRateOption.HALF_HOUR
-                            customFeeInput = null
-                            onFeeRateChange(feeEstimates.halfHourFee.toFloat().coerceAtLeast(minFeeFloat))
-                        },
-                        enabled = enabled,
-                        modifier = Modifier.weight(1f)
-                    )
-                    
-                    FeeTargetButton(
-                        label = slowLabel,
-                        feeRate = feeEstimates.hourFee,
-                        isSelected = selectedOption == FeeRateOption.HOUR,
-                        onClick = {
-                            selectedOption = FeeRateOption.HOUR
-                            customFeeInput = null
-                            onFeeRateChange(feeEstimates.hourFee.toFloat().coerceAtLeast(minFeeFloat))
-                        },
-                        enabled = enabled,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                
-                // Hint when Electrum estimates are uniform (low-fee mempool)
-                if (isElectrum && feeEstimates.isUniform) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Server reports same rate for all targets (low fee environment)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
-                    )
-                }
-                
-                Spacer(modifier = Modifier.height(6.dp))
-
-                if (selectedOption == FeeRateOption.CUSTOM) {
-                    if (customFeeInput == null) {
-                        customFeeInput = formatFeeRate(currentFeeRate)
-                    }
-                    ManualFeeInput(
-                        value = customFeeInput ?: "",
-                        onValueChange = { input ->
-                            customFeeInput = input
-                            input.toFloatOrNull()?.let { onFeeRateChange(it.coerceAtLeast(minFeeFloat)) }
-                        },
-                        enabled = enabled,
-                        minFeeRate = minFeeRate
-                    )
-                } else {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable(enabled = enabled) {
-                                selectedOption = FeeRateOption.CUSTOM
-                                customFeeInput = formatFeeRate(currentFeeRate)
-                            },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        border = BorderStroke(1.dp, BorderColor)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 12.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "Custom",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = TextSecondary
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FeeTargetButton(
-    label: String,
-    feeRate: Double,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    enabled: Boolean,
-    modifier: Modifier = Modifier
-) {
-    val backgroundColor = if (isSelected) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface
-    val borderColor = if (isSelected) BitcoinOrange else BorderColor
-    val textColor = if (isSelected) BitcoinOrange else TextSecondary
-    
-    Card(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = backgroundColor),
-        border = BorderStroke(1.dp, borderColor)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp, horizontal = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isSelected) MaterialTheme.colorScheme.onBackground else TextSecondary
-            )
-            Spacer(modifier = Modifier.height(1.dp))
-            Text(
-                text = formatFeeRate(feeRate),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = textColor
-            )
-            Text(
-                text = "sat/vB",
-                style = MaterialTheme.typography.labelSmall,
-                color = TextSecondary
-            )
-        }
-    }
-}
-
-@Composable
-private fun ManualFeeInput(
-    value: String,
-    onValueChange: (String) -> Unit,
-    enabled: Boolean,
-    minFeeRate: Double = 1.0
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = { input ->
-            if (input.isEmpty()) {
-                onValueChange(input)
-                return@OutlinedTextField
-            }
-            
-            val isValidFormat = input.matches(Regex("^\\d*\\.?\\d{0,2}$"))
-            val hasInvalidLeadingZeros = input.length > 1 && 
-                input.startsWith("0") && 
-                !input.startsWith("0.")
-            
-            if (isValidFormat && !hasInvalidLeadingZeros) {
-                onValueChange(input)
-            }
-        },
-        modifier = Modifier.fillMaxWidth(),
-        label = { Text("Fee rate (sat/vB)") },
-        placeholder = { Text(formatFeeRate(minFeeRate), color = TextSecondary.copy(alpha = 0.5f)) },
-        supportingText = {
-            Text(
-                text = "Minimum: ${formatFeeRate(minFeeRate)} sat/vB",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary.copy(alpha = 0.7f)
-            )
-        },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        enabled = enabled,
-        shape = RoundedCornerShape(12.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = BitcoinOrange,
-            unfocusedBorderColor = BorderColor,
-            focusedLabelColor = BitcoinOrange,
-            unfocusedLabelColor = TextSecondary,
-            focusedTextColor = MaterialTheme.colorScheme.onBackground,
-            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-            cursorColor = BitcoinOrange
-        )
-    )
-}
-
 /**
  * Parsed BIP21 URI data
  */
-private data class Bip21Uri(
+internal data class Bip21Uri(
     val address: String,
     val amount: Double? = null,  // Amount in BTC
     val label: String? = null,
@@ -2140,7 +1815,7 @@ private data class Bip21Uri(
  * Parse a BIP21 URI or plain Bitcoin address
  * Format: bitcoin:<address>[?amount=<amount>][&label=<label>][&message=<message>]
  */
-private fun parseBip21Uri(input: String): Bip21Uri {
+internal fun parseBip21Uri(input: String): Bip21Uri {
     val trimmed = input.trim()
     
     // Check if it's a BIP21 URI

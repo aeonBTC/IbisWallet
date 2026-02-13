@@ -212,7 +212,7 @@ sealed class WalletResult<out T> {
  */
 data class WalletImportConfig(
     val name: String,
-    val keyMaterial: String, // Mnemonic or extended public key
+    val keyMaterial: String, // Mnemonic, extended public key, WIF private key, or Bitcoin address
     val addressType: AddressType = AddressType.SEGWIT,
     val passphrase: String? = null,
     val customDerivationPath: String? = null,

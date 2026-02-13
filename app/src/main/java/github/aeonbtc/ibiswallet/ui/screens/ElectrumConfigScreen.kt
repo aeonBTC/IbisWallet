@@ -1,8 +1,6 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -45,6 +43,7 @@ import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.ElectrumConfig
 import github.aeonbtc.ibiswallet.tor.TorState
 import github.aeonbtc.ibiswallet.tor.TorStatus
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.SquareToggleGreen
@@ -69,6 +68,7 @@ fun ElectrumConfigScreen(
     torState: TorState = TorState(),
     isTorEnabled: Boolean = false,
     onTorEnabledChange: (Boolean) -> Unit = {},
+    isActiveServerOnion: Boolean = false,
     // Disconnect support
     onDisconnect: () -> Unit = {},
     onCancelConnection: () -> Unit = {},
@@ -183,19 +183,10 @@ fun ElectrumConfigScreen(
         Spacer(modifier = Modifier.height(8.dp))
         
             // 1. Add Server Button (at top, always visible)
-            OutlinedButton(
+            IbisButton(
                 onClick = { if (!showAddServerForm) showAddServerForm = true },
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
                 enabled = !showAddServerForm,
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = BitcoinOrange,
-                    disabledContentColor = BitcoinOrange.copy(alpha = 0.4f)
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (!showAddServerForm) BorderColor.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
-                )
             ) {
                 Icon(
                     imageVector = Icons.Default.Add,
@@ -237,15 +228,14 @@ fun ElectrumConfigScreen(
             TorStatusCard(
                 torState = torState,
                 isTorEnabled = isTorEnabled,
-                onTorEnabledChange = onTorEnabledChange
+                onTorEnabledChange = onTorEnabledChange,
+                isActiveServerOnion = isActiveServerOnion
             )
             
             Spacer(modifier = Modifier.height(8.dp))
             
             // 4. Saved Servers Section
             if (savedServers.isNotEmpty()) {
-                var showSavedServers by remember { mutableStateOf(activeServerId == null) }
-
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -254,88 +244,66 @@ fun ElectrumConfigScreen(
                     Column(
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        // Collapsible header
-                        Surface(
-                            onClick = { showSavedServers = !showSavedServers },
-                            color = DarkCard,
-                            shape = RoundedCornerShape(12.dp)
+                        // Header (non-clickable)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Storage,
-                                    contentDescription = null,
-                                    tint = BitcoinOrange,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(modifier = Modifier.width(10.dp))
-                                Text(
-                                    text = "Saved Servers",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                Icon(
-                                    imageVector = if (showSavedServers)
-                                        Icons.Default.KeyboardArrowUp
-                                    else
-                                        Icons.Default.KeyboardArrowDown,
-                                    contentDescription = if (showSavedServers) "Collapse" else "Expand",
-                                    tint = TextSecondary
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.Storage,
+                                contentDescription = null,
+                                tint = BitcoinOrange,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = "Saved Servers",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
                         }
 
-                        // Collapsible content
-                        AnimatedVisibility(
-                            visible = showSavedServers,
-                            enter = expandVertically(),
-                            exit = shrinkVertically()
+                        // Server list (always visible)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp)
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 16.dp)
-                                    .padding(bottom = 16.dp)
-                            ) {
-                                HorizontalDivider(color = BorderColor)
+                            HorizontalDivider(color = BorderColor)
 
-                                Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
 
-                                // List of saved servers
-                                savedServers.forEach { server ->
-                                    val isActive = server.id == activeServerId
+                            // List of saved servers
+                            savedServers.forEach { server ->
+                                val isActive = server.id == activeServerId
 
-                                    SavedServerItem(
-                                        server = server,
-                                        isActive = isActive,
-                                        isConnected = isConnected && isActive,
-                                        onConnect = {
-                                            // Auto-enable Tor if connecting to onion server
-                                            if (server.isOnionAddress() && !isTorEnabled) {
-                                                onTorEnabledChange(true)
-                                            }
-                                            server.id?.let { onConnectToServer(it) }
-                                        },
-                                        onEdit = {
-                                            // Populate form with server values
-                                            serverToEdit = server
-                                            serverUrl = server.url
-                                            serverPort = server.port.toString()
-                                            serverName = server.name ?: ""
-                                            useSsl = server.useSsl
-                                            showAddServerForm = true
-                                        },
-                                        onDelete = { serverToDelete = server }
-                                    )
+                                SavedServerItem(
+                                    server = server,
+                                    isActive = isActive,
+                                    isConnected = isConnected && isActive,
+                                    onConnect = {
+                                        // Tor auto-toggle is handled by ViewModel's
+                                        // connectToServer — it checks both server type
+                                        // and fee source before disabling Tor
+                                        server.id?.let { onConnectToServer(it) }
+                                    },
+                                    onEdit = {
+                                        // Populate form with server values
+                                        serverToEdit = server
+                                        serverUrl = server.url
+                                        serverPort = server.port.toString()
+                                        serverName = server.name ?: ""
+                                        useSsl = server.useSsl
+                                        showAddServerForm = true
+                                    },
+                                    onDelete = { serverToDelete = server }
+                                )
 
-                                    if (server != savedServers.last()) {
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                    }
+                                if (server != savedServers.last()) {
+                                    Spacer(modifier = Modifier.height(12.dp))
                                 }
                             }
                         }
@@ -384,10 +352,7 @@ fun ElectrumConfigScreen(
                         )
                         val savedConfig = onSaveServer(config)
                         
-                        if (config.isOnionAddress() && !isTorEnabled) {
-                            onTorEnabledChange(true)
-                        }
-                        
+                        // Tor auto-toggle is handled by ViewModel's connectToServer
                         savedConfig.id?.let { onConnectToServer(it) }
                         
                         serverUrl = ""
@@ -889,23 +854,36 @@ private fun SavedServerItem(
 private fun TorStatusCard(
     torState: TorState,
     isTorEnabled: Boolean,
-    onTorEnabledChange: (Boolean) -> Unit
+    onTorEnabledChange: (Boolean) -> Unit,
+    isActiveServerOnion: Boolean = false
 ) {
-    val statusColor = when (torState.status) {
-        TorStatus.CONNECTED -> SuccessGreen
-        TorStatus.CONNECTING, TorStatus.STARTING -> BitcoinOrange
-        TorStatus.ERROR -> ErrorRed
-        TorStatus.DISCONNECTED -> TextSecondary
+    // Toggle only reflects Electrum Tor usage
+    val isElectrumViaTor = isTorEnabled || isActiveServerOnion
+
+    // Status only relevant when Electrum is using Tor
+    val statusColor = if (isElectrumViaTor) {
+        when (torState.status) {
+            TorStatus.CONNECTED -> SuccessGreen
+            TorStatus.CONNECTING, TorStatus.STARTING -> BitcoinOrange
+            TorStatus.ERROR -> ErrorRed
+            TorStatus.DISCONNECTED -> TextSecondary
+        }
+    } else {
+        TextSecondary
     }
-    
-    val statusText = when (torState.status) {
-        TorStatus.CONNECTED -> "Connected"
-        TorStatus.CONNECTING -> "Connecting..."
-        TorStatus.STARTING -> "Starting..."
-        TorStatus.ERROR -> "Error"
-        TorStatus.DISCONNECTED -> "Disabled"
+
+    val statusText = if (isElectrumViaTor) {
+        when (torState.status) {
+            TorStatus.CONNECTED -> "Connected"
+            TorStatus.CONNECTING -> "Connecting..."
+            TorStatus.STARTING -> "Starting..."
+            TorStatus.ERROR -> "Error"
+            TorStatus.DISCONNECTED -> "Disabled"
+        }
+    } else {
+        "Disabled"
     }
-    
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -914,6 +892,8 @@ private fun TorStatusCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onTorEnabledChange(!isTorEnabled) }
                 .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
@@ -924,13 +904,13 @@ private fun TorStatusCard(
                 Image(
                     painter = painterResource(id = R.drawable.tor_icon),
                     contentDescription = null,
-                    alpha = if (isTorEnabled) 1f else 0.5f,
+                    alpha = if (isElectrumViaTor) 1f else 0.5f,
                     modifier = Modifier.size(24.dp)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column {
                     Text(
-                        text = "Enable Tor",
+                        text = "Tor",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground
                     )
@@ -952,9 +932,9 @@ private fun TorStatusCard(
                     }
                 }
             }
-                
+
             SquareToggleGreen(
-                checked = isTorEnabled,
+                checked = isElectrumViaTor,
                 onCheckedChange = onTorEnabledChange
             )
         }
@@ -1114,7 +1094,10 @@ private fun ServerConfigDialog(
                 }
                 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSslChange(!useSsl) },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1139,18 +1122,10 @@ private fun ServerConfigDialog(
         },
         confirmButton = {
             val isEnabled = isValidName && isValidUrl && isValidPort
-            OutlinedButton(
+            IbisButton(
                 onClick = onSave,
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (isEnabled) BitcoinOrange else TextSecondary.copy(alpha = 0.5f)
-                ),
-                border = BorderStroke(
-                    1.dp, 
-                    if (isEnabled) BitcoinOrange.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.5f)
-                ),
-                enabled = isEnabled
+                enabled = isEnabled,
             ) {
                 Text(
                     text = if (isEditMode) "Update & Connect" else "Save & Connect"

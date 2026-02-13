@@ -1,13 +1,16 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
+import android.graphics.Bitmap
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +36,10 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.QrCode
+import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -61,6 +68,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -88,6 +99,9 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
 import java.text.NumberFormat
@@ -125,17 +139,24 @@ fun BalanceScreen(
     onFetchTxVsize: suspend (String) -> Double? = { null },
     onRefreshFees: () -> Unit = {},
     onSync: () -> Unit = {},
-    onManageWallets: () -> Unit = {}
+    onManageWallets: () -> Unit = {},
+    onScanQrResult: (String) -> Unit = {}
 ) {
     // State for selected transaction dialog
     var selectedTransaction by remember { mutableStateOf<TransactionDetails?>(null) }
+    
+    // QR scanner state
+    var showQrScanner by remember { mutableStateOf(false) }
+    
+    // Quick receive dialog state
+    var showQuickReceive by remember { mutableStateOf(false) }
     
     // Search state
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     
     // Transaction display limit (progressive loading)
-    var displayLimit by remember { mutableIntStateOf(50) }
+    var displayLimit by remember { mutableIntStateOf(25) }
     
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     
@@ -170,11 +191,26 @@ fun BalanceScreen(
         )
     }
     
+    // Track pull-to-refresh separately from sync state so background/auto syncs
+    // don't cause the page to stretch — only user-initiated pull gestures do.
+    var isPullRefreshing by remember { mutableStateOf(false) }
     val pullToRefreshState = rememberPullToRefreshState()
     
+    // Clear pull-refreshing state when sync finishes
+    LaunchedEffect(walletState.isSyncing) {
+        if (!walletState.isSyncing) {
+            isPullRefreshing = false
+        }
+    }
+    
     PullToRefreshBox(
-        isRefreshing = walletState.isSyncing,
-        onRefresh = { if (walletState.isInitialized) onSync() },
+        isRefreshing = isPullRefreshing,
+        onRefresh = {
+            if (walletState.isInitialized) {
+                isPullRefreshing = true
+                onSync()
+            }
+        },
         modifier = Modifier.fillMaxSize(),
         state = pullToRefreshState,
         indicator = {}
@@ -184,43 +220,60 @@ fun BalanceScreen(
                 .fillMaxSize()
                 .padding(horizontal = 16.dp)
                 .graphicsLayer {
-                    // Add stretch effect when pulling
+                    // Add stretch effect only when user is actively pulling
                     val progress = pullToRefreshState.distanceFraction.coerceIn(0f, 1f)
                     translationY = progress * 40f
                 },
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             item {
-                Spacer(modifier = Modifier.height(16.dp))
-            
-            // Balance Card
+
             Card(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(140.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = DarkCard
                 )
             ) {
-                Column(
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(20.dp)
+                        .fillMaxSize()
+                        .padding(10.dp)
                 ) {
-                    // Header row: label + sync button
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    // Top row — privacy toggle (left) + sync button (right)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(28.dp)
+                            .padding(bottom = 4.dp)
+                            .align(Alignment.TopCenter)
                     ) {
-                        Text(
-                            text = "Total Balance",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
+                        // Privacy toggle — pinned to the left
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
                                 .size(28.dp)
+                                .align(Alignment.CenterStart)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(DarkSurfaceVariant)
+                                .clickable { onTogglePrivacy() }
+                        ) {
+                            Icon(
+                                imageVector = if (privacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = "Toggle privacy",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Sync button — pinned to the right
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(28.dp)
+                                .align(Alignment.CenterEnd)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(DarkSurfaceVariant)
                                 .clickable(enabled = walletState.isInitialized && !walletState.isSyncing) { onSync() }
@@ -242,13 +295,11 @@ fun BalanceScreen(
                         }
                     }
                     
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    // Balance content - tap to toggle privacy
+                    // Balance content — vertically centered in the card
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(onClick = onTogglePrivacy),
+                            .align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         // Main balance with inline denomination
@@ -268,9 +319,8 @@ fun BalanceScreen(
                             val usdValue = (walletState.balanceSats.toDouble() / 100_000_000.0) * btcPrice
                             Text(
                                 text = if (privacyMode) HIDDEN_AMOUNT else formatUsd(usdValue),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = TextSecondary,
-                                modifier = Modifier.padding(top = 4.dp)
+                                style = MaterialTheme.typography.titleLarge,
+                                color = TextSecondary
                             )
                         }
                         
@@ -278,9 +328,9 @@ fun BalanceScreen(
                         if (walletState.pendingIncomingSats > 0UL) {
                             Text(
                                 text = if (privacyMode) "$HIDDEN_AMOUNT pending" else "+${formatAmount(walletState.pendingIncomingSats, useSats)} pending",
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = SuccessGreen,
-                                modifier = Modifier.padding(top = 6.dp)
+                                modifier = Modifier.padding(top = 4.dp)
                             )
                         }
 
@@ -288,18 +338,58 @@ fun BalanceScreen(
                         if (walletState.pendingOutgoingSats > 0UL) {
                             Text(
                                 text = if (privacyMode) "$HIDDEN_AMOUNT pending" else "-${formatAmount(walletState.pendingOutgoingSats, useSats)} pending",
-                                style = MaterialTheme.typography.titleMedium,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = ErrorRed,
-                                modifier = Modifier.padding(top = 6.dp)
+                                modifier = Modifier.padding(top = 4.dp)
                             )
                         }
                     }
-                    
-                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // Quick receive button — pinned to bottom left
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .align(Alignment.BottomStart)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurfaceVariant)
+                            .clickable(enabled = walletState.currentAddress != null) {
+                                showQuickReceive = true
+                            }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCode,
+                            contentDescription = "Quick receive",
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    // QR scan button — pinned to bottom right
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(28.dp)
+                            .align(Alignment.BottomEnd)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurfaceVariant)
+                            .clickable(enabled = walletState.isInitialized) {
+                                showQrScanner = true
+                            }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = "Scan QR",
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
-            
-            Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            item {
+            Spacer(modifier = Modifier.height(4.dp))
             
             // Import wallet prompt if not initialized
             if (!walletState.isInitialized) {
@@ -347,10 +437,8 @@ fun BalanceScreen(
                         }
                     }
                 }
-                
-                Spacer(modifier = Modifier.height(12.dp))
             }
-            
+                Spacer(modifier = Modifier.height(6.dp))
             // Recent Transactions Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -402,7 +490,7 @@ fun BalanceScreen(
                 )
             }
             
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(4.dp))
         }
         
         // Filter transactions based on search query (always searches ALL transactions)
@@ -485,7 +573,7 @@ fun BalanceScreen(
                     privacyMode = privacyMode,
                     onClick = { selectedTransaction = tx }
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
             }
 
             // Progressive "Show More" / "Show All" buttons
@@ -494,8 +582,8 @@ fun BalanceScreen(
                     val remaining = totalCount - visibleCount
                     TextButton(
                         onClick = {
-                            if (displayLimit <= 50) {
-                                displayLimit = 150
+                            if (displayLimit <= 25) {
+                                displayLimit = 100
                             } else {
                                 displayLimit = Int.MAX_VALUE
                             }
@@ -505,7 +593,7 @@ fun BalanceScreen(
                             .padding(vertical = 4.dp)
                     ) {
                         Text(
-                            text = if (displayLimit <= 50)
+                            text = if (displayLimit <= 25)
                                 "Show More"
                             else
                                 "Show All ($remaining remaining)",
@@ -518,6 +606,110 @@ fun BalanceScreen(
         
             item {
                 Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+    }
+
+    // QR Scanner Dialog — must be outside LazyColumn
+    if (showQrScanner) {
+        QrScannerDialog(
+            onCodeScanned = { code ->
+                showQrScanner = false
+                onScanQrResult(code)
+            },
+            onDismiss = { showQrScanner = false }
+        )
+    }
+
+    // Quick Receive Dialog — must be outside LazyColumn
+    if (showQuickReceive && walletState.currentAddress != null) {
+        val address = walletState.currentAddress
+        val qrBitmap = remember(address) { generateQrCode(address) }
+        val context = LocalContext.current
+        var showCopied by remember { mutableStateOf(false) }
+
+        LaunchedEffect(showCopied) {
+            if (showCopied) {
+                kotlinx.coroutines.delay(3000)
+                showCopied = false
+            }
+        }
+
+        Dialog(
+            onDismissRequest = { showQuickReceive = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                modifier = Modifier
+                    .padding(horizontal = 32.dp)
+                    .fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkCard)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // QR Code
+                    qrBitmap?.let { bitmap ->
+                        Box(
+                            modifier = Modifier
+                                .size(200.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White)
+                                .padding(8.dp)
+                        ) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Receive address QR",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Address + copy icon
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = "${address.take(8)}...${address.takeLast(8)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "Copy address",
+                            tint = if (showCopied) BitcoinOrange else TextSecondary,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .clickable {
+                                    SecureClipboard.copyAndScheduleClear(
+                                        context,
+                                        "Address",
+                                        address
+                                    )
+                                    showCopied = true
+                                }
+                        )
+                    }
+
+                    if (showCopied) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Copied to clipboard!",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = BitcoinOrange
+                        )
+                    }
+                }
             }
         }
     }
@@ -672,14 +864,6 @@ private fun formatAmount(sats: ULong, useSats: Boolean): String {
 private fun formatFullTimestamp(timestamp: Long): String {
     val sdf = SimpleDateFormat("MMM d, yyyy HH:mm", Locale.getDefault())
     return sdf.format(Date(timestamp))
-}
-
-/**
- * Format fee rate - up to 2 decimal places, removes trailing zeros
- */
-private fun formatFeeRate(rate: Double): String {
-    val formatted = String.format(Locale.US, "%.2f", rate)
-    return formatted.trimEnd('0').trimEnd('.')
 }
 
 /**
@@ -930,7 +1114,7 @@ fun TransactionDetailDialog(
                     }
                 }
                 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(12.dp))
                 
                 // Transaction details
                 Card(
@@ -1763,7 +1947,13 @@ private fun SpeedUpDialog(
                 }
                 
                 // Fee estimates (if enabled)
-                if (estimates != null || feeEstimationState is FeeEstimationResult.Loading) {
+                if (feeEstimationState !is FeeEstimationResult.Disabled) {
+                    val isLoading = feeEstimationState is FeeEstimationResult.Loading
+                    val isElectrum = estimates?.source == FeeEstimateSource.ELECTRUM_SERVER
+                    val fastLabel = if (isElectrum) "~2 blocks" else "~1 block"
+                    val medLabel = if (isElectrum) "~6 blocks" else "~3 blocks"
+                    val slowLabel = if (isElectrum) "~12 blocks" else "~6 blocks"
+
                     Spacer(modifier = Modifier.height(2.dp))
                     
                     Row(
@@ -1782,13 +1972,12 @@ private fun SpeedUpDialog(
                                 .size(24.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(DarkSurfaceVariant)
-                                .clickable(enabled = feeEstimationState !is FeeEstimationResult.Loading) { onRefreshFees() }
+                                .clickable(enabled = !isLoading) { onRefreshFees() }
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = "Refresh",
-                                tint = if (feeEstimationState is FeeEstimationResult.Loading) 
-                                    TextSecondary.copy(alpha = 0.5f) else BitcoinOrange,
+                                tint = if (isLoading) TextSecondary.copy(alpha = 0.5f) else BitcoinOrange,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
@@ -1796,158 +1985,61 @@ private fun SpeedUpDialog(
                     
                     Spacer(modifier = Modifier.height(6.dp))
                     
-                    if (feeEstimationState is FeeEstimationResult.Loading) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                color = BitcoinOrange,
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Loading fee estimates...",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
-                            )
-                        }
-                    } else if (estimates != null) {
-                        val isElectrum = estimates.source == FeeEstimateSource.ELECTRUM_SERVER
-                        val fastLabel = if (isElectrum) "~2 blocks" else "~1 block"
-                        val medLabel = if (isElectrum) "~6 blocks" else "~3 blocks"
-                        val slowLabel = if (isElectrum) "~12 blocks" else "~6 blocks"
-                        
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            val isSelected1 = selectedFeeOption == "fastest"
-                            Card(
-                                onClick = { 
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        github.aeonbtc.ibiswallet.ui.components.FeeTargetButton(
+                            label = fastLabel,
+                            feeRate = estimates?.fastestFee,
+                            isSelected = selectedFeeOption == "fastest",
+                            onClick = {
+                                if (estimates != null) {
                                     feeRateInput = formatFeeRate(estimates.fastestFee)
                                     selectedFeeOption = "fastest"
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isSelected1) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface
-                                ),
-                                border = BorderStroke(1.dp, if (isSelected1) BitcoinOrange else BorderColor)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp, horizontal = 8.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = fastLabel,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (isSelected1) MaterialTheme.colorScheme.onBackground else TextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.height(1.dp))
-                                    Text(
-                                        text = formatFeeRate(estimates.fastestFee),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isSelected1) BitcoinOrange else TextSecondary
-                                    )
-                                    Text(
-                                        text = "sat/vB",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TextSecondary
-                                    )
                                 }
-                            }
-                            val isSelected3 = selectedFeeOption == "halfHour"
-                            Card(
-                                onClick = { 
+                            },
+                            enabled = true,
+                            isLoading = isLoading,
+                            modifier = Modifier.weight(1f)
+                        )
+                        github.aeonbtc.ibiswallet.ui.components.FeeTargetButton(
+                            label = medLabel,
+                            feeRate = estimates?.halfHourFee,
+                            isSelected = selectedFeeOption == "halfHour",
+                            onClick = {
+                                if (estimates != null) {
                                     feeRateInput = formatFeeRate(estimates.halfHourFee)
                                     selectedFeeOption = "halfHour"
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isSelected3) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface
-                                ),
-                                border = BorderStroke(1.dp, if (isSelected3) BitcoinOrange else BorderColor)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp, horizontal = 8.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = medLabel,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (isSelected3) MaterialTheme.colorScheme.onBackground else TextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.height(1.dp))
-                                    Text(
-                                        text = formatFeeRate(estimates.halfHourFee),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isSelected3) BitcoinOrange else TextSecondary
-                                    )
-                                    Text(
-                                        text = "sat/vB",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TextSecondary
-                                    )
                                 }
-                            }
-                            val isSelected6 = selectedFeeOption == "hour"
-                            Card(
-                                onClick = { 
+                            },
+                            enabled = true,
+                            isLoading = isLoading,
+                            modifier = Modifier.weight(1f)
+                        )
+                        github.aeonbtc.ibiswallet.ui.components.FeeTargetButton(
+                            label = slowLabel,
+                            feeRate = estimates?.hourFee,
+                            isSelected = selectedFeeOption == "hour",
+                            onClick = {
+                                if (estimates != null) {
                                     feeRateInput = formatFeeRate(estimates.hourFee)
                                     selectedFeeOption = "hour"
-                                },
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (isSelected6) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface
-                                ),
-                                border = BorderStroke(1.dp, if (isSelected6) BitcoinOrange else BorderColor)
-                            ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 8.dp, horizontal = 8.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally
-                                ) {
-                                    Text(
-                                        text = slowLabel,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = if (isSelected6) MaterialTheme.colorScheme.onBackground else TextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.height(1.dp))
-                                    Text(
-                                        text = formatFeeRate(estimates.hourFee),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = if (isSelected6) BitcoinOrange else TextSecondary
-                                    )
-                                    Text(
-                                        text = "sat/vB",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = TextSecondary
-                                    )
                                 }
-                            }
-                        }
-                        
-                        if (isElectrum && estimates.isUniform) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "Server reports same rate for all targets (low fee environment)",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
-                            )
-                        }
+                            },
+                            enabled = true,
+                            isLoading = isLoading,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    
+                    if (estimates != null && isElectrum && estimates.isUniform) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Server reports same rate for all targets (low fee environment)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
                     }
                 }
                 
@@ -1955,21 +2047,12 @@ private fun SpeedUpDialog(
                 
                 // Confirm button
                 val canConfirm = isValidFeeRate && canAfford
-                OutlinedButton(
+                IbisButton(
                     onClick = { onConfirm(feeRate) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp),
-                    shape = RoundedCornerShape(8.dp),
                     enabled = canConfirm,
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = BitcoinOrange,
-                        disabledContentColor = TextSecondary.copy(alpha = 0.5f)
-                    ),
-                    border = BorderStroke(
-                        1.dp,
-                        if (canConfirm) BitcoinOrange.copy(alpha = 0.5f) else BorderColor.copy(alpha = 0.3f)
-                    )
                 ) {
                     Text(
                         text = when (method) {
@@ -2001,6 +2084,35 @@ private fun SpeedUpDialog(
  * Get the appropriate button text for the block explorer button
  * based on the selected mempool server
  */
+private fun generateQrCode(content: String): Bitmap? {
+    return try {
+        val size = 512
+        val qrCodeWriter = com.google.zxing.qrcode.QRCodeWriter()
+        val hints = mapOf(
+            com.google.zxing.EncodeHintType.MARGIN to 1
+        )
+        val bitMatrix = qrCodeWriter.encode(
+            content,
+            com.google.zxing.BarcodeFormat.QR_CODE,
+            size,
+            size,
+            hints
+        )
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        for (x in 0 until size) {
+            for (y in 0 until size) {
+                bitmap.setPixel(
+                    x, y,
+                    if (bitMatrix[x, y]) Color.Black.toArgb() else Color.White.toArgb()
+                )
+            }
+        }
+        bitmap
+    } catch (e: Exception) {
+        null
+    }
+}
+
 private fun getMempoolButtonText(mempoolServer: String): String {
     return when (mempoolServer) {
         SecureStorage.MEMPOOL_SPACE -> "View on mempool.space"

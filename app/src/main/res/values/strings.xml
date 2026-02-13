@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">Ibis Wallet</string>
     <string name="wallet_added">Wallet added</string>
+    <string name="cloak_calculator_label">Calculator</string>
 </resources>

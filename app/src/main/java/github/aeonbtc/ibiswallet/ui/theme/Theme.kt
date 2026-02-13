@@ -1,7 +1,6 @@
 package github.aeonbtc.ibiswallet.ui.theme
 
 import android.app.Activity
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -42,7 +41,6 @@ private val DarkColorScheme = darkColorScheme(
 
 @Composable
 fun IbisWalletTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
     val colorScheme = DarkColorScheme // Always use dark theme for this app

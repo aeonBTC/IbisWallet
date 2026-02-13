@@ -36,37 +36,31 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 
 sealed class DrawerItem(
     val title: String,
-    val icon: ImageVector,
-    val route: String
+    val icon: ImageVector
 ) {
     data object ManageWallets : DrawerItem(
         title = "Manage Wallets",
-        icon = Icons.Default.AccountBalanceWallet,
-        route = "manage_wallets"
+        icon = Icons.Default.AccountBalanceWallet
     )
     
     data object ElectrumServer : DrawerItem(
         title = "Electrum Server",
-        icon = Icons.Default.Cloud,
-        route = "electrum_config"
+        icon = Icons.Default.Cloud
     )
     
     data object Settings : DrawerItem(
         title = "Settings",
-        icon = Icons.Default.Settings,
-        route = "settings"
+        icon = Icons.Default.Settings
     )
     
     data object Security : DrawerItem(
         title = "Security",
-        icon = Icons.Default.Lock,
-        route = "security"
+        icon = Icons.Default.Lock
     )
     
     data object About : DrawerItem(
         title = "About",
-        icon = Icons.Default.Info,
-        route = "about"
+        icon = Icons.Default.Info
     )
 }
 

@@ -20,19 +20,41 @@ import javax.crypto.spec.PBEKeySpec
  * Secure storage for sensitive wallet data using Android's EncryptedSharedPreferences
  * Supports multiple wallets with unique IDs
  */
-class SecureStorage(context: Context) {
+class SecureStorage(private val context: Context) {
     
     private val masterKey = MasterKey.Builder(context)
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
     
-    private val securePrefs: SharedPreferences = EncryptedSharedPreferences.create(
-        context,
-        SECURE_PREFS_FILE,
-        masterKey,
-        EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-        EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-    )
+    private val securePrefs: SharedPreferences = try {
+        EncryptedSharedPreferences.create(
+            context,
+            SECURE_PREFS_FILE,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    } catch (_: Exception) {
+        // KeyPermanentlyInvalidatedException or similar — the MasterKey was deleted
+        // (e.g., by auto-wipe) but the encrypted prefs file still exists with a stale
+        // Tink keyset. Delete the corrupt file and recreate from scratch.
+        context.deleteSharedPreferences(SECURE_PREFS_FILE)
+        try {
+            val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            keyStore.deleteEntry("_androidx_security_master_key_")
+        } catch (_: Exception) { }
+        val freshKey = MasterKey.Builder(context)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            context,
+            SECURE_PREFS_FILE,
+            freshKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+        )
+    }
     
     private val regularPrefs: SharedPreferences = context.getSharedPreferences(
         REGULAR_PREFS_FILE,
@@ -210,13 +232,6 @@ class SecureStorage(context: Context) {
     }
     
     /**
-     * Check if wallet has a mnemonic
-     */
-    fun hasMnemonic(walletId: String): Boolean {
-        return securePrefs.contains("${KEY_MNEMONIC_PREFIX}${walletId}")
-    }
-    
-    /**
      * Delete mnemonic for a specific wallet
      */
     fun deleteMnemonic(walletId: String) {
@@ -251,6 +266,42 @@ class SecureStorage(context: Context) {
      */
     fun deleteExtendedKey(walletId: String) {
         securePrefs.edit { remove("${KEY_EXTENDED_KEY_PREFIX}${walletId}") }
+    }
+    
+    // ==================== Private Key Storage (per wallet - WIF format) ====================
+    
+    fun savePrivateKey(walletId: String, wif: String) {
+        securePrefs.edit { putString("${KEY_PRIVATE_KEY_PREFIX}${walletId}", wif) }
+    }
+    
+    fun getPrivateKey(walletId: String): String? {
+        return securePrefs.getString("${KEY_PRIVATE_KEY_PREFIX}${walletId}", null)
+    }
+    
+    fun hasPrivateKey(walletId: String): Boolean {
+        return securePrefs.contains("${KEY_PRIVATE_KEY_PREFIX}${walletId}")
+    }
+    
+    fun deletePrivateKey(walletId: String) {
+        securePrefs.edit { remove("${KEY_PRIVATE_KEY_PREFIX}${walletId}") }
+    }
+    
+    // ==================== Watch Address Storage (per wallet - single address) ====================
+    
+    fun saveWatchAddress(walletId: String, address: String) {
+        securePrefs.edit { putString("${KEY_WATCH_ADDRESS_PREFIX}${walletId}", address) }
+    }
+    
+    fun getWatchAddress(walletId: String): String? {
+        return securePrefs.getString("${KEY_WATCH_ADDRESS_PREFIX}${walletId}", null)
+    }
+    
+    fun hasWatchAddress(walletId: String): Boolean {
+        return securePrefs.contains("${KEY_WATCH_ADDRESS_PREFIX}${walletId}")
+    }
+    
+    fun deleteWatchAddress(walletId: String) {
+        securePrefs.edit { remove("${KEY_WATCH_ADDRESS_PREFIX}${walletId}") }
     }
     
     // ==================== Passphrase Storage (per wallet) ====================
@@ -520,6 +571,8 @@ class SecureStorage(context: Context) {
         deleteMnemonic(walletId)
         deleteExtendedKey(walletId)
         deletePassphrase(walletId)
+        deletePrivateKey(walletId)
+        deleteWatchAddress(walletId)
         
         // Delete metadata
         deleteWalletMetadata(walletId)
@@ -530,6 +583,25 @@ class SecureStorage(context: Context) {
             remove("${KEY_NEEDS_FULL_SYNC_PREFIX}${walletId}")
             remove("${KEY_LAST_FULL_SYNC_PREFIX}${walletId}")
         }
+    }
+    
+    // ==================== Sync Batch Size ====================
+    
+    /**
+     * Save the adaptive sync batch size so it persists across app restarts.
+     * Avoids re-learning slow Tor connections every session.
+     */
+    fun saveSyncBatchSize(batchSize: Long) {
+        regularPrefs.edit { putLong(KEY_SYNC_BATCH_SIZE, batchSize) }
+    }
+    
+    /**
+     * Get the persisted sync batch size, or null if never saved (use default).
+     */
+    fun getSyncBatchSize(): Long? {
+        return if (regularPrefs.contains(KEY_SYNC_BATCH_SIZE)) {
+            regularPrefs.getLong(KEY_SYNC_BATCH_SIZE, 500L)
+        } else null
     }
     
     // ==================== Tor Settings ====================
@@ -566,10 +638,17 @@ class SecureStorage(context: Context) {
     }
     
     /**
-     * Check if using sats denomination
+     * Get persisted privacy mode state
      */
-    fun isUsingSats(): Boolean {
-        return getDenomination() == DENOMINATION_SATS
+    fun getPrivacyMode(): Boolean {
+        return regularPrefs.getBoolean(KEY_PRIVACY_MODE, false)
+    }
+    
+    /**
+     * Set privacy mode state
+     */
+    fun setPrivacyMode(enabled: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_PRIVACY_MODE, enabled) }
     }
     
     // ==================== Mempool Server Settings ====================
@@ -896,7 +975,7 @@ class SecureStorage(context: Context) {
      * Get the current security method
      */
     fun getSecurityMethod(): SecurityMethod {
-        val method = regularPrefs.getString(KEY_SECURITY_METHOD, SecurityMethod.NONE.name)
+        val method = securePrefs.getString(KEY_SECURITY_METHOD, SecurityMethod.NONE.name)
         return try {
             SecurityMethod.valueOf(method ?: SecurityMethod.NONE.name)
         } catch (_: IllegalArgumentException) {
@@ -908,7 +987,7 @@ class SecureStorage(context: Context) {
      * Set the security method
      */
     fun setSecurityMethod(method: SecurityMethod) {
-        regularPrefs.edit { putString(KEY_SECURITY_METHOD, method.name) }
+        securePrefs.edit { putString(KEY_SECURITY_METHOD, method.name) }
     }
     
     /**
@@ -921,7 +1000,7 @@ class SecureStorage(context: Context) {
             putString(KEY_PIN_CODE, Base64.encodeToString(hash, Base64.NO_WRAP))
             putString(KEY_PIN_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
         }
-        regularPrefs.edit {
+        securePrefs.edit {
             putInt(KEY_PIN_LENGTH, pin.length)
             remove(KEY_PIN_FAILED_ATTEMPTS)
             remove(KEY_PIN_LOCKOUT_UNTIL)
@@ -935,7 +1014,7 @@ class SecureStorage(context: Context) {
      */
     fun verifyPin(pin: String): Boolean {
         // Check lockout
-        val lockoutUntil = regularPrefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+        val lockoutUntil = securePrefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
         if (lockoutUntil > 0 && System.currentTimeMillis() < lockoutUntil) {
             return false // Still locked out
         }
@@ -962,19 +1041,19 @@ class SecureStorage(context: Context) {
         
         if (matches) {
             // Reset failed attempts on success
-            regularPrefs.edit {
+            securePrefs.edit {
                 remove(KEY_PIN_FAILED_ATTEMPTS)
                 remove(KEY_PIN_LOCKOUT_UNTIL)
             }
         } else {
             // Increment failed attempts and apply lockout if needed
-            val attempts = regularPrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
-            regularPrefs.edit { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
+            val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
+            securePrefs.edit { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
             
             if (attempts >= MAX_PIN_ATTEMPTS) {
                 // Exponential backoff: 30s, 60s, 120s, 240s, ...
                 val lockoutMs = 30_000L * (1L shl (attempts - MAX_PIN_ATTEMPTS).coerceAtMost(6))
-                regularPrefs.edit {
+                securePrefs.edit {
                     putLong(KEY_PIN_LOCKOUT_UNTIL, System.currentTimeMillis() + lockoutMs)
                 }
             }
@@ -990,7 +1069,7 @@ class SecureStorage(context: Context) {
     fun getStoredPinLength(): Int? {
         if (!hasPin()) return null
         // If we have a stored length, use it
-        val length = regularPrefs.getInt(KEY_PIN_LENGTH, -1)
+        val length = securePrefs.getInt(KEY_PIN_LENGTH, -1)
         if (length > 0) return length
         // Legacy: unhashed PIN stored directly, length can be read
         val stored = securePrefs.getString(KEY_PIN_CODE, null) ?: return null
@@ -1012,18 +1091,42 @@ class SecureStorage(context: Context) {
         securePrefs.edit {
             remove(KEY_PIN_CODE)
             remove(KEY_PIN_SALT)
-        }
-        regularPrefs.edit {
             remove(KEY_PIN_LENGTH)
             remove(KEY_PIN_FAILED_ATTEMPTS)
             remove(KEY_PIN_LOCKOUT_UNTIL)
         }
     }
     
+    /**
+     * Check if the given PIN matches the current stored PIN WITHOUT affecting
+     * the failed attempt counter or lockout state. Used for duress PIN setup
+     * to ensure the duress PIN differs from the real PIN.
+     */
+    fun pinMatchesCurrent(pin: String): Boolean {
+        val storedHash = securePrefs.getString(KEY_PIN_CODE, null) ?: return false
+        val storedSaltStr = securePrefs.getString(KEY_PIN_SALT, null)
+        
+        // Legacy: unhashed PIN
+        if (storedSaltStr == null) {
+            return storedHash == pin
+        }
+        
+        val salt = Base64.decode(storedSaltStr, Base64.NO_WRAP)
+        val inputHash = hashPin(pin, salt)
+        val storedHashBytes = Base64.decode(storedHash, Base64.NO_WRAP)
+        return constantTimeEquals(inputHash, storedHashBytes)
+    }
+    
     private fun hashPin(pin: String, salt: ByteArray): ByteArray {
-        val keySpec = PBEKeySpec(pin.toCharArray(), salt, PIN_PBKDF2_ITERATIONS, PIN_HASH_LENGTH)
-        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-        return factory.generateSecret(keySpec).encoded
+        val chars = pin.toCharArray()
+        val keySpec = PBEKeySpec(chars, salt, PIN_PBKDF2_ITERATIONS, PIN_HASH_LENGTH)
+        return try {
+            val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+            factory.generateSecret(keySpec).encoded
+        } finally {
+            keySpec.clearPassword()
+            chars.fill('\u0000')
+        }
     }
     
     private fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {
@@ -1033,13 +1136,6 @@ class SecureStorage(context: Context) {
             result = result or (a[i].toInt() xor b[i].toInt())
         }
         return result == 0
-    }
-    
-    /**
-     * Check if biometric authentication is enabled
-     */
-    fun isBiometricEnabled(): Boolean {
-        return getSecurityMethod() == SecurityMethod.BIOMETRIC
     }
     
     /**
@@ -1053,7 +1149,7 @@ class SecureStorage(context: Context) {
      * Get the lock timing setting
      */
     fun getLockTiming(): LockTiming {
-        val timing = regularPrefs.getString(KEY_LOCK_TIMING, LockTiming.DISABLED.name)
+        val timing = securePrefs.getString(KEY_LOCK_TIMING, LockTiming.DISABLED.name)
         return try {
             LockTiming.valueOf(timing ?: LockTiming.DISABLED.name)
         } catch (_: IllegalArgumentException) {
@@ -1065,7 +1161,7 @@ class SecureStorage(context: Context) {
      * Set the lock timing setting
      */
     fun setLockTiming(timing: LockTiming) {
-        regularPrefs.edit { putString(KEY_LOCK_TIMING, timing.name) }
+        securePrefs.edit { putString(KEY_LOCK_TIMING, timing.name) }
     }
     
     /**
@@ -1085,11 +1181,291 @@ class SecureStorage(context: Context) {
     // ==================== Screenshot Prevention ====================
     
     fun getDisableScreenshots(): Boolean {
-        return regularPrefs.getBoolean(KEY_DISABLE_SCREENSHOTS, true)
+        return securePrefs.getBoolean(KEY_DISABLE_SCREENSHOTS, true)
     }
     
     fun setDisableScreenshots(disabled: Boolean) {
-        regularPrefs.edit { putBoolean(KEY_DISABLE_SCREENSHOTS, disabled) }
+        securePrefs.edit { putBoolean(KEY_DISABLE_SCREENSHOTS, disabled) }
+    }
+    
+    // ==================== Cloak Mode ====================
+    
+    /**
+     * Check if cloak mode is enabled (app disguised as calculator)
+     */
+    fun isCloakModeEnabled(): Boolean {
+        return securePrefs.getBoolean(KEY_CLOAK_MODE_ENABLED, false)
+    }
+    
+    /**
+     * Enable or disable cloak mode
+     */
+    fun setCloakModeEnabled(enabled: Boolean) {
+        securePrefs.edit { putBoolean(KEY_CLOAK_MODE_ENABLED, enabled) }
+    }
+    
+    /**
+     * Save the secret calculator unlock code (stored in encrypted prefs)
+     */
+    fun setCloakCode(code: String) {
+        securePrefs.edit { putString(KEY_CLOAK_CODE, code) }
+    }
+    
+    /**
+     * Get the secret calculator unlock code
+     */
+    fun getCloakCode(): String? {
+        return securePrefs.getString(KEY_CLOAK_CODE, null)
+    }
+    
+    /**
+     * Clear all cloak mode data
+     */
+    fun clearCloakData() {
+        securePrefs.edit {
+            remove(KEY_CLOAK_MODE_ENABLED)
+            remove(KEY_CLOAK_CODE)
+        }
+        // Schedule alias swap back to default on next launch
+        setPendingIconAlias(ALIAS_DEFAULT)
+    }
+    
+    /**
+     * Set a pending icon alias swap (applied on next cold start to avoid process kill)
+     */
+    fun setPendingIconAlias(alias: String) {
+        regularPrefs.edit { putString(KEY_CLOAK_PENDING_ALIAS, alias) }
+    }
+    
+    /**
+     * Get pending icon alias swap, if any
+     */
+    fun getPendingIconAlias(): String? {
+        return regularPrefs.getString(KEY_CLOAK_PENDING_ALIAS, null)
+    }
+    
+    /**
+     * Clear the pending icon alias
+     */
+    fun clearPendingIconAlias() {
+        regularPrefs.edit { remove(KEY_CLOAK_PENDING_ALIAS) }
+    }
+    
+    /**
+     * Get the currently active launcher alias
+     */
+    fun getCurrentIconAlias(): String {
+        return regularPrefs.getString(KEY_CLOAK_CURRENT_ALIAS, ALIAS_DEFAULT) ?: ALIAS_DEFAULT
+    }
+    
+    /**
+     * Set the currently active launcher alias
+     */
+    fun setCurrentIconAlias(alias: String) {
+        regularPrefs.edit { putString(KEY_CLOAK_CURRENT_ALIAS, alias) }
+    }
+    
+    // ==================== Duress PIN / Decoy Wallet ====================
+    
+    /**
+     * Save the duress PIN code (hashed with PBKDF2 + random salt, same scheme as real PIN)
+     */
+    fun saveDuressPin(pin: String) {
+        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val hash = hashPin(pin, salt)
+        securePrefs.edit {
+            putString(KEY_DURESS_PIN_CODE, Base64.encodeToString(hash, Base64.NO_WRAP))
+            putString(KEY_DURESS_PIN_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
+            putInt(KEY_DURESS_PIN_LENGTH, pin.length)
+        }
+    }
+    
+    /**
+     * Verify if the provided PIN matches the stored duress PIN hash.
+     * Shares lockout counters with the real PIN to prevent double-attempt attacks.
+     */
+    fun verifyDuressPin(pin: String, incrementFailedAttempts: Boolean = true): Boolean {
+        // Check lockout (shared with real PIN)
+        val lockoutUntil = securePrefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+        if (lockoutUntil > 0 && System.currentTimeMillis() < lockoutUntil) {
+            return false
+        }
+        
+        val storedHash = securePrefs.getString(KEY_DURESS_PIN_CODE, null) ?: return false
+        val storedSaltStr = securePrefs.getString(KEY_DURESS_PIN_SALT, null) ?: return false
+        
+        val salt = Base64.decode(storedSaltStr, Base64.NO_WRAP)
+        val inputHash = hashPin(pin, salt)
+        val storedHashBytes = Base64.decode(storedHash, Base64.NO_WRAP)
+        
+        val matches = constantTimeEquals(inputHash, storedHashBytes)
+        
+        if (matches) {
+            // Reset shared failed attempts on success
+            securePrefs.edit {
+                remove(KEY_PIN_FAILED_ATTEMPTS)
+                remove(KEY_PIN_LOCKOUT_UNTIL)
+            }
+        } else if (incrementFailedAttempts) {
+            // Increment shared failed attempts and apply lockout if needed
+            val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
+            securePrefs.edit { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
+            
+            if (attempts >= MAX_PIN_ATTEMPTS) {
+                val lockoutMs = 30_000L * (1L shl (attempts - MAX_PIN_ATTEMPTS).coerceAtMost(6))
+                securePrefs.edit {
+                    putLong(KEY_PIN_LOCKOUT_UNTIL, System.currentTimeMillis() + lockoutMs)
+                }
+            }
+        }
+        
+        return matches
+    }
+    
+    /**
+     * Get the stored duress PIN length hint (for lock screen auto-submit).
+     */
+    fun getDuressPinLength(): Int? {
+        val length = securePrefs.getInt(KEY_DURESS_PIN_LENGTH, -1)
+        return if (length > 0) length else null
+    }
+    
+    /**
+     * Check if duress mode is enabled
+     */
+    fun isDuressEnabled(): Boolean {
+        return securePrefs.getBoolean(KEY_DURESS_ENABLED, false)
+    }
+    
+    /**
+     * Set whether duress mode is enabled
+     */
+    fun setDuressEnabled(enabled: Boolean) {
+        securePrefs.edit { putBoolean(KEY_DURESS_ENABLED, enabled) }
+    }
+    
+    /**
+     * Get the duress (decoy) wallet ID
+     */
+    fun getDuressWalletId(): String? {
+        return securePrefs.getString(KEY_DURESS_WALLET_ID, null)
+    }
+    
+    /**
+     * Set the duress (decoy) wallet ID
+     */
+    fun setDuressWalletId(id: String) {
+        securePrefs.edit { putString(KEY_DURESS_WALLET_ID, id) }
+    }
+    
+    /**
+     * Get the real wallet ID (snapshot of active wallet when duress was configured)
+     */
+    fun getRealWalletId(): String? {
+        return securePrefs.getString(KEY_REAL_WALLET_ID, null)
+    }
+    
+    /**
+     * Set the real wallet ID
+     */
+    fun setRealWalletId(id: String) {
+        securePrefs.edit { putString(KEY_REAL_WALLET_ID, id) }
+    }
+    
+    // ==================== Auto-Wipe ====================
+    
+    /**
+     * Auto-wipe threshold options (number of failed PIN attempts before wiping all data).
+     * 0 means disabled.
+     */
+    enum class AutoWipeThreshold(val displayName: String, val attempts: Int) {
+        DISABLED("Disabled", 0),
+        AFTER_1("1 attempt", 1),
+        AFTER_3("3 attempts", 3),
+        AFTER_5("5 attempts", 5),
+        AFTER_10("10 attempts", 10)
+    }
+    
+    /**
+     * Get the auto-wipe threshold setting
+     */
+    fun getAutoWipeThreshold(): AutoWipeThreshold {
+        val value = securePrefs.getString(KEY_AUTO_WIPE_THRESHOLD, AutoWipeThreshold.DISABLED.name)
+        return try {
+            AutoWipeThreshold.valueOf(value ?: AutoWipeThreshold.DISABLED.name)
+        } catch (_: IllegalArgumentException) {
+            AutoWipeThreshold.DISABLED
+        }
+    }
+    
+    /**
+     * Set the auto-wipe threshold
+     */
+    fun setAutoWipeThreshold(threshold: AutoWipeThreshold) {
+        securePrefs.edit { putString(KEY_AUTO_WIPE_THRESHOLD, threshold.name) }
+    }
+    
+    /**
+     * Get the current total number of failed PIN attempts (shared between real and duress PINs).
+     */
+    fun getFailedPinAttempts(): Int {
+        return securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0)
+    }
+    
+    /**
+     * Increment the shared failed attempt counter.
+     * Used by biometric failures to share the same counter as PIN failures.
+     */
+    fun incrementFailedAttempts() {
+        val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
+        securePrefs.edit { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
+    }
+    
+    /**
+     * Check if auto-wipe should trigger based on current failed attempts.
+     * Returns true if threshold is enabled and attempts have reached or exceeded it.
+     */
+    fun shouldAutoWipe(): Boolean {
+        val threshold = getAutoWipeThreshold()
+        if (threshold == AutoWipeThreshold.DISABLED) return false
+        return getFailedPinAttempts() >= threshold.attempts
+    }
+    
+    /**
+     * Wipe all wallet data from secure and regular prefs.
+     * Removes all mnemonics, keys, metadata, settings — everything.
+     * Also deletes the Android Keystore MasterKey to eliminate forensic artifacts.
+     */
+    fun wipeAllData() {
+        securePrefs.edit { clear() }
+        regularPrefs.edit { clear() }
+        // Delete the encrypted prefs file from disk BEFORE deleting the MasterKey.
+        // If only the key is deleted, the stale Tink keyset in the prefs file causes
+        // KeyPermanentlyInvalidatedException on the next EncryptedSharedPreferences.create().
+        try {
+            context.deleteSharedPreferences(SECURE_PREFS_FILE)
+        } catch (_: Exception) { }
+        // Delete the MasterKey from Android Keystore to remove forensic evidence
+        // that EncryptedSharedPreferences was ever used
+        try {
+            val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            keyStore.deleteEntry("_androidx_security_master_key_")
+        } catch (_: Exception) { }
+    }
+    
+    /**
+     * Clear all duress data (PIN, wallet ID, real wallet ID)
+     */
+    fun clearDuressData() {
+        securePrefs.edit {
+            remove(KEY_DURESS_PIN_CODE)
+            remove(KEY_DURESS_PIN_SALT)
+            remove(KEY_DURESS_PIN_LENGTH)
+            remove(KEY_DURESS_ENABLED)
+            remove(KEY_DURESS_WALLET_ID)
+            remove(KEY_REAL_WALLET_ID)
+        }
     }
     
     companion object {
@@ -1105,6 +1481,8 @@ class SecureStorage(context: Context) {
         private const val KEY_MNEMONIC_PREFIX = "wallet_mnemonic_"
         private const val KEY_EXTENDED_KEY_PREFIX = "wallet_extended_key_"
         private const val KEY_PASSPHRASE_PREFIX = "wallet_passphrase_"
+        private const val KEY_PRIVATE_KEY_PREFIX = "wallet_private_key_"
+        private const val KEY_WATCH_ADDRESS_PREFIX = "wallet_watch_address_"
         
         // Regular keys
         private const val KEY_NETWORK = "wallet_network"
@@ -1118,6 +1496,9 @@ class SecureStorage(context: Context) {
         private const val KEY_SERVER_PREFIX = "server_config_"
         private const val KEY_SERVER_CERT_PREFIX = "server_cert_"
         private const val KEY_DEFAULT_SERVERS_SEEDED = "default_servers_seeded"
+        
+        // Sync settings
+        private const val KEY_SYNC_BATCH_SIZE = "sync_batch_size"
         
         // Tor settings
         private const val KEY_TOR_ENABLED = "tor_enabled"
@@ -1180,5 +1561,25 @@ class SecureStorage(context: Context) {
         private const val KEY_LOCK_TIMING = "lock_timing"
         private const val KEY_LAST_BACKGROUND_TIME = "last_background_time"
         private const val KEY_DISABLE_SCREENSHOTS = "disable_screenshots"
+        private const val KEY_PRIVACY_MODE = "privacy_mode"
+        
+        // Auto-wipe
+        private const val KEY_AUTO_WIPE_THRESHOLD = "auto_wipe_threshold"
+        
+        // Cloak mode
+        private const val KEY_CLOAK_MODE_ENABLED = "cloak_mode_enabled"
+        private const val KEY_CLOAK_CODE = "cloak_code"
+        private const val KEY_CLOAK_PENDING_ALIAS = "cloak_pending_alias"
+        private const val KEY_CLOAK_CURRENT_ALIAS = "cloak_current_alias"
+        const val ALIAS_DEFAULT = ".LauncherDefault"
+        const val ALIAS_CALCULATOR = ".LauncherCalculator"
+        
+        // Duress PIN / Decoy wallet
+        private const val KEY_DURESS_PIN_CODE = "duress_pin_code"
+        private const val KEY_DURESS_PIN_SALT = "duress_pin_salt"
+        private const val KEY_DURESS_PIN_LENGTH = "duress_pin_length"
+        private const val KEY_DURESS_ENABLED = "duress_enabled"
+        private const val KEY_DURESS_WALLET_ID = "duress_wallet_id"
+        private const val KEY_REAL_WALLET_ID = "real_wallet_id"
     }
 }

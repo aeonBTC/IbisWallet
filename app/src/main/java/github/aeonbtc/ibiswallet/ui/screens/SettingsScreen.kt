@@ -10,17 +10,26 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.CurrencyBitcoin
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.CircleShape
+import kotlinx.coroutines.delay
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.tor.TorStatus
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.*
 
@@ -41,6 +50,7 @@ fun SettingsScreen(
     onMempoolServerChange: (String) -> Unit = {},
     customMempoolUrl: String = "",
     onCustomMempoolUrlSave: (String) -> Unit = {},
+    torStatus: TorStatus = TorStatus.DISCONNECTED,
     onBack: () -> Unit = {}
 ) {
     Column(
@@ -92,25 +102,44 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            onDenominationChange(
+                                if (!isSats) SecureStorage.DENOMINATION_SATS
+                                else SecureStorage.DENOMINATION_BTC
+                            )
+                        },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (isSats) "Sats" else "BTC",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onBackground
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CurrencyBitcoin,
+                            contentDescription = null,
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(24.dp)
                         )
-                        Text(
-                            text = if (isSats) "Amounts shown in satoshis" else "Amounts shown in bitcoin",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = if (isSats) "Sats" else "BTC",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = if (isSats) "Amounts shown in satoshis" else "Amounts shown in bitcoin",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
                     SquareToggle(
                         checked = isSats,
                         onCheckedChange = { useSats ->
@@ -150,23 +179,37 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSpendUnconfirmedChange(!spendUnconfirmed) },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Spend Unconfirmed",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onBackground
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = null,
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(24.dp)
                         )
-                        Text(
-                            text = "Allow spending unconfirmed UTXOs",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
-                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                text = "Spend Unconfirmed",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            Text(
+                                text = "Allow spending unconfirmed UTXOs",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary
+                            )
+                        }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
                     SquareToggle(
                         checked = spendUnconfirmed,
                         onCheckedChange = onSpendUnconfirmedChange
@@ -197,11 +240,20 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // Fee Rate Source
-                Text(
-                    text = "Fee Rate Source",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = TextSecondary
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Speed,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Fee Rate Source",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = TextSecondary
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
@@ -219,6 +271,28 @@ fun SettingsScreen(
                     }
                     var feeUrlError by remember { mutableStateOf<String?>(null) }
                     var feeUrlSaved by remember { mutableStateOf<String?>(null) }
+                    
+                    LaunchedEffect(feeUrlSaved) {
+                        if (feeUrlSaved != null) {
+                            delay(3000)
+                            feeUrlSaved = null
+                        }
+                    }
+
+                    val isOnionUrl = feeUrlDraft.contains(".onion")
+                    val torStatusColor = when (torStatus) {
+                        TorStatus.CONNECTED -> SuccessGreen
+                        TorStatus.CONNECTING, TorStatus.STARTING -> SuccessGreen.copy(alpha = 0.6f)
+                        TorStatus.ERROR -> ErrorRed
+                        TorStatus.DISCONNECTED -> TextSecondary
+                    }
+                    val torStatusText = when (torStatus) {
+                        TorStatus.CONNECTED -> "Tor connected"
+                        TorStatus.CONNECTING -> "Tor connecting..."
+                        TorStatus.STARTING -> "Tor starting..."
+                        TorStatus.ERROR -> "Tor error"
+                        TorStatus.DISCONNECTED -> "Tor will start automatically"
+                    }
 
                     CompactTextFieldWithSave(
                         value = feeUrlDraft,
@@ -241,29 +315,29 @@ fun SettingsScreen(
                         placeholder = "http://192.168... or http://...onion",
                         errorMessage = feeUrlError,
                         successMessage = feeUrlSaved,
+                        torStatusText = if (isOnionUrl) torStatusText else null,
+                        torStatusColor = if (isOnionUrl) torStatusColor else null,
                         modifier = Modifier.padding(start = 24.dp)
                     )
-
-                    if (feeUrlDraft.contains(".onion")) {
-                        Spacer(modifier = Modifier.height(2.dp))
-
-                        Text(
-                            text = "Tor will automatically be enabled to access this server",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(start = 24.dp),
-                            color = TextSecondary
-                        )
-                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Block Explorer
-                Text(
-                    text = "Block Explorer",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = TextSecondary
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Block Explorer",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = TextSecondary
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
@@ -310,11 +384,20 @@ fun SettingsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // BTC/USD Price Source
-                Text(
-                    text = "USD Price Source",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = TextSecondary
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.AttachMoney,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "USD Price Source",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = TextSecondary
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(4.dp))
 
@@ -663,8 +746,7 @@ private fun validateServerUrl(url: String): String? {
     if (trimmed.isEmpty()) return "URL cannot be empty"
     val lower = trimmed.lowercase()
     val hasScheme = lower.startsWith("http://") || lower.startsWith("https://")
-    val isOnion = lower.contains(".onion")
-    if (!hasScheme && !isOnion) return "URL must start with http:// or https://"
+    if (!hasScheme) return "URL must start with http:// or https://"
     return null
 }
 
@@ -679,6 +761,8 @@ private fun CompactTextFieldWithSave(
     placeholder: String,
     errorMessage: String? = null,
     successMessage: String? = null,
+    torStatusText: String? = null,
+    torStatusColor: androidx.compose.ui.graphics.Color? = null,
     modifier: Modifier = Modifier
 ) {
     val borderColor = when {
@@ -723,29 +807,51 @@ private fun CompactTextFieldWithSave(
             )
 
             Text(
-                text = "Save",
+                text = if (successMessage != null) "Saved" else "Save",
                 style = TextStyle(fontSize = 13.sp),
-                color = BitcoinOrange,
+                color = if (successMessage != null) SuccessGreen else BitcoinOrange,
                 modifier = Modifier
                     .clickable(onClick = onSave)
                     .padding(horizontal = 8.dp, vertical = 8.dp)
             )
         }
 
-        if (errorMessage != null) {
-            Text(
-                text = errorMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = ErrorRed,
-                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
-            )
-        } else if (successMessage != null) {
-            Text(
-                text = successMessage,
-                style = MaterialTheme.typography.bodySmall,
-                color = SuccessGreen,
-                modifier = Modifier.padding(start = 4.dp, top = 2.dp)
-            )
+        // Error and/or Tor status on the same line
+        if (errorMessage != null || torStatusText != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (errorMessage != null) {
+                    Text(
+                        text = errorMessage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ErrorRed,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
+                }
+                if (torStatusText != null && torStatusColor != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(torStatusColor)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = torStatusText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = torStatusColor
+                        )
+                    }
+                }
+            }
         }
     }
 }

@@ -1,8 +1,12 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import android.content.Context
+import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +22,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -30,8 +37,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -42,19 +53,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrCode
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrScannerDialog
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
+import github.aeonbtc.ibiswallet.util.parseTxFileBytes
 import github.aeonbtc.ibiswallet.viewmodel.PsbtState
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
 
@@ -78,6 +95,46 @@ fun PsbtScreen(
 ) {
     val context = LocalContext.current
     var showScanner by remember { mutableStateOf(false) }
+    var showPasteDialog by remember { mutableStateOf(false) }
+    
+    // File picker for saving unsigned PSBT
+    val savePsbtLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
+    ) { uri: Uri? ->
+        if (uri != null && psbtState.unsignedPsbtBase64 != null) {
+            try {
+                context.contentResolver.openOutputStream(uri)?.use { stream ->
+                    // Write raw PSBT bytes (base64-decoded) for maximum compatibility
+                    val bytes = android.util.Base64.decode(
+                        psbtState.unsignedPsbtBase64,
+                        android.util.Base64.DEFAULT
+                    )
+                    stream.write(bytes)
+                }
+                Toast.makeText(context, "PSBT saved", Toast.LENGTH_SHORT).show()
+            } catch (_: Exception) {
+                Toast.makeText(context, "Failed to save PSBT", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    
+    // File picker for loading signed PSBT/tx (.psbt, .txn, .txt, or any file)
+    val loadSignedLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                context.contentResolver.openInputStream(uri)?.use { stream ->
+                    val result = parseTxFileBytes(stream.readBytes())
+                    if (result != null) {
+                        onSignedDataReceived(result.data)
+                    }
+                }
+            } catch (_: Exception) {
+                Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     // Scanner dialog
     if (showScanner) {
@@ -89,13 +146,28 @@ fun PsbtScreen(
             onDismiss = { showScanner = false }
         )
     }
+    
+    // Paste signed transaction dialog
+    if (showPasteDialog) {
+        PasteSignedTransactionDialog(
+            onSubmit = { data ->
+                showPasteDialog = false
+                onSignedDataReceived(data)
+            },
+            onScanQr = {
+                showPasteDialog = false
+                showScanner = true
+            },
+            onDismiss = { showPasteDialog = false }
+        )
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = "Sign with Hardware Wallet",
+                        text = "Build PSBT",
                         style = MaterialTheme.typography.titleMedium
                     )
                 },
@@ -182,7 +254,7 @@ fun PsbtScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "Step 1: Scan with Hardware Wallet",
+                                text = "Step 1: Export Unsigned PSBT",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -191,7 +263,7 @@ fun PsbtScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
-                                text = "Point your hardware wallet's camera at this QR code",
+                                text = "Scan or save PSBT for signing.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center
@@ -207,27 +279,55 @@ fun PsbtScreen(
 
                             Spacer(modifier = Modifier.height(12.dp))
 
-                            // Copy PSBT base64 to clipboard
-                            OutlinedButton(
-                                onClick = {
-                                    SecureClipboard.copyAndScheduleClear(context, "PSBT", psbtState.unsignedPsbtBase64)
-                                    Toast.makeText(context, "PSBT copied to clipboard", Toast.LENGTH_SHORT).show()
-                                },
-                                shape = RoundedCornerShape(8.dp),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
+                            // Export options: Copy + Save to File
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = TextSecondary
-                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        savePsbtLauncher.launch("unsigned.psbt")
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, BorderColor)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Save,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Save File",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = TextSecondary
+                                    )
+                                }
+                                
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Copy PSBT",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = TextSecondary
-                                )
+
+                                OutlinedButton(
+                                    onClick = {
+                                        SecureClipboard.copyAndScheduleClear(context, "PSBT", psbtState.unsignedPsbtBase64)
+                                        Toast.makeText(context, "PSBT copied", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, BorderColor)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                        tint = TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Copy PSBT",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = TextSecondary
+                                    )
+                                }
                             }
                         }
                     }
@@ -302,7 +402,7 @@ fun PsbtScreen(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text(
-                                text = "Step 2: Scan Signed Transaction",
+                                text = "Step 2: Import Signed PSBT",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -311,7 +411,7 @@ fun PsbtScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
-                                text = "After signing on your hardware wallet, scan the result back",
+                                text = "Scan or load signed PSBT for broadcasting.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center
@@ -325,7 +425,6 @@ fun PsbtScreen(
                                     .fillMaxWidth()
                                     .height(48.dp),
                                 shape = RoundedCornerShape(8.dp),
-                                enabled = uiState.isConnected,
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = BitcoinOrange,
                                     contentColor = DarkBackground
@@ -338,9 +437,63 @@ fun PsbtScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Scan Signed Transaction",
+                                    text = "Scan QR",
                                     style = MaterialTheme.typography.titleMedium
                                 )
+                            }
+                            
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            // Import from file or paste
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    onClick = {
+                                        loadSignedLauncher.launch(arrayOf("*/*"))
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, BorderColor)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.FileOpen,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Load File",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = TextSecondary
+                                    )
+                                }
+                                
+                                OutlinedButton(
+                                    onClick = { showPasteDialog = true },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(48.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = BorderStroke(1.dp, BorderColor)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ContentPaste,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                        tint = TextSecondary
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Paste",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = TextSecondary
+                                    )
+                                }
                             }
 
                             if (!uiState.isConnected) {
@@ -504,7 +657,7 @@ private fun BroadcastConfirmation(
                 shape = RoundedCornerShape(8.dp),
                 enabled = uiState.isConnected,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = SuccessGreen,
+                    containerColor = BitcoinOrange,
                     contentColor = DarkBackground
                 )
             ) {
@@ -560,6 +713,106 @@ private fun BroadcastConfirmation(
                 modifier = Modifier.padding(16.dp),
                 textAlign = TextAlign.Center
             )
+        }
+    }
+}
+
+/**
+ * Dialog for pasting a signed PSBT (base64) or raw transaction (hex).
+ */
+@Composable
+private fun PasteSignedTransactionDialog(
+    onSubmit: (String) -> Unit,
+    onScanQr: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var inputText by remember { mutableStateOf("") }
+    
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = DarkSurface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Paste Signed Transaction",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                Text(
+                    text = "Paste signed PSBT base64 or raw transaction hex",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Box(
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp),
+                        placeholder = {
+                            Text(
+                                "Signed PSBT or raw tx hex",
+                                color = TextSecondary.copy(alpha = 0.6f)
+                            )
+                        },
+                        textStyle = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = FontFamily.Monospace
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BitcoinOrange,
+                            unfocusedBorderColor = BorderColor,
+                            cursorColor = BitcoinOrange
+                        )
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cancel", color = TextSecondary)
+                    }
+                    
+                    Spacer(modifier = Modifier.width(8.dp))
+                    
+                    Button(
+                        onClick = { onSubmit(inputText.trim()) },
+                        enabled = inputText.isNotBlank(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            contentColor = DarkBackground
+                        )
+                    ) {
+                        Text("Submit")
+                    }
+                }
+            }
         }
     }
 }
