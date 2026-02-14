@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 3
-        versionName = "1.2-beta"
+        versionName = "2.0-beta"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -77,6 +77,7 @@ dependencies {
     // Security & Storage
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
+    implementation(libs.google.material)
     
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
