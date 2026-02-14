@@ -1,0 +1,74 @@
+# ============================================
+# Ibis Wallet - .gitignore
+# ============================================
+
+# ---------- Gradle ----------
+.gradle/
+build/
+!gradle-wrapper.jar
+
+# ---------- Local properties ----------
+local.properties
+
+# ---------- Android Studio / IntelliJ IDEA ----------
+*.iml
+*.iws
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.idea/deploymentTargetSelector.xml
+.idea/deviceManager.xml
+.idea/dictionaries/
+captures/
+
+# ---------- Kotlin ----------
+.kotlin/
+
+# ---------- Android build artifacts ----------
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+output-metadata.json
+app/release/
+
+# ---------- Native build ----------
+.externalNativeBuild/
+.cxx/
+*.so
+*.o
+
+# ---------- Signing / secrets ----------
+*.jks
+*.keystore
+*.pem
+*.key
+*.p12
+keystore.properties
+signing.properties
+.env
+.env.*
+
+# ---------- ProGuard / R8 ----------
+mapping/
+
+# ---------- Profiling / debugging ----------
+*.hprof
+
+# ---------- OS artifacts ----------
+.DS_Store
+Thumbs.db
+Desktop.ini
+nul
+
+# ---------- Editor artifacts ----------
+*.swp
+*~
+\#*\#
+
+# ---------- OpenCode ----------
+.opencode/
