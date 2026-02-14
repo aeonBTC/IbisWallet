@@ -16,6 +16,7 @@ cameraX = "1.3.4"
 torAndroid = "0.4.8.16"
 okhttp = "4.12.0"
 biometric = "1.1.0"
+material = "1.12.0"
 hummingbird = "1.7.2"
 
 [libraries]
@@ -40,6 +41,7 @@ androidx-camera-view = { group = "androidx.camera", name = "camera-view", versio
 tor-android = { group = "info.guardianproject", name = "tor-android", version.ref = "torAndroid" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
+google-material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 hummingbird = { group = "com.sparrowwallet", name = "hummingbird", version.ref = "hummingbird" }
 
 [plugins]
