@@ -52,7 +52,7 @@ class ElectrumFeatureService {
          * Used as fallback for .onion connections where Tor provides transport security.
          * For clearnet servers, prefer using a TofuTrustManager-backed factory.
          */
-        fun createTrustAllSSLSocketFactory(): SSLSocketFactory {
+        internal fun createTrustAllSSLSocketFactory(): SSLSocketFactory {
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
                 override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
                 override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) {}
@@ -125,9 +125,11 @@ class ElectrumFeatureService {
             
             // Upgrade to SSL if needed
             connectedSocket = if (useSSL) {
-                val factory = sslSocketFactory ?: createTrustAllSSLSocketFactory()
+                val factory = sslSocketFactory
+                    ?: if (host.endsWith(".onion")) createTrustAllSSLSocketFactory()
+                    else throw IllegalStateException("SSL socket factory required for clearnet host: $host")
                 val sslSocket = factory.createSocket(socket, host, port, true)
-                if (BuildConfig.DEBUG) Log.d(TAG, "SSL socket created (trust-all for self-signed certs)")
+                if (BuildConfig.DEBUG) Log.d(TAG, "SSL socket created")
                 sslSocket
             } else {
                 socket
@@ -297,7 +299,9 @@ class ElectrumFeatureService {
             
             // Upgrade to SSL if needed
             connectedSocket = if (useSSL) {
-                val factory = sslSocketFactory ?: createTrustAllSSLSocketFactory()
+                val factory = sslSocketFactory
+                    ?: if (host.endsWith(".onion")) createTrustAllSSLSocketFactory()
+                    else throw IllegalStateException("SSL socket factory required for clearnet host: $host")
                 factory.createSocket(socket, host, port, true)
             } else {
                 socket

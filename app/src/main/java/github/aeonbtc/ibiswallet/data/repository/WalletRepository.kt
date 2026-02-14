@@ -5303,8 +5303,12 @@ class WalletRepository(context: Context) {
         secureStorage.setCloakCode(code)
     }
     
-    fun getCloakCode(): String? {
-        return secureStorage.getCloakCode()
+    fun verifyCloakCode(code: String): Boolean {
+        return secureStorage.verifyCloakCode(code)
+    }
+
+    fun hasCloakCode(): Boolean {
+        return secureStorage.hasCloakCode()
     }
     
     fun clearCloakData() {

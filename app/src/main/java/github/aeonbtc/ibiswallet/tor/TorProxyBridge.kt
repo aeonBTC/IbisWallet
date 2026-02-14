@@ -10,6 +10,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
@@ -70,8 +71,7 @@ class TorProxyBridge(
         }
         
         try {
-            // Create server socket on random available port
-            serverSocket = ServerSocket(0).apply {
+            serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).apply {
                 soTimeout = connectionTimeoutMs
                 reuseAddress = true
             }
@@ -311,25 +311,11 @@ class TorProxyBridge(
         return totalBytes
     }
     
-    /**
-     * Close a socket quietly, ignoring exceptions
-     */
     private fun closeQuietly(socket: Socket?) {
-        try {
-            socket?.close()
-        } catch (e: Exception) {
-            // Ignore
-        }
+        try { socket?.close() } catch (_: Exception) {}
     }
-    
-    /**
-     * Close a server socket quietly, ignoring exceptions
-     */
+
     private fun closeQuietly(socket: ServerSocket?) {
-        try {
-            socket?.close()
-        } catch (e: Exception) {
-            // Ignore
-        }
+        try { socket?.close() } catch (_: Exception) {}
     }
 }
