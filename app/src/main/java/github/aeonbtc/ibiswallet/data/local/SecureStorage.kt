@@ -12,6 +12,7 @@ import github.aeonbtc.ibiswallet.data.model.WalletNetwork
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import java.security.MessageDigest
 import java.security.SecureRandom
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
@@ -694,6 +695,7 @@ class SecureStorage(private val context: Context) {
      * Set custom mempool URL (for future custom server implementation)
      */
     fun setCustomMempoolUrl(url: String) {
+        requireHttpsForClearnet(url)
         regularPrefs.edit { putString(KEY_MEMPOOL_CUSTOM_URL, url) }
     }
     
@@ -753,6 +755,7 @@ class SecureStorage(private val context: Context) {
      * Set the custom fee source server URL
      */
     fun setCustomFeeSourceUrl(url: String) {
+        requireHttpsForClearnet(url)
         regularPrefs.edit { putString(KEY_FEE_SOURCE_CUSTOM_URL, url) }
     }
     
@@ -999,8 +1002,6 @@ class SecureStorage(private val context: Context) {
         securePrefs.edit {
             putString(KEY_PIN_CODE, Base64.encodeToString(hash, Base64.NO_WRAP))
             putString(KEY_PIN_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
-        }
-        securePrefs.edit {
             putInt(KEY_PIN_LENGTH, pin.length)
             remove(KEY_PIN_FAILED_ATTEMPTS)
             remove(KEY_PIN_LOCKOUT_UNTIL)
@@ -1024,7 +1025,7 @@ class SecureStorage(private val context: Context) {
         
         // Migration: if no salt exists, this is an old plaintext PIN
         if (storedSaltStr == null) {
-            val matches = storedHash == pin
+            val matches = MessageDigest.isEqual(storedHash.toByteArray(), pin.toByteArray())
             if (matches) {
                 // Migrate to hashed format on successful verification
                 savePin(pin)
@@ -1108,7 +1109,7 @@ class SecureStorage(private val context: Context) {
         
         // Legacy: unhashed PIN
         if (storedSaltStr == null) {
-            return storedHash == pin
+            return MessageDigest.isEqual(storedHash.toByteArray(), pin.toByteArray())
         }
         
         val salt = Base64.decode(storedSaltStr, Base64.NO_WRAP)
@@ -1117,6 +1118,14 @@ class SecureStorage(private val context: Context) {
         return constantTimeEquals(inputHash, storedHashBytes)
     }
     
+    private fun requireHttpsForClearnet(url: String) {
+        val parsed = android.net.Uri.parse(url)
+        val host = parsed.host ?: ""
+        if (!host.endsWith(".onion") && parsed.scheme?.lowercase() != "https") {
+            throw IllegalArgumentException("HTTPS is required for non-.onion URLs")
+        }
+    }
+
     private fun hashPin(pin: String, salt: ByteArray): ByteArray {
         val chars = pin.toCharArray()
         val keySpec = PBEKeySpec(chars, salt, PIN_PBKDF2_ITERATIONS, PIN_HASH_LENGTH)
@@ -1130,12 +1139,7 @@ class SecureStorage(private val context: Context) {
     }
     
     private fun constantTimeEquals(a: ByteArray, b: ByteArray): Boolean {
-        if (a.size != b.size) return false
-        var result = 0
-        for (i in a.indices) {
-            result = result or (a[i].toInt() xor b[i].toInt())
-        }
-        return result == 0
+        return MessageDigest.isEqual(a, b)
     }
     
     /**
@@ -1204,18 +1208,26 @@ class SecureStorage(private val context: Context) {
         securePrefs.edit { putBoolean(KEY_CLOAK_MODE_ENABLED, enabled) }
     }
     
-    /**
-     * Save the secret calculator unlock code (stored in encrypted prefs)
-     */
     fun setCloakCode(code: String) {
-        securePrefs.edit { putString(KEY_CLOAK_CODE, code) }
+        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        val hash = hashPin(code, salt)
+        securePrefs.edit {
+            putString(KEY_CLOAK_CODE, Base64.encodeToString(hash, Base64.NO_WRAP))
+            putString(KEY_CLOAK_CODE_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
+        }
     }
-    
-    /**
-     * Get the secret calculator unlock code
-     */
-    fun getCloakCode(): String? {
-        return securePrefs.getString(KEY_CLOAK_CODE, null)
+
+    fun verifyCloakCode(code: String): Boolean {
+        val storedHash = securePrefs.getString(KEY_CLOAK_CODE, null) ?: return false
+        val storedSaltStr = securePrefs.getString(KEY_CLOAK_CODE_SALT, null) ?: return false
+        val salt = Base64.decode(storedSaltStr, Base64.NO_WRAP)
+        val inputHash = hashPin(code, salt)
+        val storedHashBytes = Base64.decode(storedHash, Base64.NO_WRAP)
+        return constantTimeEquals(inputHash, storedHashBytes)
+    }
+
+    fun hasCloakCode(): Boolean {
+        return securePrefs.contains(KEY_CLOAK_CODE)
     }
     
     /**
@@ -1225,6 +1237,7 @@ class SecureStorage(private val context: Context) {
         securePrefs.edit {
             remove(KEY_CLOAK_MODE_ENABLED)
             remove(KEY_CLOAK_CODE)
+            remove(KEY_CLOAK_CODE_SALT)
         }
         // Schedule alias swap back to default on next launch
         setPendingIconAlias(ALIAS_DEFAULT)
@@ -1322,12 +1335,11 @@ class SecureStorage(private val context: Context) {
         return matches
     }
     
-    /**
-     * Get the stored duress PIN length hint (for lock screen auto-submit).
-     */
     fun getDuressPinLength(): Int? {
+        if (!securePrefs.contains(KEY_DURESS_PIN_CODE)) return null
         val length = securePrefs.getInt(KEY_DURESS_PIN_LENGTH, -1)
-        return if (length > 0) length else null
+        if (length > 0) return length
+        return null
     }
     
     /**
@@ -1461,7 +1473,7 @@ class SecureStorage(private val context: Context) {
         securePrefs.edit {
             remove(KEY_DURESS_PIN_CODE)
             remove(KEY_DURESS_PIN_SALT)
-            remove(KEY_DURESS_PIN_LENGTH)
+            remove(KEY_DURESS_PIN_LENGTH)  // legacy cleanup
             remove(KEY_DURESS_ENABLED)
             remove(KEY_DURESS_WALLET_ID)
             remove(KEY_REAL_WALLET_ID)
@@ -1569,6 +1581,7 @@ class SecureStorage(private val context: Context) {
         // Cloak mode
         private const val KEY_CLOAK_MODE_ENABLED = "cloak_mode_enabled"
         private const val KEY_CLOAK_CODE = "cloak_code"
+        private const val KEY_CLOAK_CODE_SALT = "cloak_code_salt"
         private const val KEY_CLOAK_PENDING_ALIAS = "cloak_pending_alias"
         private const val KEY_CLOAK_CURRENT_ALIAS = "cloak_current_alias"
         const val ALIAS_DEFAULT = ".LauncherDefault"

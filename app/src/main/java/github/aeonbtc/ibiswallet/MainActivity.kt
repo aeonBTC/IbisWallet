@@ -100,7 +100,7 @@ class MainActivity : FragmentActivity() {
         applyPendingIconSwap()
         
         // Check cloak mode
-        isCloakActive = secureStorage.isCloakModeEnabled() && secureStorage.getCloakCode() != null
+        isCloakActive = secureStorage.isCloakModeEnabled() && secureStorage.hasCloakCode()
         updateTaskDescription()
         
         // Apply screenshot prevention if enabled
@@ -132,7 +132,7 @@ class MainActivity : FragmentActivity() {
                     } else if (isCloakActive && !cloakBypassed) {
                         // Show calculator disguise — entering the secret code bypasses it
                         CalculatorScreen(
-                            cloakCode = secureStorage.getCloakCode() ?: "",
+                            verifyCloakCode = { code -> secureStorage.verifyCloakCode(code) },
                             onUnlock = {
                                 cloakBypassed = true
                                 val secMethod = secureStorage.getSecurityMethod()
@@ -306,18 +306,6 @@ class MainActivity : FragmentActivity() {
                     // User can still use PIN as fallback
                 }
                 
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    // Increment shared failed attempt counter (same as PIN failures)
-                    secureStorage.incrementFailedAttempts()
-                    if (secureStorage.shouldAutoWipe()) {
-                        walletViewModel.wipeAllData {
-                            // Kill the process to simulate a crash — no restart,
-                            // no fresh state visible. The app simply vanishes.
-                            android.os.Process.killProcess(android.os.Process.myPid())
-                        }
-                    }
-                }
             })
     }
     
