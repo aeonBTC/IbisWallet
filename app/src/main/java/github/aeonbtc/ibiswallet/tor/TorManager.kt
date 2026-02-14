@@ -6,9 +6,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.ServiceConnection
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import androidx.core.content.ContextCompat
 import github.aeonbtc.ibiswallet.BuildConfig
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,8 +22,6 @@ class TorManager(private val context: Context) {
     
     companion object {
         private const val TAG = "TorManager"
-        const val SOCKS_PORT = 9050
-        const val SOCKS_HOST = "127.0.0.1"
     }
     
     private val _torState = MutableStateFlow(TorState())
@@ -106,11 +104,9 @@ class TorManager(private val context: Context) {
         
         // Register status receiver
         val filter = IntentFilter(TorService.ACTION_STATUS)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            context.registerReceiver(statusReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            context, statusReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         isReceiverRegistered = true
         
         // Bind to Tor service
