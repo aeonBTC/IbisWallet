@@ -141,7 +141,7 @@ class TofuTrustManager(
          * Create a trust-all SSLSocketFactory for .onion connections.
          * Tor already provides transport security for .onion addresses.
          */
-        fun createOnionSSLSocketFactory(): SSLSocketFactory {
+        internal fun createOnionSSLSocketFactory(): SSLSocketFactory {
             val trustAll = object : X509TrustManager {
                 override fun checkClientTrusted(chain: Array<out X509Certificate>, authType: String) {}
                 override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String) {}

@@ -34,7 +34,7 @@ private val CalcHighlightText = Color(0xFFFF9F0A)
  * Compose can correctly track reads/writes without stale-lambda issues.
  */
 private class CalcState(
-    val cloakCode: String,
+    val verifyCloakCode: (String) -> Boolean,
     val onUnlock: () -> Unit
 ) {
     var display by mutableStateOf("0")
@@ -118,7 +118,7 @@ private class CalcState(
     }
 
     fun equals() {
-        if (rawInput == cloakCode) {
+        if (rawInput.isNotEmpty() && verifyCloakCode(rawInput)) {
             onUnlock()
             return
         }
@@ -173,10 +173,10 @@ private class CalcState(
  */
 @Composable
 fun CalculatorScreen(
-    cloakCode: String,
+    verifyCloakCode: (String) -> Boolean,
     onUnlock: () -> Unit
 ) {
-    val s = remember { CalcState(cloakCode, onUnlock) }
+    val s = remember { CalcState(verifyCloakCode, onUnlock) }
 
     val fontSize = when {
         s.display.length > 15 -> 32.sp

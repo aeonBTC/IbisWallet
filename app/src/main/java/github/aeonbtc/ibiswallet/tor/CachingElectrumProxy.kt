@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.selects.select
+import java.math.BigDecimal
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
 import java.io.IOException
@@ -18,14 +19,19 @@ import java.io.OutputStream
 import java.io.PrintWriter
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
 import javax.net.ssl.SSLSocket
 import kotlin.concurrent.withLock
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock as suspendWithLock
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -95,7 +101,7 @@ class CachingElectrumProxy(
 
     private var clientSocket: Socket? = null
     private var bridgeTargetSocket: Socket? = null
-    private var preConnectedSocket: Socket? = null
+    private val preConnectedSocket = AtomicReference<Socket?>(null)
 
     // Tracks in-flight blockchain.transaction.get request ids for caching responses.
     // Populated by the BDK→Server reader, consumed by the Server→BDK reader.
@@ -120,6 +126,7 @@ class CachingElectrumProxy(
     private var subHandshakeDone = false
     private var subListenerJob: Job? = null
     @Volatile private var subListenerPaused = false
+    private val subListenerMutex = Mutex()
 
     private val _notifications = MutableSharedFlow<ElectrumNotification>(extraBufferCapacity = 64)
 
@@ -136,7 +143,7 @@ class CachingElectrumProxy(
         }
 
         try {
-            serverSocket = ServerSocket(0).apply {
+            serverSocket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).apply {
                 soTimeout = connectionTimeoutMs
                 reuseAddress = true
             }
@@ -163,18 +170,18 @@ class CachingElectrumProxy(
         stopSubscriptionListener()
         closeQuietly(clientSocket)
         closeQuietly(bridgeTargetSocket)
-        closeQuietly(preConnectedSocket)
+        closeQuietly(preConnectedSocket.getAndSet(null))
         closeQuietly(serverSocket)
         closeDirectConnection()
         clientSocket = null
         bridgeTargetSocket = null
-        preConnectedSocket = null
+        preConnectedSocket.set(null)
         serverSocket = null
         localPort = 0
         pendingTxGetRequests.clear()
     }
 
-    fun setPreConnectedSocket(socket: Socket) { preConnectedSocket = socket }
+    fun setPreConnectedSocket(socket: Socket) { preConnectedSocket.set(socket) }
     fun isRunning(): Boolean = isRunning
     fun getLocalPort(): Int = localPort
 
@@ -855,36 +862,33 @@ class CachingElectrumProxy(
         // dropped. This is fine — subscription responses have our request IDs,
         // and push notifications will be re-delivered by the server on the next
         // status change.
-        subListenerPaused = true
-        try {
-            val idToScriptHash = mutableMapOf<Int, String>()
-            for (scriptHash in scriptHashes) {
-                val id = subRequestId++
-                idToScriptHash[id] = scriptHash
-                val req = JSONObject().apply {
-                    put("id", id)
-                    put("method", "blockchain.scripthash.subscribe")
-                    put("params", JSONArray().apply { put(scriptHash) })
+        return runBlocking {
+            subListenerMutex.suspendWithLock {
+                subListenerPaused = true
+                try {
+                    val idToScriptHash = mutableMapOf<Int, String>()
+                    for (scriptHash in scriptHashes) {
+                        val id = subRequestId++
+                        idToScriptHash[id] = scriptHash
+                        val req = JSONObject().apply {
+                            put("id", id)
+                            put("method", "blockchain.scripthash.subscribe")
+                            put("params", JSONArray().apply { put(scriptHash) })
+                        }
+                        writer.println(req.toString())
+                    }
+                    writer.flush()
+
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Sent ${scriptHashes.size} additional subscribe requests (responses handled by listener)")
+
+                    scriptHashes.associateWith { null as String? }
+                } catch (e: Exception) {
+                    if (BuildConfig.DEBUG) Log.w(TAG, "Additional subscription failed: ${e.message}")
+                    emptyMap()
+                } finally {
+                    subListenerPaused = false
                 }
-                writer.println(req.toString())
             }
-            writer.flush()
-
-            // Note: responses will be read by the listener coroutine (which
-            // ignores them because subListenerPaused=true). We don't read
-            // responses here to avoid fighting the listener for socket reads.
-            // The initial status for these new addresses is unknown, but the
-            // next push notification or background sync will catch changes.
-            if (BuildConfig.DEBUG) Log.d(TAG, "Sent ${scriptHashes.size} additional subscribe requests (responses handled by listener)")
-
-            // Return the script hashes as subscribed with null status (unknown).
-            // The server will push notifications for any future changes.
-            return scriptHashes.associateWith { null as String? }
-        } catch (e: Exception) {
-            if (BuildConfig.DEBUG) Log.w(TAG, "Additional subscription failed: ${e.message}")
-            return emptyMap()
-        } finally {
-            subListenerPaused = false
         }
     }
 
@@ -922,18 +926,17 @@ class CachingElectrumProxy(
 
                     if (line.isBlank()) continue
 
-                    // If paused (subscribeAdditionalScriptHashes is reading),
-                    // skip dispatching — the caller handles its own responses.
-                    if (subListenerPaused) continue
+                    subListenerMutex.suspendWithLock {
+                        if (subListenerPaused) return@suspendWithLock
 
-                    try {
-                        val json = JSONObject(line)
-                        if (isServerPushNotification(line)) {
-                            dispatchPushNotification(json)
+                        try {
+                            val json = JSONObject(line)
+                            if (isServerPushNotification(line)) {
+                                dispatchPushNotification(json)
+                            }
+                        } catch (e: Exception) {
+                            if (BuildConfig.DEBUG) Log.w(TAG, "Failed to parse notification: ${e.message}")
                         }
-                        // Non-push lines (stale responses) are silently ignored
-                    } catch (e: Exception) {
-                        if (BuildConfig.DEBUG) Log.w(TAG, "Failed to parse notification: ${e.message}")
                     }
                 }
             } catch (e: CancellationException) {
@@ -1127,7 +1130,7 @@ class CachingElectrumProxy(
                 val scriptPubKey = vout.optJSONObject("scriptPubKey") ?: continue
                 val addr = scriptPubKey.optString("address", "")
                 if (addr == address) {
-                    received += Math.round(valueBtc * 100_000_000.0)
+                    received += BigDecimal.valueOf(valueBtc).multiply(BigDecimal("100000000")).toLong()
                 }
             }
         }
@@ -1146,7 +1149,7 @@ class CachingElectrumProxy(
                     val spk = prevout.optJSONObject("scriptPubKey")
                     val prevAddr = spk?.optString("address", "") ?: ""
                     if (prevAddr == address) {
-                        spent += Math.round(prevout.optDouble("value", 0.0) * 100_000_000.0)
+                        spent += BigDecimal.valueOf(prevout.optDouble("value", 0.0)).multiply(BigDecimal("100000000")).toLong()
                     }
                     continue
                 }
@@ -1164,7 +1167,7 @@ class CachingElectrumProxy(
                 val prevSpk = prevVout.optJSONObject("scriptPubKey") ?: continue
                 val prevAddr = prevSpk.optString("address", "")
                 if (prevAddr == address) {
-                    spent += Math.round(prevVout.optDouble("value", 0.0) * 100_000_000.0)
+                    spent += BigDecimal.valueOf(prevVout.optDouble("value", 0.0)).multiply(BigDecimal("100000000")).toLong()
                 }
             }
         }
@@ -1190,7 +1193,7 @@ class CachingElectrumProxy(
         if (vouts != null) {
             for (i in 0 until vouts.length()) {
                 val vout = vouts.optJSONObject(i) ?: continue
-                totalVoutValue += Math.round(vout.optDouble("value", 0.0) * 100_000_000.0)
+                totalVoutValue += BigDecimal.valueOf(vout.optDouble("value", 0.0)).multiply(BigDecimal("100000000")).toLong()
             }
         }
         // Total input value = spent (inputs from our address) + other inputs
@@ -1207,7 +1210,7 @@ class CachingElectrumProxy(
                         val spk = prevout.optJSONObject("scriptPubKey")
                         val prevAddr = spk?.optString("address", "") ?: ""
                         if (prevAddr != address) {
-                            otherInputs += Math.round(prevout.optDouble("value", 0.0) * 100_000_000.0)
+                            otherInputs += BigDecimal.valueOf(prevout.optDouble("value", 0.0)).multiply(BigDecimal("100000000")).toLong()
                         }
                         continue
                     }
@@ -1226,7 +1229,7 @@ class CachingElectrumProxy(
                     val prevSpk = prevVout.optJSONObject("scriptPubKey")
                     val prevAddr = prevSpk?.optString("address", "") ?: ""
                     if (prevAddr != address) {
-                        otherInputs += Math.round(prevVout.optDouble("value", 0.0) * 100_000_000.0)
+                        otherInputs += BigDecimal.valueOf(prevVout.optDouble("value", 0.0)).multiply(BigDecimal("100000000")).toLong()
                     }
                 }
             }
@@ -1426,8 +1429,7 @@ class CachingElectrumProxy(
     }
 
     private fun createTargetConnection(): Socket? {
-        preConnectedSocket?.let { socket ->
-            preConnectedSocket = null
+        preConnectedSocket.getAndSet(null)?.let { socket ->
             if (!socket.isClosed && socket.isConnected) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "Reusing pre-connected socket from cert probe")
                 return socket
@@ -1460,7 +1462,7 @@ class CachingElectrumProxy(
                     try { Thread.sleep(TOR_RETRY_DELAY_MS * attempt) } catch (_: InterruptedException) { return null }
                 }
             } catch (e: SocketTimeoutException) {
-                if (BuildConfig.DEBUG) Log.w(TAG, "Connection attempt $attempt/$maxAttempts timed out")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Connection attempt $attempt/$maxAttempts failed: ${e.message}")
                 if (attempt < maxAttempts) {
                     try { Thread.sleep(TOR_RETRY_DELAY_MS * attempt) } catch (_: InterruptedException) { return null }
                 }
