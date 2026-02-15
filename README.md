@@ -13,16 +13,16 @@ Designed for experienced users - no hand-holding, no training wheels.
 
 ## Key Features
 
-- **Multi-wallet** — create, import, and switch between BIP39 wallets
-- **Watch-only wallets** — import xpub/zpub, output descriptors, or QR codes
+- **Multi-wallet** — Create, import, and switch between BIP39 wallets
+- **Watch-only wallets** — Import xpub/zpub, output descriptors, or QR codes
 - **Sweep Private Key** - Sweep private keys (WIF format) to specified bitcoin address
-- **Hardware wallet signing** — animated QR codes for PSBTs
-- **Coin control** — select specific UTXOs, freeze/unfreeze, send from individual outputs
-- **RBF & CPFP** — bump fees on unconfirmed transactions, both outgoing and incoming
+- **Hardware wallet signing** — Animated QR codes for PSBTs
+- **Coin control** — Select specific UTXOs, freeze/unfreeze, send from individual outputs
+- **RBF & CPFP** — Bump fees on unconfirmed transactions, both outgoing and incoming
 - **Manual Broadcast Raw Transactions** - Broadcast any signed transaction directly to the Bitcoin network
-- **Multi-recipient** — batch multiple outputs in a single transaction
-- **Built-in Tor** — automatic .onion detection, all traffic routed through Tor when enabled
-- **Custom Electrum server** — connect to your own server, QR import, SSL and Tor support
+- **Multi-recipient** — Batch multiple outputs in a single transaction
+- **Built-in Tor** — Automatic .onion detection, all traffic routed through Tor when enabled
+- **Custom Electrum server** — Connect to your own server, QR import, SSL and Tor support
 - **Encrypted backups** — AES-256-GCM with optional labels, import/export via file
 - **Duress Pin** - Configure a secondary PIN that opens a decoy wallet
 - **Auto-Wipe** - Set a threshold for failed unlock that automatically and irreversibly wipes all app data
