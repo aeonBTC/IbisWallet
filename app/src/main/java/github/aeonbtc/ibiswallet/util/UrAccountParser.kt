@@ -10,6 +10,7 @@ import com.sparrowwallet.hummingbird.registry.ScriptExpression
 import com.sparrowwallet.hummingbird.registry.URAccountDescriptor
 import com.sparrowwallet.hummingbird.registry.UROutputDescriptor
 import com.sparrowwallet.hummingbird.registry.pathcomponent.IndexPathComponent
+import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.model.AddressType
 import java.math.BigInteger
 import java.security.MessageDigest
@@ -37,7 +38,7 @@ object UrAccountParser {
     data class ParsedUrResult(
         val keyMaterial: String,
         val fingerprint: String?,
-        val detectedAddressType: AddressType? = null
+        val detectedAddressType: AddressType? = null,
     )
 
     /**
@@ -48,7 +49,10 @@ object UrAccountParser {
      *   used to pick the matching descriptor from crypto-account bundles
      * @return ParsedUrResult with text-form key material, or null if unsupported type
      */
-    fun parseUr(ur: UR, preferredAddressType: AddressType): ParsedUrResult? {
+    fun parseUr(
+        ur: UR,
+        preferredAddressType: AddressType,
+    ): ParsedUrResult? {
         return try {
             when (ur.type) {
                 "crypto-account" -> parseCryptoAccountV1(ur, preferredAddressType)
@@ -58,12 +62,12 @@ object UrAccountParser {
                 "crypto-output" -> parseCryptoOutputV1(ur)
                 "output-descriptor" -> parseOutputDescriptorV2(ur)
                 else -> {
-                    Log.w(TAG, "Unsupported UR type: ${ur.type}")
+                    if (BuildConfig.DEBUG) Log.w(TAG, "Unsupported UR type: ${ur.type}")
                     null
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse UR type ${ur.type}", e)
+            if (BuildConfig.DEBUG) Log.e(TAG, "Failed to parse UR type ${ur.type}", e)
             null
         }
     }
@@ -75,44 +79,50 @@ object UrAccountParser {
      * Contains master fingerprint + array of CryptoOutput descriptors.
      * Selects the descriptor matching [preferredAddressType].
      */
-    private fun parseCryptoAccountV1(ur: UR, preferredAddressType: AddressType): ParsedUrResult? {
+    private fun parseCryptoAccountV1(
+        ur: UR,
+        preferredAddressType: AddressType,
+    ): ParsedUrResult? {
         val account = ur.decodeFromRegistry() as? CryptoAccount ?: return null
         val masterFp = account.masterFingerprint?.toHexString() ?: return null
         val outputs = account.outputDescriptors ?: return null
 
         if (outputs.isEmpty()) {
-            Log.w(TAG, "crypto-account has no output descriptors")
+            if (BuildConfig.DEBUG) Log.w(TAG, "crypto-account has no output descriptors")
             return null
         }
 
         // Find the output descriptor matching the preferred address type
-        val matched = outputs.firstOrNull { output ->
-            scriptExpressionsToAddressType(output.scriptExpressions) == preferredAddressType
-        }
+        val matched =
+            outputs.firstOrNull { output ->
+                scriptExpressionsToAddressType(output.scriptExpressions) == preferredAddressType
+            }
 
         // Fall back to first available singlesig descriptor
-        val selectedOutput = matched ?: outputs.firstOrNull { output ->
-            val expressions = output.scriptExpressions
-            expressions.none {
-                it == ScriptExpression.MULTISIG ||
-                    it == ScriptExpression.SORTED_MULTISIG ||
-                    it == ScriptExpression.COSIGNER
-            } && output.hdKey != null
-        } ?: outputs.firstOrNull { it.hdKey != null }
+        val selectedOutput =
+            matched ?: outputs.firstOrNull { output ->
+                val expressions = output.scriptExpressions
+                expressions.none {
+                    it == ScriptExpression.MULTISIG ||
+                        it == ScriptExpression.SORTED_MULTISIG ||
+                        it == ScriptExpression.COSIGNER
+                } && output.hdKey != null
+            } ?: outputs.firstOrNull { it.hdKey != null }
 
         if (selectedOutput == null) {
-            Log.w(TAG, "No suitable output descriptor found in crypto-account")
+            if (BuildConfig.DEBUG) Log.w(TAG, "No suitable output descriptor found in crypto-account")
             return null
         }
 
         val detectedType = scriptExpressionsToAddressType(selectedOutput.scriptExpressions)
-        val descriptorStr = cryptoOutputToDescriptorString(selectedOutput, masterFp)
-            ?: return null
+        val descriptorStr =
+            cryptoOutputToDescriptorString(selectedOutput, masterFp)
+                ?: return null
 
         return ParsedUrResult(
             keyMaterial = descriptorStr,
             fingerprint = masterFp,
-            detectedAddressType = detectedType
+            detectedAddressType = detectedType,
         )
     }
 
@@ -133,13 +143,14 @@ object UrAccountParser {
         val output = ur.decodeFromRegistry() as? CryptoOutput ?: return null
         val detectedType = scriptExpressionsToAddressType(output.scriptExpressions)
         val fingerprint = output.hdKey?.origin?.sourceFingerprint?.toHexString()
-        val descriptorStr = cryptoOutputToDescriptorString(output, fingerprint)
-            ?: return null
+        val descriptorStr =
+            cryptoOutputToDescriptorString(output, fingerprint)
+                ?: return null
 
         return ParsedUrResult(
             keyMaterial = descriptorStr,
             fingerprint = fingerprint,
-            detectedAddressType = detectedType
+            detectedAddressType = detectedType,
         )
     }
 
@@ -153,28 +164,30 @@ object UrAccountParser {
      */
     private fun parseAccountDescriptorV2(
         ur: UR,
-        preferredAddressType: AddressType
+        preferredAddressType: AddressType,
     ): ParsedUrResult? {
         val account = ur.decodeFromRegistry() as? URAccountDescriptor ?: return null
         val masterFp = account.masterFingerprint?.toHexString() ?: return null
         val descriptors = account.outputDescriptors ?: return null
 
         if (descriptors.isEmpty()) {
-            Log.w(TAG, "account-descriptor has no output descriptors")
+            if (BuildConfig.DEBUG) Log.w(TAG, "account-descriptor has no output descriptors")
             return null
         }
 
         // Try to match preferred address type from the source string
-        val matched = descriptors.firstOrNull { desc ->
-            val source = desc.source?.lowercase() ?: return@firstOrNull false
-            sourceToAddressType(source) == preferredAddressType
-        }
+        val matched =
+            descriptors.firstOrNull { desc ->
+                val source = desc.source?.lowercase() ?: return@firstOrNull false
+                sourceToAddressType(source) == preferredAddressType
+            }
 
         // Fall back to first singlesig descriptor
-        val selected = matched ?: descriptors.firstOrNull { desc ->
-            val source = desc.source?.lowercase() ?: return@firstOrNull false
-            !source.contains("multi") && !source.contains("cosigner")
-        } ?: descriptors.firstOrNull()
+        val selected =
+            matched ?: descriptors.firstOrNull { desc ->
+                val source = desc.source?.lowercase() ?: return@firstOrNull false
+                !source.contains("multi") && !source.contains("cosigner")
+            } ?: descriptors.firstOrNull()
 
         if (selected == null) return null
 
@@ -184,7 +197,7 @@ object UrAccountParser {
         return ParsedUrResult(
             keyMaterial = descriptorStr,
             fingerprint = masterFp,
-            detectedAddressType = detectedType
+            detectedAddressType = detectedType,
         )
     }
 
@@ -203,15 +216,16 @@ object UrAccountParser {
      */
     private fun parseOutputDescriptorV2(ur: UR): ParsedUrResult? {
         val desc = ur.decodeFromRegistry() as? UROutputDescriptor ?: return null
-        val fingerprint = desc.keys?.filterIsInstance<CryptoHDKey>()?.firstOrNull()
-            ?.origin?.sourceFingerprint?.toHexString()
+        val fingerprint =
+            desc.keys?.filterIsInstance<CryptoHDKey>()?.firstOrNull()
+                ?.origin?.sourceFingerprint?.toHexString()
         val detectedType = desc.source?.let { sourceToAddressType(it.lowercase()) }
         val descriptorStr = urOutputDescriptorToString(desc, fingerprint) ?: return null
 
         return ParsedUrResult(
             keyMaterial = descriptorStr,
             fingerprint = fingerprint,
-            detectedAddressType = detectedType
+            detectedAddressType = detectedType,
         )
     }
 
@@ -227,7 +241,7 @@ object UrAccountParser {
 
         return ParsedUrResult(
             keyMaterial = keyStr,
-            fingerprint = fingerprint
+            fingerprint = fingerprint,
         )
     }
 
@@ -246,41 +260,47 @@ object UrAccountParser {
 
         // Determine version bytes (mainnet vs testnet)
         val isTestnet = hdKey.useInfo?.network == CryptoCoinInfo.Network.TESTNET
-        val version = if (isTestnet) {
-            byteArrayOf(0x04, 0x35, 0x87.toByte(), 0xCF.toByte()) // tpub
-        } else {
-            byteArrayOf(0x04, 0x88.toByte(), 0xB2.toByte(), 0x1E) // xpub
-        }
+        val version =
+            if (isTestnet) {
+                byteArrayOf(0x04, 0x35, 0x87.toByte(), 0xCF.toByte()) // tpub
+            } else {
+                byteArrayOf(0x04, 0x88.toByte(), 0xB2.toByte(), 0x1E) // xpub
+            }
 
         // Depth: number of derivation steps in origin path
         val origin = hdKey.origin
-        val depth = origin?.depth
-            ?: origin?.components?.count { it is IndexPathComponent }
-            ?: 0
+        val depth =
+            origin?.depth
+                ?: origin?.components?.count { it is IndexPathComponent }
+                ?: 0
         val depthByte = byteArrayOf(depth.toByte())
 
         // Parent fingerprint (4 bytes)
-        val parentFp = hdKey.parentFingerprint
-            ?: byteArrayOf(0x00, 0x00, 0x00, 0x00)
+        val parentFp =
+            hdKey.parentFingerprint
+                ?: byteArrayOf(0x00, 0x00, 0x00, 0x00)
 
         // Child number: last IndexPathComponent of the derivation path
-        val lastComponent = origin?.components?.lastOrNull { it is IndexPathComponent }
-            as? IndexPathComponent
-        val childNumber = if (lastComponent != null) {
-            val childIdx = if (lastComponent.isHardened) {
-                (lastComponent.index or 0x80000000.toInt())
+        val lastComponent =
+            origin?.components?.lastOrNull { it is IndexPathComponent }
+                as? IndexPathComponent
+        val childNumber =
+            if (lastComponent != null) {
+                val childIdx =
+                    if (lastComponent.isHardened) {
+                        (lastComponent.index or 0x80000000.toInt())
+                    } else {
+                        lastComponent.index
+                    }
+                ByteArray(4).also {
+                    it[0] = (childIdx shr 24 and 0xFF).toByte()
+                    it[1] = (childIdx shr 16 and 0xFF).toByte()
+                    it[2] = (childIdx shr 8 and 0xFF).toByte()
+                    it[3] = (childIdx and 0xFF).toByte()
+                }
             } else {
-                lastComponent.index
+                byteArrayOf(0x00, 0x00, 0x00, 0x00)
             }
-            ByteArray(4).also {
-                it[0] = (childIdx shr 24 and 0xFF).toByte()
-                it[1] = (childIdx shr 16 and 0xFF).toByte()
-                it[2] = (childIdx shr 8 and 0xFF).toByte()
-                it[3] = (childIdx and 0xFF).toByte()
-            }
-        } else {
-            byteArrayOf(0x00, 0x00, 0x00, 0x00)
-        }
 
         // Assemble the 78-byte payload
         val payload = version + depthByte + parentFp + childNumber + chainCode + keyData
@@ -295,11 +315,12 @@ object UrAccountParser {
     private fun hdKeyToKeyOriginString(
         hdKey: CryptoHDKey,
         xpub: String,
-        fallbackFingerprint: String?
+        fallbackFingerprint: String?,
     ): String {
         val origin = hdKey.origin
-        val fingerprint = origin?.sourceFingerprint?.toHexString()
-            ?: fallbackFingerprint
+        val fingerprint =
+            origin?.sourceFingerprint?.toHexString()
+                ?: fallbackFingerprint
 
         if (fingerprint != null && origin != null) {
             val path = origin.path
@@ -321,7 +342,7 @@ object UrAccountParser {
      */
     private fun cryptoOutputToDescriptorString(
         output: CryptoOutput,
-        fallbackFingerprint: String?
+        fallbackFingerprint: String?,
     ): String? {
         val hdKey = output.hdKey ?: return null
         val xpub = hdKeyToXpub(hdKey) ?: return null
@@ -329,12 +350,13 @@ object UrAccountParser {
 
         // Build child path suffix from CryptoHDKey.children if present
         val childrenPath = hdKey.children?.path
-        val keyWithChildren = if (childrenPath != null) {
-            "$keyOrigin/$childrenPath"
-        } else {
-            // Default: add /0/* for receive derivation
-            "$keyOrigin/0/*"
-        }
+        val keyWithChildren =
+            if (childrenPath != null) {
+                "$keyOrigin/$childrenPath"
+            } else {
+                // Default: add /0/* for receive derivation
+                "$keyOrigin/0/*"
+            }
 
         // Build the script expression wrappers
         val expressions = output.scriptExpressions
@@ -365,7 +387,7 @@ object UrAccountParser {
      */
     private fun urOutputDescriptorToString(
         desc: UROutputDescriptor,
-        fallbackFingerprint: String?
+        fallbackFingerprint: String?,
     ): String? {
         val source = desc.source ?: return null
         val keys = desc.keys
@@ -385,11 +407,12 @@ object UrAccountParser {
 
             // Build the key expression with children path
             val childrenPath = hdKey.children?.path
-            val fullKey = if (childrenPath != null) {
-                "$keyOrigin/$childrenPath"
-            } else {
-                "$keyOrigin/0/*"
-            }
+            val fullKey =
+                if (childrenPath != null) {
+                    "$keyOrigin/$childrenPath"
+                } else {
+                    "$keyOrigin/0/*"
+                }
 
             result = result.replace("@$index", fullKey)
         }
@@ -400,9 +423,7 @@ object UrAccountParser {
     /**
      * Map v1 CryptoOutput script expressions to an AddressType.
      */
-    private fun scriptExpressionsToAddressType(
-        expressions: List<ScriptExpression>?
-    ): AddressType? {
+    private fun scriptExpressionsToAddressType(expressions: List<ScriptExpression>?): AddressType? {
         if (expressions.isNullOrEmpty()) return null
 
         // Filter out cosigner wrapper
@@ -411,10 +432,12 @@ object UrAccountParser {
         return when {
             filtered == listOf(ScriptExpression.WITNESS_PUBLIC_KEY_HASH) ->
                 AddressType.SEGWIT
-            filtered == listOf(
-                ScriptExpression.SCRIPT_HASH,
-                ScriptExpression.WITNESS_PUBLIC_KEY_HASH
-            ) ->
+            filtered ==
+                listOf(
+                    ScriptExpression.SCRIPT_HASH,
+                    ScriptExpression.WITNESS_PUBLIC_KEY_HASH,
+                )
+            ->
                 AddressType.NESTED_SEGWIT
             filtered == listOf(ScriptExpression.PUBLIC_KEY_HASH) ->
                 AddressType.LEGACY

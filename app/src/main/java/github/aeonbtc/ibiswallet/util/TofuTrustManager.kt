@@ -19,7 +19,7 @@ data class CertificateInfo(
     val subject: String,
     val issuer: String,
     val validFrom: String,
-    val validUntil: String
+    val validUntil: String,
 )
 
 /**
@@ -30,7 +30,7 @@ class CertificateMismatchException(
     val port: Int,
     val storedFingerprint: String,
     val presentedFingerprint: String,
-    val certInfo: CertificateInfo
+    val certInfo: CertificateInfo,
 ) : CertificateException("Certificate fingerprint mismatch for $host:$port")
 
 /**
@@ -38,7 +38,7 @@ class CertificateMismatchException(
  * The caller should show the cert to the user for explicit approval.
  */
 class CertificateFirstUseException(
-    val certInfo: CertificateInfo
+    val certInfo: CertificateInfo,
 ) : CertificateException("First connection to ${certInfo.host}:${certInfo.port} - certificate approval required")
 
 /**
@@ -59,9 +59,8 @@ class TofuTrustManager(
     private val host: String,
     private val port: Int,
     private val storedFingerprint: String?,
-    private val isOnionHost: Boolean = host.endsWith(".onion")
+    private val isOnionHost: Boolean = host.endsWith(".onion"),
 ) : X509TrustManager {
-
     /** The fingerprint of the certificate presented during the last handshake */
     var presentedFingerprint: String? = null
         private set
@@ -70,26 +69,33 @@ class TofuTrustManager(
     var presentedCertInfo: CertificateInfo? = null
         private set
 
-    override fun checkClientTrusted(chain: Array<out X509Certificate>, authType: String) {
+    override fun checkClientTrusted(
+        chain: Array<out X509Certificate>,
+        authType: String,
+    ) {
         // Not used - we're only a client
     }
 
-    override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String) {
+    override fun checkServerTrusted(
+        chain: Array<out X509Certificate>,
+        authType: String,
+    ) {
         if (chain.isEmpty()) throw CertificateException("Empty certificate chain")
 
         val cert = chain[0]
         val fingerprint = computeFingerprint(cert)
         presentedFingerprint = fingerprint
 
-        val certInfo = CertificateInfo(
-            host = host,
-            port = port,
-            sha256Fingerprint = fingerprint,
-            subject = cert.subjectX500Principal?.name ?: "Unknown",
-            issuer = cert.issuerX500Principal?.name ?: "Unknown",
-            validFrom = cert.notBefore?.toString() ?: "Unknown",
-            validUntil = cert.notAfter?.toString() ?: "Unknown"
-        )
+        val certInfo =
+            CertificateInfo(
+                host = host,
+                port = port,
+                sha256Fingerprint = fingerprint,
+                subject = cert.subjectX500Principal?.name ?: "Unknown",
+                issuer = cert.issuerX500Principal?.name ?: "Unknown",
+                validFrom = cert.notBefore?.toString() ?: "Unknown",
+                validUntil = cert.notAfter?.toString() ?: "Unknown",
+            )
         presentedCertInfo = certInfo
 
         // .onion addresses: Tor provides transport-level authentication
@@ -108,7 +114,7 @@ class TofuTrustManager(
                     port = port,
                     storedFingerprint = storedFingerprint,
                     presentedFingerprint = fingerprint,
-                    certInfo = certInfo
+                    certInfo = certInfo,
                 )
             }
             // Fingerprint matches - connection is trusted
@@ -134,21 +140,6 @@ class TofuTrustManager(
         fun createSSLSocketFactory(trustManager: TofuTrustManager): SSLSocketFactory {
             val sslContext = SSLContext.getInstance("TLS")
             sslContext.init(null, arrayOf<TrustManager>(trustManager), null)
-            return sslContext.socketFactory
-        }
-
-        /**
-         * Create a trust-all SSLSocketFactory for .onion connections.
-         * Tor already provides transport security for .onion addresses.
-         */
-        fun createOnionSSLSocketFactory(): SSLSocketFactory {
-            val trustAll = object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out X509Certificate>, authType: String) {}
-                override fun checkServerTrusted(chain: Array<out X509Certificate>, authType: String) {}
-                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-            }
-            val sslContext = SSLContext.getInstance("TLS")
-            sslContext.init(null, arrayOf<TrustManager>(trustAll), null)
             return sslContext.socketFactory
         }
     }

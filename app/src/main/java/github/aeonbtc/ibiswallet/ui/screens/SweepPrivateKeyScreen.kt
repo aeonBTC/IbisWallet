@@ -9,7 +9,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -17,8 +16,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-
-
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
@@ -41,7 +38,7 @@ fun SweepPrivateKeyScreen(
     isWifValid: (String) -> Boolean,
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
     minFeeRate: Double = 1.0,
-    onRefreshFees: () -> Unit = {}
+    onRefreshFees: () -> Unit = {},
 ) {
     var wifKey by remember { mutableStateOf("") }
     var destinationAddress by remember { mutableStateOf("") }
@@ -49,14 +46,15 @@ fun SweepPrivateKeyScreen(
     var showWifQrScanner by remember { mutableStateOf(false) }
     var showDestQrScanner by remember { mutableStateOf(false) }
     var showReviewDialog by remember { mutableStateOf(false) }
-    
+
     // Refresh fee estimates when screen opens
     LaunchedEffect(Unit) { onRefreshFees() }
-    
-    val isValidWif = remember(wifKey) {
-        wifKey.isNotBlank() && isWifValid(wifKey.trim())
-    }
-    
+
+    val isValidWif =
+        remember(wifKey) {
+            wifKey.isNotBlank() && isWifValid(wifKey.trim())
+        }
+
     val isValidFeeRate = feeRate >= minFeeRate.toFloat()
     val isValidDestination = destinationAddress.isNotBlank()
     val canScan = isValidWif && isConnected && !sweepState.isScanning
@@ -69,7 +67,7 @@ fun SweepPrivateKeyScreen(
                 wifKey = scanned
                 showWifQrScanner = false
             },
-            onDismiss = { showWifQrScanner = false }
+            onDismiss = { showWifQrScanner = false },
         )
     }
     if (showDestQrScanner) {
@@ -80,7 +78,7 @@ fun SweepPrivateKeyScreen(
                 destinationAddress = addr
                 showDestQrScanner = false
             },
-            onDismiss = { showDestQrScanner = false }
+            onDismiss = { showDestQrScanner = false },
         )
     }
 
@@ -93,81 +91,82 @@ fun SweepPrivateKeyScreen(
                 Text(
                     "Confirm Sweep",
                     color = MaterialTheme.colorScheme.onBackground,
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
                 )
             },
             text = {
                 Column {
                     sweepState.scanResults.forEach { result ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
                                 result.addressType.displayName,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                             Text(
                                 "${result.balanceSats} sats",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                         }
                     }
-                    
+
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
-                        color = BorderColor
+                        color = BorderColor,
                     )
-                    
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
                             "Total",
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                         Text(
                             "${sweepState.totalBalanceSats} sats",
                             style = MaterialTheme.typography.titleSmall,
-                            color = BitcoinOrange
+                            color = BitcoinOrange,
                         )
                     }
-                    
+
                     Spacer(modifier = Modifier.height(8.dp))
-                    
+
                     Text(
                         "Fee rate: ${formatFeeRate(feeRate)} sat/vB",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
-                    
+
                     Spacer(modifier = Modifier.height(4.dp))
-                    
+
                     Text(
                         "To: ${destinationAddress.take(16)}...${destinationAddress.takeLast(8)}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
-                    
+
                     if (sweepState.isSweeping) {
                         Spacer(modifier = Modifier.height(12.dp))
                         LinearProgressIndicator(
                             modifier = Modifier.fillMaxWidth(),
                             color = BitcoinOrange,
-                            trackColor = BorderColor
+                            trackColor = BorderColor,
                         )
                         sweepState.sweepProgress?.let {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 it,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     }
@@ -180,16 +179,17 @@ fun SweepPrivateKeyScreen(
                     },
                     enabled = !sweepState.isSweeping,
                     shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = BitcoinOrange,
-                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f)
-                    )
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        ),
                 ) {
                     if (sweepState.isSweeping) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
                             color = MaterialTheme.colorScheme.onPrimary,
-                            strokeWidth = 2.dp
+                            strokeWidth = 2.dp,
                         )
                     } else {
                         Text("Broadcast")
@@ -202,10 +202,17 @@ fun SweepPrivateKeyScreen(
                         Text("Cancel", color = TextSecondary)
                     }
                 }
-            }
+            },
         )
     }
-    
+
+    // Clear WIF key from memory once sweep completes
+    LaunchedEffect(sweepState.isComplete) {
+        if (sweepState.isComplete) {
+            wifKey = ""
+        }
+    }
+
     // Success dialog
     if (sweepState.isComplete) {
         AlertDialog(
@@ -215,7 +222,7 @@ fun SweepPrivateKeyScreen(
                 Text(
                     "Sweep Successful",
                     color = SuccessGreen,
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
                 )
             },
             text = {
@@ -223,14 +230,14 @@ fun SweepPrivateKeyScreen(
                     Text(
                         "${sweepState.sweepTxids.size} transaction${if (sweepState.sweepTxids.size > 1) "s" else ""} broadcast",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     sweepState.sweepTxids.forEach { txid ->
                         Text(
                             "${txid.take(16)}...${txid.takeLast(8)}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
+                            color = TextSecondary,
                         )
                     }
                 }
@@ -242,38 +249,43 @@ fun SweepPrivateKeyScreen(
                         onBack()
                     },
                     shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange)
+                    colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
                 ) {
                     Text("Done")
                 }
-            }
+            },
         )
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
     ) {
         // Header
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = { onReset(); onBack() }) {
+            IconButton(onClick = {
+                onReset()
+                onBack()
+            }) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back"
+                    contentDescription = "Back",
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "Sweep Private Key",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
             )
         }
 
@@ -283,53 +295,56 @@ fun SweepPrivateKeyScreen(
         Text(
             text = "Private Key (WIF)",
             style = MaterialTheme.typography.labelLarge,
-            color = TextSecondary
+            color = TextSecondary,
         )
         Spacer(modifier = Modifier.height(6.dp))
         Box(modifier = Modifier.fillMaxWidth()) {
             OutlinedTextField(
                 value = wifKey,
                 onValueChange = { wifKey = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(80.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(80.dp),
                 shape = RoundedCornerShape(8.dp),
                 placeholder = { Text("Enter WIF key (K..., L..., 5...)", color = TextSecondary.copy(alpha = 0.5f)) },
                 keyboardOptions = KeyboardOptions(autoCorrect = false),
                 singleLine = false,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = BitcoinOrange,
-                    unfocusedBorderColor = BorderColor,
-                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                    cursorColor = BitcoinOrange
-                )
+                colors =
+                    OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BitcoinOrange,
+                        unfocusedBorderColor = BorderColor,
+                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                        cursorColor = BitcoinOrange,
+                    ),
             )
             Box(
                 contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(4.dp)
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { showWifQrScanner = true }
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(4.dp)
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { showWifQrScanner = true },
             ) {
                 Icon(
                     imageVector = Icons.Default.QrCodeScanner,
                     contentDescription = "Scan QR Code",
                     tint = BitcoinOrange,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(24.dp),
                 )
             }
         }
-        
+
         // WIF validation feedback
         if (wifKey.isNotBlank()) {
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = if (isValidWif) "Valid WIF key" else "Invalid WIF key",
                 style = MaterialTheme.typography.bodySmall,
-                color = if (isValidWif) SuccessGreen else ErrorRed
+                color = if (isValidWif) SuccessGreen else ErrorRed,
             )
         }
 
@@ -339,7 +354,7 @@ fun SweepPrivateKeyScreen(
         Text(
             text = "Destination Address",
             style = MaterialTheme.typography.labelLarge,
-            color = TextSecondary
+            color = TextSecondary,
         )
         Spacer(modifier = Modifier.height(6.dp))
         OutlinedTextField(
@@ -356,17 +371,18 @@ fun SweepPrivateKeyScreen(
                         imageVector = Icons.Default.QrCodeScanner,
                         contentDescription = "Scan",
                         tint = BitcoinOrange,
-                        modifier = Modifier.size(22.dp)
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = BitcoinOrange,
-                unfocusedBorderColor = BorderColor,
-                focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                cursorColor = BitcoinOrange
-            )
+            colors =
+                OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = BitcoinOrange,
+                    unfocusedBorderColor = BorderColor,
+                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                    cursorColor = BitcoinOrange,
+                ),
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -378,7 +394,7 @@ fun SweepPrivateKeyScreen(
             minFeeRate = minFeeRate,
             onFeeRateChange = { feeRate = it },
             onRefreshFees = onRefreshFees,
-            enabled = true
+            enabled = true,
         )
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -386,21 +402,23 @@ fun SweepPrivateKeyScreen(
         // Check Balance button
         Button(
             onClick = { onScanBalances(wifKey.trim()) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
             shape = RoundedCornerShape(8.dp),
             enabled = canScan,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = BitcoinOrange,
-                disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f)
-            )
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = BitcoinOrange,
+                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                ),
         ) {
             if (sweepState.isScanning) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(24.dp),
                     color = MaterialTheme.colorScheme.onPrimary,
-                    strokeWidth = 2.dp
+                    strokeWidth = 2.dp,
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(sweepState.scanProgress ?: "Scanning...")
@@ -416,84 +434,86 @@ fun SweepPrivateKeyScreen(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = DarkCard),
-                border = BorderStroke(1.dp, BorderColor)
+                border = BorderStroke(1.dp, BorderColor),
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
                         "Funds Found",
                         style = MaterialTheme.typography.titleSmall,
-                        color = SuccessGreen
+                        color = SuccessGreen,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     sweepState.scanResults.forEach { result ->
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Column {
                                 Text(
                                     result.addressType.displayName,
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onBackground
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                                 Text(
                                     result.address.take(16) + "..." + result.address.takeLast(8),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary
+                                    color = TextSecondary,
                                 )
                             }
                             Text(
                                 "${result.balanceSats} sats",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = BitcoinOrange
+                                color = BitcoinOrange,
                             )
                         }
                     }
                     HorizontalDivider(
                         modifier = Modifier.padding(vertical = 8.dp),
-                        color = BorderColor
+                        color = BorderColor,
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
                             "Total",
                             style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                         Text(
                             "${sweepState.totalBalanceSats} sats",
                             style = MaterialTheme.typography.titleSmall,
-                            color = BitcoinOrange
+                            color = BitcoinOrange,
                         )
                     }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(12.dp))
-            
+
             // Sweep button
             Button(
                 onClick = { showReviewDialog = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                 shape = RoundedCornerShape(8.dp),
                 enabled = canSweep,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BitcoinOrange,
-                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f)
-                )
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                    ),
             ) {
                 Text("Review Sweep")
             }
-
-        } else if (!sweepState.isScanning && sweepState.scanResults.isEmpty() && sweepState.error == null
-            && wifKey.isNotBlank() && isValidWif && sweepState.scanProgress == null
-            && sweepState.totalBalanceSats == 0UL && sweepState.sweepTxids.isEmpty()
+        } else if (!sweepState.isScanning && sweepState.scanResults.isEmpty() && sweepState.error == null &&
+            wifKey.isNotBlank() && isValidWif && sweepState.scanProgress == null &&
+            sweepState.totalBalanceSats == 0UL && sweepState.sweepTxids.isEmpty()
         ) {
             // Show "no funds" only after a scan has been attempted (scanResults is empty but no error)
         }
@@ -504,17 +524,17 @@ fun SweepPrivateKeyScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(containerColor = ErrorRed.copy(alpha = 0.1f))
+                colors = CardDefaults.cardColors(containerColor = ErrorRed.copy(alpha = 0.1f)),
             ) {
                 Text(
                     text = sweepState.error,
                     style = MaterialTheme.typography.bodyMedium,
                     color = ErrorRed,
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier.padding(16.dp),
                 )
             }
         }
-        
+
         if (!isConnected) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -522,7 +542,7 @@ fun SweepPrivateKeyScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             )
         }
 

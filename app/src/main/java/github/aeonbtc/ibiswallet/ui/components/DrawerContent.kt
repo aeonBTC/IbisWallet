@@ -36,104 +36,106 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 
 sealed class DrawerItem(
     val title: String,
-    val icon: ImageVector
+    val icon: ImageVector,
 ) {
     data object ManageWallets : DrawerItem(
         title = "Manage Wallets",
-        icon = Icons.Default.AccountBalanceWallet
+        icon = Icons.Default.AccountBalanceWallet,
     )
-    
+
     data object ElectrumServer : DrawerItem(
         title = "Electrum Server",
-        icon = Icons.Default.Cloud
+        icon = Icons.Default.Cloud,
     )
-    
+
     data object Settings : DrawerItem(
         title = "Settings",
-        icon = Icons.Default.Settings
+        icon = Icons.Default.Settings,
     )
-    
+
     data object Security : DrawerItem(
         title = "Security",
-        icon = Icons.Default.Lock
+        icon = Icons.Default.Lock,
     )
-    
+
     data object About : DrawerItem(
         title = "About",
-        icon = Icons.Default.Info
+        icon = Icons.Default.Info,
     )
 }
 
-val drawerItems = listOf(
-    DrawerItem.ManageWallets,
-    DrawerItem.ElectrumServer,
-    DrawerItem.Settings,
-    DrawerItem.Security,
-    DrawerItem.About
-)
+val drawerItems =
+    listOf(
+        DrawerItem.ManageWallets,
+        DrawerItem.ElectrumServer,
+        DrawerItem.Settings,
+        DrawerItem.Security,
+        DrawerItem.About,
+    )
 
 @Composable
 fun DrawerContent(
     onItemClick: (DrawerItem) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     ModalDrawerSheet(
         modifier = modifier.width(300.dp),
-        drawerContainerColor = DarkSurface
+        drawerContainerColor = DarkSurface,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxHeight()
-                .padding(vertical = 24.dp)
+            modifier =
+                Modifier
+                    .fillMaxHeight()
+                    .padding(vertical = 24.dp),
         ) {
             // Header
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp),
             ) {
-
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
                 Text(
                     text = "Ibis Wallet",
                     style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }
-            
+
             Spacer(modifier = Modifier.height(24.dp))
-            
+
             HorizontalDivider(
                 color = BorderColor,
-                modifier = Modifier.padding(horizontal = 16.dp)
+                modifier = Modifier.padding(horizontal = 16.dp),
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             // Menu items
             drawerItems.forEach { item ->
                 DrawerMenuItem(
                     item = item,
-                    onClick = { onItemClick(item) }
+                    onClick = { onItemClick(item) },
                 )
             }
-            
+
             Spacer(modifier = Modifier.weight(1f))
-            
+
             // Version info at bottom
             HorizontalDivider(
                 color = BorderColor,
-                modifier = Modifier.padding(horizontal = 16.dp)
+                modifier = Modifier.padding(horizontal = 16.dp),
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Text(
                 text = "Version ${BuildConfig.VERSION_NAME}",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary.copy(alpha = 0.6f),
-                modifier = Modifier.padding(horizontal = 24.dp)
+                modifier = Modifier.padding(horizontal = 24.dp),
             )
         }
     }
@@ -142,30 +144,31 @@ fun DrawerContent(
 @Composable
 private fun DrawerMenuItem(
     item: DrawerItem,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .padding(horizontal = 8.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
             imageVector = item.icon,
             contentDescription = item.title,
             tint = BitcoinOrange,
-            modifier = Modifier.size(24.dp)
+            modifier = Modifier.size(24.dp),
         )
-        
+
         Spacer(modifier = Modifier.width(16.dp))
-        
+
         Text(
             text = item.title,
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onBackground
+            color = MaterialTheme.colorScheme.onBackground,
         )
     }
 }

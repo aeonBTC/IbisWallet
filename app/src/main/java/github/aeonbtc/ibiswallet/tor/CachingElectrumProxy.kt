@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.selects.select
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.BufferedOutputStream
 import java.io.BufferedReader
 import java.io.IOException
@@ -22,12 +24,16 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.net.SocketTimeoutException
+import java.security.cert.X509Certificate
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.locks.ReentrantLock
+import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.withLock
-import org.json.JSONArray
-import org.json.JSONObject
+import kotlin.math.roundToLong
 
 /**
  * Notifications pushed by the Electrum server over the subscription socket.
@@ -36,6 +42,7 @@ import org.json.JSONObject
 sealed class ElectrumNotification {
     /** A subscribed script hash's status changed (new tx or confirmation). */
     data class ScriptHashChanged(val scriptHash: String, val status: String?) : ElectrumNotification()
+
     /** A new block was mined. */
     data class NewBlockHeader(val height: Int, val hexHeader: String) : ElectrumNotification()
 }
@@ -73,9 +80,8 @@ class CachingElectrumProxy(
     private val connectionTimeoutMs: Int = 60000,
     private val soTimeoutMs: Int = 60000,
     private val sslTrustManager: TofuTrustManager? = null,
-    private val cache: ElectrumCache? = null
+    private val cache: ElectrumCache? = null,
 ) {
-
     companion object {
         private const val TAG = "CachingElectrumProxy"
         private const val BUFFER_SIZE = 32768
@@ -89,6 +95,7 @@ class CachingElectrumProxy(
 
     private var serverSocket: ServerSocket? = null
     private var localPort: Int = 0
+
     @Volatile private var isRunning = false
     private var bridgeJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -119,6 +126,7 @@ class CachingElectrumProxy(
     private var subRequestId = 200_000
     private var subHandshakeDone = false
     private var subListenerJob: Job? = null
+
     @Volatile private var subListenerPaused = false
 
     private val _notifications = MutableSharedFlow<ElectrumNotification>(extraBufferCapacity = 64)
@@ -136,14 +144,20 @@ class CachingElectrumProxy(
         }
 
         try {
-            serverSocket = ServerSocket(0).apply {
-                soTimeout = connectionTimeoutMs
-                reuseAddress = true
-            }
+            serverSocket =
+                ServerSocket(0, 50, java.net.InetAddress.getByName("127.0.0.1")).apply {
+                    soTimeout = connectionTimeoutMs
+                    reuseAddress = true
+                }
             localPort = serverSocket!!.localPort
             isRunning = true
 
-            if (BuildConfig.DEBUG) Log.d(TAG, "Proxy started on port $localPort -> $targetHost:$targetPort (SSL=$useSsl, Tor=$useTorProxy)")
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    TAG,
+                    "Proxy started on port $localPort -> $targetHost:$targetPort (SSL=$useSsl, Tor=$useTorProxy)",
+                )
+            }
 
             bridgeJob = scope.launch { acceptConnections() }
             return localPort
@@ -174,48 +188,48 @@ class CachingElectrumProxy(
         pendingTxGetRequests.clear()
     }
 
-    fun setPreConnectedSocket(socket: Socket) { preConnectedSocket = socket }
-    fun isRunning(): Boolean = isRunning
-    fun getLocalPort(): Int = localPort
+    fun setPreConnectedSocket(socket: Socket) {
+        preConnectedSocket = socket
+    }
 
     // ==================== Bidirectional Bridge ====================
 
-    private suspend fun acceptConnections() = withContext(Dispatchers.IO) {
-        while (isRunning && isActive) {
-            try {
-                if (BuildConfig.DEBUG) Log.d(TAG, "Waiting for BDK connection on port $localPort...")
-                val client = serverSocket?.accept() ?: break
-                client.soTimeout = soTimeoutMs
-                clientSocket = client
+    private suspend fun acceptConnections() =
+        withContext(Dispatchers.IO) {
+            while (isRunning && isActive) {
+                try {
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Waiting for BDK connection on port $localPort...")
+                    val client = serverSocket?.accept() ?: break
+                    client.soTimeout = soTimeoutMs
+                    clientSocket = client
 
-                if (BuildConfig.DEBUG) Log.d(TAG, "Accepted BDK connection")
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Accepted BDK connection")
 
-                val target = createTargetConnection()
-                if (target == null) {
-                    if (BuildConfig.DEBUG) Log.e(TAG, "Failed to connect to $targetHost:$targetPort")
-                    closeQuietly(client)
-                    continue
-                }
-                bridgeTargetSocket = target
+                    val target = createTargetConnection()
+                    if (target == null) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "Failed to connect to $targetHost:$targetPort")
+                        closeQuietly(client)
+                        continue
+                    }
+                    bridgeTargetSocket = target
 
-                if (BuildConfig.DEBUG) Log.d(TAG, "Bridge connected to target, starting bidirectional copy")
-                bridgeConnections(client, target)
-
-            } catch (e: SocketTimeoutException) {
-                // Accept timeout — loop
-            } catch (e: SocketException) {
-                if (isRunning) {
-                    if (BuildConfig.DEBUG) Log.e(TAG, "Socket exception in accept loop", e)
-                }
-                break
-            } catch (e: Exception) {
-                if (isRunning) {
-                    if (BuildConfig.DEBUG) Log.e(TAG, "Error in accept loop", e)
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Bridge connected to target, starting bidirectional copy")
+                    bridgeConnections(client, target)
+                } catch (_: SocketTimeoutException) {
+                    // Accept timeout — loop
+                } catch (e: SocketException) {
+                    if (isRunning) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "Socket exception in accept loop", e)
+                    }
+                    break
+                } catch (e: Exception) {
+                    if (isRunning) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "Error in accept loop", e)
+                    }
                 }
             }
+            if (BuildConfig.DEBUG) Log.d(TAG, "Accept loop ended")
         }
-        if (BuildConfig.DEBUG) Log.d(TAG, "Accept loop ended")
-    }
 
     /**
      * Bidirectional bridge between BDK and the Electrum server.
@@ -237,7 +251,10 @@ class CachingElectrumProxy(
      * Both directions use smart flush (only when no more data is immediately
      * available), which batches small writes into fewer Tor circuit sends.
      */
-    private suspend fun bridgeConnections(client: Socket, target: Socket) = withContext(Dispatchers.IO) {
+    private suspend fun bridgeConnections(
+        client: Socket,
+        target: Socket,
+    ) = withContext(Dispatchers.IO) {
         pendingTxGetRequests.clear()
 
         // Synchronized writer for BDK — both directions may write to it
@@ -246,25 +263,27 @@ class CachingElectrumProxy(
         val bdkWriteLock = ReentrantLock()
 
         try {
-            val clientToServer = async {
-                copyClientToServer(
-                    client.getInputStream(),
-                    target.getOutputStream(),
-                    bdkOutput,
-                    bdkWriteLock
-                )
-            }
+            val clientToServer =
+                async {
+                    copyClientToServer(
+                        client.getInputStream(),
+                        target.getOutputStream(),
+                        bdkOutput,
+                        bdkWriteLock,
+                    )
+                }
 
-            val serverToClient = async {
-                copyServerToClient(
-                    target.getInputStream(),
-                    bdkOutput,
-                    bdkWriteLock
-                )
-            }
+            val serverToClient =
+                async {
+                    copyServerToClient(
+                        target.getInputStream(),
+                        bdkOutput,
+                        bdkWriteLock,
+                    )
+                }
 
             // Wait for either direction to complete (connection closed)
-            select<Unit> {
+            select {
                 clientToServer.onAwait {}
                 serverToClient.onAwait {}
             }
@@ -289,7 +308,7 @@ class CachingElectrumProxy(
         bdkInput: InputStream,
         serverOutput: OutputStream,
         bdkOutput: OutputStream,
-        bdkWriteLock: ReentrantLock
+        bdkWriteLock: ReentrantLock,
     ): Long {
         val bdkReader = BufferedReader(InputStreamReader(bdkInput), BUFFER_SIZE)
         val serverBuffered = BufferedOutputStream(serverOutput, BUFFER_SIZE)
@@ -328,12 +347,15 @@ class CachingElectrumProxy(
                     serverBuffered.flush()
                 }
             }
-        } catch (e: SocketException) {
+        } catch (_: SocketException) {
             if (BuildConfig.DEBUG) Log.d(TAG, "[BDK->Server] Socket closed, total bytes: $totalBytes")
         } catch (e: IOException) {
             if (BuildConfig.DEBUG) Log.d(TAG, "[BDK->Server] IO error: ${e.message}, total bytes: $totalBytes")
         }
-        try { serverBuffered.flush() } catch (_: Exception) {}
+        try {
+            serverBuffered.flush()
+        } catch (_: Exception) {
+        }
         return totalBytes
     }
 
@@ -344,7 +366,7 @@ class CachingElectrumProxy(
     private fun copyServerToClient(
         serverInput: InputStream,
         bdkOutput: OutputStream,
-        bdkWriteLock: ReentrantLock
+        bdkWriteLock: ReentrantLock,
     ): Long {
         val serverReader = BufferedReader(InputStreamReader(serverInput), BUFFER_SIZE)
         var totalBytes = 0L
@@ -366,13 +388,16 @@ class CachingElectrumProxy(
                 }
                 totalBytes += bytes.size
             }
-        } catch (e: SocketException) {
+        } catch (_: SocketException) {
             if (BuildConfig.DEBUG) Log.d(TAG, "[Server->BDK] Socket closed, total bytes: $totalBytes")
         } catch (e: IOException) {
             if (BuildConfig.DEBUG) Log.d(TAG, "[Server->BDK] IO error: ${e.message}, total bytes: $totalBytes")
         }
         bdkWriteLock.withLock {
-            try { bdkOutput.flush() } catch (_: Exception) {}
+            try {
+                bdkOutput.flush()
+            } catch (_: Exception) {
+            }
         }
         return totalBytes
     }
@@ -406,14 +431,15 @@ class CachingElectrumProxy(
 
             val cachedHex = txCache.getRawTx(txid) ?: return null
 
-            val response = JSONObject().apply {
-                put("jsonrpc", "2.0")
-                put("id", json.opt("id"))
-                put("result", cachedHex)
-            }
+            val response =
+                JSONObject().apply {
+                    put("jsonrpc", "2.0")
+                    put("id", json.opt("id"))
+                    put("result", cachedHex)
+                }
             if (BuildConfig.DEBUG) Log.d(TAG, "Cache HIT: tx $txid")
             response.toString()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -441,7 +467,8 @@ class CachingElectrumProxy(
             if (txid.isNotBlank() && id >= 0) {
                 pendingTxGetRequests[id] = txid
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     /**
@@ -461,7 +488,8 @@ class CachingElectrumProxy(
 
             txCache.putRawTx(txid, hex)
             if (BuildConfig.DEBUG) Log.d(TAG, "Cache STORE: tx $txid (${hex.length / 2} bytes)")
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     // ==================== Direct Query Methods ====================
@@ -502,16 +530,23 @@ class CachingElectrumProxy(
         }
     }
 
-    private fun performDirectHandshakeLocked(writer: PrintWriter, reader: BufferedReader): Boolean {
+    private fun performDirectHandshakeLocked(
+        writer: PrintWriter,
+        reader: BufferedReader,
+    ): Boolean {
         return try {
-            val req = JSONObject().apply {
-                put("id", directRequestId++)
-                put("method", "server.version")
-                put("params", JSONArray().apply {
-                    put("IbisWallet")
-                    put("1.4")
-                })
-            }
+            val req =
+                JSONObject().apply {
+                    put("id", directRequestId++)
+                    put("method", "server.version")
+                    put(
+                        "params",
+                        JSONArray().apply {
+                            put("IbisWallet")
+                            put("1.4")
+                        },
+                    )
+                }
             writer.println(req.toString())
             writer.flush()
 
@@ -534,14 +569,15 @@ class CachingElectrumProxy(
         writer: PrintWriter,
         reader: BufferedReader,
         method: String,
-        params: JSONArray
+        params: JSONArray,
     ): String? {
         val id = directRequestId++
-        val req = JSONObject().apply {
-            put("id", id)
-            put("method", method)
-            put("params", params)
-        }
+        val req =
+            JSONObject().apply {
+                put("id", id)
+                put("method", method)
+                put("params", params)
+            }
 
         writer.println(req.toString())
         writer.flush()
@@ -558,7 +594,7 @@ class CachingElectrumProxy(
         return try {
             val json = JSONObject(line)
             json.has("method") && (!json.has("id") || json.isNull("id"))
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
@@ -580,11 +616,12 @@ class CachingElectrumProxy(
                 for (scriptHash in scriptHashes) {
                     val id = directRequestId++
                     idToScriptHash[id] = scriptHash
-                    val req = JSONObject().apply {
-                        put("id", id)
-                        put("method", "blockchain.scripthash.subscribe")
-                        put("params", JSONArray().apply { put(scriptHash) })
-                    }
+                    val req =
+                        JSONObject().apply {
+                            put("id", id)
+                            put("method", "blockchain.scripthash.subscribe")
+                            put("params", JSONArray().apply { put(scriptHash) })
+                        }
                     writer.println(req.toString())
                 }
                 writer.flush()
@@ -605,8 +642,12 @@ class CachingElectrumProxy(
                             val extraId = extraJson.optInt("id", -1)
                             val extraHash = idToScriptHash[extraId]
                             if (extraHash != null) {
-                                val status: String? = if (extraJson.isNull("result")) null
-                                    else extraJson.optString("result")
+                                val status: String? =
+                                    if (extraJson.isNull("result")) {
+                                        null
+                                    } else {
+                                        extraJson.optString("result")
+                                    }
                                 results[extraHash] = status
                             }
                         } else {
@@ -617,8 +658,12 @@ class CachingElectrumProxy(
                         val responseId = json.optInt("id", -1)
                         val scriptHash = idToScriptHash[responseId]
                         if (scriptHash != null) {
-                            val status: String? = if (json.isNull("result")) null
-                                else json.optString("result")
+                            val status: String? =
+                                if (json.isNull("result")) {
+                                    null
+                                } else {
+                                    json.optString("result")
+                                }
                             results[scriptHash] = status
                         }
                     }
@@ -694,16 +739,23 @@ class CachingElectrumProxy(
         }
     }
 
-    private fun performSubHandshakeLocked(writer: PrintWriter, reader: BufferedReader): Boolean {
+    private fun performSubHandshakeLocked(
+        writer: PrintWriter,
+        reader: BufferedReader,
+    ): Boolean {
         return try {
-            val req = JSONObject().apply {
-                put("id", subRequestId++)
-                put("method", "server.version")
-                put("params", JSONArray().apply {
-                    put("IbisWallet")
-                    put("1.4")
-                })
-            }
+            val req =
+                JSONObject().apply {
+                    put("id", subRequestId++)
+                    put("method", "server.version")
+                    put(
+                        "params",
+                        JSONArray().apply {
+                            put("IbisWallet")
+                            put("1.4")
+                        },
+                    )
+                }
             writer.println(req.toString())
             writer.flush()
 
@@ -742,11 +794,12 @@ class CachingElectrumProxy(
 
             try {
                 // 1. Subscribe to block headers
-                val headersReq = JSONObject().apply {
-                    put("id", subRequestId++)
-                    put("method", "blockchain.headers.subscribe")
-                    put("params", JSONArray())
-                }
+                val headersReq =
+                    JSONObject().apply {
+                        put("id", subRequestId++)
+                        put("method", "blockchain.headers.subscribe")
+                        put("params", JSONArray())
+                    }
                 writer.println(headersReq.toString())
 
                 // 2. Subscribe to all script hashes (pipelined)
@@ -754,11 +807,12 @@ class CachingElectrumProxy(
                 for (scriptHash in scriptHashes) {
                     val id = subRequestId++
                     idToScriptHash[id] = scriptHash
-                    val req = JSONObject().apply {
-                        put("id", id)
-                        put("method", "blockchain.scripthash.subscribe")
-                        put("params", JSONArray().apply { put(scriptHash) })
-                    }
+                    val req =
+                        JSONObject().apply {
+                            put("id", id)
+                            put("method", "blockchain.script hash.subscribe")
+                            put("params", JSONArray().apply { put(scriptHash) })
+                        }
                     writer.println(req.toString())
                 }
                 writer.flush()
@@ -809,8 +863,12 @@ class CachingElectrumProxy(
                     val responseId = json.optInt("id", -1)
                     val scriptHash = idToScriptHash[responseId]
                     if (scriptHash != null) {
-                        val status: String? = if (json.isNull("result")) null
-                            else json.optString("result")
+                        val status: String? =
+                            if (json.isNull("result")) {
+                                null
+                            } else {
+                                json.optString("result")
+                            }
                         results[scriptHash] = status
                         received++
                     } else {
@@ -861,11 +919,12 @@ class CachingElectrumProxy(
             for (scriptHash in scriptHashes) {
                 val id = subRequestId++
                 idToScriptHash[id] = scriptHash
-                val req = JSONObject().apply {
-                    put("id", id)
-                    put("method", "blockchain.scripthash.subscribe")
-                    put("params", JSONArray().apply { put(scriptHash) })
-                }
+                val req =
+                    JSONObject().apply {
+                        put("id", id)
+                        put("method", "blockchain.scripthash.subscribe")
+                        put("params", JSONArray().apply { put(scriptHash) })
+                    }
                 writer.println(req.toString())
             }
             writer.flush()
@@ -875,7 +934,12 @@ class CachingElectrumProxy(
             // responses here to avoid fighting the listener for socket reads.
             // The initial status for these new addresses is unknown, but the
             // next push notification or background sync will catch changes.
-            if (BuildConfig.DEBUG) Log.d(TAG, "Sent ${scriptHashes.size} additional subscribe requests (responses handled by listener)")
+            if (BuildConfig.DEBUG) {
+                Log.d(
+                    TAG,
+                    "Sent ${scriptHashes.size} additional subscribe requests (responses handled by listener)",
+                )
+            }
 
             // Return the script hashes as subscribed with null status (unknown).
             // The server will push notifications for any future changes.
@@ -903,46 +967,48 @@ class CachingElectrumProxy(
     private fun startNotificationListener(reader: BufferedReader) {
         subListenerJob?.cancel()
         subListenerPaused = false
-        subListenerJob = scope.launch {
-            if (BuildConfig.DEBUG) Log.d(TAG, "Notification listener started")
-            try {
-                while (isActive && isRunning) {
-                    val line = withContext(Dispatchers.IO) {
+        subListenerJob =
+            scope.launch {
+                if (BuildConfig.DEBUG) Log.d(TAG, "Notification listener started")
+                try {
+                    while (isActive && isRunning) {
+                        val line =
+                            withContext(Dispatchers.IO) {
+                                try {
+                                    reader.readLine()
+                                } catch (_: Exception) {
+                                    null
+                                }
+                            }
+
+                        if (line == null) {
+                            if (BuildConfig.DEBUG) Log.d(TAG, "Subscription socket closed, listener exiting")
+                            break
+                        }
+
+                        if (line.isBlank()) continue
+
+                        // If paused (subscribeAdditionalScriptHashes is reading),
+                        // skip dispatching — the caller handles its own responses.
+                        if (subListenerPaused) continue
+
                         try {
-                            reader.readLine()
+                            val json = JSONObject(line)
+                            if (isServerPushNotification(line)) {
+                                dispatchPushNotification(json)
+                            }
+                            // Non-push lines (stale responses) are silently ignored
                         } catch (e: Exception) {
-                            null
+                            if (BuildConfig.DEBUG) Log.w(TAG, "Failed to parse notification: ${e.message}")
                         }
                     }
-
-                    if (line == null) {
-                        if (BuildConfig.DEBUG) Log.d(TAG, "Subscription socket closed, listener exiting")
-                        break
-                    }
-
-                    if (line.isBlank()) continue
-
-                    // If paused (subscribeAdditionalScriptHashes is reading),
-                    // skip dispatching — the caller handles its own responses.
-                    if (subListenerPaused) continue
-
-                    try {
-                        val json = JSONObject(line)
-                        if (isServerPushNotification(line)) {
-                            dispatchPushNotification(json)
-                        }
-                        // Non-push lines (stale responses) are silently ignored
-                    } catch (e: Exception) {
-                        if (BuildConfig.DEBUG) Log.w(TAG, "Failed to parse notification: ${e.message}")
-                    }
+                } catch (_: CancellationException) {
+                    // Normal cancellation
+                } catch (e: Exception) {
+                    if (BuildConfig.DEBUG) Log.w(TAG, "Notification listener error: ${e.message}")
                 }
-            } catch (e: CancellationException) {
-                // Normal cancellation
-            } catch (e: Exception) {
-                if (BuildConfig.DEBUG) Log.w(TAG, "Notification listener error: ${e.message}")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Notification listener stopped")
             }
-            if (BuildConfig.DEBUG) Log.d(TAG, "Notification listener stopped")
-        }
     }
 
     /**
@@ -990,7 +1056,10 @@ class CachingElectrumProxy(
     private fun stopSubscriptionListener() {
         // 1. Close socket to unblock any blocking readLine() in the listener.
         //    This causes readLine() to throw IOException → returns null → listener exits.
-        try { subSocket?.close() } catch (_: Exception) {}
+        try {
+            subSocket?.close()
+        } catch (_: Exception) {
+        }
         // 2. Cancel the coroutine job (in case it's at a suspension point)
         subListenerJob?.cancel()
         subListenerJob = null
@@ -1007,17 +1076,23 @@ class CachingElectrumProxy(
      * Used by [ensureSubConnectionLocked] and [startSubscriptions] for error cleanup.
      */
     private fun closeSubConnectionLocked() {
-        try { subWriter?.close() } catch (_: Exception) {}
-        try { subReader?.close() } catch (_: Exception) {}
-        try { subSocket?.close() } catch (_: Exception) {}
+        try {
+            subWriter?.close()
+        } catch (_: Exception) {
+        }
+        try {
+            subReader?.close()
+        } catch (_: Exception) {
+        }
+        try {
+            subSocket?.close()
+        } catch (_: Exception) {
+        }
         subWriter = null
         subReader = null
         subSocket = null
         subHandshakeDone = false
     }
-
-    /** Check if the subscription listener is running. */
-    fun isSubscriptionListenerActive(): Boolean = subListenerJob?.isActive == true
 
     /**
      * Pipeline blockchain.transaction.get requests via the direct query
@@ -1035,11 +1110,12 @@ class CachingElectrumProxy(
                 for (txid in txids) {
                     val id = directRequestId++
                     idToTxid[id] = txid
-                    val req = JSONObject().apply {
-                        put("id", id)
-                        put("method", "blockchain.transaction.get")
-                        put("params", JSONArray().apply { put(txid) })
-                    }
+                    val req =
+                        JSONObject().apply {
+                            put("id", id)
+                            put("method", "blockchain.transaction.get")
+                            put("params", JSONArray().apply { put(txid) })
+                        }
                     writer.println(req.toString())
                 }
                 writer.flush()
@@ -1074,7 +1150,10 @@ class CachingElectrumProxy(
         }
     }
 
-    private fun tryCachePipelineResponse(line: String, idToTxid: Map<Int, String>) {
+    private fun tryCachePipelineResponse(
+        line: String,
+        idToTxid: Map<Int, String>,
+    ) {
         val txCache = cache ?: return
         try {
             val json = JSONObject(line)
@@ -1084,24 +1163,25 @@ class CachingElectrumProxy(
             val hex = json.optString("result", "")
             if (hex.isBlank() || hex.length < 20) return
             txCache.putRawTx(txid, hex)
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
     }
 
     data class TxDetails(
         val txid: String,
         val size: Int,
         val vsize: Int,
-        val weight: Int
+        val weight: Int,
     )
 
     /**
      * Result of analyzing a transaction for a specific address.
      */
     data class AddressTxInfo(
-        val netAmountSats: Long,        // Positive = received, negative = spent
-        val timestamp: Long?,           // Unix timestamp from blocktime/time field, null if unconfirmed
+        val netAmountSats: Long, // Positive = received, negative = spent
+        val timestamp: Long?, // Unix timestamp from blocktime/time field, null if unconfirmed
         val counterpartyAddress: String? = null, // For sends: recipient address; for receives: sender is unknown
-        val feeSats: Long? = null       // Transaction fee in sats (if determinable)
+        val feeSats: Long? = null, // Transaction fee in sats (if determinable)
     )
 
     /**
@@ -1109,13 +1189,23 @@ class CachingElectrumProxy(
      * Checks vouts for received amounts and vins (via prevout lookup) for spent amounts.
      * Returns null if the transaction can't be fetched.
      */
-    fun getAddressTxInfo(txid: String, address: String): AddressTxInfo? {
+    fun getAddressTxInfo(
+        txid: String,
+        address: String,
+    ): AddressTxInfo? {
         val verboseJson = getVerboseTxJson(txid) ?: return null
 
         // Extract timestamp (blocktime preferred, falls back to time)
         val blocktime = verboseJson.optLong("blocktime", 0L)
         val time = verboseJson.optLong("time", 0L)
-        val timestamp = if (blocktime > 0L) blocktime else if (time > 0L) time else null
+        val timestamp =
+            if (blocktime > 0L) {
+                blocktime
+            } else if (time > 0L) {
+                time
+            } else {
+                null
+            }
 
         // Sum outputs paying to our address (received)
         var received = 0L
@@ -1127,7 +1217,7 @@ class CachingElectrumProxy(
                 val scriptPubKey = vout.optJSONObject("scriptPubKey") ?: continue
                 val addr = scriptPubKey.optString("address", "")
                 if (addr == address) {
-                    received += Math.round(valueBtc * 100_000_000.0)
+                    received += (valueBtc * 100_000_000.0).roundToLong()
                 }
             }
         }
@@ -1146,7 +1236,7 @@ class CachingElectrumProxy(
                     val spk = prevout.optJSONObject("scriptPubKey")
                     val prevAddr = spk?.optString("address", "") ?: ""
                     if (prevAddr == address) {
-                        spent += Math.round(prevout.optDouble("value", 0.0) * 100_000_000.0)
+                        spent += (prevout.optDouble("value", 0.0) * 100_000_000.0).roundToLong()
                     }
                     continue
                 }
@@ -1164,7 +1254,7 @@ class CachingElectrumProxy(
                 val prevSpk = prevVout.optJSONObject("scriptPubKey") ?: continue
                 val prevAddr = prevSpk.optString("address", "")
                 if (prevAddr == address) {
-                    spent += Math.round(prevVout.optDouble("value", 0.0) * 100_000_000.0)
+                    spent += (prevVout.optDouble("value", 0.0) * 100_000_000.0).roundToLong()
                 }
             }
         }
@@ -1190,58 +1280,75 @@ class CachingElectrumProxy(
         if (vouts != null) {
             for (i in 0 until vouts.length()) {
                 val vout = vouts.optJSONObject(i) ?: continue
-                totalVoutValue += Math.round(vout.optDouble("value", 0.0) * 100_000_000.0)
+                totalVoutValue += (vout.optDouble("value", 0.0) * 100_000_000.0).roundToLong()
             }
         }
         // Total input value = spent (inputs from our address) + other inputs
         // We can only compute fee if we resolved all inputs
-        val totalVinValue = spent + run {
-            var otherInputs = 0L
-            if (vins != null) {
-                for (i in 0 until vins.length()) {
-                    val vin = vins.optJSONObject(i) ?: continue
-                    if (vin.has("coinbase")) continue
+        val totalVinValue =
+            spent +
+                run {
+                    var otherInputs = 0L
+                    if (vins != null) {
+                        for (i in 0 until vins.length()) {
+                            val vin = vins.optJSONObject(i) ?: continue
+                            if (vin.has("coinbase")) continue
 
-                    val prevout = vin.optJSONObject("prevout")
-                    if (prevout != null) {
-                        val spk = prevout.optJSONObject("scriptPubKey")
-                        val prevAddr = spk?.optString("address", "") ?: ""
-                        if (prevAddr != address) {
-                            otherInputs += Math.round(prevout.optDouble("value", 0.0) * 100_000_000.0)
+                            val prevout = vin.optJSONObject("prevout")
+                            if (prevout != null) {
+                                val spk = prevout.optJSONObject("scriptPubKey")
+                                val prevAddr = spk?.optString("address", "") ?: ""
+                                if (prevAddr != address) {
+                                    otherInputs += (prevout.optDouble("value", 0.0) * 100_000_000.0).roundToLong()
+                                }
+                                continue
+                            }
+
+                            val prevTxid = vin.optString("txid", "")
+                            val prevVoutIdx = vin.optInt("vout", -1)
+                            if (prevTxid.isBlank() || prevVoutIdx < 0) {
+                                otherInputs = -1L
+                                break
+                            }
+
+                            val prevTxJson = getVerboseTxJson(prevTxid)
+                            if (prevTxJson == null) {
+                                otherInputs = -1L
+                                break
+                            }
+                            val prevVoutsArr = prevTxJson.optJSONArray("vout")
+                            if (prevVoutsArr == null || prevVoutIdx >= prevVoutsArr.length()) {
+                                otherInputs = -1L
+                                break
+                            }
+
+                            val prevVout = prevVoutsArr.optJSONObject(prevVoutIdx)
+                            if (prevVout == null) {
+                                otherInputs = -1L
+                                break
+                            }
+                            val prevSpk = prevVout.optJSONObject("scriptPubKey")
+                            val prevAddr = prevSpk?.optString("address", "") ?: ""
+                            if (prevAddr != address) {
+                                otherInputs += (prevVout.optDouble("value", 0.0) * 100_000_000.0).roundToLong()
+                            }
                         }
-                        continue
                     }
-
-                    val prevTxid = vin.optString("txid", "")
-                    val prevVoutIdx = vin.optInt("vout", -1)
-                    if (prevTxid.isBlank() || prevVoutIdx < 0) { otherInputs = -1L; break }
-
-                    val prevTxJson = getVerboseTxJson(prevTxid)
-                    if (prevTxJson == null) { otherInputs = -1L; break }
-                    val prevVoutsArr = prevTxJson.optJSONArray("vout")
-                    if (prevVoutsArr == null || prevVoutIdx >= prevVoutsArr.length()) { otherInputs = -1L; break }
-
-                    val prevVout = prevVoutsArr.optJSONObject(prevVoutIdx)
-                    if (prevVout == null) { otherInputs = -1L; break }
-                    val prevSpk = prevVout.optJSONObject("scriptPubKey")
-                    val prevAddr = prevSpk?.optString("address", "") ?: ""
-                    if (prevAddr != address) {
-                        otherInputs += Math.round(prevVout.optDouble("value", 0.0) * 100_000_000.0)
-                    }
+                    otherInputs
                 }
+        val feeSats =
+            if (totalVinValue >= 0 && totalVoutValue >= 0) {
+                val fee = totalVinValue - totalVoutValue
+                if (fee >= 0) fee else null
+            } else {
+                null
             }
-            otherInputs
-        }
-        val feeSats = if (totalVinValue >= 0 && totalVoutValue >= 0) {
-            val fee = totalVinValue - totalVoutValue
-            if (fee >= 0) fee else null
-        } else null
 
         return AddressTxInfo(
             netAmountSats = net,
             timestamp = timestamp,
             counterpartyAddress = counterparty,
-            feeSats = feeSats
+            feeSats = feeSats,
         )
     }
 
@@ -1250,7 +1357,11 @@ class CachingElectrumProxy(
      */
     private fun getVerboseTxJson(txid: String): JSONObject? {
         cache?.getVerboseTx(txid)?.let { cachedJson ->
-            return try { JSONObject(cachedJson) } catch (_: Exception) { null }
+            return try {
+                JSONObject(cachedJson)
+            } catch (_: Exception) {
+                null
+            }
         }
 
         return directLock.withLock {
@@ -1259,11 +1370,15 @@ class CachingElectrumProxy(
             val reader = directReader ?: return@withLock null
 
             try {
-                val response = sendDirectRequestLocked(
-                    writer, reader,
-                    "blockchain.transaction.get",
-                    JSONArray().apply { put(txid); put(true) }
-                ) ?: return@withLock null
+                val response =
+                    sendDirectRequestLocked(
+                        writer, reader,
+                        "blockchain.transaction.get",
+                        JSONArray().apply {
+                            put(txid)
+                            put(true)
+                        },
+                    ) ?: return@withLock null
 
                 val json = JSONObject(response)
                 if (json.has("error") && !json.isNull("error")) return@withLock null
@@ -1291,21 +1406,25 @@ class CachingElectrumProxy(
         return parseVerboseTxDetails(txid, result)
     }
 
-    private fun parseVerboseTxDetails(txid: String, result: JSONObject): TxDetails? {
+    private fun parseVerboseTxDetails(
+        txid: String,
+        result: JSONObject,
+    ): TxDetails? {
         val size = result.optInt("size", -1)
         val vsize = result.optInt("vsize", -1)
         val weight = result.optInt("weight", -1)
-        val calculatedVsize = when {
-            vsize > 0 -> vsize
-            weight > 0 -> (weight + 3) / 4
-            size > 0 -> size
-            else -> return null
-        }
+        val calculatedVsize =
+            when {
+                vsize > 0 -> vsize
+                weight > 0 -> (weight + 3) / 4
+                size > 0 -> size
+                else -> return null
+            }
         return TxDetails(
             txid = txid,
             size = if (size > 0) size else calculatedVsize,
             vsize = calculatedVsize,
-            weight = if (weight > 0) weight else calculatedVsize * 4
+            weight = if (weight > 0) weight else calculatedVsize * 4,
         )
     }
 
@@ -1319,9 +1438,10 @@ class CachingElectrumProxy(
             val reader = directReader ?: return@withLock DEFAULT_MIN_FEE_RATE
 
             try {
-                val response = sendDirectRequestLocked(
-                    writer, reader, "blockchain.relayfee", JSONArray()
-                ) ?: return@withLock DEFAULT_MIN_FEE_RATE
+                val response =
+                    sendDirectRequestLocked(
+                        writer, reader, "blockchain.relayfee", JSONArray(),
+                    ) ?: return@withLock DEFAULT_MIN_FEE_RATE
 
                 val json = JSONObject(response)
                 if (json.has("error") && !json.isNull("error")) return@withLock DEFAULT_MIN_FEE_RATE
@@ -1330,7 +1450,7 @@ class CachingElectrumProxy(
                 if (relayFeeBtcPerKb < 0) return@withLock DEFAULT_MIN_FEE_RATE
 
                 val minFeeRate = relayFeeBtcPerKb * BTC_PER_KB_TO_SAT_PER_VB
-                if (minFeeRate < 0.01 || minFeeRate > 100.0) return@withLock DEFAULT_MIN_FEE_RATE
+                if (minFeeRate !in 0.01..100.0) return@withLock DEFAULT_MIN_FEE_RATE
 
                 if (BuildConfig.DEBUG) Log.d(TAG, "Server relay fee: $relayFeeBtcPerKb BTC/kB = $minFeeRate sat/vB")
                 minFeeRate
@@ -1354,9 +1474,10 @@ class CachingElectrumProxy(
 
             try {
                 val params = JSONArray().apply { put(scriptHash) }
-                val response = sendDirectRequestLocked(
-                    writer, reader, "blockchain.scripthash.get_balance", params
-                ) ?: return@withLock null
+                val response =
+                    sendDirectRequestLocked(
+                        writer, reader, "blockchain.scripthash.get_balance", params,
+                    ) ?: return@withLock null
 
                 val json = JSONObject(response)
                 if (json.has("error") && !json.isNull("error")) return@withLock null
@@ -1385,9 +1506,10 @@ class CachingElectrumProxy(
 
             try {
                 val params = JSONArray().apply { put(scriptHash) }
-                val response = sendDirectRequestLocked(
-                    writer, reader, "blockchain.scripthash.get_history", params
-                ) ?: return@withLock null
+                val response =
+                    sendDirectRequestLocked(
+                        writer, reader, "blockchain.scripthash.get_history", params,
+                    ) ?: return@withLock null
 
                 val json = JSONObject(response)
                 if (json.has("error") && !json.isNull("error")) return@withLock null
@@ -1412,9 +1534,18 @@ class CachingElectrumProxy(
     // ==================== Connection Management ====================
 
     private fun closeDirectConnectionLocked() {
-        try { directWriter?.close() } catch (_: Exception) {}
-        try { directReader?.close() } catch (_: Exception) {}
-        try { directSocket?.close() } catch (_: Exception) {}
+        try {
+            directWriter?.close()
+        } catch (_: Exception) {
+        }
+        try {
+            directReader?.close()
+        } catch (_: Exception) {
+        }
+        try {
+            directSocket?.close()
+        } catch (_: Exception) {
+        }
         directWriter = null
         directReader = null
         directSocket = null
@@ -1438,31 +1569,40 @@ class CachingElectrumProxy(
         val maxAttempts = if (useTorProxy) TOR_CONNECT_RETRIES else 1
         for (attempt in 1..maxAttempts) {
             try {
-                val socket = if (useTorProxy) {
-                    val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(torSocksHost, torSocksPort))
-                    Socket(proxy).also {
-                        it.soTimeout = soTimeoutMs
-                        it.connect(
-                            InetSocketAddress.createUnresolved(targetHost, targetPort),
-                            connectionTimeoutMs
-                        )
+                val socket =
+                    if (useTorProxy) {
+                        val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(torSocksHost, torSocksPort))
+                        Socket(proxy).also {
+                            it.soTimeout = soTimeoutMs
+                            it.connect(
+                                InetSocketAddress.createUnresolved(targetHost, targetPort),
+                                connectionTimeoutMs,
+                            )
+                        }
+                    } else {
+                        Socket().also {
+                            it.soTimeout = soTimeoutMs
+                            it.connect(InetSocketAddress(targetHost, targetPort), connectionTimeoutMs)
+                        }
                     }
-                } else {
-                    Socket().also {
-                        it.soTimeout = soTimeoutMs
-                        it.connect(InetSocketAddress(targetHost, targetPort), connectionTimeoutMs)
-                    }
-                }
                 return if (useSsl) wrapWithSsl(socket) else socket
             } catch (e: SocketException) {
                 if (BuildConfig.DEBUG) Log.w(TAG, "Connection attempt $attempt/$maxAttempts failed: ${e.message}")
                 if (attempt < maxAttempts) {
-                    try { Thread.sleep(TOR_RETRY_DELAY_MS * attempt) } catch (_: InterruptedException) { return null }
+                    try {
+                        Thread.sleep(TOR_RETRY_DELAY_MS * attempt)
+                    } catch (_: InterruptedException) {
+                        return null
+                    }
                 }
-            } catch (e: SocketTimeoutException) {
+            } catch (_: SocketTimeoutException) {
                 if (BuildConfig.DEBUG) Log.w(TAG, "Connection attempt $attempt/$maxAttempts timed out")
                 if (attempt < maxAttempts) {
-                    try { Thread.sleep(TOR_RETRY_DELAY_MS * attempt) } catch (_: InterruptedException) { return null }
+                    try {
+                        Thread.sleep(TOR_RETRY_DELAY_MS * attempt)
+                    } catch (_: InterruptedException) {
+                        return null
+                    }
                 }
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) Log.e(TAG, "Failed to create target connection", e)
@@ -1472,25 +1612,62 @@ class CachingElectrumProxy(
         return null
     }
 
+    /**
+     * Create a trust-all SSLSocketFactory for .onion connections.
+     * Tor already provides transport security for .onion addresses.
+     * Kept private to prevent misuse on non-.onion hosts.
+     */
+    @android.annotation.SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
+    private fun createOnionSSLSocketFactory(): SSLSocketFactory {
+        val trustAll =
+            object : X509TrustManager {
+                override fun checkClientTrusted(
+                    chain: Array<out X509Certificate>,
+                    authType: String,
+                ) {}
+
+                override fun checkServerTrusted(
+                    chain: Array<out X509Certificate>,
+                    authType: String,
+                ) {}
+
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            }
+        val sslContext = SSLContext.getInstance("TLS")
+        sslContext.init(null, arrayOf<TrustManager>(trustAll), null)
+        return sslContext.socketFactory
+    }
+
     private fun wrapWithSsl(socket: Socket): SSLSocket {
-        val sslSocketFactory = if (sslTrustManager != null) {
-            TofuTrustManager.createSSLSocketFactory(sslTrustManager)
-        } else {
-            TofuTrustManager.createOnionSSLSocketFactory()
-        }
-        val sslSocket = sslSocketFactory.createSocket(
-            socket, targetHost, targetPort, true
-        ) as SSLSocket
+        val sslSocketFactory =
+            if (sslTrustManager != null) {
+                TofuTrustManager.createSSLSocketFactory(sslTrustManager)
+            } else {
+                createOnionSSLSocketFactory()
+            }
+        val sslSocket =
+            sslSocketFactory.createSocket(
+                socket,
+                targetHost,
+                targetPort,
+                true,
+            ) as SSLSocket
         sslSocket.startHandshake()
         if (BuildConfig.DEBUG) Log.d(TAG, "SSL handshake completed with $targetHost:$targetPort")
         return sslSocket
     }
 
     private fun closeQuietly(socket: Socket?) {
-        try { socket?.close() } catch (_: Exception) {}
+        try {
+            socket?.close()
+        } catch (_: Exception) {
+        }
     }
 
     private fun closeQuietly(socket: ServerSocket?) {
-        try { socket?.close() } catch (_: Exception) {}
+        try {
+            socket?.close()
+        } catch (_: Exception) {
+        }
     }
 }

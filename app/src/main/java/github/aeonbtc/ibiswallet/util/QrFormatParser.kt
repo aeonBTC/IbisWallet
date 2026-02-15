@@ -25,7 +25,6 @@ import java.security.MessageDigest
  * - Protocol-prefixed: ssl://host:port, tcp://host:port
  */
 object QrFormatParser {
-
     private const val TAG = "QrFormatParser"
     private var cachedWordlist: List<String>? = null
 
@@ -34,9 +33,10 @@ object QrFormatParser {
      */
     fun getWordlist(context: Context): List<String> {
         cachedWordlist?.let { return it }
-        val words = context.assets.open("bip39_english.txt").use { stream ->
-            BufferedReader(InputStreamReader(stream)).readLines()
-        }
+        val words =
+            context.assets.open("bip39_english.txt").use { stream ->
+                BufferedReader(InputStreamReader(stream)).readLines()
+            }
         cachedWordlist = words
         return words
     }
@@ -53,7 +53,7 @@ object QrFormatParser {
     fun parseWalletQr(
         context: Context,
         raw: String,
-        addressType: AddressType = AddressType.SEGWIT
+        addressType: AddressType = AddressType.SEGWIT,
     ): String {
         val trimmed = raw.trim()
 
@@ -146,7 +146,10 @@ object QrFormatParser {
      * Each word is represented as its 4-digit zero-padded index (0000-2047).
      * 12-word = 48 digits, 24-word = 96 digits.
      */
-    private fun decodeSeedQr(context: Context, digits: String): String? {
+    private fun decodeSeedQr(
+        context: Context,
+        digits: String,
+    ): String? {
         val wordlist = getWordlist(context)
         if (wordlist.size != 2048) return null
 
@@ -169,7 +172,10 @@ object QrFormatParser {
      * 16 bytes = 128 bits entropy = 12 words, 32 bytes = 256 bits entropy = 24 words.
      * The checksum is recomputed from the entropy (not stored in the QR).
      */
-    private fun decodeCompactSeedQr(context: Context, bytes: ByteArray): String? {
+    private fun decodeCompactSeedQr(
+        context: Context,
+        bytes: ByteArray,
+    ): String? {
         val wordlist = getWordlist(context)
         if (wordlist.size != 2048) return null
 
@@ -227,7 +233,10 @@ object QrFormatParser {
      *
      * Returns a key-origin string like "[fingerprint/path]xpub..." or null if not valid JSON.
      */
-    private fun parseColdCardJson(json: String, addressType: AddressType): String? {
+    private fun parseColdCardJson(
+        json: String,
+        addressType: AddressType,
+    ): String? {
         return try {
             val obj = JSONObject(json)
 
@@ -251,16 +260,20 @@ object QrFormatParser {
      * Keys are named by script type: p2wpkh, p2sh_p2wpkh, p2pkh, p2tr
      * Derivation paths are in matching *_deriv fields.
      */
-    private fun parseColdCardFormat(obj: JSONObject, addressType: AddressType): String? {
+    private fun parseColdCardFormat(
+        obj: JSONObject,
+        addressType: AddressType,
+    ): String? {
         val xfp = obj.optString("xfp", "").takeIf { it.isNotBlank() } ?: return null
 
         // Map address type to ColdCard JSON field names
-        val (keyField, derivField) = when (addressType) {
-            AddressType.SEGWIT -> "p2wpkh" to "p2wpkh_deriv"
-            AddressType.NESTED_SEGWIT -> "p2sh_p2wpkh" to "p2sh_p2wpkh_deriv"
-            AddressType.LEGACY -> "p2pkh" to "p2pkh_deriv"
-            AddressType.TAPROOT -> "p2tr" to "p2tr_deriv"
-        }
+        val (keyField, derivField) =
+            when (addressType) {
+                AddressType.SEGWIT -> "p2wpkh" to "p2wpkh_deriv"
+                AddressType.NESTED_SEGWIT -> "p2sh_p2wpkh" to "p2sh_p2wpkh_deriv"
+                AddressType.LEGACY -> "p2pkh" to "p2pkh_deriv"
+                AddressType.TAPROOT -> "p2tr" to "p2tr_deriv"
+            }
 
         // Try the preferred type first, then fall back to any available key
         var key = obj.optString(keyField, "").takeIf { it.isNotBlank() }
@@ -268,12 +281,13 @@ object QrFormatParser {
 
         if (key == null) {
             // Fall back to first available key in priority order
-            val fallbacks = listOf(
-                "p2wpkh" to "p2wpkh_deriv",
-                "p2tr" to "p2tr_deriv",
-                "p2sh_p2wpkh" to "p2sh_p2wpkh_deriv",
-                "p2pkh" to "p2pkh_deriv"
-            )
+            val fallbacks =
+                listOf(
+                    "p2wpkh" to "p2wpkh_deriv",
+                    "p2tr" to "p2tr_deriv",
+                    "p2sh_p2wpkh" to "p2sh_p2wpkh_deriv",
+                    "p2pkh" to "p2pkh_deriv",
+                )
             for ((kf, df) in fallbacks) {
                 val k = obj.optString(kf, "").takeIf { it.isNotBlank() }
                 if (k != null) {
@@ -298,10 +312,12 @@ object QrFormatParser {
      * Uses "MasterFingerprint", "ExtPubKey", and "AccountKeyPath" fields.
      */
     private fun parseSpecterFormat(obj: JSONObject): String? {
-        val fingerprint = obj.optString("MasterFingerprint", "").takeIf { it.isNotBlank() }
-            ?: return null
-        val extPubKey = obj.optString("ExtPubKey", "").takeIf { it.isNotBlank() }
-            ?: return null
+        val fingerprint =
+            obj.optString("MasterFingerprint", "").takeIf { it.isNotBlank() }
+                ?: return null
+        val extPubKey =
+            obj.optString("ExtPubKey", "").takeIf { it.isNotBlank() }
+                ?: return null
         val path = obj.optString("AccountKeyPath", "").takeIf { it.isNotBlank() }
 
         return if (path != null) {
@@ -314,6 +330,6 @@ object QrFormatParser {
     data class ServerConfig(
         val host: String,
         val port: Int?,
-        val ssl: Boolean?
+        val ssl: Boolean?,
     )
 }

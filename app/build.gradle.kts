@@ -12,13 +12,13 @@ android {
         applicationId = "github.aeonbtc.ibiswallet"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "2.0-beta"
+        versionCode = 4
+        versionName = "2.1-beta"
 
         vectorDrawables {
             useSupportLibrary = true
         }
-        
+
         // BDK native library only works reliably on ARM architectures
         // x86/x86_64 emulators have compatibility issues
         ndk {
@@ -32,7 +32,7 @@ android {
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
         }
     }
@@ -59,7 +59,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
-    
+
     // Compose
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
@@ -67,36 +67,36 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
-    
+
     // ViewModel
     implementation(libs.androidx.lifecycle.viewmodel.compose)
-    
+
     // Bitcoin Development Kit
     implementation(libs.bdk.android)
-    
+
     // Security & Storage
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
     implementation(libs.google.material)
-    
+
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
-    
+
     // QR Code
     implementation(libs.zxing.core)
-    
+
     // Camera
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)
     implementation(libs.androidx.camera.view)
-    
+
     // Tor Network
     implementation(libs.tor.android)
-    
+
     // HTTP Client
     implementation(libs.okhttp)
-    
+
     // BC-UR (Uniform Resources) for animated QR codes (PSBT exchange with hardware wallets)
     implementation(libs.hummingbird)
 }

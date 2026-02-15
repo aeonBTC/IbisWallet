@@ -41,38 +41,40 @@ import github.aeonbtc.ibiswallet.viewmodel.CertDialogState
 fun CertificateDialog(
     state: CertDialogState,
     onAccept: () -> Unit,
-    onReject: () -> Unit
+    onReject: () -> Unit,
 ) {
     Dialog(onDismissRequest = onReject) {
         Card(
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurface)
+            colors = CardDefaults.cardColors(containerColor = DarkSurface),
         ) {
             Column(
-                modifier = Modifier
-                    .padding(20.dp)
-                    .verticalScroll(rememberScrollState())
+                modifier =
+                    Modifier
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
             ) {
                 // Title
                 Text(
                     text = if (state.isFirstUse) "New Server Certificate" else "Certificate Changed",
                     style = MaterialTheme.typography.titleMedium,
                     color = if (state.isFirstUse) TextPrimary else ErrorRed,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 // Description
                 Text(
-                    text = if (state.isFirstUse) {
-                        "First connection to this server. Verify the certificate fingerprint matches what the server operator publishes."
-                    } else {
-                        "The certificate for this server has changed since your last connection. This could indicate a man-in-the-middle attack, or the server operator rotated their certificate."
-                    },
+                    text =
+                        if (state.isFirstUse) {
+                            "First connection to this server. Verify the certificate fingerprint matches what the server operator publishes."
+                        } else {
+                            "The certificate for this server has changed since your last connection. This could indicate a man-in-the-middle attack, or the server operator rotated their certificate."
+                        },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (state.isFirstUse) TextSecondary else ErrorRed,
-                    lineHeight = 18.sp
+                    lineHeight = 18.sp,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -92,7 +94,7 @@ fun CertificateDialog(
                     label = if (state.isFirstUse) "Fingerprint" else "New Fingerprint",
                     value = state.certInfo.sha256Fingerprint,
                     isFingerprint = true,
-                    color = if (state.isFirstUse) TextPrimary else ErrorRed
+                    color = if (state.isFirstUse) TextPrimary else ErrorRed,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -106,12 +108,12 @@ fun CertificateDialog(
                 // Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     OutlinedButton(
                         onClick = onReject,
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
                     ) {
                         Text("Reject")
                     }
@@ -119,9 +121,10 @@ fun CertificateDialog(
                     Button(
                         onClick = onAccept,
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (state.isFirstUse) BitcoinOrange else ErrorRed
-                        )
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = if (state.isFirstUse) BitcoinOrange else ErrorRed,
+                            ),
                     ) {
                         Text(if (state.isFirstUse) "Trust" else "Accept New Certificate")
                     }
@@ -136,27 +139,28 @@ private fun CertField(
     label: String,
     value: String,
     isFingerprint: Boolean = false,
-    color: androidx.compose.ui.graphics.Color = TextPrimary
+    color: androidx.compose.ui.graphics.Color = TextPrimary,
 ) {
     Column {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
             color = TextSecondary,
-            fontWeight = FontWeight.Medium
+            fontWeight = FontWeight.Medium,
         )
         Text(
             text = value,
-            style = if (isFingerprint) {
-                MaterialTheme.typography.bodySmall.copy(
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp
-                )
-            } else {
-                MaterialTheme.typography.bodySmall
-            },
-            color = color
+            style =
+                if (isFingerprint) {
+                    MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                    )
+                } else {
+                    MaterialTheme.typography.bodySmall
+                },
+            color = color,
         )
     }
 }

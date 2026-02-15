@@ -35,7 +35,7 @@ private val CalcHighlightText = Color(0xFFFF9F0A)
  */
 private class CalcState(
     val cloakCode: String,
-    val onUnlock: () -> Unit
+    val onUnlock: () -> Unit,
 ) {
     var display by mutableStateOf("0")
     var rawInput by mutableStateOf("")
@@ -56,13 +56,18 @@ private class CalcState(
         }
     }
 
-    private fun applyOp(op: String, a: Double, b: Double): Double = when (op) {
-        "+" -> a + b
-        "\u2212" -> a - b
-        "\u00D7" -> a * b
-        "\u00F7" -> if (b != 0.0) a / b else Double.NaN
-        else -> b
-    }
+    private fun applyOp(
+        op: String,
+        a: Double,
+        b: Double,
+    ): Double =
+        when (op) {
+            "+" -> a + b
+            "\u2212" -> a - b
+            "\u00D7" -> a * b
+            "\u00F7" -> if (b != 0.0) a / b else Double.NaN
+            else -> b
+        }
 
     fun parseDisplay(): Double = display.replace(",", "").toDoubleOrNull() ?: 0.0
 
@@ -174,30 +179,33 @@ private class CalcState(
 @Composable
 fun CalculatorScreen(
     cloakCode: String,
-    onUnlock: () -> Unit
+    onUnlock: () -> Unit,
 ) {
     val s = remember { CalcState(cloakCode, onUnlock) }
 
-    val fontSize = when {
-        s.display.length > 15 -> 32.sp
-        s.display.length > 12 -> 38.sp
-        s.display.length > 9 -> 48.sp
-        else -> 64.sp
-    }
+    val fontSize =
+        when {
+            s.display.length > 15 -> 32.sp
+            s.display.length > 12 -> 38.sp
+            s.display.length > 9 -> 48.sp
+            else -> 64.sp
+        }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(CalcBackground)
-            .systemBarsPadding()
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(CalcBackground)
+                .systemBarsPadding(),
     ) {
         // Display
         Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .padding(horizontal = 24.dp, vertical = 16.dp),
-            contentAlignment = Alignment.BottomEnd
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(horizontal = 24.dp, vertical = 16.dp),
+            contentAlignment = Alignment.BottomEnd,
         ) {
             Text(
                 text = s.display,
@@ -206,53 +214,71 @@ fun CalculatorScreen(
                 textAlign = TextAlign.End,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             )
         }
 
         // Button grid
-        val rows = listOf(
+        val rows =
             listOf(
-                Btn("AC", CalcFunctionButton, CalcFunctionText) { s.clear() },
-                Btn("+/\u2212", CalcFunctionButton, CalcFunctionText) { s.toggleSign() },
-                Btn("%", CalcFunctionButton, CalcFunctionText) { s.percent() },
-                Btn("\u00F7", CalcOperatorButton, CalcOperatorText,
-                    highlight = s.pendingOperator == "\u00F7" && s.resetOnNextDigit) { s.operator("\u00F7") },
-            ),
-            listOf(
-                Btn("7", CalcNumberButton, CalcNumberText) { s.digit("7") },
-                Btn("8", CalcNumberButton, CalcNumberText) { s.digit("8") },
-                Btn("9", CalcNumberButton, CalcNumberText) { s.digit("9") },
-                Btn("\u00D7", CalcOperatorButton, CalcOperatorText,
-                    highlight = s.pendingOperator == "\u00D7" && s.resetOnNextDigit) { s.operator("\u00D7") },
-            ),
-            listOf(
-                Btn("4", CalcNumberButton, CalcNumberText) { s.digit("4") },
-                Btn("5", CalcNumberButton, CalcNumberText) { s.digit("5") },
-                Btn("6", CalcNumberButton, CalcNumberText) { s.digit("6") },
-                Btn("\u2212", CalcOperatorButton, CalcOperatorText,
-                    highlight = s.pendingOperator == "\u2212" && s.resetOnNextDigit) { s.operator("\u2212") },
-            ),
-            listOf(
-                Btn("1", CalcNumberButton, CalcNumberText) { s.digit("1") },
-                Btn("2", CalcNumberButton, CalcNumberText) { s.digit("2") },
-                Btn("3", CalcNumberButton, CalcNumberText) { s.digit("3") },
-                Btn("+", CalcOperatorButton, CalcOperatorText,
-                    highlight = s.pendingOperator == "+" && s.resetOnNextDigit) { s.operator("+") },
-            ),
-        )
+                listOf(
+                    Btn("AC", CalcFunctionButton, CalcFunctionText) { s.clear() },
+                    Btn("+/\u2212", CalcFunctionButton, CalcFunctionText) { s.toggleSign() },
+                    Btn("%", CalcFunctionButton, CalcFunctionText) { s.percent() },
+                    Btn(
+                        "\u00F7",
+                        CalcOperatorButton,
+                        CalcOperatorText,
+                        highlight = s.pendingOperator == "\u00F7" && s.resetOnNextDigit,
+                    ) { s.operator("\u00F7") },
+                ),
+                listOf(
+                    Btn("7", CalcNumberButton, CalcNumberText) { s.digit("7") },
+                    Btn("8", CalcNumberButton, CalcNumberText) { s.digit("8") },
+                    Btn("9", CalcNumberButton, CalcNumberText) { s.digit("9") },
+                    Btn(
+                        "\u00D7",
+                        CalcOperatorButton,
+                        CalcOperatorText,
+                        highlight = s.pendingOperator == "\u00D7" && s.resetOnNextDigit,
+                    ) { s.operator("\u00D7") },
+                ),
+                listOf(
+                    Btn("4", CalcNumberButton, CalcNumberText) { s.digit("4") },
+                    Btn("5", CalcNumberButton, CalcNumberText) { s.digit("5") },
+                    Btn("6", CalcNumberButton, CalcNumberText) { s.digit("6") },
+                    Btn(
+                        "\u2212",
+                        CalcOperatorButton,
+                        CalcOperatorText,
+                        highlight = s.pendingOperator == "\u2212" && s.resetOnNextDigit,
+                    ) { s.operator("\u2212") },
+                ),
+                listOf(
+                    Btn("1", CalcNumberButton, CalcNumberText) { s.digit("1") },
+                    Btn("2", CalcNumberButton, CalcNumberText) { s.digit("2") },
+                    Btn("3", CalcNumberButton, CalcNumberText) { s.digit("3") },
+                    Btn(
+                        "+",
+                        CalcOperatorButton,
+                        CalcOperatorText,
+                        highlight = s.pendingOperator == "+" && s.resetOnNextDigit,
+                    ) { s.operator("+") },
+                ),
+            )
 
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp)
-                .padding(bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp)
+                    .padding(bottom = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             for (row in rows) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     for (btn in row) {
                         CalcKey(
@@ -260,7 +286,7 @@ fun CalculatorScreen(
                             bg = if (btn.highlight) CalcHighlightBg else btn.bg,
                             fg = if (btn.highlight) CalcHighlightText else btn.fg,
                             modifier = Modifier.weight(1f),
-                            onClick = btn.onClick
+                            onClick = btn.onClick,
                         )
                     }
                 }
@@ -268,7 +294,7 @@ fun CalculatorScreen(
             // Bottom row: 0 (wide), ., =
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 CalcKey("0", CalcNumberButton, CalcNumberText, Modifier.weight(2f)) { s.digit("0") }
                 CalcKey(".", CalcNumberButton, CalcNumberText, Modifier.weight(1f)) { s.digit(".") }
@@ -285,7 +311,7 @@ private data class Btn(
     val bg: Color,
     val fg: Color,
     val highlight: Boolean = false,
-    val onClick: () -> Unit
+    val onClick: () -> Unit,
 )
 
 @Composable
@@ -294,25 +320,26 @@ private fun CalcKey(
     bg: Color,
     fg: Color,
     modifier: Modifier = Modifier,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     Box(
-        modifier = modifier
-            .height(72.dp)
-            .clip(RoundedCornerShape(36.dp))
-            .background(bg)
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = ripple(color = Color.White.copy(alpha = 0.3f)),
-                onClick = onClick
-            ),
-        contentAlignment = Alignment.Center
+        modifier =
+            modifier
+                .height(72.dp)
+                .clip(RoundedCornerShape(36.dp))
+                .background(bg)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(color = Color.White.copy(alpha = 0.3f)),
+                    onClick = onClick,
+                ),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             fontSize = 28.sp,
             color = fg,
-            textAlign = TextAlign.Center
+            textAlign = TextAlign.Center,
         )
     }
 }

@@ -33,51 +33,52 @@ import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 
 @Composable
-fun AboutScreen(
-    onBack: () -> Unit = {}
-) {
+fun AboutScreen(onBack: () -> Unit = {}) {
     val context = LocalContext.current
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp)
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
     ) {
         // Header
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back"
+                    contentDescription = "Back",
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "About",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
             )
         }
 
         // Centered content
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Center,
         ) {
             // Ibis icon
             Icon(
                 painter = painterResource(id = R.drawable.ic_ibis),
                 contentDescription = null,
                 tint = TextPrimary,
-                modifier = Modifier.size(72.dp)
+                modifier = Modifier.size(72.dp),
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -86,7 +87,7 @@ fun AboutScreen(
                 text = "Ibis Wallet",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
-                color = BitcoinOrange
+                color = BitcoinOrange,
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -94,35 +95,37 @@ fun AboutScreen(
             Text(
                 text = "Version ${BuildConfig.VERSION_NAME}",
                 style = MaterialTheme.typography.bodyMedium,
-                color = TextSecondary
+                color = TextSecondary,
             )
 
             Spacer(modifier = Modifier.height(32.dp))
 
             // GitHub link
             Row(
-                modifier = Modifier
-                    .clickable {
-                        val intent = Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("https://github.com/aeonbtc/IbisWallet")
-                        )
-                        context.startActivity(intent)
-                    }
-                    .padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .clickable {
+                            val intent =
+                                Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("https://github.com/aeonbtc/IbisWallet"),
+                                )
+                            context.startActivity(intent)
+                        }
+                        .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
                     painter = painterResource(id = R.drawable.ic_github),
                     contentDescription = "GitHub",
                     tint = BitcoinOrange,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(20.dp),
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Source Code",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = BitcoinOrange
+                    color = BitcoinOrange,
                 )
             }
 
@@ -131,7 +134,7 @@ fun AboutScreen(
             Text(
                 text = "Report bugs and request features on GitHub",
                 style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
+                color = TextSecondary,
             )
         }
     }

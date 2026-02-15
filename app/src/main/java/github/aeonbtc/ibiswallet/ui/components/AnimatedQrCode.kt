@@ -37,6 +37,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.set
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -66,26 +68,29 @@ fun AnimatedQrCode(
     psbtBase64: String,
     modifier: Modifier = Modifier,
     qrSize: Dp = 280.dp,
-    frameDelayMs: Long = 250L // ~4 FPS, optimized for hardware wallet cameras
+    frameDelayMs: Long = 250L, // ~4 FPS, optimized for hardware wallet cameras
 ) {
     val context = LocalContext.current
     var showEnlarged by remember { mutableStateOf(false) }
 
-    val psbtBytes = remember(psbtBase64) {
-        android.util.Base64.decode(psbtBase64, android.util.Base64.DEFAULT)
-    }
+    val psbtBytes =
+        remember(psbtBase64) {
+            android.util.Base64.decode(psbtBase64, android.util.Base64.DEFAULT)
+        }
 
     // Create the UR encoder with fountain codes
     // 120-byte max fragment keeps QR density low for slow cameras
-    val encoder = remember(psbtBytes) {
-        val cryptoPsbt = CryptoPSBT(psbtBytes)
-        val ur = cryptoPsbt.toUR()
-        UREncoder(ur, 120, 10, 0)
-    }
+    val encoder =
+        remember(psbtBytes) {
+            val cryptoPsbt = CryptoPSBT(psbtBytes)
+            val ur = cryptoPsbt.toUR()
+            UREncoder(ur, 120, 10, 0)
+        }
 
-    val totalParts = remember(encoder) {
-        encoder.seqLen
-    }
+    val totalParts =
+        remember(encoder) {
+            encoder.seqLen
+        }
 
     var currentPart by remember { mutableStateOf(encoder.nextPart()) }
     var partIndex by remember { mutableIntStateOf(1) }
@@ -103,9 +108,10 @@ fun AnimatedQrCode(
         }
     }
 
-    val qrBitmap = remember(currentPart) {
-        generateQrBitmap(currentPart.uppercase())
-    }
+    val qrBitmap =
+        remember(currentPart) {
+            generateQrBitmap(currentPart.uppercase())
+        }
 
     // Boost screen brightness and keep screen on while QR is displayed
     DisposableEffect(Unit) {
@@ -130,36 +136,39 @@ fun AnimatedQrCode(
         }
     }
 
-    // Enlarged QR dialog
+    val enlargeQr = { showEnlarged = true }
+    val dismissEnlarged = { showEnlarged = false }
     if (showEnlarged) {
         Dialog(
-            onDismissRequest = { showEnlarged = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            onDismissRequest = dismissEnlarged,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
-                    .clickable { showEnlarged = false },
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .clickable(onClick = dismissEnlarged),
+                contentAlignment = Alignment.Center,
             ) {
                 Column(
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Box(
-                        modifier = Modifier
-                            .size(360.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White)
-                            .padding(20.dp),
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .size(360.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White)
+                                .padding(20.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         qrBitmap?.let { bitmap ->
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
                                 contentDescription = "Enlarged PSBT QR Code",
                                 modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Fit
+                                contentScale = ContentScale.Fit,
                             )
                         }
                     }
@@ -169,7 +178,7 @@ fun AnimatedQrCode(
                         Text(
                             text = "Part $partIndex of $totalParts",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary
+                            color = TextSecondary,
                         )
                     }
 
@@ -178,7 +187,7 @@ fun AnimatedQrCode(
                     Text(
                         text = "Tap anywhere to close",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
             }
@@ -187,24 +196,25 @@ fun AnimatedQrCode(
 
     Column(
         modifier = modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // White background box with padding for contrast against dark card
         Box(
-            modifier = Modifier
-                .size(qrSize + 32.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color.White)
-                .clickable { showEnlarged = true }
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .size(qrSize + 32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White)
+                    .clickable(onClick = enlargeQr)
+                    .padding(16.dp),
+            contentAlignment = Alignment.Center,
         ) {
             qrBitmap?.let { bitmap ->
                 Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "PSBT QR Code - Tap to enlarge",
                     modifier = Modifier.size(qrSize),
-                    contentScale = ContentScale.Fit
+                    contentScale = ContentScale.Fit,
                 )
             }
         }
@@ -214,7 +224,7 @@ fun AnimatedQrCode(
             Text(
                 text = "Part $partIndex of $totalParts",
                 style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
+                color = TextSecondary,
             )
         }
 
@@ -222,7 +232,7 @@ fun AnimatedQrCode(
         Text(
             text = "Tap QR to enlarge",
             style = MaterialTheme.typography.bodySmall,
-            color = TextSecondary
+            color = TextSecondary,
         )
     }
 }
@@ -236,29 +246,29 @@ private fun generateQrBitmap(content: String): Bitmap? {
     return try {
         val size = 512
         val qrCodeWriter = QRCodeWriter()
-        val hints = mapOf(
-            EncodeHintType.MARGIN to 1,
-            EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L
-        )
-        val bitMatrix = qrCodeWriter.encode(
-            content,
-            BarcodeFormat.QR_CODE,
-            size,
-            size,
-            hints
-        )
+        val hints =
+            mapOf(
+                EncodeHintType.MARGIN to 1,
+                EncodeHintType.ERROR_CORRECTION to ErrorCorrectionLevel.L,
+            )
+        val bitMatrix =
+            qrCodeWriter.encode(
+                content,
+                BarcodeFormat.QR_CODE,
+                size,
+                size,
+                hints,
+            )
 
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(size, size)
         for (x in 0 until size) {
             for (y in 0 until size) {
-                bitmap.setPixel(
-                    x, y,
+                bitmap[x, y] =
                     if (bitMatrix[x, y]) Color.Black.toArgb() else Color.White.toArgb()
-                )
             }
         }
         bitmap
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
     }
 }

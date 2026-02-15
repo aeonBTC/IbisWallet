@@ -10,7 +10,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,22 +17,19 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -65,7 +61,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -84,6 +79,7 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.SyncProgress
 import github.aeonbtc.ibiswallet.navigation.Screen
 import github.aeonbtc.ibiswallet.navigation.bottomNavItems
+import github.aeonbtc.ibiswallet.tor.TorStatus
 import github.aeonbtc.ibiswallet.ui.components.CertificateDialog
 import github.aeonbtc.ibiswallet.ui.components.DrawerContent
 import github.aeonbtc.ibiswallet.ui.components.DrawerItem
@@ -99,14 +95,14 @@ import github.aeonbtc.ibiswallet.ui.screens.GenerateWalletScreen
 import github.aeonbtc.ibiswallet.ui.screens.ImportWalletScreen
 import github.aeonbtc.ibiswallet.ui.screens.KeyMaterialInfo
 import github.aeonbtc.ibiswallet.ui.screens.ManageWalletsScreen
+import github.aeonbtc.ibiswallet.ui.screens.PsbtScreen
 import github.aeonbtc.ibiswallet.ui.screens.ReceiveScreen
 import github.aeonbtc.ibiswallet.ui.screens.SecurityScreen
-import github.aeonbtc.ibiswallet.ui.screens.PsbtScreen
 import github.aeonbtc.ibiswallet.ui.screens.SendScreen
-import github.aeonbtc.ibiswallet.ui.screens.parseBip21Uri
 import github.aeonbtc.ibiswallet.ui.screens.SettingsScreen
 import github.aeonbtc.ibiswallet.ui.screens.SweepPrivateKeyScreen
 import github.aeonbtc.ibiswallet.ui.screens.WalletInfo
+import github.aeonbtc.ibiswallet.ui.screens.parseBip21Uri
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
@@ -117,9 +113,8 @@ import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
-import github.aeonbtc.ibiswallet.tor.TorStatus
-import github.aeonbtc.ibiswallet.viewmodel.WalletEvent
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
+import github.aeonbtc.ibiswallet.viewmodel.WalletEvent
 import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import kotlinx.coroutines.launch
 
@@ -127,14 +122,14 @@ import kotlinx.coroutines.launch
 @Composable
 fun IbisWalletApp(
     viewModel: WalletViewModel = viewModel(),
-    onLockApp: () -> Unit = {}
+    onLockApp: () -> Unit = {},
 ) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
-    
+
     val walletState by viewModel.walletState.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
     val serversState by viewModel.serversState.collectAsState()
@@ -154,58 +149,71 @@ fun IbisWalletApp(
     val certDialogState by viewModel.certDialogState.collectAsState()
     val dryRunResult by viewModel.dryRunResult.collectAsState()
     val isDuressMode by viewModel.isDuressMode.collectAsState()
-    
+
     // Global labels version counter - bumped when labels may have changed
     // (wallet imported with backup labels, wallet switched, sync completed)
     var labelsVersion by remember { mutableIntStateOf(0) }
-    
+
     // Wallet selector dropdown state
     var walletSelectorExpanded by remember { mutableStateOf(false) }
+
+    // PIN setup active state — hides bottom bar so Next/Confirm buttons are visible
+    var isPinSetupActive by remember { mutableStateOf(false) }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
 
-    // Close wallet picker when navigating to a different screen
+    // Close wallet picker and reset PIN setup state when navigating to a different screen
     LaunchedEffect(currentDestination?.route) {
         walletSelectorExpanded = false
+        if (currentDestination?.route != Screen.Security.route) {
+            isPinSetupActive = false
+        }
     }
-    
+
     // Check if we're on a main screen (with bottom nav)
-    val isMainScreen = currentDestination?.route in listOf(
-        Screen.Receive.route,
-        Screen.Balance.route,
-        Screen.Send.route
-    )
-    
+    val isMainScreen =
+        currentDestination?.route in
+            listOf(
+                Screen.Receive.route,
+                Screen.Balance.route,
+                Screen.Send.route,
+            )
+
     // Check if we're on a drawer screen (should show bottom nav but not main top bar)
-    val isDrawerScreen = currentDestination?.route in listOf(
-        Screen.ManageWallets.route,
-        Screen.ElectrumConfig.route,
-        Screen.Settings.route,
-        Screen.Security.route,
-        Screen.About.route
-    )
+    val isDrawerScreen =
+        currentDestination?.route in
+            listOf(
+                Screen.ManageWallets.route,
+                Screen.ElectrumConfig.route,
+                Screen.Settings.route,
+                Screen.Security.route,
+                Screen.About.route,
+            )
 
     // Check if we're on a sub-screen that should show back button in main TopAppBar
-    val isSubScreenWithTopBar = currentDestination?.route in listOf(
-        Screen.AllAddresses.route,
-        Screen.AllUtxos.route
-    )
-    
+    val isSubScreenWithTopBar =
+        currentDestination?.route in
+            listOf(
+                Screen.AllAddresses.route,
+                Screen.AllUtxos.route,
+            )
+
     // Get title for sub-screens
-    val subScreenTitle = when (currentDestination?.route) {
-        Screen.AllAddresses.route -> "Addresses"
-        Screen.AllUtxos.route -> "UTXOs"
-        else -> ""
-    }
-    
+    val subScreenTitle =
+        when (currentDestination?.route) {
+            Screen.AllAddresses.route -> "Addresses"
+            Screen.AllUtxos.route -> "UTXOs"
+            else -> ""
+        }
+
     // Security state - tracks whether app lock is enabled for the lock icon
     var isSecurityEnabled by remember { mutableStateOf(viewModel.isSecurityEnabled()) }
-    
+
     // Connection status dialog state
     var showConnectionStatusDialog by remember { mutableStateOf(false) }
     val electrumConfig = viewModel.getElectrumConfig()
-    
+
     // Connection status dialog
     if (showConnectionStatusDialog) {
         ConnectionStatusDialog(
@@ -230,27 +238,26 @@ fun IbisWalletApp(
             onConfigureServer = {
                 showConnectionStatusDialog = false
                 navController.navigate(Screen.ElectrumConfig.route)
-            }
+            },
         )
     }
-    
+
     // Full sync progress dialog - shows automatically during full scan
     if (walletState.isFullSyncing) {
         FullSyncProgressDialog(
-            syncProgress = walletState.syncProgress
+            syncProgress = walletState.syncProgress,
         )
     }
-    
-    
+
     // Certificate TOFU dialog
     certDialogState?.let { state ->
         CertificateDialog(
             state = state,
             onAccept = { viewModel.acceptCertificate() },
-            onReject = { viewModel.rejectCertificate() }
+            onReject = { viewModel.rejectCertificate() },
         )
     }
-    
+
     // Existing wallet names for auto-naming on import/generate screens
     val existingWalletNames = walletState.wallets.map { it.name }
 
@@ -258,34 +265,36 @@ fun IbisWalletApp(
     // - In duress mode: show only the duress wallet
     // - Not in duress mode: hide the duress wallet
     val duressWalletId = remember(isDuressMode) { viewModel.getDuressWalletId() }
-    val filteredWallets = remember(walletState.wallets, isDuressMode, duressWalletId) {
-        if (isDuressMode) {
-            walletState.wallets.filter { it.id == duressWalletId }
-        } else {
-            walletState.wallets.filter { it.id != duressWalletId }
+    val filteredWallets =
+        remember(walletState.wallets, isDuressMode, duressWalletId) {
+            if (isDuressMode) {
+                walletState.wallets.filter { it.id == duressWalletId }
+            } else {
+                walletState.wallets.filter { it.id != duressWalletId }
+            }
         }
-    }
 
     // Build wallet list for ManageWallets screen from filtered wallets
     val activeWalletId = walletState.activeWallet?.id
-    val wallets = filteredWallets.map { storedWallet ->
-        val isWatchAddress = storedWallet.derivationPath == "single" && storedWallet.isWatchOnly
-        val isPrivateKey = storedWallet.derivationPath == "single" && !storedWallet.isWatchOnly
-        WalletInfo(
-            id = storedWallet.id,
-            name = storedWallet.name,
-            type = storedWallet.addressType.name.lowercase(),
-            typeDescription = storedWallet.addressType.displayName,
-            derivationPath = storedWallet.derivationPath,
-            isActive = storedWallet.id == activeWalletId,
-            isWatchOnly = storedWallet.isWatchOnly,
-            isWatchAddress = isWatchAddress,
-            isPrivateKey = isPrivateKey,
-            lastFullSyncTime = viewModel.getLastFullSyncTime(storedWallet.id),
-            masterFingerprint = storedWallet.masterFingerprint
-        )
-    }
-    
+    val wallets =
+        filteredWallets.map { storedWallet ->
+            val isWatchAddress = storedWallet.derivationPath == "single" && storedWallet.isWatchOnly
+            val isPrivateKey = storedWallet.derivationPath == "single" && !storedWallet.isWatchOnly
+            WalletInfo(
+                id = storedWallet.id,
+                name = storedWallet.name,
+                type = storedWallet.addressType.name.lowercase(),
+                typeDescription = storedWallet.addressType.displayName,
+                derivationPath = storedWallet.derivationPath,
+                isActive = storedWallet.id == activeWalletId,
+                isWatchOnly = storedWallet.isWatchOnly,
+                isWatchAddress = isWatchAddress,
+                isPrivateKey = isPrivateKey,
+                lastFullSyncTime = viewModel.getLastFullSyncTime(storedWallet.id),
+                masterFingerprint = storedWallet.masterFingerprint,
+            )
+        }
+
     // Get string resources for use in event handling
     val walletAddedMessage = stringResource(R.string.wallet_added)
 
@@ -323,7 +332,8 @@ fun IbisWalletApp(
                 }
                 is WalletEvent.SyncCompleted,
                 is WalletEvent.WalletSwitched,
-                is WalletEvent.LabelsRestored -> {
+                is WalletEvent.LabelsRestored,
+                -> {
                     // Refresh labels - labels may have been restored from backup,
                     // changed due to wallet switch, or updated after sync
                     labelsVersion++
@@ -334,11 +344,12 @@ fun IbisWalletApp(
                 is WalletEvent.CpfpCreated,
                 is WalletEvent.WalletDeleted,
                 is WalletEvent.ServerDeleted,
-                is WalletEvent.AddressGenerated -> { }
+                is WalletEvent.AddressGenerated,
+                -> { }
             }
         }
     }
-    
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -364,10 +375,10 @@ fun IbisWalletApp(
                             navController.navigate(Screen.About.route)
                         }
                     }
-                }
+                },
             )
         },
-        gesturesEnabled = isMainScreen
+        gesturesEnabled = isMainScreen,
     ) {
         Scaffold(
             containerColor = DarkBackground,
@@ -377,13 +388,13 @@ fun IbisWalletApp(
                     TopAppBar(
                         title = {
                             Row(
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 if (isSubScreenWithTopBar) {
                                     Text(
                                         text = subScreenTitle,
                                         style = MaterialTheme.typography.titleLarge,
-                                        color = MaterialTheme.colorScheme.onBackground
+                                        color = MaterialTheme.colorScheme.onBackground,
                                     )
                                 } else {
                                     WalletSelectorDropdown(
@@ -394,20 +405,20 @@ fun IbisWalletApp(
                                         onDismiss = { walletSelectorExpanded = false },
                                         onSelectWallet = { walletId ->
                                             viewModel.switchWallet(walletId)
-                                        }
+                                        },
                                     )
                                 }
                                 if (isMainScreen && isSecurityEnabled) {
                                     Spacer(modifier = Modifier.width(4.dp))
                                     IconButton(
                                         onClick = onLockApp,
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(32.dp),
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Lock,
                                             contentDescription = "Lock app",
                                             tint = BitcoinOrange,
-                                            modifier = Modifier.size(22.dp)
+                                            modifier = Modifier.size(22.dp),
                                         )
                                     }
                                 }
@@ -419,7 +430,7 @@ fun IbisWalletApp(
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                                         contentDescription = "Back",
-                                        tint = MaterialTheme.colorScheme.onBackground
+                                        tint = MaterialTheme.colorScheme.onBackground,
                                     )
                                 }
                             } else {
@@ -428,12 +439,12 @@ fun IbisWalletApp(
                                         scope.launch {
                                             drawerState.open()
                                         }
-                                    }
+                                    },
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Menu,
                                         contentDescription = "Menu",
-                                        tint = MaterialTheme.colorScheme.onBackground
+                                        tint = MaterialTheme.colorScheme.onBackground,
                                     )
                                 }
                             }
@@ -446,647 +457,829 @@ fun IbisWalletApp(
                                     isConnecting = uiState.isConnecting,
                                     torStatus = torState.status,
                                     isOnionServer = electrumConfig?.isOnionAddress() ?: false,
-                                    onClick = { showConnectionStatusDialog = true }
+                                    onClick = { showConnectionStatusDialog = true },
                                 )
                             }
                         },
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = DarkBackground,
-                            titleContentColor = MaterialTheme.colorScheme.onBackground
-                        )
+                        colors =
+                            TopAppBarDefaults.topAppBarColors(
+                                containerColor = DarkBackground,
+                                titleContentColor = MaterialTheme.colorScheme.onBackground,
+                            ),
                     )
                 }
             },
             bottomBar = {
-                NavigationBar(
-                    containerColor = DarkSurface,
-                    contentColor = MaterialTheme.colorScheme.onSurface
-                ) {
-                    bottomNavItems.forEach { item ->
-                        val selected = currentDestination?.hierarchy?.any {
-                            it.route == item.screen.route
-                        } == true
+                if (!isPinSetupActive) {
+                    NavigationBar(
+                        containerColor = DarkSurface,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                    ) {
+                        bottomNavItems.forEach { item ->
+                            val selected =
+                                currentDestination?.hierarchy?.any {
+                                    it.route == item.screen.route
+                                } == true
 
-                        NavigationBarItem(
-                            icon = {
-                                Icon(
-                                    imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
-                                    contentDescription = item.title
-                                )
-                            },
-                            label = {
-                                Text(
-                                    text = item.title,
-                                    style = MaterialTheme.typography.labelMedium
-                                )
-                            },
-                            selected = selected,
-                            onClick = {
-                                // Only navigate if not already on this screen
-                                if (currentDestination?.route != item.screen.route) {
-                                    navController.navigate(item.screen.route) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            inclusive = false
+                            NavigationBarItem(
+                                icon = {
+                                    Icon(
+                                        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                        contentDescription = item.title,
+                                    )
+                                },
+                                label = {
+                                    Text(
+                                        text = item.title,
+                                        style = MaterialTheme.typography.labelMedium,
+                                    )
+                                },
+                                selected = selected,
+                                onClick = {
+                                    // Only navigate if not already on this screen
+                                    if (currentDestination?.route != item.screen.route) {
+                                        navController.navigate(item.screen.route) {
+                                            popUpTo(navController.graph.findStartDestination().id) {
+                                                inclusive = false
+                                            }
                                         }
+                                    }
+                                },
+                                colors =
+                                    NavigationBarItemDefaults.colors(
+                                        selectedIconColor = BitcoinOrange,
+                                        selectedTextColor = BitcoinOrange,
+                                        unselectedIconColor = TextSecondary,
+                                        unselectedTextColor = TextSecondary,
+                                        indicatorColor = Color.Transparent,
+                                    ),
+                            )
+                        }
+                    }
+                }
+            },
+        ) { innerPadding ->
+            Box(modifier = Modifier.padding(innerPadding)) {
+                NavHost(
+                    navController = navController,
+                    startDestination = Screen.Balance.route,
+                    enterTransition = { fadeIn(animationSpec = tween(200)) },
+                    exitTransition = { fadeOut(animationSpec = tween(200)) },
+                    popEnterTransition = { fadeIn(animationSpec = tween(200)) },
+                    popExitTransition = { fadeOut(animationSpec = tween(200)) },
+                ) {
+                    composable(Screen.Receive.route) {
+                        // Fetch price when entering Receive screen
+                        LaunchedEffect(Unit) {
+                            viewModel.fetchBtcPrice()
+                        }
+
+                        ReceiveScreen(
+                            walletState = walletState,
+                            denomination = denomination,
+                            btcPrice = btcPrice,
+                            privacyMode = privacyMode,
+                            onGenerateAddress = { viewModel.getNewAddress() },
+                            onSaveLabel = { address, label -> viewModel.saveAddressLabel(address, label) },
+                            onShowAllAddresses = { navController.navigate(Screen.AllAddresses.route) },
+                            onShowAllUtxos = { navController.navigate(Screen.AllUtxos.route) },
+                        )
+                    }
+                    composable(Screen.Balance.route) {
+                        // Fetch price when entering Balance screen
+                        LaunchedEffect(Unit) {
+                            viewModel.fetchBtcPrice()
+                        }
+
+                        // Labels are refreshed when labelsVersion changes (global counter
+                        // bumped on wallet import, wallet switch, sync, or manual label save)
+                        val transactionLabels = remember(labelsVersion) { viewModel.getAllTransactionLabels() }
+                        val addressLabels = remember(labelsVersion) { viewModel.getAllAddressLabels() }
+
+                        BalanceScreen(
+                            walletState = walletState,
+                            uiState = uiState,
+                            denomination = denomination,
+                            mempoolUrl = viewModel.getMempoolUrl(),
+                            mempoolServer = viewModel.getMempoolServer(),
+                            btcPrice = btcPrice,
+                            privacyMode = privacyMode,
+                            onTogglePrivacy = { viewModel.togglePrivacyMode() },
+                            addressLabels = addressLabels,
+                            transactionLabels = transactionLabels,
+                            feeEstimationState = feeEstimationState,
+                            canBumpFee = { txid -> viewModel.canBumpFee(txid) },
+                            canCpfp = { txid -> viewModel.canCpfp(txid) },
+                            onBumpFee = { txid, feeRate -> viewModel.bumpFee(txid, feeRate) },
+                            onCpfp = { txid, feeRate -> viewModel.cpfp(txid, feeRate) },
+                            onSaveTransactionLabel = { txid, label ->
+                                viewModel.saveTransactionLabel(txid, label)
+                                labelsVersion++
+                            },
+                            onFetchTxVsize = { txid -> viewModel.fetchTransactionVsize(txid) },
+                            onRefreshFees = { viewModel.fetchFeeEstimates() },
+                            onSync = { viewModel.sync() },
+                            onManageWallets = { navController.navigate(Screen.ManageWallets.route) },
+                            onScanQrResult = { code ->
+                                val bip21 = parseBip21Uri(code)
+                                viewModel.updateSendScreenDraft(
+                                    SendScreenDraft(
+                                        recipientAddress = bip21.address,
+                                        label = bip21.label ?: "",
+                                    ),
+                                )
+                                navController.navigate(Screen.Send.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        inclusive = false
                                     }
                                 }
                             },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = BitcoinOrange,
-                                selectedTextColor = BitcoinOrange,
-                                unselectedIconColor = TextSecondary,
-                                unselectedTextColor = TextSecondary,
-                                indicatorColor = Color.Transparent
+                        )
+                    }
+                    composable(Screen.Send.route) {
+                        val utxos = viewModel.getAllUtxos()
+
+                        // Collect preSelectedUtxo directly here to ensure fresh value
+                        val currentPreSelectedUtxo by viewModel.preSelectedUtxo.collectAsState()
+
+                        // Get all wallet addresses for self-transfer detection
+                        val allWalletAddresses =
+                            remember(walletState) {
+                                val (receive, change, used) = viewModel.getAllAddresses()
+                                (receive.map { it.address } + change.map { it.address } + used.map { it.address }).toSet()
+                            }
+
+                        // Fetch fee estimates and price when entering Send screen
+                        LaunchedEffect(Unit) {
+                            viewModel.fetchFeeEstimates()
+                            viewModel.fetchBtcPrice()
+                        }
+
+                        SendScreen(
+                            walletState = walletState,
+                            uiState = uiState,
+                            denomination = denomination,
+                            utxos = utxos,
+                            walletAddresses = allWalletAddresses,
+                            feeEstimationState = feeEstimationState,
+                            minFeeRate = minFeeRate,
+                            preSelectedUtxo = currentPreSelectedUtxo,
+                            spendUnconfirmed = viewModel.getSpendUnconfirmed(),
+                            btcPrice = btcPrice,
+                            privacyMode = privacyMode,
+                            isWatchOnly = walletState.activeWallet?.isWatchOnly == true,
+                            draft = sendScreenDraft,
+                            dryRunResult = dryRunResult,
+                            onEstimateFee = { address, amount, feeRate, selectedUtxos, isMaxSend ->
+                                viewModel.estimateFee(address, amount, feeRate, selectedUtxos, isMaxSend)
+                            },
+                            onEstimateFeeMulti = { recipients, feeRate, selectedUtxos ->
+                                viewModel.estimateFeeMulti(recipients, feeRate, selectedUtxos)
+                            },
+                            onClearDryRun = { viewModel.clearDryRunResult() },
+                            onRefreshFees = { viewModel.fetchFeeEstimates() },
+                            onClearPreSelectedUtxo = { viewModel.clearPreSelectedUtxo() },
+                            onUpdateDraft = { draft -> viewModel.updateSendScreenDraft(draft) },
+                            onSend = { address, amount, feeRate, selectedUtxos, label, isMaxSend, precomputedFeeSats ->
+                                viewModel.sendBitcoin(
+                                    address,
+                                    amount,
+                                    feeRate,
+                                    selectedUtxos,
+                                    label,
+                                    isMaxSend,
+                                    precomputedFeeSats,
+                                )
+                            },
+                            onSendMulti = { recipients, feeRate, selectedUtxos, label, precomputedFeeSats ->
+                                viewModel.sendBitcoinMulti(
+                                    recipients,
+                                    feeRate,
+                                    selectedUtxos,
+                                    label,
+                                    precomputedFeeSats,
+                                )
+                            },
+                            onCreatePsbt = {
+                                    address,
+                                    amount,
+                                    feeRate,
+                                    selectedUtxos,
+                                    label,
+                                    isMaxSend,
+                                    precomputedFeeSats,
+                                ->
+                                viewModel.createPsbt(
+                                    address,
+                                    amount,
+                                    feeRate,
+                                    selectedUtxos,
+                                    label,
+                                    isMaxSend,
+                                    precomputedFeeSats,
+                                )
+                            },
+                            onCreatePsbtMulti = { recipients, feeRate, selectedUtxos, label, precomputedFeeSats ->
+                                viewModel.createPsbtMulti(recipients, feeRate, selectedUtxos, label, precomputedFeeSats)
+                            },
+                            onNavigateToBroadcast = {
+                                navController.navigate(Screen.BroadcastTransaction.route)
+                            },
+                        )
+                    }
+                    composable(
+                        route = Screen.ManageWallets.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
                             )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        ManageWalletsScreen(
+                            wallets = wallets,
+                            onBack = { navController.popBackStack() },
+                            onImportWallet = { navController.navigate(Screen.ImportWallet.route) },
+                            onGenerateWallet = { navController.navigate(Screen.GenerateWallet.route) },
+                            onViewWallet = { wallet ->
+                                // Get key material from ViewModel
+                                viewModel.getKeyMaterial(wallet.id)?.let { keyMaterial ->
+                                    KeyMaterialInfo(
+                                        walletName = wallet.name,
+                                        mnemonic = keyMaterial.mnemonic,
+                                        extendedPublicKey = keyMaterial.extendedPublicKey,
+                                        isWatchOnly = keyMaterial.isWatchOnly,
+                                        masterFingerprint = wallet.masterFingerprint,
+                                        privateKey = keyMaterial.privateKey,
+                                        watchAddress = keyMaterial.watchAddress,
+                                    )
+                                }
+                            },
+                            onDeleteWallet = { wallet ->
+                                viewModel.deleteWallet(wallet.id)
+                            },
+                            onSelectWallet = { wallet ->
+                                viewModel.switchWallet(wallet.id)
+                            },
+                            onExportWallet = { walletId, uri, includeLabels, password ->
+                                viewModel.exportWallet(walletId, uri, includeLabels, password)
+                            },
+                            onEditWallet = { walletId, newName, newFingerprint ->
+                                viewModel.editWallet(walletId, newName, newFingerprint)
+                            },
+                            onFullSync = { wallet ->
+                                viewModel.fullSync(wallet.id)
+                            },
+                            syncingWalletId = syncingWalletId,
+                        )
+                    }
+                    composable(
+                        route = Screen.ImportWallet.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        ImportWalletScreen(
+                            onImport = { config ->
+                                viewModel.importWallet(config)
+                            },
+                            onImportFromBackup = { backupJson ->
+                                viewModel.importFromBackup(backupJson)
+                            },
+                            onParseBackupFile = { uri, password ->
+                                viewModel.parseBackupFile(uri, password)
+                            },
+                            onBack = { navController.popBackStack() },
+                            onSweepPrivateKey = { navController.navigate(Screen.SweepPrivateKey.route) },
+                            existingWalletNames = existingWalletNames,
+                            isLoading = uiState.isLoading,
+                            error = uiState.error,
+                        )
+                    }
+                    composable(
+                        route = Screen.GenerateWallet.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        GenerateWalletScreen(
+                            onGenerate = { config ->
+                                viewModel.generateWallet(config)
+                            },
+                            onBack = { navController.popBackStack() },
+                            existingWalletNames = existingWalletNames,
+                            isLoading = uiState.isLoading,
+                            error = uiState.error,
+                        )
+                    }
+                    composable(
+                        route = Screen.SweepPrivateKey.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        val sweepState by viewModel.sweepState.collectAsState()
+                        SweepPrivateKeyScreen(
+                            sweepState = sweepState,
+                            isConnected = uiState.isConnected,
+                            onScanBalances = { wif -> viewModel.scanWifBalances(wif) },
+                            onSweep = { wif, dest, rate -> viewModel.sweepPrivateKey(wif, dest, rate) },
+                            onReset = { viewModel.resetSweepState() },
+                            onBack = { navController.popBackStack() },
+                            currentReceiveAddress = walletState.currentAddress,
+                            isWifValid = { viewModel.isWifPrivateKey(it) },
+                            feeEstimationState = feeEstimationState,
+                            minFeeRate = minFeeRate,
+                            onRefreshFees = { viewModel.fetchFeeEstimates() },
+                        )
+                    }
+                    composable(
+                        route = Screen.ElectrumConfig.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        ElectrumConfigScreen(
+                            onConnect = { config ->
+                                viewModel.connectToElectrum(config)
+                            },
+                            onBack = { navController.popBackStack() },
+                            currentConfig = viewModel.getElectrumConfig(),
+                            isConnecting = uiState.isConnecting,
+                            isConnected = uiState.isConnected,
+                            error = uiState.error,
+                            savedServers = serversState.servers,
+                            activeServerId = serversState.activeServerId,
+                            onSaveServer = { config -> viewModel.saveServer(config) },
+                            onDeleteServer = { serverId -> viewModel.deleteServer(serverId) },
+                            onConnectToServer = { serverId -> viewModel.connectToServer(serverId) },
+                            onDisconnect = { viewModel.disconnect() },
+                            onCancelConnection = { viewModel.cancelConnection() },
+                            torState = torState,
+                            isTorEnabled = viewModel.isTorEnabled(),
+                            onTorEnabledChange = { enabled -> viewModel.setTorEnabled(enabled) },
+                            isActiveServerOnion = viewModel.getElectrumConfig()?.isOnionAddress() == true,
+                            serverVersion = uiState.serverVersion,
+                            blockHeight = walletState.blockHeight,
+                        )
+                    }
+                    composable(
+                        route = Screen.Settings.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        var customMempoolUrl by remember { mutableStateOf(viewModel.getCustomMempoolUrl()) }
+                        var customFeeSourceUrl by remember { mutableStateOf(viewModel.getCustomFeeSourceUrl()) }
+                        var spendUnconfirmed by remember { mutableStateOf(viewModel.getSpendUnconfirmed()) }
+
+                        SettingsScreen(
+                            currentDenomination = denomination,
+                            onDenominationChange = { newDenomination ->
+                                viewModel.setDenomination(newDenomination)
+                            },
+                            spendUnconfirmed = spendUnconfirmed,
+                            onSpendUnconfirmedChange = { enabled ->
+                                viewModel.setSpendUnconfirmed(enabled)
+                                spendUnconfirmed = enabled
+                            },
+                            currentFeeSource = feeSource,
+                            onFeeSourceChange = { newSource ->
+                                val wasOnion = viewModel.isFeeSourceOnion()
+                                viewModel.setFeeSource(newSource)
+                                // If switching away from .onion fee source, stop Tor
+                                // if Electrum doesn't need it either
+                                if (wasOnion && !viewModel.isFeeSourceOnion() && !viewModel.isTorEnabled()) {
+                                    viewModel.stopTor()
+                                }
+                            },
+                            customFeeSourceUrl = customFeeSourceUrl,
+                            onCustomFeeSourceUrlSave = { newUrl ->
+                                val wasOnion = viewModel.isFeeSourceOnion()
+                                customFeeSourceUrl = newUrl
+                                viewModel.setCustomFeeSourceUrl(newUrl)
+                                val isNewUrlOnion =
+                                    try {
+                                        java.net.URI(newUrl).host?.endsWith(".onion") == true
+                                    } catch (_: Exception) {
+                                        newUrl.endsWith(".onion")
+                                    }
+                                if (isNewUrlOnion && !viewModel.isTorReady()) {
+                                    // Start Tor for .onion fee source
+                                    viewModel.startTor()
+                                } else if (wasOnion && !isNewUrlOnion && !viewModel.isTorEnabled()) {
+                                    // Switched from .onion to clearnet — stop Tor if Electrum doesn't need it
+                                    viewModel.stopTor()
+                                }
+                            },
+                            currentPriceSource = priceSource,
+                            onPriceSourceChange = { newSource ->
+                                viewModel.setPriceSource(newSource)
+                            },
+                            currentMempoolServer = mempoolServer,
+                            onMempoolServerChange = { newServer ->
+                                viewModel.setMempoolServer(newServer)
+                            },
+                            customMempoolUrl = customMempoolUrl,
+                            onCustomMempoolUrlSave = { newUrl ->
+                                customMempoolUrl = newUrl
+                                viewModel.setCustomMempoolUrl(newUrl)
+                            },
+                            torStatus = torState.status,
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = Screen.Security.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        // Use mutableState so UI recomposes when settings change
+                        var securityMethod by remember { mutableStateOf(viewModel.getSecurityMethod()) }
+                        var lockTiming by remember { mutableStateOf(viewModel.getLockTiming()) }
+                        var screenshotsDisabled by remember { mutableStateOf(viewModel.getDisableScreenshots()) }
+                        var duressEnabled by remember { mutableStateOf(viewModel.isDuressEnabled()) }
+                        var autoWipeThreshold by remember { mutableStateOf(viewModel.getAutoWipeThreshold()) }
+                        var cloakModeEnabled by remember { mutableStateOf(viewModel.isCloakModeEnabled()) }
+                        val isDuressMode by viewModel.isDuressMode.collectAsState()
+
+                        // Check if device has biometric hardware
+                        val biometricManager = androidx.biometric.BiometricManager.from(context)
+                        val isBiometricAvailable =
+                            biometricManager.canAuthenticate(
+                                androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                                    androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK,
+                            ) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
+
+                        SecurityScreen(
+                            currentSecurityMethod = securityMethod,
+                            currentLockTiming = lockTiming,
+                            isBiometricAvailable = isBiometricAvailable,
+                            screenshotsDisabled = screenshotsDisabled,
+                            isDuressEnabled = duressEnabled,
+                            isDuressMode = isDuressMode,
+                            hasWallet = walletState.wallets.isNotEmpty(),
+                            autoWipeThreshold = autoWipeThreshold,
+                            isCloakModeEnabled = cloakModeEnabled,
+                            onSetPinCode = { pin ->
+                                viewModel.savePin(pin)
+                                viewModel.setSecurityMethod(SecureStorage.SecurityMethod.PIN)
+                                securityMethod = SecureStorage.SecurityMethod.PIN
+                                isSecurityEnabled = true
+                            },
+                            onEnableBiometric = {
+                                viewModel.setSecurityMethod(SecureStorage.SecurityMethod.BIOMETRIC)
+                                securityMethod = SecureStorage.SecurityMethod.BIOMETRIC
+                                isSecurityEnabled = true
+                            },
+                            onDisableSecurity = {
+                                // Disabling security also disables duress
+                                if (duressEnabled) {
+                                    viewModel.disableDuress {
+                                        duressEnabled = false
+                                    }
+                                }
+                                // Disabling security also disables auto-wipe
+                                viewModel.setAutoWipeThreshold(SecureStorage.AutoWipeThreshold.DISABLED)
+                                autoWipeThreshold = SecureStorage.AutoWipeThreshold.DISABLED
+                                viewModel.clearPin()
+                                viewModel.setSecurityMethod(SecureStorage.SecurityMethod.NONE)
+                                securityMethod = SecureStorage.SecurityMethod.NONE
+                                isSecurityEnabled = false
+                            },
+                            onLockTimingChange = { timing ->
+                                viewModel.setLockTiming(timing)
+                                lockTiming = timing
+                            },
+                            onScreenshotsDisabledChange = { disabled ->
+                                viewModel.setDisableScreenshots(disabled)
+                                screenshotsDisabled = disabled
+                                val activity = context as? android.app.Activity
+                                if (disabled) {
+                                    activity?.window?.setFlags(
+                                        android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                                        android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                                    )
+                                } else {
+                                    activity?.window?.clearFlags(
+                                        android.view.WindowManager.LayoutParams.FLAG_SECURE,
+                                    )
+                                }
+                            },
+                            onSetupDuress = { pin, mnemonic, passphrase, customDerivationPath, addressType ->
+                                viewModel.setupDuress(
+                                    pin = pin,
+                                    mnemonic = mnemonic,
+                                    passphrase = passphrase,
+                                    customDerivationPath = customDerivationPath,
+                                    addressType = addressType,
+                                    onSuccess = { duressEnabled = true },
+                                    onError = { errorMsg ->
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(
+                                                message = "Duress setup failed: $errorMsg",
+                                            )
+                                        }
+                                    },
+                                )
+                            },
+                            onDisableDuress = {
+                                viewModel.disableDuress {
+                                    duressEnabled = false
+                                }
+                            },
+                            onAutoWipeThresholdChange = { threshold ->
+                                viewModel.setAutoWipeThreshold(threshold)
+                                autoWipeThreshold = threshold
+                            },
+                            onEnableCloakMode = { code ->
+                                viewModel.enableCloakMode(code)
+                                cloakModeEnabled = true
+                            },
+                            onDisableCloakMode = {
+                                viewModel.disableCloakMode()
+                                cloakModeEnabled = false
+                            },
+                            onPinSetupActiveChange = { active -> isPinSetupActive = active },
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = Screen.About.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        AboutScreen(
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = Screen.AllAddresses.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        // Trigger recomposition after generating new address
+                        var addressListVersion by remember { mutableIntStateOf(0) }
+
+                        // Fetch addresses - uses addressListVersion as key to refresh after generating
+                        val addresses = remember(addressListVersion) { viewModel.getAllAddresses() }
+
+                        AllAddressesScreen(
+                            receiveAddresses = addresses.first,
+                            changeAddresses = addresses.second,
+                            usedAddresses = addresses.third,
+                            denomination = denomination,
+                            privacyMode = privacyMode,
+                            onGenerateReceiveAddress = {
+                                val newAddress = viewModel.getNewAddressSuspend()
+                                addressListVersion++
+                                newAddress
+                            },
+                            onSaveLabel = { address, label ->
+                                viewModel.saveAddressLabel(address, label)
+                                addressListVersion++
+                            },
+                            onDeleteLabel = { address ->
+                                viewModel.deleteAddressLabel(address)
+                                addressListVersion++
+                            },
+                        )
+                    }
+                    composable(
+                        route = Screen.AllUtxos.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        val utxos = viewModel.getAllUtxos()
+
+                        AllUtxosScreen(
+                            utxos = utxos,
+                            denomination = denomination,
+                            btcPrice = btcPrice,
+                            privacyMode = privacyMode,
+                            spendUnconfirmed = viewModel.getSpendUnconfirmed(),
+                            onFreezeUtxo = { outpoint, frozen ->
+                                viewModel.setUtxoFrozen(outpoint, frozen)
+                            },
+                            onSendFromUtxo = { utxo ->
+                                viewModel.setPreSelectedUtxo(utxo)
+                                // Simple navigation to Send screen
+                                navController.navigate(Screen.Send.route)
+                            },
+                            onSaveLabel = { address, label ->
+                                viewModel.saveAddressLabel(address, label)
+                            },
+                            onDeleteLabel = { address ->
+                                viewModel.deleteAddressLabel(address)
+                            },
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = Screen.PsbtExport.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        PsbtScreen(
+                            psbtState = psbtState,
+                            uiState = uiState,
+                            onSignedDataReceived = { data ->
+                                viewModel.setSignedTransactionData(data)
+                            },
+                            onConfirmBroadcast = {
+                                viewModel.confirmBroadcast()
+                            },
+                            onCancelBroadcast = {
+                                viewModel.cancelBroadcast()
+                            },
+                            onBack = {
+                                viewModel.clearPsbtState()
+                                navController.popBackStack()
+                            },
+                        )
+                    }
+                    composable(
+                        route = Screen.BroadcastTransaction.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        val manualBroadcastState by viewModel.manualBroadcastState.collectAsState()
+
+                        BroadcastTransactionScreen(
+                            broadcastState = manualBroadcastState,
+                            isConnected = uiState.isConnected,
+                            onBroadcast = { data ->
+                                viewModel.broadcastManualTransaction(data)
+                            },
+                            onClear = {
+                                viewModel.clearManualBroadcastState()
+                            },
+                            onBack = {
+                                navController.popBackStack()
+                            },
                         )
                     }
                 }
-            }
-        ) { innerPadding ->
-            Box(modifier = Modifier.padding(innerPadding)) {
-            NavHost(
-                navController = navController,
-                startDestination = Screen.Balance.route,
-                enterTransition = { fadeIn(animationSpec = tween(200)) },
-                exitTransition = { fadeOut(animationSpec = tween(200)) },
-                popEnterTransition = { fadeIn(animationSpec = tween(200)) },
-                popExitTransition = { fadeOut(animationSpec = tween(200)) }
-            ) {
-                composable(Screen.Receive.route) {
-                    // Fetch price when entering Receive screen
-                    LaunchedEffect(Unit) {
-                        viewModel.fetchBtcPrice()
-                    }
-                    
-                    ReceiveScreen(
-                        walletState = walletState,
-                        denomination = denomination,
-                        btcPrice = btcPrice,
-                        privacyMode = privacyMode,
-                        onGenerateAddress = { viewModel.getNewAddress() },
-                        onSaveLabel = { address, label -> viewModel.saveAddressLabel(address, label) },
-                        onShowAllAddresses = { navController.navigate(Screen.AllAddresses.route) },
-                        onShowAllUtxos = { navController.navigate(Screen.AllUtxos.route) }
-                    )
-                }
-                composable(Screen.Balance.route) {
-                    // Fetch price when entering Balance screen
-                    LaunchedEffect(Unit) {
-                        viewModel.fetchBtcPrice()
-                    }
-                    
-                    // Labels are refreshed when labelsVersion changes (global counter
-                    // bumped on wallet import, wallet switch, sync, or manual label save)
-                    val transactionLabels = remember(labelsVersion) { viewModel.getAllTransactionLabels() }
-                    val addressLabels = remember(labelsVersion) { viewModel.getAllAddressLabels() }
-                    
-                    BalanceScreen(
-                        walletState = walletState,
-                        uiState = uiState,
-                        denomination = denomination,
-                        mempoolUrl = viewModel.getMempoolUrl(),
-                        mempoolServer = viewModel.getMempoolServer(),
-                        btcPrice = btcPrice,
-                        privacyMode = privacyMode,
-                        onTogglePrivacy = { viewModel.togglePrivacyMode() },
-                        addressLabels = addressLabels,
-                        transactionLabels = transactionLabels,
-                        feeEstimationState = feeEstimationState,
-                        canBumpFee = { txid -> viewModel.canBumpFee(txid) },
-                        canCpfp = { txid -> viewModel.canCpfp(txid) },
-                        onBumpFee = { txid, feeRate -> viewModel.bumpFee(txid, feeRate) },
-                        onCpfp = { txid, feeRate -> viewModel.cpfp(txid, feeRate) },
-                        onSaveTransactionLabel = { txid, label -> 
-                            viewModel.saveTransactionLabel(txid, label)
-                            labelsVersion++
-                        },
-                        onFetchTxVsize = { txid -> viewModel.fetchTransactionVsize(txid) },
-                        onRefreshFees = { viewModel.fetchFeeEstimates() },
-                        onSync = { viewModel.sync() },
-                        onManageWallets = { navController.navigate(Screen.ManageWallets.route) },
-                        onScanQrResult = { code ->
-                            val bip21 = parseBip21Uri(code)
-                            viewModel.updateSendScreenDraft(
-                                SendScreenDraft(
-                                    recipientAddress = bip21.address,
-                                    label = bip21.label ?: ""
-                                )
-                            )
-                            navController.navigate(Screen.Send.route)
+
+                // Wallet selector overlay panel
+                if (isMainScreen) {
+                    val selectorSyncTimes =
+                        remember(filteredWallets, syncingWalletId) {
+                            filteredWallets.associate { it.id to viewModel.getLastFullSyncTime(it.id) }
                         }
-                    )
-                }
-                composable(Screen.Send.route) {
-                    val utxos = viewModel.getAllUtxos()
-                    
-                    // Collect preSelectedUtxo directly here to ensure fresh value
-                    val currentPreSelectedUtxo by viewModel.preSelectedUtxo.collectAsState()
-                    
-                    // Get all wallet addresses for self-transfer detection
-                    val allWalletAddresses = remember(walletState) {
-                        val (receive, change, used) = viewModel.getAllAddresses()
-                        (receive.map { it.address } + change.map { it.address } + used.map { it.address }).toSet()
-                    }
-                    
-                    // Fetch fee estimates and price when entering Send screen
-                    LaunchedEffect(Unit) {
-                        viewModel.fetchFeeEstimates()
-                        viewModel.fetchBtcPrice()
-                    }
-                    
-                    SendScreen(
-                        walletState = walletState,
-                        uiState = uiState,
-                        denomination = denomination,
-                        utxos = utxos,
-                        walletAddresses = allWalletAddresses,
-                        feeEstimationState = feeEstimationState,
-                        minFeeRate = minFeeRate,
-                        preSelectedUtxo = currentPreSelectedUtxo,
-                        spendUnconfirmed = viewModel.getSpendUnconfirmed(),
-                        btcPrice = btcPrice,
-                        privacyMode = privacyMode,
-                        isWatchOnly = walletState.activeWallet?.isWatchOnly == true,
-                        draft = sendScreenDraft,
-                        dryRunResult = dryRunResult,
-                        onEstimateFee = { address, amount, feeRate, selectedUtxos, isMaxSend ->
-                            viewModel.estimateFee(address, amount, feeRate, selectedUtxos, isMaxSend)
+                    WalletSelectorPanel(
+                        activeWallet = walletState.activeWallet,
+                        wallets = filteredWallets,
+                        expanded = walletSelectorExpanded,
+                        onDismiss = { walletSelectorExpanded = false },
+                        onSelectWallet = { walletId ->
+                            viewModel.switchWallet(walletId)
                         },
-                        onEstimateFeeMulti = { recipients, feeRate, selectedUtxos ->
-                            viewModel.estimateFeeMulti(recipients, feeRate, selectedUtxos)
-                        },
-                        onClearDryRun = { viewModel.clearDryRunResult() },
-                        onRefreshFees = { viewModel.fetchFeeEstimates() },
-                        onClearPreSelectedUtxo = { viewModel.clearPreSelectedUtxo() },
-                        onUpdateDraft = { draft -> viewModel.updateSendScreenDraft(draft) },
-                        onSend = { address, amount, feeRate, selectedUtxos, label, isMaxSend, precomputedFeeSats ->
-                            viewModel.sendBitcoin(address, amount, feeRate, selectedUtxos, label, isMaxSend, precomputedFeeSats)
-                        },
-                        onSendMulti = { recipients, feeRate, selectedUtxos, label, precomputedFeeSats ->
-                            viewModel.sendBitcoinMulti(recipients, feeRate, selectedUtxos, label, precomputedFeeSats)
-                        },
-                        onCreatePsbt = { address, amount, feeRate, selectedUtxos, label, isMaxSend, precomputedFeeSats ->
-                            viewModel.createPsbt(address, amount, feeRate, selectedUtxos, label, isMaxSend, precomputedFeeSats)
-                        },
-                        onCreatePsbtMulti = { recipients, feeRate, selectedUtxos, label, precomputedFeeSats ->
-                            viewModel.createPsbtMulti(recipients, feeRate, selectedUtxos, label, precomputedFeeSats)
-                        },
-                        onNavigateToBroadcast = {
-                            navController.navigate(Screen.BroadcastTransaction.route)
-                        }
-                    )
-                }
-                composable(
-                    route = Screen.ManageWallets.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    ManageWalletsScreen(
-                        wallets = wallets,
-                        onBack = { navController.popBackStack() },
-                        onImportWallet = { navController.navigate(Screen.ImportWallet.route) },
-                        onGenerateWallet = { navController.navigate(Screen.GenerateWallet.route) },
-                        onViewWallet = { wallet ->
-                            // Get key material from ViewModel
-                            viewModel.getKeyMaterial(wallet.id)?.let { keyMaterial ->
-                                KeyMaterialInfo(
-                                    walletName = wallet.name,
-                                    mnemonic = keyMaterial.mnemonic,
-                                    extendedPublicKey = keyMaterial.extendedPublicKey,
-                                    isWatchOnly = keyMaterial.isWatchOnly,
-                                    masterFingerprint = wallet.masterFingerprint,
-                                    privateKey = keyMaterial.privateKey,
-                                    watchAddress = keyMaterial.watchAddress
-                                )
-                            }
-                        },
-                        onDeleteWallet = { wallet ->
-                            viewModel.deleteWallet(wallet.id)
-                        },
-                        onSelectWallet = { wallet ->
-                            viewModel.switchWallet(wallet.id)
-                        },
-                        onExportWallet = { walletId, uri, includeLabels, password ->
-                            viewModel.exportWallet(walletId, uri, includeLabels, password)
-                        },
-                        onEditWallet = { walletId, newName, newFingerprint ->
-                            viewModel.editWallet(walletId, newName, newFingerprint)
+                        onManageWallets = {
+                            navController.navigate(Screen.ManageWallets.route)
                         },
                         onFullSync = { wallet ->
                             viewModel.fullSync(wallet.id)
                         },
-                        syncingWalletId = syncingWalletId
+                        syncingWalletId = syncingWalletId,
+                        lastFullSyncTimes = selectorSyncTimes,
                     )
                 }
-                composable(
-                    route = Screen.ImportWallet.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    ImportWalletScreen(
-                        onImport = { config ->
-                            viewModel.importWallet(config)
-                        },
-                        onImportFromBackup = { backupJson ->
-                            viewModel.importFromBackup(backupJson)
-                        },
-                        onParseBackupFile = { uri, password ->
-                            viewModel.parseBackupFile(uri, password)
-                        },
-                        onBack = { navController.popBackStack() },
-                        onSweepPrivateKey = { navController.navigate(Screen.SweepPrivateKey.route) },
-                        existingWalletNames = existingWalletNames,
-                        isLoading = uiState.isLoading,
-                        error = uiState.error
-                    )
-                }
-                composable(
-                    route = Screen.GenerateWallet.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    GenerateWalletScreen(
-                        onGenerate = { config ->
-                            viewModel.generateWallet(config)
-                        },
-                        onBack = { navController.popBackStack() },
-                        existingWalletNames = existingWalletNames,
-                        isLoading = uiState.isLoading,
-                        error = uiState.error
-                    )
-                }
-                composable(
-                    route = Screen.SweepPrivateKey.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    val sweepState by viewModel.sweepState.collectAsState()
-                    SweepPrivateKeyScreen(
-                        sweepState = sweepState,
-                        isConnected = uiState.isConnected,
-                        onScanBalances = { wif -> viewModel.scanWifBalances(wif) },
-                        onSweep = { wif, dest, rate -> viewModel.sweepPrivateKey(wif, dest, rate) },
-                        onReset = { viewModel.resetSweepState() },
-                        onBack = { navController.popBackStack() },
-                        currentReceiveAddress = walletState.currentAddress,
-                        isWifValid = { viewModel.isWifPrivateKey(it) },
-                        feeEstimationState = feeEstimationState,
-                        minFeeRate = minFeeRate,
-                        onRefreshFees = { viewModel.fetchFeeEstimates() }
-                    )
-                }
-                composable(
-                    route = Screen.ElectrumConfig.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    ElectrumConfigScreen(
-                        onConnect = { config ->
-                            viewModel.connectToElectrum(config)
-                        },
-                        onBack = { navController.popBackStack() },
-                        currentConfig = viewModel.getElectrumConfig(),
-                        isConnecting = uiState.isConnecting,
-                        isConnected = uiState.isConnected,
-                        error = uiState.error,
-                        savedServers = serversState.servers,
-                        activeServerId = serversState.activeServerId,
-                        onSaveServer = { config -> viewModel.saveServer(config) },
-                        onDeleteServer = { serverId -> viewModel.deleteServer(serverId) },
-                        onConnectToServer = { serverId -> viewModel.connectToServer(serverId) },
-                        onDisconnect = { viewModel.disconnect() },
-                        onCancelConnection = { viewModel.cancelConnection() },
-                        torState = torState,
-                        isTorEnabled = viewModel.isTorEnabled(),
-                        onTorEnabledChange = { enabled -> viewModel.setTorEnabled(enabled) },
-                        isActiveServerOnion = viewModel.getElectrumConfig()?.isOnionAddress() == true,
-                        serverVersion = uiState.serverVersion,
-                        blockHeight = walletState.blockHeight
-                    )
-                }
-                composable(
-                    route = Screen.Settings.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    var customMempoolUrl by remember { mutableStateOf(viewModel.getCustomMempoolUrl()) }
-                    var customFeeSourceUrl by remember { mutableStateOf(viewModel.getCustomFeeSourceUrl()) }
-                    var spendUnconfirmed by remember { mutableStateOf(viewModel.getSpendUnconfirmed()) }
-
-                    
-                    SettingsScreen(
-                        currentDenomination = denomination,
-                        onDenominationChange = { newDenomination ->
-                            viewModel.setDenomination(newDenomination)
-                        },
-                        spendUnconfirmed = spendUnconfirmed,
-                        onSpendUnconfirmedChange = { enabled ->
-                            viewModel.setSpendUnconfirmed(enabled)
-                            spendUnconfirmed = enabled
-                        },
-                        currentFeeSource = feeSource,
-                        onFeeSourceChange = { newSource ->
-                            val wasOnion = viewModel.isFeeSourceOnion()
-                            viewModel.setFeeSource(newSource)
-                            // If switching away from .onion fee source, stop Tor
-                            // if Electrum doesn't need it either
-                            if (wasOnion && !viewModel.isFeeSourceOnion() && !viewModel.isTorEnabled()) {
-                                viewModel.stopTor()
-                            }
-                        },
-                        customFeeSourceUrl = customFeeSourceUrl,
-                        onCustomFeeSourceUrlSave = { newUrl ->
-                            val wasOnion = viewModel.isFeeSourceOnion()
-                            customFeeSourceUrl = newUrl
-                            viewModel.setCustomFeeSourceUrl(newUrl)
-                            if (newUrl.contains(".onion") && !viewModel.isTorReady()) {
-                                // Start Tor for .onion fee source
-                                viewModel.startTor()
-                            } else if (wasOnion && !newUrl.contains(".onion") && !viewModel.isTorEnabled()) {
-                                // Switched from .onion to clearnet — stop Tor if Electrum doesn't need it
-                                viewModel.stopTor()
-                            }
-                        },
-                        currentPriceSource = priceSource,
-                        onPriceSourceChange = { newSource ->
-                            viewModel.setPriceSource(newSource)
-                        },
-                        currentMempoolServer = mempoolServer,
-                        onMempoolServerChange = { newServer ->
-                            viewModel.setMempoolServer(newServer)
-                        },
-                        customMempoolUrl = customMempoolUrl,
-                        onCustomMempoolUrlSave = { newUrl ->
-                            customMempoolUrl = newUrl
-                            viewModel.setCustomMempoolUrl(newUrl)
-                        },
-                        torStatus = torState.status,
-                        onBack = { navController.popBackStack() }
-                    )
-                }
-                composable(
-                    route = Screen.Security.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    // Use mutableState so UI recomposes when settings change
-                    var securityMethod by remember { mutableStateOf(viewModel.getSecurityMethod()) }
-                    var lockTiming by remember { mutableStateOf(viewModel.getLockTiming()) }
-                    var screenshotsDisabled by remember { mutableStateOf(viewModel.getDisableScreenshots()) }
-                    var duressEnabled by remember { mutableStateOf(viewModel.isDuressEnabled()) }
-                    var autoWipeThreshold by remember { mutableStateOf(viewModel.getAutoWipeThreshold()) }
-                    var cloakModeEnabled by remember { mutableStateOf(viewModel.isCloakModeEnabled()) }
-                    val isDuressMode by viewModel.isDuressMode.collectAsState()
-                    
-                    // Check if device has biometric hardware
-                    val biometricManager = androidx.biometric.BiometricManager.from(context)
-                    val isBiometricAvailable = biometricManager.canAuthenticate(
-                        androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                        androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
-                    ) == androidx.biometric.BiometricManager.BIOMETRIC_SUCCESS
-                    
-                    SecurityScreen(
-                        currentSecurityMethod = securityMethod,
-                        currentLockTiming = lockTiming,
-                        isBiometricAvailable = isBiometricAvailable,
-                        screenshotsDisabled = screenshotsDisabled,
-                        isDuressEnabled = duressEnabled,
-                        isDuressMode = isDuressMode,
-                        hasWallet = walletState.wallets.isNotEmpty(),
-                        autoWipeThreshold = autoWipeThreshold,
-                        isCloakModeEnabled = cloakModeEnabled,
-                        onSetPinCode = { pin ->
-                            viewModel.savePin(pin)
-                            viewModel.setSecurityMethod(SecureStorage.SecurityMethod.PIN)
-                            securityMethod = SecureStorage.SecurityMethod.PIN
-                            isSecurityEnabled = true
-                        },
-                        onEnableBiometric = {
-                            viewModel.setSecurityMethod(SecureStorage.SecurityMethod.BIOMETRIC)
-                            securityMethod = SecureStorage.SecurityMethod.BIOMETRIC
-                            isSecurityEnabled = true
-                        },
-                        onDisableSecurity = {
-                            // Disabling security also disables duress
-                            if (duressEnabled) {
-                                viewModel.disableDuress {
-                                    duressEnabled = false
-                                }
-                            }
-                            // Disabling security also disables auto-wipe
-                            viewModel.setAutoWipeThreshold(SecureStorage.AutoWipeThreshold.DISABLED)
-                            autoWipeThreshold = SecureStorage.AutoWipeThreshold.DISABLED
-                            viewModel.clearPin()
-                            viewModel.setSecurityMethod(SecureStorage.SecurityMethod.NONE)
-                            securityMethod = SecureStorage.SecurityMethod.NONE
-                            isSecurityEnabled = false
-                        },
-                        onLockTimingChange = { timing ->
-                            viewModel.setLockTiming(timing)
-                            lockTiming = timing
-                        },
-                        onScreenshotsDisabledChange = { disabled ->
-                            viewModel.setDisableScreenshots(disabled)
-                            screenshotsDisabled = disabled
-                            val activity = context as? android.app.Activity
-                            if (disabled) {
-                                activity?.window?.setFlags(
-                                    android.view.WindowManager.LayoutParams.FLAG_SECURE,
-                                    android.view.WindowManager.LayoutParams.FLAG_SECURE
-                                )
-                            } else {
-                                activity?.window?.clearFlags(
-                                    android.view.WindowManager.LayoutParams.FLAG_SECURE
-                                )
-                            }
-                        },
-                        onSetupDuress = { pin, mnemonic, passphrase, customDerivationPath, addressType ->
-                            viewModel.setupDuress(
-                                pin = pin,
-                                mnemonic = mnemonic,
-                                passphrase = passphrase,
-                                customDerivationPath = customDerivationPath,
-                                addressType = addressType,
-                                onSuccess = { duressEnabled = true },
-                                onError = { errorMsg ->
-                                    scope.launch {
-                                        snackbarHostState.showSnackbar(
-                                            message = "Duress setup failed: $errorMsg"
-                                        )
-                                    }
-                                }
-                            )
-                        },
-                        onDisableDuress = {
-                            viewModel.disableDuress {
-                                duressEnabled = false
-                            }
-                        },
-                        onAutoWipeThresholdChange = { threshold ->
-                            viewModel.setAutoWipeThreshold(threshold)
-                            autoWipeThreshold = threshold
-                        },
-                        onEnableCloakMode = { code ->
-                            viewModel.enableCloakMode(code)
-                            cloakModeEnabled = true
-                        },
-                        onDisableCloakMode = {
-                            viewModel.disableCloakMode()
-                            cloakModeEnabled = false
-                        },
-                        onBack = { navController.popBackStack() }
-                    )
-                }
-                composable(
-                    route = Screen.About.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    AboutScreen(
-                        onBack = { navController.popBackStack() }
-                    )
-                }
-                composable(
-                    route = Screen.AllAddresses.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    // Trigger recomposition after generating new address
-                    var addressListVersion by remember { mutableIntStateOf(0) }
-                    
-                    // Fetch addresses - uses addressListVersion as key to refresh after generating
-                    val addresses = remember(addressListVersion) { viewModel.getAllAddresses() }
-                    
-                    AllAddressesScreen(
-                        receiveAddresses = addresses.first,
-                        changeAddresses = addresses.second,
-                        usedAddresses = addresses.third,
-                        denomination = denomination,
-                        privacyMode = privacyMode,
-                        onGenerateReceiveAddress = {
-                            val newAddress = viewModel.getNewAddressSuspend()
-                            addressListVersion++
-                            newAddress
-                        },
-                        onSaveLabel = { address, label ->
-                            viewModel.saveAddressLabel(address, label)
-                            addressListVersion++
-                        },
-                        onDeleteLabel = { address ->
-                            viewModel.deleteAddressLabel(address)
-                            addressListVersion++
-                        }
-                    )
-                }
-                composable(
-                    route = Screen.AllUtxos.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    val utxos = viewModel.getAllUtxos()
-                    
-                    AllUtxosScreen(
-                        utxos = utxos,
-                        denomination = denomination,
-                        btcPrice = btcPrice,
-                        privacyMode = privacyMode,
-                        spendUnconfirmed = viewModel.getSpendUnconfirmed(),
-                        onFreezeUtxo = { outpoint, frozen ->
-                            viewModel.setUtxoFrozen(outpoint, frozen)
-                        },
-                        onSendFromUtxo = { utxo ->
-                            viewModel.setPreSelectedUtxo(utxo)
-                            // Simple navigation to Send screen
-                            navController.navigate(Screen.Send.route)
-                        },
-                        onBack = { navController.popBackStack() }
-                    )
-                }
-                composable(
-                    route = Screen.PsbtExport.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    PsbtScreen(
-                        psbtState = psbtState,
-                        uiState = uiState,
-                        onSignedDataReceived = { data ->
-                            viewModel.setSignedTransactionData(data)
-                        },
-                        onConfirmBroadcast = {
-                            viewModel.confirmBroadcast()
-                        },
-                        onCancelBroadcast = {
-                            viewModel.cancelBroadcast()
-                        },
-                        onBack = {
-                            viewModel.clearPsbtState()
-                            navController.popBackStack()
-                        }
-                    )
-                }
-                composable(
-                    route = Screen.BroadcastTransaction.route,
-                    enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
-                    exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
-                    popEnterTransition = { slideInHorizontally(initialOffsetX = { -it }, animationSpec = tween(300)) },
-                    popExitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) }
-                ) {
-                    val manualBroadcastState by viewModel.manualBroadcastState.collectAsState()
-                    
-                    BroadcastTransactionScreen(
-                        broadcastState = manualBroadcastState,
-                        isConnected = uiState.isConnected,
-                        onBroadcast = { data ->
-                            viewModel.broadcastManualTransaction(data)
-                        },
-                        onClear = {
-                            viewModel.clearManualBroadcastState()
-                        },
-                        onBack = {
-                            navController.popBackStack()
-                        }
-                    )
-                }
-            }
-
-            // Wallet selector overlay panel
-            if (isMainScreen) {
-                WalletSelectorPanel(
-                    activeWallet = walletState.activeWallet,
-                    wallets = filteredWallets,
-                    expanded = walletSelectorExpanded,
-                    onDismiss = { walletSelectorExpanded = false },
-                    onSelectWallet = { walletId ->
-                        viewModel.switchWallet(walletId)
-                    },
-                    onManageWallets = {
-                        navController.navigate(Screen.ManageWallets.route)
-                    }
-                )
-            }
             }
         }
     }
@@ -1098,32 +1291,32 @@ fun IbisWalletApp(
  * Shows the current keychain being scanned and address count.
  */
 @Composable
-private fun FullSyncProgressDialog(
-    syncProgress: SyncProgress?
-) {
+private fun FullSyncProgressDialog(syncProgress: SyncProgress?) {
     Dialog(
         onDismissRequest = { /* non-dismissable during full sync */ },
-        properties = androidx.compose.ui.window.DialogProperties(
-            dismissOnBackPress = false,
-            dismissOnClickOutside = false
-        )
+        properties =
+            androidx.compose.ui.window.DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+            ),
     ) {
         Surface(
             shape = RoundedCornerShape(12.dp),
-            color = DarkSurface
+            color = DarkSurface,
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 // Header
                 Text(
                     text = "Full Sync",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1133,7 +1326,7 @@ private fun FullSyncProgressDialog(
                     modifier = Modifier.size(48.dp),
                     color = BitcoinOrange,
                     strokeWidth = 4.dp,
-                    trackColor = DarkCard
+                    trackColor = DarkCard,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -1142,7 +1335,7 @@ private fun FullSyncProgressDialog(
                 Text(
                     text = syncProgress?.status ?: "Scanning addresses...",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -1150,7 +1343,7 @@ private fun FullSyncProgressDialog(
                 Text(
                     text = "This may take a while for large wallets",
                     style = MaterialTheme.typography.labelSmall,
-                    color = TextTertiary
+                    color = TextTertiary,
                 )
             }
         }
@@ -1166,61 +1359,66 @@ private fun ConnectionStatusIndicator(
     isConnecting: Boolean,
     torStatus: TorStatus = TorStatus.DISCONNECTED,
     isOnionServer: Boolean = false,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     // Show Tor bootstrap progress when connecting to an onion server
     // and Tor is not yet ready
-    val isTorBootstrapping = isConnecting && isOnionServer &&
-        torStatus != TorStatus.CONNECTED
+    val isTorBootstrapping =
+        isConnecting && isOnionServer &&
+            torStatus != TorStatus.CONNECTED
 
-    val statusColor = when {
-        isTorBootstrapping -> TorPurple
-        isConnecting -> BitcoinOrange
-        isConnected -> SuccessGreen
-        else -> ErrorRed
-    }
+    val statusColor =
+        when {
+            isTorBootstrapping -> TorPurple
+            isConnecting -> BitcoinOrange
+            isConnected -> SuccessGreen
+            else -> ErrorRed
+        }
 
     Box(
-        modifier = Modifier
-            .padding(end = 12.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .border(
-                width = 1.dp,
-                color = statusColor,
-                shape = RoundedCornerShape(8.dp)
-            )
-            .background(statusColor.copy(alpha = 0.15f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .padding(end = 12.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .border(
+                    width = 1.dp,
+                    color = statusColor,
+                    shape = RoundedCornerShape(8.dp),
+                )
+                .background(statusColor.copy(alpha = 0.15f))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             if (isConnecting) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(12.dp),
                     color = statusColor,
-                    strokeWidth = 1.5.dp
+                    strokeWidth = 1.5.dp,
                 )
             } else {
                 Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(statusColor)
+                    modifier =
+                        Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(statusColor),
                 )
             }
             Spacer(modifier = Modifier.width(6.dp))
             Text(
-                text = when {
-                    isTorBootstrapping -> "Starting Tor"
-                    isConnecting -> "Connecting"
-                    isConnected -> "Connected"
-                    else -> "Disconnected"
-                },
+                text =
+                    when {
+                        isTorBootstrapping -> "Starting Tor"
+                        isConnecting -> "Connecting"
+                        isConnected -> "Connected"
+                        else -> "Disconnected"
+                    },
                 style = MaterialTheme.typography.labelMedium,
-                color = statusColor
+                color = statusColor,
             )
         }
     }
@@ -1245,49 +1443,53 @@ private fun ConnectionStatusDialog(
     onDismiss: () -> Unit,
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
-    onConfigureServer: () -> Unit
+    onConfigureServer: () -> Unit,
 ) {
-    val statusColor = when {
-        isConnecting -> BitcoinOrange
-        isConnected -> SuccessGreen
-        else -> ErrorRed
-    }
-    val statusText = when {
-        isConnecting -> "Connecting"
-        isConnected -> "Connected"
-        else -> "Disconnected"
-    }
-    
+    val statusColor =
+        when {
+            isConnecting -> BitcoinOrange
+            isConnected -> SuccessGreen
+            else -> ErrorRed
+        }
+    val statusText =
+        when {
+            isConnecting -> "Connecting"
+            isConnected -> "Connected"
+            else -> "Disconnected"
+        }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(12.dp),
-            color = DarkSurface
+            color = DarkSurface,
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
             ) {
                 // Status header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .clip(CircleShape)
-                                .background(statusColor)
+                            modifier =
+                                Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(statusColor),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = statusText,
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = statusColor
+                            color = statusColor,
                         )
                     }
                     // Badges
@@ -1297,13 +1499,13 @@ private fun ConnectionStatusDialog(
                             Surface(
                                 shape = RoundedCornerShape(4.dp),
                                 color = sslColor.copy(alpha = 0.15f),
-                                border = BorderStroke(1.dp, sslColor.copy(alpha = 0.4f))
+                                border = BorderStroke(1.dp, sslColor.copy(alpha = 0.4f)),
                             ) {
                                 Text(
                                     text = if (useSsl) "SSL" else "TCP",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = sslColor,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 )
                             }
                         }
@@ -1313,41 +1515,45 @@ private fun ConnectionStatusDialog(
                             Surface(
                                 shape = RoundedCornerShape(4.dp),
                                 color = torColor.copy(alpha = 0.15f),
-                                border = BorderStroke(1.dp, torColor.copy(alpha = if (isTorActive) 0.4f else 0.2f))
+                                border = BorderStroke(1.dp, torColor.copy(alpha = if (isTorActive) 0.4f else 0.2f)),
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 ) {
                                     Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(if (isTorActive) TorPurple else TextSecondary.copy(alpha = 0.5f))
+                                        modifier =
+                                            Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    if (isTorActive) TorPurple else TextSecondary.copy(alpha = 0.5f),
+                                                ),
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
                                         text = "Tor",
                                         style = MaterialTheme.typography.labelSmall,
-                                        color = torColor
+                                        color = torColor,
                                     )
+                                }
                             }
-                        }
                         }
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 if (serverUrl != null) {
                     // Server info card
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(DarkCard)
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(DarkCard)
+                                .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         if (serverName != null) {
                             DialogDetailRow("Name:", serverName)
@@ -1363,27 +1569,28 @@ private fun ConnectionStatusDialog(
                     }
                 } else {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(DarkCard)
-                            .padding(16.dp),
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(DarkCard)
+                                .padding(16.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = "No server configured",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary
+                            color = TextSecondary,
                         )
                     }
                 }
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 // Buttons row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     if (serverUrl != null) {
                         val isDisconnectAction = isConnected || isConnecting
@@ -1393,14 +1600,15 @@ private fun ConnectionStatusDialog(
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(8.dp),
                             border = BorderStroke(1.dp, actionColor.copy(alpha = 0.4f)),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = actionColor,
-                                containerColor = actionColor.copy(alpha = 0.08f)
-                            )
+                            colors =
+                                ButtonDefaults.outlinedButtonColors(
+                                    contentColor = actionColor,
+                                    containerColor = actionColor.copy(alpha = 0.08f),
+                                ),
                         ) {
                             Text(
                                 text = if (isDisconnectAction) "Disconnect" else "Connect",
-                                style = MaterialTheme.typography.bodySmall
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
                     }
@@ -1409,13 +1617,14 @@ private fun ConnectionStatusDialog(
                         modifier = Modifier.weight(1f),
                         shape = RoundedCornerShape(8.dp),
                         border = BorderStroke(1.dp, BorderColor),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.onBackground
-                        )
+                        colors =
+                            ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.onBackground,
+                            ),
                     ) {
                         Text(
                             text = if (serverUrl != null) "Change Server" else "Configure Server",
-                            style = MaterialTheme.typography.bodySmall
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
@@ -1428,23 +1637,27 @@ private fun ConnectionStatusDialog(
  * Labeled detail row for the connection status dialog
  */
 @Composable
-private fun DialogDetailRow(label: String, value: String, monospace: Boolean = false) {
+private fun DialogDetailRow(
+    label: String,
+    value: String,
+    monospace: Boolean = false,
+) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
-            modifier = Modifier.width(72.dp)
+            modifier = Modifier.width(72.dp),
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onBackground,
             fontFamily = if (monospace) FontFamily.Monospace else null,
-            maxLines = 1
+            maxLines = 1,
         )
     }
 }

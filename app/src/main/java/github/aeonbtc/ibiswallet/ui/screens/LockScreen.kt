@@ -29,7 +29,7 @@ fun LockScreen(
     onBiometricRequest: () -> Unit,
     isBiometricAvailable: Boolean = false,
     storedPinLength: Int? = null,
-    isDuressWithBiometric: Boolean = false
+    isDuressWithBiometric: Boolean = false,
 ) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -44,7 +44,7 @@ fun LockScreen(
             onBiometricRequest()
         }
     }
-    
+
     // Handle delayed PIN validation so user can see the last dot
     LaunchedEffect(pendingValidation) {
         if (pendingValidation) {
@@ -52,11 +52,12 @@ fun LockScreen(
             val success = onPinEntered(pin)
             if (!success) {
                 attempts++
-                error = if (attempts >= 6) {
-                    "Too many attempts"
-                } else {
-                    "Incorrect PIN"
-                }
+                error =
+                    if (attempts >= 6) {
+                        "Too many attempts"
+                    } else {
+                        "Incorrect PIN"
+                    }
                 pin = ""
             }
             pendingValidation = false
@@ -64,49 +65,53 @@ fun LockScreen(
     }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(DarkBackground),
+        contentAlignment = Alignment.Center,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(modifier = Modifier.height(48.dp))
 
-
             Text(
-                text = when {
-                    isDuressWithBiometric -> "Enter PIN to unlock"
-                    securityMethod == SecureStorage.SecurityMethod.BIOMETRIC -> "Authenticate to continue"
-                    securityMethod == SecureStorage.SecurityMethod.PIN -> "Enter PIN to unlock"
-                    else -> ""
-                },
+                text =
+                    when {
+                        isDuressWithBiometric -> "Enter PIN to unlock"
+                        securityMethod == SecureStorage.SecurityMethod.BIOMETRIC -> "Authenticate to continue"
+                        securityMethod == SecureStorage.SecurityMethod.PIN -> "Enter PIN to unlock"
+                        else -> ""
+                    },
                 style = MaterialTheme.typography.bodyLarge,
-                color = TextSecondary
+                color = TextSecondary,
             )
 
             // PIN dots indicator - fixed height container to prevent layout jumps
             Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                contentAlignment = Alignment.Center
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 if (pin.isNotEmpty()) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         repeat(pin.length) {
                             Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(CircleShape)
-                                    .background(BitcoinOrange)
+                                modifier =
+                                    Modifier
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(BitcoinOrange),
                             )
                         }
                     }
@@ -116,14 +121,14 @@ fun LockScreen(
             // Error message - fixed height to prevent layout jumps
             Box(
                 modifier = Modifier.height(24.dp),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 if (error != null) {
                     Text(
                         text = error!!,
                         style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -135,16 +140,17 @@ fun LockScreen(
             if (securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && isBiometricAvailable && !isDuressWithBiometric) {
                 IconButton(
                     onClick = { onBiometricRequest() },
-                    modifier = Modifier
-                        .size(80.dp)
-                        .clip(CircleShape)
-                        .background(DarkCard)
+                    modifier =
+                        Modifier
+                            .size(80.dp)
+                            .clip(CircleShape)
+                            .background(DarkCard),
                 ) {
                     Icon(
                         imageVector = Icons.Default.Fingerprint,
                         contentDescription = "Use biometric",
                         tint = BitcoinOrange,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(48.dp),
                     )
                 }
 
@@ -154,7 +160,7 @@ fun LockScreen(
                     text = "Tap to use biometric\nor enter PIN below",
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
 
                 Spacer(modifier = Modifier.height(24.dp))
@@ -167,7 +173,7 @@ fun LockScreen(
                         val newPin = pin + number
                         pin = newPin
                         error = null
-                        
+
                         // Auto-submit when PIN reaches the stored length
                         if (storedPinLength != null && newPin.length == storedPinLength) {
                             pendingValidation = true
@@ -181,21 +187,30 @@ fun LockScreen(
                     }
                 },
                 // Show Unlock button only when stored PIN length is unknown (fallback)
-                onConfirmClick = if (storedPinLength == null && pin.length >= MIN_PIN_LENGTH && !pendingValidation) {
-                    { pendingValidation = true }
-                } else null,
-                onBiometricClick = if (isBiometricAvailable && securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && !isDuressWithBiometric) {
-                    { onBiometricRequest() }
-                } else null,
+                onConfirmClick =
+                    if (storedPinLength == null && pin.length >= MIN_PIN_LENGTH && !pendingValidation) {
+                        { pendingValidation = true }
+                    } else {
+                        null
+                    },
+                onBiometricClick =
+                    if (isBiometricAvailable && securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && !isDuressWithBiometric) {
+                        { onBiometricRequest() }
+                    } else {
+                        null
+                    },
                 // In duress+biometric mode, the "C" button clears input and triggers biometric
-                onClearWithBiometricClick = if (isDuressWithBiometric && isBiometricAvailable) {
-                    {
-                        pin = ""
-                        error = null
-                        onBiometricRequest()
-                    }
-                } else null,
-                showConfirmButton = storedPinLength == null
+                onClearWithBiometricClick =
+                    if (isDuressWithBiometric && isBiometricAvailable) {
+                        {
+                            pin = ""
+                            error = null
+                            onBiometricRequest()
+                        }
+                    } else {
+                        null
+                    },
+                showConfirmButton = storedPinLength == null,
             )
         }
     }
@@ -208,23 +223,24 @@ private fun NumberPad(
     onConfirmClick: (() -> Unit)? = null,
     onBiometricClick: (() -> Unit)? = null,
     onClearWithBiometricClick: (() -> Unit)? = null,
-    showConfirmButton: Boolean = true
+    showConfirmButton: Boolean = true,
 ) {
-    val numbers = listOf(
-        listOf("1", "2", "3"),
-        listOf("4", "5", "6"),
-        listOf("7", "8", "9"),
-        listOf("", "0", "")
-    )
+    val numbers =
+        listOf(
+            listOf("1", "2", "3"),
+            listOf("4", "5", "6"),
+            listOf("7", "8", "9"),
+            listOf("", "0", ""),
+        )
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         numbers.forEachIndexed { rowIndex, row ->
             Row(
                 horizontalArrangement = Arrangement.spacedBy(24.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 row.forEachIndexed { colIndex, number ->
                     when {
@@ -237,31 +253,33 @@ private fun NumberPad(
                                     onClick = onClearWithBiometricClick,
                                     modifier = Modifier.size(72.dp),
                                     shape = CircleShape,
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = DarkCard,
-                                        contentColor = TextSecondary
-                                    ),
-                                    contentPadding = PaddingValues(0.dp)
+                                    colors =
+                                        ButtonDefaults.buttonColors(
+                                            containerColor = DarkCard,
+                                            contentColor = TextSecondary,
+                                        ),
+                                    contentPadding = PaddingValues(0.dp),
                                 ) {
                                     Text(
                                         text = "C",
                                         style = MaterialTheme.typography.headlineMedium,
-                                        fontSize = 28.sp
+                                        fontSize = 28.sp,
                                     )
                                 }
                             } else if (onBiometricClick != null) {
                                 IconButton(
                                     onClick = onBiometricClick,
-                                    modifier = Modifier
-                                        .size(72.dp)
-                                        .clip(CircleShape)
-                                        .background(DarkCard)
+                                    modifier =
+                                        Modifier
+                                            .size(72.dp)
+                                            .clip(CircleShape)
+                                            .background(DarkCard),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Fingerprint,
                                         contentDescription = "Biometric",
                                         tint = BitcoinOrange,
-                                        modifier = Modifier.size(32.dp)
+                                        modifier = Modifier.size(32.dp),
                                     )
                                 }
                             } else {
@@ -272,16 +290,17 @@ private fun NumberPad(
                         rowIndex == 3 && colIndex == 2 -> {
                             IconButton(
                                 onClick = onBackspaceClick,
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .clip(CircleShape)
-                                    .background(DarkCard)
+                                modifier =
+                                    Modifier
+                                        .size(72.dp)
+                                        .clip(CircleShape)
+                                        .background(DarkCard),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Backspace,
                                     contentDescription = "Backspace",
                                     tint = TextSecondary,
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(28.dp),
                                 )
                             }
                         }
@@ -291,16 +310,17 @@ private fun NumberPad(
                                 onClick = { onNumberClick(number) },
                                 modifier = Modifier.size(72.dp),
                                 shape = CircleShape,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = DarkCard,
-                                    contentColor = MaterialTheme.colorScheme.onBackground
-                                ),
-                                contentPadding = PaddingValues(0.dp)
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = DarkCard,
+                                        contentColor = MaterialTheme.colorScheme.onBackground,
+                                    ),
+                                contentPadding = PaddingValues(0.dp),
                             ) {
                                 Text(
                                     text = number,
                                     style = MaterialTheme.typography.headlineMedium,
-                                    fontSize = 28.sp
+                                    fontSize = 28.sp,
                                 )
                             }
                         }
@@ -312,28 +332,30 @@ private fun NumberPad(
                 }
             }
         }
-        
+
         // Confirm button row below the number pad (hidden when auto-submit is active)
         if (showConfirmButton) {
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             Button(
                 onClick = { onConfirmClick?.invoke() },
                 enabled = onConfirmClick != null,
-                modifier = Modifier
-                    .width(240.dp)
-                    .height(48.dp),
+                modifier =
+                    Modifier
+                        .width(240.dp)
+                        .height(48.dp),
                 shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BitcoinOrange,
-                    contentColor = DarkBackground,
-                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
-                    disabledContentColor = DarkBackground.copy(alpha = 0.5f)
-                )
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        contentColor = DarkBackground,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        disabledContentColor = DarkBackground.copy(alpha = 0.5f),
+                    ),
             ) {
                 Text(
                     text = "Unlock",
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
         }

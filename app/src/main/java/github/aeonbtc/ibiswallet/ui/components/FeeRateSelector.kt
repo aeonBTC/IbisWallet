@@ -46,11 +46,15 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import java.util.Locale
 
+/** Safety cap for manual fee rate entry (sat/vB). Users can still type higher values
+ *  but a warning is shown and the value is clamped when applied. */
+const val MAX_FEE_RATE_SAT_VB = 10_000f
+
 enum class FeeRateOption {
     FASTEST,
     HALF_HOUR,
     HOUR,
-    CUSTOM
+    CUSTOM,
 }
 
 fun formatFeeRate(rate: Double): String {
@@ -76,7 +80,7 @@ fun FeeRateSection(
     formatAmount: ((ULong, Boolean) -> String)? = null,
     formatUsd: ((Double) -> String)? = null,
     formatVBytesDisplay: ((Double) -> String)? = null,
-    hiddenAmount: String? = null
+    hiddenAmount: String? = null,
 ) {
     var selectedOption by remember { mutableStateOf(FeeRateOption.HALF_HOUR) }
     var customFeeInput by remember { mutableStateOf<String?>(null) }
@@ -87,12 +91,13 @@ fun FeeRateSection(
 
     LaunchedEffect(estimates) {
         if (estimates != null && selectedOption != FeeRateOption.CUSTOM) {
-            val newRate = when (selectedOption) {
-                FeeRateOption.FASTEST -> estimates.fastestFee.toFloat()
-                FeeRateOption.HALF_HOUR -> estimates.halfHourFee.toFloat()
-                FeeRateOption.HOUR -> estimates.hourFee.toFloat()
-                FeeRateOption.CUSTOM -> currentFeeRate
-            }
+            val newRate =
+                when (selectedOption) {
+                    FeeRateOption.FASTEST -> estimates.fastestFee.toFloat()
+                    FeeRateOption.HALF_HOUR -> estimates.halfHourFee.toFloat()
+                    FeeRateOption.HOUR -> estimates.hourFee.toFloat()
+                    FeeRateOption.CUSTOM -> currentFeeRate
+                }
             onFeeRateChange(newRate.coerceAtLeast(minFeeFloat))
         }
     }
@@ -101,33 +106,36 @@ fun FeeRateSection(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = "Fee Rate",
                 style = MaterialTheme.typography.labelLarge,
-                color = TextSecondary
+                color = TextSecondary,
             )
 
             if (feeEstimationState !is FeeEstimationResult.Disabled) {
                 Box(
                     contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(DarkSurfaceVariant)
-                        .clickable(enabled = enabled && feeEstimationState !is FeeEstimationResult.Loading) {
-                            onRefreshFees()
-                        }
+                    modifier =
+                        Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurfaceVariant)
+                            .clickable(enabled = enabled && feeEstimationState !is FeeEstimationResult.Loading) {
+                                onRefreshFees()
+                            },
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "Refresh fees",
-                        tint = if (feeEstimationState is FeeEstimationResult.Loading)
-                            TextSecondary.copy(alpha = 0.5f)
-                        else
-                            BitcoinOrange,
-                        modifier = Modifier.size(24.dp)
+                        tint =
+                            if (feeEstimationState is FeeEstimationResult.Loading) {
+                                TextSecondary.copy(alpha = 0.5f)
+                            } else {
+                                BitcoinOrange
+                            },
+                        modifier = Modifier.size(24.dp),
                     )
                 }
             }
@@ -138,17 +146,24 @@ fun FeeRateSection(
             formatAmount != null && formatVBytesDisplay != null
         ) {
             val vBytesDisplay = formatVBytesDisplay(estimatedVBytes)
-            val usdFee = if (btcPrice != null && btcPrice > 0 && !privacyMode && formatUsd != null) {
-                " · ${formatUsd((estimatedFeeSats.toDouble() / 100_000_000.0) * btcPrice)}"
-            } else ""
-            Text(
-                text = if (privacyMode && hiddenAmount != null) {
-                    "Est. fee: $hiddenAmount ($vBytesDisplay vB)"
+            val usdFee =
+                if (btcPrice != null && btcPrice > 0 && !privacyMode && formatUsd != null) {
+                    " · ${formatUsd((estimatedFeeSats.toDouble() / 100_000_000.0) * btcPrice)}"
                 } else {
-                    "Est. fee: ${formatAmount(estimatedFeeSats.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}$usdFee ($vBytesDisplay vB)"
-                },
+                    ""
+                }
+            Text(
+                text =
+                    if (privacyMode && hiddenAmount != null) {
+                        "Est. fee: $hiddenAmount ($vBytesDisplay vB)"
+                    } else {
+                        "Est. fee: ${formatAmount(
+                            estimatedFeeSats.toULong(),
+                            useSats,
+                        )} ${if (useSats) "sats" else "BTC"}$usdFee ($vBytesDisplay vB)"
+                    },
                 style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
+                color = TextSecondary,
             )
         }
 
@@ -162,10 +177,12 @@ fun FeeRateSection(
                 value = customFeeInput ?: "",
                 onValueChange = { input ->
                     customFeeInput = input
-                    input.toFloatOrNull()?.let { onFeeRateChange(it.coerceAtLeast(minFeeFloat)) }
+                    input.toFloatOrNull()?.let {
+                        onFeeRateChange(it.coerceIn(minFeeFloat, MAX_FEE_RATE_SAT_VB))
+                    }
                 },
                 enabled = enabled,
-                minFeeRate = minFeeRate
+                minFeeRate = minFeeRate,
             )
         } else {
             val isLoading = feeEstimationState is FeeEstimationResult.Loading
@@ -179,22 +196,23 @@ fun FeeRateSection(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = WarningYellow.copy(alpha = 0.1f)
-                    )
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = WarningYellow.copy(alpha = 0.1f),
+                        ),
                 ) {
                     Column(
-                        modifier = Modifier.padding(12.dp)
+                        modifier = Modifier.padding(12.dp),
                     ) {
                         Text(
                             text = "Failed to load fee estimates",
                             style = MaterialTheme.typography.bodySmall,
-                            color = WarningYellow
+                            color = WarningYellow,
                         )
                         Text(
                             text = (feeEstimationState as FeeEstimationResult.Error).message,
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary.copy(alpha = 0.7f)
+                            color = TextSecondary.copy(alpha = 0.7f),
                         )
                     }
                 }
@@ -203,7 +221,7 @@ fun FeeRateSection(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FeeTargetButton(
                     label = fastLabel,
@@ -218,7 +236,7 @@ fun FeeRateSection(
                     },
                     enabled = enabled,
                     isLoading = isLoading,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
                 )
 
                 FeeTargetButton(
@@ -234,7 +252,7 @@ fun FeeRateSection(
                     },
                     enabled = enabled,
                     isLoading = isLoading,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
                 )
 
                 FeeTargetButton(
@@ -250,7 +268,7 @@ fun FeeRateSection(
                     },
                     enabled = enabled,
                     isLoading = isLoading,
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
                 )
             }
             Spacer(modifier = Modifier.height(6.dp))
@@ -263,34 +281,38 @@ fun FeeRateSection(
                     value = customFeeInput ?: "",
                     onValueChange = { input ->
                         customFeeInput = input
-                        input.toFloatOrNull()?.let { onFeeRateChange(it.coerceAtLeast(minFeeFloat)) }
+                        input.toFloatOrNull()?.let {
+                            onFeeRateChange(it.coerceIn(minFeeFloat, MAX_FEE_RATE_SAT_VB))
+                        }
                     },
                     enabled = enabled,
-                    minFeeRate = minFeeRate
+                    minFeeRate = minFeeRate,
                 )
             } else {
                 Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .clickable(enabled = enabled && !isLoading) {
-                            selectedOption = FeeRateOption.CUSTOM
-                            customFeeInput = formatFeeRate(currentFeeRate)
-                        },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable(enabled = enabled && !isLoading) {
+                                selectedOption = FeeRateOption.CUSTOM
+                                customFeeInput = formatFeeRate(currentFeeRate)
+                            },
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                    border = BorderStroke(1.dp, BorderColor)
+                    border = BorderStroke(1.dp, BorderColor),
                 ) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 12.dp),
-                        contentAlignment = Alignment.Center
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = "Custom",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary
+                            color = TextSecondary,
                         )
                     }
                 }
@@ -307,50 +329,52 @@ internal fun FeeTargetButton(
     onClick: () -> Unit,
     enabled: Boolean,
     isLoading: Boolean = false,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val backgroundColor = if (isSelected) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface
     val borderColor = if (isSelected) BitcoinOrange else BorderColor
     val textColor = if (isSelected) BitcoinOrange else TextSecondary
 
     Card(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled && !isLoading, onClick = onClick),
+        modifier =
+            modifier
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(enabled = enabled && !isLoading, onClick = onClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = backgroundColor),
-        border = BorderStroke(1.dp, borderColor)
+        border = BorderStroke(1.dp, borderColor),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp, horizontal = 8.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp, horizontal = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (isSelected) MaterialTheme.colorScheme.onBackground else TextSecondary
+                color = if (isSelected) MaterialTheme.colorScheme.onBackground else TextSecondary,
             )
             Spacer(modifier = Modifier.height(1.dp))
             if (isLoading) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(20.dp),
                     color = BitcoinOrange,
-                    strokeWidth = 2.dp
+                    strokeWidth = 2.dp,
                 )
             } else {
                 Text(
                     text = feeRate?.let { formatFeeRate(it) } ?: "—",
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
-                    color = textColor
+                    color = textColor,
                 )
             }
             Text(
                 text = "sat/vB",
                 style = MaterialTheme.typography.labelSmall,
-                color = TextSecondary
+                color = TextSecondary,
             )
         }
     }
@@ -361,8 +385,11 @@ private fun ManualFeeInput(
     value: String,
     onValueChange: (String) -> Unit,
     enabled: Boolean,
-    minFeeRate: Double = 1.0
+    minFeeRate: Double = 1.0,
 ) {
+    val parsedRate = value.toFloatOrNull()
+    val isOverCap = parsedRate != null && parsedRate > MAX_FEE_RATE_SAT_VB
+
     OutlinedTextField(
         value = value,
         onValueChange = { input ->
@@ -372,9 +399,10 @@ private fun ManualFeeInput(
             }
 
             val isValidFormat = input.matches(Regex("^\\d*\\.?\\d{0,2}$"))
-            val hasInvalidLeadingZeros = input.length > 1 &&
-                input.startsWith("0") &&
-                !input.startsWith("0.")
+            val hasInvalidLeadingZeros =
+                input.length > 1 &&
+                    input.startsWith("0") &&
+                    !input.startsWith("0.")
 
             if (isValidFormat && !hasInvalidLeadingZeros) {
                 onValueChange(input)
@@ -383,25 +411,35 @@ private fun ManualFeeInput(
         modifier = Modifier.fillMaxWidth(),
         label = { Text("Fee rate (sat/vB)") },
         placeholder = { Text(formatFeeRate(minFeeRate), color = TextSecondary.copy(alpha = 0.5f)) },
+        isError = isOverCap,
         supportingText = {
-            Text(
-                text = "Minimum: ${formatFeeRate(minFeeRate)} sat/vB",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary.copy(alpha = 0.7f)
-            )
+            if (isOverCap) {
+                Text(
+                    text = "Exceeds ${formatFeeRate(MAX_FEE_RATE_SAT_VB)} sat/vB safety cap — will be clamped",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WarningYellow,
+                )
+            } else {
+                Text(
+                    text = "Minimum: ${formatFeeRate(minFeeRate)} sat/vB",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary.copy(alpha = 0.7f),
+                )
+            }
         },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
         enabled = enabled,
         shape = RoundedCornerShape(12.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = BitcoinOrange,
-            unfocusedBorderColor = BorderColor,
-            focusedLabelColor = BitcoinOrange,
-            unfocusedLabelColor = TextSecondary,
-            focusedTextColor = MaterialTheme.colorScheme.onBackground,
-            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-            cursorColor = BitcoinOrange
-        )
+        colors =
+            OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = if (isOverCap) WarningYellow else BitcoinOrange,
+                unfocusedBorderColor = if (isOverCap) WarningYellow else BorderColor,
+                focusedLabelColor = if (isOverCap) WarningYellow else BitcoinOrange,
+                unfocusedLabelColor = TextSecondary,
+                focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                cursorColor = BitcoinOrange,
+            ),
     )
 }

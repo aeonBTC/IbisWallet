@@ -1,8 +1,8 @@
 package github.aeonbtc.ibiswallet.ui.components
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -41,75 +41,80 @@ fun SquareToggle(
     checkedColor: Color = BitcoinOrange,
     uncheckedColor: Color = DarkSurfaceVariant,
     uncheckedBorderColor: Color = BorderColor,
-    uncheckedThumbColor: Color = TextSecondary
+    uncheckedThumbColor: Color = TextSecondary,
 ) {
     val trackWidth = 44.dp
     val trackHeight = 24.dp
     val thumbSize = 18.dp
     val thumbPadding = 3.dp
-    
+
     // Animate thumb position
     val thumbOffset by animateDpAsState(
         targetValue = if (checked) trackWidth - thumbSize - thumbPadding * 2 else 0.dp,
         animationSpec = tween(durationMillis = 150),
-        label = "thumbOffset"
+        label = "thumbOffset",
     )
-    
+
     // Animate track color
     val trackColor by animateColorAsState(
-        targetValue = when {
-            !enabled -> uncheckedColor.copy(alpha = 0.5f)
-            checked -> checkedColor.copy(alpha = 0.3f)
-            else -> uncheckedColor
-        },
+        targetValue =
+            when {
+                !enabled -> uncheckedColor.copy(alpha = 0.5f)
+                checked -> checkedColor.copy(alpha = 0.3f)
+                else -> uncheckedColor
+            },
         animationSpec = tween(durationMillis = 150),
-        label = "trackColor"
+        label = "trackColor",
     )
-    
+
     // Animate border color
     val borderColor by animateColorAsState(
-        targetValue = when {
-            !enabled -> uncheckedBorderColor.copy(alpha = 0.3f)
-            checked -> checkedColor
-            else -> uncheckedBorderColor
-        },
+        targetValue =
+            when {
+                !enabled -> uncheckedBorderColor.copy(alpha = 0.3f)
+                checked -> checkedColor
+                else -> uncheckedBorderColor
+            },
         animationSpec = tween(durationMillis = 150),
-        label = "borderColor"
+        label = "borderColor",
     )
-    
+
     // Animate thumb color
     val thumbColor by animateColorAsState(
-        targetValue = when {
-            !enabled -> uncheckedThumbColor.copy(alpha = 0.5f)
-            checked -> checkedColor
-            else -> uncheckedThumbColor
-        },
+        targetValue =
+            when {
+                !enabled -> uncheckedThumbColor.copy(alpha = 0.5f)
+                checked -> checkedColor
+                else -> uncheckedThumbColor
+            },
         animationSpec = tween(durationMillis = 150),
-        label = "thumbColor"
+        label = "thumbColor",
     )
-    
+
     Box(
-        modifier = modifier
-            .width(trackWidth)
-            .height(trackHeight)
-            .clip(RoundedCornerShape(4.dp))
-            .background(trackColor)
-            .border(1.dp, borderColor, RoundedCornerShape(4.dp))
-            .clickable(
-                enabled = enabled,
-                indication = null,
-                interactionSource = remember { MutableInteractionSource() }
-            ) { onCheckedChange(!checked) },
-        contentAlignment = Alignment.CenterStart
+        modifier =
+            modifier
+                .width(trackWidth)
+                .height(trackHeight)
+                .clip(RoundedCornerShape(4.dp))
+                .background(trackColor)
+                .border(1.dp, borderColor, RoundedCornerShape(4.dp))
+                .clickable(
+                    enabled = enabled,
+                    indication = null,
+                    interactionSource = remember { MutableInteractionSource() },
+                ) { onCheckedChange(!checked) },
+        contentAlignment = Alignment.CenterStart,
     ) {
         // Thumb
         Box(
-            modifier = Modifier
-                .padding(thumbPadding)
-                .offset(x = thumbOffset)
-                .size(thumbSize)
-                .clip(RoundedCornerShape(3.dp))
-                .background(thumbColor)
+            modifier =
+                Modifier
+                    .padding(thumbPadding)
+                    .offset(x = thumbOffset)
+                    .size(thumbSize)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(thumbColor),
         )
     }
 }
@@ -123,13 +128,13 @@ fun SquareToggleGreen(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
 ) {
     SquareToggle(
         checked = checked,
         onCheckedChange = onCheckedChange,
         modifier = modifier,
         enabled = enabled,
-        checkedColor = SuccessGreen
+        checkedColor = SuccessGreen,
     )
 }

@@ -6,6 +6,8 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -27,9 +29,12 @@ import github.aeonbtc.ibiswallet.ui.screens.LockScreen
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
 import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
 
 class MainActivity : FragmentActivity() {
-    
     private lateinit var secureStorage: SecureStorage
     private lateinit var walletViewModel: WalletViewModel
     private var isUnlocked by mutableStateOf(false)
@@ -38,7 +43,7 @@ class MainActivity : FragmentActivity() {
     private var wasInBackground = false
     private val biometricAutoCancelHandler = Handler(Looper.getMainLooper())
     private var isCloakActive = false
-    
+
     /**
      * Apply any pending launcher icon alias swap. Called early in onCreate
      * before any UI to avoid the Android 10+ process-kill race.
@@ -50,28 +55,30 @@ class MainActivity : FragmentActivity() {
             secureStorage.clearPendingIconAlias()
             return
         }
-        
+
         val pm = packageManager
         val pkg = packageName
         val allAliases = listOf(SecureStorage.ALIAS_DEFAULT, SecureStorage.ALIAS_CALCULATOR)
-        
+
         for (alias in allAliases) {
-            val state = if (alias == pending)
-                PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-            else
-                PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-            
+            val state =
+                if (alias == pending) {
+                    PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+                } else {
+                    PackageManager.COMPONENT_ENABLED_STATE_DISABLED
+                }
+
             pm.setComponentEnabledSetting(
                 ComponentName(pkg, "$pkg$alias"),
                 state,
-                PackageManager.DONT_KILL_APP
+                PackageManager.DONT_KILL_APP,
             )
         }
-        
+
         secureStorage.setCurrentIconAlias(pending)
         secureStorage.clearPendingIconAlias()
     }
-    
+
     /**
      * Disguise the app in the recent apps / task switcher when cloak mode is active.
      */
@@ -80,54 +87,54 @@ class MainActivity : FragmentActivity() {
         if (isCloakActive) {
             setTaskDescription(
                 ActivityManager.TaskDescription(
-                    getString(R.string.cloak_calculator_label)
-                )
+                    getString(R.string.cloak_calculator_label),
+                ),
             )
         }
     }
-    
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        
+
         // Prevent tapjacking/overlay attacks
         window.decorView.filterTouchesWhenObscured = true
-        
+
         secureStorage = SecureStorage(this)
         walletViewModel = ViewModelProvider(this)[WalletViewModel::class.java]
-        
+
         // Apply pending icon swap before any UI
         applyPendingIconSwap()
-        
+
         // Check cloak mode
         isCloakActive = secureStorage.isCloakModeEnabled() && secureStorage.getCloakCode() != null
         updateTaskDescription()
-        
+
         // Apply screenshot prevention if enabled
         if (secureStorage.getDisableScreenshots()) {
             window.setFlags(
                 WindowManager.LayoutParams.FLAG_SECURE,
-                WindowManager.LayoutParams.FLAG_SECURE
+                WindowManager.LayoutParams.FLAG_SECURE,
             )
         }
-        
+
         // Check if security is enabled - always locked on fresh start
         // When cloak mode is active, stay locked so the calculator screen shows first
         val securityMethod = secureStorage.getSecurityMethod()
         isUnlocked = securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive
-        
+
         // Setup biometric prompt
         setupBiometricPrompt()
-        
+
         setContent {
             IbisWalletTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = DarkBackground
+                    color = DarkBackground,
                 ) {
                     if (isUnlocked) {
                         IbisWalletApp(
-                            onLockApp = { isUnlocked = false }
+                            onLockApp = { isUnlocked = false },
                         )
                     } else if (isCloakActive && !cloakBypassed) {
                         // Show calculator disguise — entering the secret code bypasses it
@@ -141,34 +148,37 @@ class MainActivity : FragmentActivity() {
                                     isUnlocked = true
                                 }
                                 // Otherwise fall through to LockScreen on next recompose
-                            }
+                            },
                         )
                     } else {
                         val biometricManager = BiometricManager.from(this)
-                        val isBiometricAvailable = biometricManager.canAuthenticate(
-                            BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                            BiometricManager.Authenticators.BIOMETRIC_WEAK
-                        ) == BiometricManager.BIOMETRIC_SUCCESS
-                        
+                        val isBiometricAvailable =
+                            biometricManager.canAuthenticate(
+                                BiometricManager.Authenticators.BIOMETRIC_STRONG,
+                            ) == BiometricManager.BIOMETRIC_SUCCESS
+
                         val secMethod = secureStorage.getSecurityMethod()
                         val isDuressEnabled = secureStorage.isDuressEnabled()
-                        val isDuressWithBiometric = isDuressEnabled &&
-                            secMethod == SecureStorage.SecurityMethod.BIOMETRIC
-                        
+                        val isDuressWithBiometric =
+                            isDuressEnabled &&
+                                secMethod == SecureStorage.SecurityMethod.BIOMETRIC
+
                         LockScreen(
                             securityMethod = secMethod,
                             onPinEntered = { pin ->
                                 // For PIN mode: check real PIN first, then duress PIN
                                 // For BIOMETRIC mode with duress: only duress PIN works
                                 //   (real wallet accessed via biometric through the C button)
-                                val isRealPin = secMethod == SecureStorage.SecurityMethod.PIN &&
-                                    secureStorage.verifyPin(pin)
+                                val isRealPin =
+                                    secMethod == SecureStorage.SecurityMethod.PIN &&
+                                        secureStorage.verifyPin(pin)
                                 // When verifyPin already ran and failed, it incremented
                                 // the shared counter — don't double-count in verifyDuressPin
                                 val realPinWasTried = secMethod == SecureStorage.SecurityMethod.PIN
-                                val isDuressPin = !isRealPin && isDuressEnabled &&
-                                    secureStorage.verifyDuressPin(pin, incrementFailedAttempts = !realPinWasTried)
-                                
+                                val isDuressPin =
+                                    !isRealPin && isDuressEnabled &&
+                                        secureStorage.verifyDuressPin(pin, incrementFailedAttempts = !realPinWasTried)
+
                                 when {
                                     isRealPin -> {
                                         walletViewModel.exitDuressMode()
@@ -197,22 +207,23 @@ class MainActivity : FragmentActivity() {
                                 showBiometricPrompt(isDuressWithBiometric)
                             },
                             isBiometricAvailable = isBiometricAvailable,
-                            storedPinLength = if (isDuressWithBiometric) {
-                                secureStorage.getDuressPinLength()
-                            } else {
-                                secureStorage.getStoredPinLength()
-                            },
-                            isDuressWithBiometric = isDuressWithBiometric
+                            storedPinLength =
+                                if (isDuressWithBiometric) {
+                                    secureStorage.getDuressPinLength()
+                                } else {
+                                    secureStorage.getStoredPinLength()
+                                },
+                            isDuressWithBiometric = isDuressWithBiometric,
                         )
                     }
                 }
             }
         }
     }
-    
+
     override fun onResume() {
         super.onResume()
-        
+
         val securityMethod = secureStorage.getSecurityMethod()
         if (securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive) {
             isUnlocked = true
@@ -222,12 +233,12 @@ class MainActivity : FragmentActivity() {
         if (securityMethod == SecureStorage.SecurityMethod.NONE) {
             return
         }
-        
+
         // Check if we need to lock based on timing settings
         if (wasInBackground) {
             wasInBackground = false
             val lockTiming = secureStorage.getLockTiming()
-            
+
             when (lockTiming) {
                 SecureStorage.LockTiming.DISABLED -> {
                     // Never auto-lock after initial unlock
@@ -246,17 +257,17 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
-        
+
         // Trigger biometric if locked and biometric is enabled
         // Skip auto-trigger in duress+biometric mode (the C button is the hidden trigger)
         if (!isUnlocked && securityMethod == SecureStorage.SecurityMethod.BIOMETRIC && !secureStorage.isDuressEnabled()) {
             showBiometricPrompt()
         }
     }
-    
+
     override fun onStop() {
         super.onStop()
-        
+
         val securityMethod = secureStorage.getSecurityMethod()
         if (securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive) {
             return
@@ -267,10 +278,10 @@ class MainActivity : FragmentActivity() {
             cloakBypassed = false
             return
         }
-        
+
         wasInBackground = true
         val lockTiming = secureStorage.getLockTiming()
-        
+
         when (lockTiming) {
             SecureStorage.LockTiming.DISABLED -> {
                 // Never lock when going to background
@@ -286,54 +297,67 @@ class MainActivity : FragmentActivity() {
             }
         }
     }
-    
+
     private fun setupBiometricPrompt() {
         val executor = ContextCompat.getMainExecutor(this)
-        
-        biometricPrompt = BiometricPrompt(this, executor,
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    super.onAuthenticationSucceeded(result)
-                    biometricAutoCancelHandler.removeCallbacksAndMessages(null)
-                    // Biometric always opens the real wallet
-                    walletViewModel.exitDuressMode()
-                    isUnlocked = true
-                }
-                
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    super.onAuthenticationError(errorCode, errString)
-                    biometricAutoCancelHandler.removeCallbacksAndMessages(null)
-                    // User can still use PIN as fallback
-                }
-                
-                override fun onAuthenticationFailed() {
-                    super.onAuthenticationFailed()
-                    // Increment shared failed attempt counter (same as PIN failures)
-                    secureStorage.incrementFailedAttempts()
-                    if (secureStorage.shouldAutoWipe()) {
-                        walletViewModel.wipeAllData {
-                            // Kill the process to simulate a crash — no restart,
-                            // no fresh state visible. The app simply vanishes.
-                            android.os.Process.killProcess(android.os.Process.myPid())
-                        }
+
+        biometricPrompt =
+            BiometricPrompt(
+                this, executor,
+                object : BiometricPrompt.AuthenticationCallback() {
+                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                        super.onAuthenticationSucceeded(result)
+                        biometricAutoCancelHandler.removeCallbacksAndMessages(null)
+                        // Biometric always opens the real wallet
+                        walletViewModel.exitDuressMode()
+                        isUnlocked = true
                     }
-                }
-            })
-    }
-    
-    private fun showBiometricPrompt(autoCancelAfter2s: Boolean = false) {
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle(if (isCloakActive) "Authenticate" else "Unlock Ibis Wallet")
-            .setSubtitle(if (isCloakActive) "Verify your identity" else "Authenticate to access your wallet")
-            .setNegativeButtonText("Use PIN")
-            .setAllowedAuthenticators(
-                BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                BiometricManager.Authenticators.BIOMETRIC_WEAK
+
+                    override fun onAuthenticationError(
+                        errorCode: Int,
+                        errString: CharSequence,
+                    ) {
+                        super.onAuthenticationError(errorCode, errString)
+                        biometricAutoCancelHandler.removeCallbacksAndMessages(null)
+                        // User can still use PIN as fallback
+                    }
+
+                    override fun onAuthenticationFailed() {
+                        super.onAuthenticationFailed()
+                        // Biometric failures do not count toward auto-wipe — only
+                        // PIN failures do. The OS already rate-limits biometric
+                        // attempts and falls back to PIN entry.
+                    }
+                },
             )
-            .build()
-        
-        biometricPrompt?.authenticate(promptInfo)
-        
+    }
+
+    private fun showBiometricPrompt(autoCancelAfter2s: Boolean = false) {
+        val promptInfo =
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle(if (isCloakActive) "Authenticate" else "Unlock Ibis Wallet")
+                .setSubtitle(if (isCloakActive) "Verify your identity" else "Authenticate to access your wallet")
+                .setNegativeButtonText("Use PIN")
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                .build()
+
+        // Tie authentication to a KeyStore cryptographic operation so it cannot
+        // be bypassed by injecting a success callback on rooted/instrumented devices.
+        val cryptoObject =
+            try {
+                val cipher = getBiometricCipher()
+                BiometricPrompt.CryptoObject(cipher)
+            } catch (_: Exception) {
+                // KeyStore unavailable — fall back to prompt-only auth
+                null
+            }
+
+        if (cryptoObject != null) {
+            biometricPrompt?.authenticate(promptInfo, cryptoObject)
+        } else {
+            biometricPrompt?.authenticate(promptInfo)
+        }
+
         // In duress+biometric mode, auto-cancel the biometric prompt after 2 seconds
         // so an attacker who accidentally hits C sees it disappear quickly
         if (autoCancelAfter2s) {
@@ -341,6 +365,42 @@ class MainActivity : FragmentActivity() {
             biometricAutoCancelHandler.postDelayed({
                 biometricPrompt?.cancelAuthentication()
             }, 2000L)
+        }
+    }
+
+    /**
+     * Get or create a KeyStore-backed AES key that requires biometric auth,
+     * and return an initialized Cipher for CryptoObject binding.
+     */
+    private fun getBiometricCipher(): Cipher {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val keyAlias = "ibis_biometric_key"
+
+        if (!keyStore.containsAlias(keyAlias)) {
+            val keyGen =
+                KeyGenerator.getInstance(
+                    KeyProperties.KEY_ALGORITHM_AES,
+                    "AndroidKeyStore",
+                )
+            keyGen.init(
+                KeyGenParameterSpec.Builder(
+                    keyAlias,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_CBC)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_PKCS7)
+                    .setUserAuthenticationRequired(true)
+                    .setInvalidatedByBiometricEnrollment(true)
+                    .build(),
+            )
+            keyGen.generateKey()
+        }
+
+        val secretKey = keyStore.getKey(keyAlias, null) as SecretKey
+        return Cipher.getInstance(
+            "${KeyProperties.KEY_ALGORITHM_AES}/${KeyProperties.BLOCK_MODE_CBC}/${KeyProperties.ENCRYPTION_PADDING_PKCS7}",
+        ).apply {
+            init(Cipher.ENCRYPT_MODE, secretKey)
         }
     }
 }

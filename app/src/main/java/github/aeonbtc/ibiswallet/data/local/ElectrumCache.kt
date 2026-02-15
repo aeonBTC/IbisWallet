@@ -5,6 +5,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
+import androidx.core.database.sqlite.transaction
 import github.aeonbtc.ibiswallet.BuildConfig
 
 /**
@@ -17,7 +18,7 @@ import github.aeonbtc.ibiswallet.BuildConfig
  *   never changes. Eliminates BDK's cold tx_cache penalty on startup.
  *
  * - **Verbose transaction JSON** (`tx_verbose`): keyed by txid. Contains
- *   size/vsize/weight fields used by [fetchTransactionVsizeFromElectrum].
+ *   size/vsize/weight fields used by fetchTransactionVsizeFromElectrum.
  *   Only permanently cached for confirmed txs; unconfirmed entries are pruned
  *   after 1 hour.
  *
@@ -31,9 +32,8 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
     context,
     DATABASE_NAME,
     null,
-    DATABASE_VERSION
+    DATABASE_VERSION,
 ) {
-
     companion object {
         private const val TAG = "ElectrumCache"
         private const val DATABASE_NAME = "electrum_cache.db"
@@ -74,7 +74,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                 $COL_HEX TEXT NOT NULL,
                 $COL_CACHED_AT INTEGER NOT NULL
             )
-            """.trimIndent()
+            """.trimIndent(),
         )
 
         db.execSQL(
@@ -85,7 +85,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                 $COL_CONFIRMED INTEGER NOT NULL DEFAULT 0,
                 $COL_CACHED_AT INTEGER NOT NULL
             )
-            """.trimIndent()
+            """.trimIndent(),
         )
 
         db.execSQL(
@@ -95,7 +95,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                 $COL_HEADER TEXT NOT NULL,
                 $COL_CACHED_AT INTEGER NOT NULL
             )
-            """.trimIndent()
+            """.trimIndent(),
         )
 
         db.execSQL(
@@ -105,11 +105,15 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                 $COL_STATUS TEXT,
                 $COL_CACHED_AT INTEGER NOT NULL
             )
-            """.trimIndent()
+            """.trimIndent(),
         )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+    override fun onUpgrade(
+        db: SQLiteDatabase,
+        oldVersion: Int,
+        newVersion: Int,
+    ) {
         if (oldVersion < 2) {
             db.execSQL(
                 """
@@ -118,7 +122,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                     $COL_STATUS TEXT,
                     $COL_CACHED_AT INTEGER NOT NULL
                 )
-                """.trimIndent()
+                """.trimIndent(),
             )
         }
     }
@@ -136,7 +140,9 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                 arrayOf(COL_HEX),
                 "$COL_TXID = ?",
                 arrayOf(txid),
-                null, null, null
+                null,
+                null,
+                null,
             ).use { cursor ->
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             }
@@ -149,15 +155,22 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
     /**
      * Cache raw transaction hex. Uses INSERT OR REPLACE for idempotency.
      */
-    fun putRawTx(txid: String, hex: String) {
+    fun putRawTx(
+        txid: String,
+        hex: String,
+    ) {
         try {
-            val values = ContentValues().apply {
-                put(COL_TXID, txid)
-                put(COL_HEX, hex)
-                put(COL_CACHED_AT, System.currentTimeMillis())
-            }
+            val values =
+                ContentValues().apply {
+                    put(COL_TXID, txid)
+                    put(COL_HEX, hex)
+                    put(COL_CACHED_AT, System.currentTimeMillis())
+                }
             writableDatabase.insertWithOnConflict(
-                TABLE_TX_RAW, null, values, SQLiteDatabase.CONFLICT_REPLACE
+                TABLE_TX_RAW,
+                null,
+                values,
+                SQLiteDatabase.CONFLICT_REPLACE,
             )
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to cache tx $txid: ${e.message}")
@@ -177,7 +190,9 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                 arrayOf(COL_JSON),
                 "$COL_TXID = ?",
                 arrayOf(txid),
-                null, null, null
+                null,
+                null,
+                null,
             ).use { cursor ->
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             }
@@ -191,16 +206,24 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
      * Cache verbose transaction JSON.
      * @param confirmed whether the tx is confirmed (permanent cache) or unconfirmed (TTL-based)
      */
-    fun putVerboseTx(txid: String, json: String, confirmed: Boolean) {
+    fun putVerboseTx(
+        txid: String,
+        json: String,
+        confirmed: Boolean,
+    ) {
         try {
-            val values = ContentValues().apply {
-                put(COL_TXID, txid)
-                put(COL_JSON, json)
-                put(COL_CONFIRMED, if (confirmed) 1 else 0)
-                put(COL_CACHED_AT, System.currentTimeMillis())
-            }
+            val values =
+                ContentValues().apply {
+                    put(COL_TXID, txid)
+                    put(COL_JSON, json)
+                    put(COL_CONFIRMED, if (confirmed) 1 else 0)
+                    put(COL_CACHED_AT, System.currentTimeMillis())
+                }
             writableDatabase.insertWithOnConflict(
-                TABLE_TX_VERBOSE, null, values, SQLiteDatabase.CONFLICT_REPLACE
+                TABLE_TX_VERBOSE,
+                null,
+                values,
+                SQLiteDatabase.CONFLICT_REPLACE,
             )
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to cache verbose tx $txid: ${e.message}")
@@ -218,24 +241,23 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
     fun saveScriptHashStatuses(statuses: Map<String, String?>) {
         if (statuses.isEmpty()) return
         try {
-            val db = writableDatabase
-            db.beginTransaction()
-            try {
-                db.delete(TABLE_SCRIPT_HASH_STATUSES, null, null)
+            writableDatabase.transaction {
+                delete(TABLE_SCRIPT_HASH_STATUSES, null, null)
                 val now = System.currentTimeMillis()
                 for ((scriptHash, status) in statuses) {
-                    val values = ContentValues().apply {
-                        put(COL_SCRIPT_HASH, scriptHash)
-                        put(COL_STATUS, status)
-                        put(COL_CACHED_AT, now)
-                    }
-                    db.insertWithOnConflict(
-                        TABLE_SCRIPT_HASH_STATUSES, null, values, SQLiteDatabase.CONFLICT_REPLACE
+                    val values =
+                        ContentValues().apply {
+                            put(COL_SCRIPT_HASH, scriptHash)
+                            put(COL_STATUS, status)
+                            put(COL_CACHED_AT, now)
+                        }
+                    insertWithOnConflict(
+                        TABLE_SCRIPT_HASH_STATUSES,
+                        null,
+                        values,
+                        SQLiteDatabase.CONFLICT_REPLACE,
                     )
                 }
-                db.setTransactionSuccessful()
-            } finally {
-                db.endTransaction()
             }
             if (BuildConfig.DEBUG) Log.d(TAG, "Persisted ${statuses.size} script hash statuses")
         } catch (e: Exception) {
@@ -253,7 +275,11 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             readableDatabase.query(
                 TABLE_SCRIPT_HASH_STATUSES,
                 arrayOf(COL_SCRIPT_HASH, COL_STATUS),
-                null, null, null, null, null
+                null,
+                null,
+                null,
+                null,
+                null,
             ).use { cursor ->
                 while (cursor.moveToNext()) {
                     val scriptHash = cursor.getString(0)
@@ -289,11 +315,12 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
     fun pruneStaleUnconfirmed() {
         try {
             val cutoff = System.currentTimeMillis() - UNCONFIRMED_TTL_MS
-            val deleted = writableDatabase.delete(
-                TABLE_TX_VERBOSE,
-                "$COL_CONFIRMED = 0 AND $COL_CACHED_AT < ?",
-                arrayOf(cutoff.toString())
-            )
+            val deleted =
+                writableDatabase.delete(
+                    TABLE_TX_VERBOSE,
+                    "$COL_CONFIRMED = 0 AND $COL_CACHED_AT < ?",
+                    arrayOf(cutoff.toString()),
+                )
             if (deleted > 0 && BuildConfig.DEBUG) {
                 Log.d(TAG, "Pruned $deleted stale unconfirmed verbose tx entries")
             }

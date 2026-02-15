@@ -5,9 +5,11 @@ import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.model.FeeEstimates
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
@@ -16,7 +18,6 @@ import java.util.concurrent.TimeUnit
  * Service for fetching fee rate estimates from mempool.space API
  */
 class FeeEstimationService {
-    
     companion object {
         private const val TAG = "FeeEstimationService"
         private const val PRECISE_ENDPOINT = "/api/v1/fees/precise"
@@ -26,10 +27,10 @@ class FeeEstimationService {
         private const val TIMEOUT_SECONDS = 30L
         private const val TOR_TIMEOUT_SECONDS = 30L
     }
-    
+
     /**
      * Fetch fee estimates from the specified mempool API
-     * 
+     *
      * @param baseUrl The base URL of the mempool server (e.g., "https://mempool.space")
      * @param useTorProxy Whether to route requests through Tor SOCKS proxy
      * @param usePrecise Whether to use the precise endpoint (for sub-sat fees). If true, tries
@@ -39,102 +40,113 @@ class FeeEstimationService {
     suspend fun fetchFeeEstimates(
         baseUrl: String,
         useTorProxy: Boolean,
-        usePrecise: Boolean = true
-    ): Result<FeeEstimates> = withContext(Dispatchers.IO) {
-        try {
-            val client = buildClient(useTorProxy)
-            
-            if (usePrecise) {
-                // Try precise endpoint first for sub-sat precision
-                val preciseResult = tryFetchFromEndpoint(client, baseUrl, PRECISE_ENDPOINT)
-                if (preciseResult.isSuccess) {
-                    return@withContext preciseResult
+        usePrecise: Boolean = true,
+    ): Result<FeeEstimates> =
+        withContext(Dispatchers.IO) {
+            try {
+                val client = buildClient(useTorProxy)
+
+                if (usePrecise) {
+                    // Try precise endpoint first for sub-sat precision
+                    val preciseResult = tryFetchFromEndpoint(client, baseUrl, PRECISE_ENDPOINT)
+                    if (preciseResult.isSuccess) {
+                        return@withContext preciseResult
+                    }
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Precise endpoint failed, trying recommended endpoint")
                 }
-                if (BuildConfig.DEBUG) Log.d(TAG, "Precise endpoint failed, trying recommended endpoint")
+
+                // Use recommended endpoint (either as fallback or primary)
+                val recommendedResult = tryFetchFromEndpoint(client, baseUrl, RECOMMENDED_ENDPOINT)
+                if (recommendedResult.isSuccess) {
+                    return@withContext recommendedResult
+                }
+
+                // Failed
+                val error = recommendedResult.exceptionOrNull()?.message ?: "Unknown error"
+                Result.failure(Exception("Failed to fetch fee estimates: $error"))
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching fee estimates", e)
+                Result.failure(e)
             }
-            
-            // Use recommended endpoint (either as fallback or primary)
-            val recommendedResult = tryFetchFromEndpoint(client, baseUrl, RECOMMENDED_ENDPOINT)
-            if (recommendedResult.isSuccess) {
-                return@withContext recommendedResult
-            }
-            
-            // Failed
-            val error = recommendedResult.exceptionOrNull()?.message ?: "Unknown error"
-            Result.failure(Exception("Failed to fetch fee estimates: $error"))
-            
-        } catch (e: Exception) {
-            if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching fee estimates", e)
-            Result.failure(e)
         }
-    }
-    
+
     private fun buildClient(useTorProxy: Boolean): OkHttpClient {
-        val builder = OkHttpClient.Builder()
-            .connectTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .writeTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
-        
+        val builder =
+            OkHttpClient.Builder()
+                .connectTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .readTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                .writeTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
+
         if (useTorProxy) {
-            val proxy = Proxy(
-                Proxy.Type.SOCKS,
-                InetSocketAddress(TOR_PROXY_HOST, TOR_PROXY_PORT)
-            )
+            val proxy =
+                Proxy(
+                    Proxy.Type.SOCKS,
+                    InetSocketAddress(TOR_PROXY_HOST, TOR_PROXY_PORT),
+                )
             builder.proxy(proxy)
+            // Prevent local DNS resolution — send hostname through SOCKS5 proxy
+            // so Tor resolves it at the exit node, avoiding DNS leaks.
+            builder.dns(
+                object : Dns {
+                    override fun lookup(hostname: String): List<InetAddress> {
+                        return listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
+                    }
+                },
+            )
         }
-        
+
         return builder.build()
     }
-    
+
     private fun tryFetchFromEndpoint(
         client: OkHttpClient,
         baseUrl: String,
-        endpoint: String
+        endpoint: String,
     ): Result<FeeEstimates> {
         return try {
             val url = "${baseUrl.trimEnd('/')}$endpoint"
             if (BuildConfig.DEBUG) Log.d(TAG, "Fetching fees from: $url")
-            
-            val request = Request.Builder()
-                .url(url)
-                .header("Accept", "application/json")
-                .build()
-            
+
+            val request =
+                Request.Builder()
+                    .url(url)
+                    .header("Accept", "application/json")
+                    .build()
+
             val response = client.newCall(request).execute()
-            
+
             if (!response.isSuccessful) {
                 return Result.failure(Exception("HTTP ${response.code}: ${response.message}"))
             }
-            
+
             val body = response.body?.string()
             if (body.isNullOrEmpty()) {
                 return Result.failure(Exception("Empty response body"))
             }
-            
+
             val estimates = parseResponse(body)
             Result.success(estimates)
-            
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching from $endpoint", e)
             Result.failure(e)
         }
     }
-    
+
     private fun parseResponse(jsonString: String): FeeEstimates {
         val json = JSONObject(jsonString)
-        
+
         // Both endpoints return the same field names
         // Precise returns decimals, recommended returns integers
         val fastestFee = json.optDouble("fastestFee", 1.0)
         val halfHourFee = json.optDouble("halfHourFee", 1.0)
         val hourFee = json.optDouble("hourFee", 1.0)
         val minimumFee = json.optDouble("minimumFee", 1.0)
-        
+
         return FeeEstimates(
             fastestFee = fastestFee,
             halfHourFee = halfHourFee,
             hourFee = hourFee,
-            minimumFee = minimumFee
+            minimumFee = minimumFee,
         )
     }
 }

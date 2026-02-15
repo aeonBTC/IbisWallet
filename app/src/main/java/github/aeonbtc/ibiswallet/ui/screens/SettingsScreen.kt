@@ -5,14 +5,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CurrencyBitcoin
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Speed
@@ -26,12 +27,11 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.shape.CircleShape
-import kotlinx.coroutines.delay
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.tor.TorStatus
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.*
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -51,33 +51,35 @@ fun SettingsScreen(
     customMempoolUrl: String = "",
     onCustomMempoolUrlSave: (String) -> Unit = {},
     torStatus: TorStatus = TorStatus.DISCONNECTED,
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Header
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back"
+                    contentDescription = "Back",
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "Settings",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
             )
         }
 
@@ -87,56 +89,61 @@ fun SettingsScreen(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkCard)
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
             ) {
                 Text(
                     text = "Display",
                     style = MaterialTheme.typography.titleMedium,
-                    color = BitcoinOrange
+                    color = BitcoinOrange,
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            onDenominationChange(
-                                if (!isSats) SecureStorage.DENOMINATION_SATS
-                                else SecureStorage.DENOMINATION_BTC
-                            )
-                        },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                onDenominationChange(
+                                    if (!isSats) {
+                                        SecureStorage.DENOMINATION_SATS
+                                    } else {
+                                        SecureStorage.DENOMINATION_BTC
+                                    },
+                                )
+                            },
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
                     ) {
                         Icon(
                             imageVector = Icons.Default.CurrencyBitcoin,
                             contentDescription = null,
                             tint = BitcoinOrange,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(24.dp),
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
                                 text = if (isSats) "Sats" else "BTC",
                                 style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                             Text(
                                 text = if (isSats) "Amounts shown in satoshis" else "Amounts shown in bitcoin",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     }
@@ -144,14 +151,17 @@ fun SettingsScreen(
                         checked = isSats,
                         onCheckedChange = { useSats ->
                             onDenominationChange(
-                                if (useSats) SecureStorage.DENOMINATION_SATS
-                                else SecureStorage.DENOMINATION_BTC
+                                if (useSats) {
+                                    SecureStorage.DENOMINATION_SATS
+                                } else {
+                                    SecureStorage.DENOMINATION_BTC
+                                },
                             )
                         },
                         checkedColor = TextSecondary,
                         uncheckedColor = TextSecondary.copy(alpha = 0.3f),
                         uncheckedBorderColor = TextSecondary,
-                        uncheckedThumbColor = TextSecondary
+                        uncheckedThumbColor = TextSecondary,
                     )
                 }
             }
@@ -163,56 +173,58 @@ fun SettingsScreen(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkCard)
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
             ) {
                 Text(
                     text = "Transactions",
                     style = MaterialTheme.typography.titleMedium,
-                    color = BitcoinOrange
+                    color = BitcoinOrange,
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onSpendUnconfirmedChange(!spendUnconfirmed) },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSpendUnconfirmedChange(!spendUnconfirmed) },
                     horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
                     ) {
                         Icon(
                             imageVector = Icons.Default.SwapHoriz,
                             contentDescription = null,
                             tint = BitcoinOrange,
-                            modifier = Modifier.size(24.dp)
+                            modifier = Modifier.size(24.dp),
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
                                 text = "Spend Unconfirmed",
                                 style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                             Text(
                                 text = "Allow spending unconfirmed UTXOs",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     }
                     SquareToggle(
                         checked = spendUnconfirmed,
-                        onCheckedChange = onSpendUnconfirmedChange
+                        onCheckedChange = onSpendUnconfirmedChange,
                     )
                 }
             }
@@ -224,17 +236,18 @@ fun SettingsScreen(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkCard)
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
             ) {
                 Text(
                     text = "External Services",
                     style = MaterialTheme.typography.titleMedium,
-                    color = BitcoinOrange
+                    color = BitcoinOrange,
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -245,13 +258,13 @@ fun SettingsScreen(
                         imageVector = Icons.Default.Speed,
                         contentDescription = null,
                         tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Fee Rate Source",
                         style = MaterialTheme.typography.labelLarge,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
 
@@ -259,7 +272,7 @@ fun SettingsScreen(
 
                 FeeSourceDropdown(
                     currentSource = currentFeeSource,
-                    onSourceSelected = onFeeSourceChange
+                    onSourceSelected = onFeeSourceChange,
                 )
 
                 // Custom fee server URL field (shown only when Custom is selected)
@@ -271,7 +284,7 @@ fun SettingsScreen(
                     }
                     var feeUrlError by remember { mutableStateOf<String?>(null) }
                     var feeUrlSaved by remember { mutableStateOf<String?>(null) }
-                    
+
                     LaunchedEffect(feeUrlSaved) {
                         if (feeUrlSaved != null) {
                             delay(3000)
@@ -279,20 +292,27 @@ fun SettingsScreen(
                         }
                     }
 
-                    val isOnionUrl = feeUrlDraft.contains(".onion")
-                    val torStatusColor = when (torStatus) {
-                        TorStatus.CONNECTED -> SuccessGreen
-                        TorStatus.CONNECTING, TorStatus.STARTING -> SuccessGreen.copy(alpha = 0.6f)
-                        TorStatus.ERROR -> ErrorRed
-                        TorStatus.DISCONNECTED -> TextSecondary
-                    }
-                    val torStatusText = when (torStatus) {
-                        TorStatus.CONNECTED -> "Tor connected"
-                        TorStatus.CONNECTING -> "Tor connecting..."
-                        TorStatus.STARTING -> "Tor starting..."
-                        TorStatus.ERROR -> "Tor error"
-                        TorStatus.DISCONNECTED -> "Tor will start automatically"
-                    }
+                    val isOnionUrl =
+                        try {
+                            java.net.URI(feeUrlDraft).host?.endsWith(".onion") == true
+                        } catch (_: Exception) {
+                            feeUrlDraft.endsWith(".onion")
+                        }
+                    val torStatusColor =
+                        when (torStatus) {
+                            TorStatus.CONNECTED -> SuccessGreen
+                            TorStatus.CONNECTING, TorStatus.STARTING -> SuccessGreen.copy(alpha = 0.6f)
+                            TorStatus.ERROR -> ErrorRed
+                            TorStatus.DISCONNECTED -> TextSecondary
+                        }
+                    val torStatusText =
+                        when (torStatus) {
+                            TorStatus.CONNECTED -> "Tor connected"
+                            TorStatus.CONNECTING -> "Tor connecting..."
+                            TorStatus.STARTING -> "Tor starting..."
+                            TorStatus.ERROR -> "Tor error"
+                            TorStatus.DISCONNECTED -> "Tor will start automatically"
+                        }
 
                     CompactTextFieldWithSave(
                         value = feeUrlDraft,
@@ -317,7 +337,7 @@ fun SettingsScreen(
                         successMessage = feeUrlSaved,
                         torStatusText = if (isOnionUrl) torStatusText else null,
                         torStatusColor = if (isOnionUrl) torStatusColor else null,
-                        modifier = Modifier.padding(start = 24.dp)
+                        modifier = Modifier.padding(start = 24.dp),
                     )
                 }
 
@@ -329,13 +349,13 @@ fun SettingsScreen(
                         imageVector = Icons.Default.Language,
                         contentDescription = null,
                         tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Block Explorer",
                         style = MaterialTheme.typography.labelLarge,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
 
@@ -343,7 +363,7 @@ fun SettingsScreen(
 
                 MempoolServerDropdown(
                     currentServer = currentMempoolServer,
-                    onServerSelected = onMempoolServerChange
+                    onServerSelected = onMempoolServerChange,
                 )
 
                 // Custom URL input field (shown only when Custom Server is selected)
@@ -377,7 +397,7 @@ fun SettingsScreen(
                         placeholder = "http://192.168... or http://...onion",
                         errorMessage = mempoolUrlError,
                         successMessage = mempoolUrlSaved,
-                        modifier = Modifier.padding(start = 24.dp)
+                        modifier = Modifier.padding(start = 24.dp),
                     )
                 }
 
@@ -389,13 +409,13 @@ fun SettingsScreen(
                         imageVector = Icons.Default.AttachMoney,
                         contentDescription = null,
                         tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "USD Price Source",
                         style = MaterialTheme.typography.labelLarge,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
 
@@ -403,7 +423,7 @@ fun SettingsScreen(
 
                 PriceSourceDropdown(
                     currentSource = currentPriceSource,
-                    onSourceSelected = onPriceSourceChange
+                    onSourceSelected = onPriceSourceChange,
                 )
             }
         }
@@ -418,7 +438,7 @@ fun SettingsScreen(
 private data class MempoolServerOption(
     val id: String,
     val name: String,
-    val description: String
+    val description: String,
 )
 
 /**
@@ -428,51 +448,53 @@ private data class MempoolServerOption(
 @Composable
 private fun MempoolServerDropdown(
     currentServer: String,
-    onServerSelected: (String) -> Unit
+    onServerSelected: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
-    val serverOptions = listOf(
-        MempoolServerOption(
-            id = SecureStorage.MEMPOOL_DISABLED,
-            name = "Disabled",
-            description = "Don't show block explorer links"
-        ),
-        MempoolServerOption(
-            id = SecureStorage.MEMPOOL_SPACE,
-            name = "mempool.space",
-            description = "Clearnet server (HTTPS)"
-        ),
-        MempoolServerOption(
-            id = SecureStorage.MEMPOOL_ONION,
-            name = "mempool.space (Onion)",
-            description = "Onion address (requires Tor Browser)"
-        ),
-        MempoolServerOption(
-            id = SecureStorage.MEMPOOL_CUSTOM,
-            name = "Custom Server",
-            description = "Configure custom mempool instance"
+
+    val serverOptions =
+        listOf(
+            MempoolServerOption(
+                id = SecureStorage.MEMPOOL_DISABLED,
+                name = "Disabled",
+                description = "Don't show block explorer links",
+            ),
+            MempoolServerOption(
+                id = SecureStorage.MEMPOOL_SPACE,
+                name = "mempool.space",
+                description = "Clearnet server (HTTPS)",
+            ),
+            MempoolServerOption(
+                id = SecureStorage.MEMPOOL_ONION,
+                name = "mempool.space (Onion)",
+                description = "Onion address (requires Tor Browser)",
+            ),
+            MempoolServerOption(
+                id = SecureStorage.MEMPOOL_CUSTOM,
+                name = "Custom Server",
+                description = "Configure custom mempool instance",
+            ),
         )
-    )
-    
+
     val selectedOption = serverOptions.find { it.id == currentServer } ?: serverOptions.first()
-    
+
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { expanded = it }
+        onExpandedChange = { expanded = it },
     ) {
         CompactDropdownField(
             value = selectedOption.name,
             expanded = expanded,
-            modifier = Modifier.menuAnchor()
+            modifier = Modifier.menuAnchor(),
         )
-        
+
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .exposedDropdownSize(true)
-                .background(DarkSurface)
+            modifier =
+                Modifier
+                    .exposedDropdownSize(true)
+                    .background(DarkSurface),
         ) {
             serverOptions.forEach { option ->
                 DropdownMenuItem(
@@ -481,15 +503,17 @@ private fun MempoolServerDropdown(
                             Text(
                                 text = option.name,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = if (option.id == currentServer) 
-                                    BitcoinOrange 
-                                else 
-                                    MaterialTheme.colorScheme.onBackground
+                                color =
+                                    if (option.id == currentServer) {
+                                        BitcoinOrange
+                                    } else {
+                                        MaterialTheme.colorScheme.onBackground
+                                    },
                             )
                             Text(
                                 text = option.description,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     },
@@ -502,10 +526,10 @@ private fun MempoolServerDropdown(
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Selected",
-                                tint = BitcoinOrange
+                                tint = BitcoinOrange,
                             )
                         }
-                    }
+                    },
                 )
             }
         }
@@ -518,7 +542,7 @@ private fun MempoolServerDropdown(
 private data class FeeSourceOption(
     val id: String,
     val name: String,
-    val description: String
+    val description: String,
 )
 
 /**
@@ -528,51 +552,53 @@ private data class FeeSourceOption(
 @Composable
 private fun FeeSourceDropdown(
     currentSource: String,
-    onSourceSelected: (String) -> Unit
+    onSourceSelected: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
-    val sourceOptions = listOf(
-        FeeSourceOption(
-            id = SecureStorage.FEE_SOURCE_OFF,
-            name = "Disabled",
-            description = "Manual fee entry only"
-        ),
-        FeeSourceOption(
-            id = SecureStorage.FEE_SOURCE_MEMPOOL,
-            name = "mempool.space",
-            description = "Fetch from mempool.space"
-        ),
-        FeeSourceOption(
-            id = SecureStorage.FEE_SOURCE_ELECTRUM,
-            name = "Electrum Server",
-            description = "Fetch from connected Electrum server"
-        ),
-        FeeSourceOption(
-            id = SecureStorage.FEE_SOURCE_CUSTOM,
-            name = "Custom Server",
-            description = "Fetch from custom mempool instance"
+
+    val sourceOptions =
+        listOf(
+            FeeSourceOption(
+                id = SecureStorage.FEE_SOURCE_OFF,
+                name = "Disabled",
+                description = "Manual fee entry only",
+            ),
+            FeeSourceOption(
+                id = SecureStorage.FEE_SOURCE_MEMPOOL,
+                name = "mempool.space",
+                description = "Fetch from mempool.space",
+            ),
+            FeeSourceOption(
+                id = SecureStorage.FEE_SOURCE_ELECTRUM,
+                name = "Electrum Server",
+                description = "Fetch from connected Electrum server",
+            ),
+            FeeSourceOption(
+                id = SecureStorage.FEE_SOURCE_CUSTOM,
+                name = "Custom Server",
+                description = "Fetch from custom mempool instance",
+            ),
         )
-    )
-    
+
     val selectedOption = sourceOptions.find { it.id == currentSource } ?: sourceOptions.first()
-    
+
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { expanded = it }
+        onExpandedChange = { expanded = it },
     ) {
         CompactDropdownField(
             value = selectedOption.name,
             expanded = expanded,
-            modifier = Modifier.menuAnchor()
+            modifier = Modifier.menuAnchor(),
         )
-        
+
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .exposedDropdownSize(true)
-                .background(DarkSurface)
+            modifier =
+                Modifier
+                    .exposedDropdownSize(true)
+                    .background(DarkSurface),
         ) {
             sourceOptions.forEach { option ->
                 DropdownMenuItem(
@@ -581,15 +607,17 @@ private fun FeeSourceDropdown(
                             Text(
                                 text = option.name,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = if (option.id == currentSource) 
-                                    BitcoinOrange 
-                                else 
-                                    MaterialTheme.colorScheme.onBackground
+                                color =
+                                    if (option.id == currentSource) {
+                                        BitcoinOrange
+                                    } else {
+                                        MaterialTheme.colorScheme.onBackground
+                                    },
                             )
                             Text(
                                 text = option.description,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     },
@@ -602,10 +630,10 @@ private fun FeeSourceDropdown(
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Selected",
-                                tint = BitcoinOrange
+                                tint = BitcoinOrange,
                             )
                         }
-                    }
+                    },
                 )
             }
         }
@@ -618,7 +646,7 @@ private fun FeeSourceDropdown(
 private data class PriceSourceOption(
     val id: String,
     val name: String,
-    val description: String
+    val description: String,
 )
 
 /**
@@ -628,46 +656,48 @@ private data class PriceSourceOption(
 @Composable
 private fun PriceSourceDropdown(
     currentSource: String,
-    onSourceSelected: (String) -> Unit
+    onSourceSelected: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
-    val sourceOptions = listOf(
-        PriceSourceOption(
-            id = SecureStorage.PRICE_SOURCE_OFF,
-            name = "Disabled",
-            description = "Don't show USD values"
-        ),
-        PriceSourceOption(
-            id = SecureStorage.PRICE_SOURCE_MEMPOOL,
-            name = "mempool.space",
-            description = "Fetch price from mempool.space"
-        ),
-        PriceSourceOption(
-            id = SecureStorage.PRICE_SOURCE_COINGECKO,
-            name = "CoinGecko",
-            description = "Fetch price from CoinGecko"
+
+    val sourceOptions =
+        listOf(
+            PriceSourceOption(
+                id = SecureStorage.PRICE_SOURCE_OFF,
+                name = "Disabled",
+                description = "Don't show USD values",
+            ),
+            PriceSourceOption(
+                id = SecureStorage.PRICE_SOURCE_MEMPOOL,
+                name = "mempool.space",
+                description = "Fetch price from mempool.space",
+            ),
+            PriceSourceOption(
+                id = SecureStorage.PRICE_SOURCE_COINGECKO,
+                name = "CoinGecko",
+                description = "Fetch price from CoinGecko",
+            ),
         )
-    )
-    
+
     val selectedOption = sourceOptions.find { it.id == currentSource } ?: sourceOptions.first()
-    
+
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { expanded = it }
+        onExpandedChange = { expanded = it },
     ) {
         CompactDropdownField(
             value = selectedOption.name,
             expanded = expanded,
-            modifier = Modifier.menuAnchor()
+            modifier = Modifier.menuAnchor(),
         )
-        
+
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .exposedDropdownSize(true)
-                .background(DarkSurface)
+            modifier =
+                Modifier
+                    .exposedDropdownSize(true)
+                    .background(DarkSurface),
         ) {
             sourceOptions.forEach { option ->
                 DropdownMenuItem(
@@ -676,15 +706,17 @@ private fun PriceSourceDropdown(
                             Text(
                                 text = option.name,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = if (option.id == currentSource) 
-                                    BitcoinOrange 
-                                else 
-                                    MaterialTheme.colorScheme.onBackground
+                                color =
+                                    if (option.id == currentSource) {
+                                        BitcoinOrange
+                                    } else {
+                                        MaterialTheme.colorScheme.onBackground
+                                    },
                             )
                             Text(
                                 text = option.description,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     },
@@ -697,10 +729,10 @@ private fun PriceSourceDropdown(
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Selected",
-                                tint = BitcoinOrange
+                                tint = BitcoinOrange,
                             )
                         }
-                    }
+                    },
                 )
             }
         }
@@ -714,26 +746,27 @@ private fun PriceSourceDropdown(
 private fun CompactDropdownField(
     value: String,
     expanded: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .border(1.dp, if (expanded) BitcoinOrange else BorderColor, RoundedCornerShape(8.dp))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .border(1.dp, if (expanded) BitcoinOrange else BorderColor, RoundedCornerShape(8.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = value,
             style = TextStyle(fontSize = 14.sp),
             color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
         )
         Icon(
             imageVector = Icons.Default.ArrowDropDown,
             contentDescription = null,
             tint = TextSecondary,
-            modifier = Modifier.size(20.dp)
+            modifier = Modifier.size(20.dp),
         )
     }
 }
@@ -763,74 +796,79 @@ private fun CompactTextFieldWithSave(
     successMessage: String? = null,
     torStatusText: String? = null,
     torStatusColor: androidx.compose.ui.graphics.Color? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    val borderColor = when {
-        errorMessage != null -> ErrorRed
-        successMessage != null -> SuccessGreen
-        else -> BorderColor
-    }
+    val borderColor =
+        when {
+            errorMessage != null -> ErrorRed
+            successMessage != null -> SuccessGreen
+            else -> BorderColor
+        }
 
     Column(modifier = modifier) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, borderColor, RoundedCornerShape(8.dp))
-                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+                    .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
                 singleLine = true,
-                textStyle = TextStyle(
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onBackground
-                ),
+                textStyle =
+                    TextStyle(
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    ),
                 cursorBrush = SolidColor(BitcoinOrange),
                 modifier = Modifier.weight(1f),
                 decorationBox = { innerTextField ->
                     Box(
                         modifier = Modifier.padding(vertical = 8.dp),
-                        contentAlignment = Alignment.CenterStart
+                        contentAlignment = Alignment.CenterStart,
                     ) {
                         if (value.isEmpty()) {
                             Text(
                                 text = placeholder,
                                 style = TextStyle(fontSize = 13.sp),
-                                color = TextSecondary.copy(alpha = 0.5f)
+                                color = TextSecondary.copy(alpha = 0.5f),
                             )
                         }
                         innerTextField()
                     }
-                }
+                },
             )
 
             Text(
                 text = if (successMessage != null) "Saved" else "Save",
                 style = TextStyle(fontSize = 13.sp),
                 color = if (successMessage != null) SuccessGreen else BitcoinOrange,
-                modifier = Modifier
-                    .clickable(onClick = onSave)
-                    .padding(horizontal = 8.dp, vertical = 8.dp)
+                modifier =
+                    Modifier
+                        .clickable(onClick = onSave)
+                        .padding(horizontal = 8.dp, vertical = 8.dp),
             )
         }
 
         // Error and/or Tor status on the same line
         if (errorMessage != null || torStatusText != null) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 2.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (errorMessage != null) {
                     Text(
                         text = errorMessage,
                         style = MaterialTheme.typography.bodySmall,
                         color = ErrorRed,
-                        modifier = Modifier.padding(start = 4.dp)
+                        modifier = Modifier.padding(start = 4.dp),
                     )
                 } else {
                     Spacer(modifier = Modifier.width(1.dp))
@@ -838,16 +876,17 @@ private fun CompactTextFieldWithSave(
                 if (torStatusText != null && torStatusColor != null) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .clip(CircleShape)
-                                .background(torStatusColor)
+                            modifier =
+                                Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(torStatusColor),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = torStatusText,
                             style = MaterialTheme.typography.bodySmall,
-                            color = torStatusColor
+                            color = torStatusColor,
                         )
                     }
                 }

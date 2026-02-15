@@ -34,15 +34,17 @@ fun IbisButton(
         modifier = modifier,
         enabled = enabled,
         shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(
-            1.dp,
-            if (enabled) Color(0xFF9BA3AC) else Color(0xFF9BA3AC).copy(alpha = 0.25f)
-        ),
-        colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = activeColor,
-            disabledContentColor = TextSecondary.copy(alpha = 0.3f)
-        ),
+        border =
+            BorderStroke(
+                1.dp,
+                if (enabled) Color(0xFF9BA3AC) else Color(0xFF9BA3AC).copy(alpha = 0.25f),
+            ),
+        colors =
+            ButtonDefaults.outlinedButtonColors(
+                contentColor = activeColor,
+                disabledContentColor = TextSecondary.copy(alpha = 0.3f),
+            ),
         contentPadding = contentPadding,
-        content = content
+        content = content,
     )
 }

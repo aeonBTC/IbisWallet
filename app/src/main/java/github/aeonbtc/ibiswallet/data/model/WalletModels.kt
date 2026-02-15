@@ -6,38 +6,33 @@ package github.aeonbtc.ibiswallet.data.model
 enum class AddressType(
     val displayName: String,
     val description: String,
-    val bip: Int,
     val defaultPath: String,
-    val accountPath: String // Account-level derivation path without m/ prefix (for descriptor origin)
+    val accountPath: String, // Account-level derivation path without m/ prefix (for descriptor origin)
 ) {
     LEGACY(
         displayName = "Legacy",
         description = "P2PKH - Legacy addresses start with '1'",
-        bip = 44,
         defaultPath = "m/44'/0'/0'/0",
-        accountPath = "44'/0'/0'"
+        accountPath = "44'/0'/0'",
     ),
     NESTED_SEGWIT(
         displayName = "Wrapped",
         description = "P2SH-P2WPKH - Wrapped SegWit addresses start with '3'",
-        bip = 49,
         defaultPath = "m/49'/0'/0'/0",
-        accountPath = "49'/0'/0'"
+        accountPath = "49'/0'/0'",
     ),
     SEGWIT(
         displayName = "SegWit",
         description = "P2WPKH - Native SegWit addresses start with 'bc1q'",
-        bip = 84,
         defaultPath = "m/84'/0'/0'/0",
-        accountPath = "84'/0'/0'"
+        accountPath = "84'/0'/0'",
     ),
     TAPROOT(
         displayName = "Taproot",
         description = "P2TR - Taproot addresses start with 'bc1p'",
-        bip = 86,
         defaultPath = "m/86'/0'/0'/0",
-        accountPath = "86'/0'/0'"
-    )
+        accountPath = "86'/0'/0'",
+    ),
 }
 
 /**
@@ -51,7 +46,7 @@ data class StoredWallet(
     val isWatchOnly: Boolean = false,
     val network: WalletNetwork = WalletNetwork.BITCOIN,
     val createdAt: Long = System.currentTimeMillis(),
-    val masterFingerprint: String? = null // Master key fingerprint (8 hex chars) for watch-only wallets
+    val masterFingerprint: String? = null, // Master key fingerprint (8 hex chars) for watch-only wallets
 )
 
 /**
@@ -60,7 +55,7 @@ data class StoredWallet(
 data class ReceiveAddressInfo(
     val address: String,
     val label: String? = null,
-    val isUsed: Boolean = false
+    val isUsed: Boolean = false,
 )
 
 /**
@@ -81,7 +76,7 @@ data class WalletState(
     val syncProgress: SyncProgress? = null,
     val lastSyncTimestamp: Long? = null,
     val blockHeight: UInt? = null,
-    val error: String? = null
+    val error: String? = null,
 )
 
 /**
@@ -99,7 +94,7 @@ data class SyncProgress(
     val total: ULong = 0UL,
     val keychain: String? = null,
     /** Human-readable label for the current pipeline step */
-    val status: String? = null
+    val status: String? = null,
 )
 
 /**
@@ -117,7 +112,7 @@ data class TransactionDetails(
     val addressAmount: ULong? = null, // Amount sent to/received at the address
     val changeAddress: String? = null, // Change address for sent transactions (if applicable)
     val changeAmount: ULong? = null, // Amount returned as change
-    val isSelfTransfer: Boolean = false // True when sending to yourself (all outputs are yours)
+    val isSelfTransfer: Boolean = false, // True when sending to yourself (all outputs are yours)
 ) {
     /** Ceiled vsize = ceil(weight / 4) matching Bitcoin Core / mempool.space */
     val vsize: Double?
@@ -136,7 +131,7 @@ data class TransactionDetails(
  */
 data class ConfirmationTime(
     val height: UInt,
-    val timestamp: ULong
+    val timestamp: ULong,
 )
 
 /**
@@ -146,7 +141,7 @@ enum class WalletNetwork {
     BITCOIN,
     TESTNET,
     SIGNET,
-    REGTEST
+    REGTEST,
 }
 
 /**
@@ -158,7 +153,7 @@ data class ElectrumConfig(
     val url: String,
     val port: Int = 50001,
     val useSsl: Boolean = false,
-    val useTor: Boolean = false
+    val useTor: Boolean = false,
 ) {
     /**
      * Get the clean host URL (strip any protocol prefix)
@@ -172,31 +167,20 @@ data class ElectrumConfig(
             .trim()
             .trimEnd('/')
     }
-    
-    /**
-     * Generate connection string for BDK ElectrumClient
-     * Format: protocol://host:port
-     */
-    fun toConnectionString(): String {
-        val protocol = if (useSsl) "ssl" else "tcp"
-        val host = cleanUrl()
-        return "$protocol://$host:$port"
-    }
-    
+
     /**
      * Generate a display name if none provided
      */
     fun displayName(): String {
         return if (!name.isNullOrBlank()) name else "${cleanUrl()}:$port"
     }
-    
+
     /**
      * Check if this is an onion address
      */
     fun isOnionAddress(): Boolean {
         return cleanUrl().endsWith(".onion")
     }
-    
 }
 
 /**
@@ -204,6 +188,7 @@ data class ElectrumConfig(
  */
 sealed class WalletResult<out T> {
     data class Success<T>(val data: T) : WalletResult<T>()
+
     data class Error(val message: String, val exception: Throwable? = null) : WalletResult<Nothing>()
 }
 
@@ -218,8 +203,14 @@ data class WalletImportConfig(
     val customDerivationPath: String? = null,
     val network: WalletNetwork = WalletNetwork.BITCOIN,
     val isWatchOnly: Boolean = false,
-    val masterFingerprint: String? = null // Master key fingerprint (8 hex chars) for hardware wallet PSBT signing
-)
+    val masterFingerprint: String? = null, // Master key fingerprint (8 hex chars) for hardware wallet PSBT signing
+) {
+    /** Redact sensitive fields to prevent accidental logging of key material. */
+    override fun toString(): String =
+        "WalletImportConfig(name=$name, addressType=$addressType, network=$network, " +
+            "isWatchOnly=$isWatchOnly, hasPassphrase=${passphrase != null}, " +
+            "keyMaterial=[REDACTED ${keyMaterial.length} chars])"
+}
 
 /**
  * Wallet address with details for display
@@ -231,41 +222,41 @@ data class WalletAddress(
     val label: String? = null,
     val balanceSats: ULong = 0UL,
     val transactionCount: Int = 0,
-    val isUsed: Boolean = false
+    val isUsed: Boolean = false,
 )
 
 /**
  * Keychain type (receive or change)
  */
 enum class KeychainType {
-    EXTERNAL,  // Receive addresses
-    INTERNAL   // Change addresses
+    EXTERNAL, // Receive addresses
+    INTERNAL, // Change addresses
 }
 
 /**
  * UTXO (Unspent Transaction Output) details
  */
 data class UtxoInfo(
-    val outpoint: String,  // txid:vout format
+    val outpoint: String, // txid:vout format
     val txid: String,
     val vout: UInt,
     val address: String,
     val amountSats: ULong,
     val label: String? = null,
     val isConfirmed: Boolean,
-    val isFrozen: Boolean = false
+    val isFrozen: Boolean = false,
 )
 
 /**
  * Fee rate estimates from mempool API
  */
 data class FeeEstimates(
-    val fastestFee: Double,    // High priority target
-    val halfHourFee: Double,   // Medium priority target
-    val hourFee: Double,       // Low priority target
-    val minimumFee: Double,    // Minimum/economy fee
+    val fastestFee: Double, // High priority target
+    val halfHourFee: Double, // Medium priority target
+    val hourFee: Double, // Low priority target
+    val minimumFee: Double, // Minimum/economy fee
     val timestamp: Long = System.currentTimeMillis(),
-    val source: FeeEstimateSource = FeeEstimateSource.MEMPOOL_SPACE
+    val source: FeeEstimateSource = FeeEstimateSource.MEMPOOL_SPACE,
 ) {
     /** True when all priority levels report the same rate (common in low-fee mempools via Electrum) */
     val isUniform: Boolean
@@ -277,7 +268,7 @@ data class FeeEstimates(
  */
 enum class FeeEstimateSource {
     MEMPOOL_SPACE,
-    ELECTRUM_SERVER
+    ELECTRUM_SERVER,
 }
 
 /**
@@ -285,8 +276,11 @@ enum class FeeEstimateSource {
  */
 sealed class FeeEstimationResult {
     data class Success(val estimates: FeeEstimates) : FeeEstimationResult()
+
     data class Error(val message: String) : FeeEstimationResult()
+
     data object Loading : FeeEstimationResult()
+
     data object Disabled : FeeEstimationResult()
 }
 
@@ -296,7 +290,7 @@ sealed class FeeEstimationResult {
  */
 data class Recipient(
     val address: String,
-    val amountSats: ULong
+    val amountSats: ULong,
 )
 
 /**
@@ -310,7 +304,7 @@ data class PsbtDetails(
     val recipientAddress: String,
     val recipientAmountSats: ULong,
     val changeAmountSats: ULong?,
-    val totalInputSats: ULong
+    val totalInputSats: ULong,
 )
 
 /**
@@ -325,21 +319,22 @@ data class DryRunResult(
     val txVBytes: Double,
     val effectiveFeeRate: Double,
     val recipientAmountSats: Long,
-    val error: String? = null // Non-null when the dry-run failed (e.g. insufficient funds)
+    val error: String? = null, // Non-null when the dry-run failed (e.g. insufficient funds)
 ) {
     val isError: Boolean get() = error != null
 
     companion object {
         /** Create an error-only result when TxBuilder.finish() fails */
-        fun error(message: String) = DryRunResult(
-            feeSats = 0L,
-            changeSats = 0L,
-            hasChange = false,
-            numInputs = 0,
-            txVBytes = 0.0,
-            effectiveFeeRate = 0.0,
-            recipientAmountSats = 0L,
-            error = message
-        )
+        fun error(message: String) =
+            DryRunResult(
+                feeSats = 0L,
+                changeSats = 0L,
+                hasChange = false,
+                numInputs = 0,
+                txVBytes = 0.0,
+                effectiveFeeRate = 0.0,
+                recipientAmountSats = 0L,
+                error = message,
+            )
     }
 }

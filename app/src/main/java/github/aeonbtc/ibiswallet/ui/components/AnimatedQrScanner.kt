@@ -1,5 +1,8 @@
 package github.aeonbtc.ibiswallet.ui.components
 
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +20,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -28,10 +33,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview as CameraPreview
-import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.BinaryBitmap
@@ -47,6 +48,7 @@ import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.UrAccountParser
 import java.util.concurrent.Executors
+import androidx.camera.core.Preview as CameraPreview
 
 /**
  * Animated QR scanner dialog that supports both single-frame and multi-frame BC-UR QR codes.
@@ -63,32 +65,31 @@ import java.util.concurrent.Executors
 @Composable
 fun AnimatedQrScannerDialog(
     onDataReceived: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+
     @Suppress("DEPRECATION")
     val lifecycleOwner = LocalLifecycleOwner.current
     var cameraPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA)
+        mutableIntStateOf(
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA),
         )
     }
-    var permissionRequested by remember { mutableStateOf(false) }
-
-    val cameraPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            cameraPermission = android.content.pm.PackageManager.PERMISSION_GRANTED
-        } else {
-            onDismiss()
+    val cameraPermissionLauncher =
+        androidx.activity.compose.rememberLauncherForActivityResult(
+            contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        ) { isGranted ->
+            if (isGranted) {
+                cameraPermission = android.content.pm.PackageManager.PERMISSION_GRANTED
+            } else {
+                onDismiss()
+            }
         }
-    }
 
-    // Request permission immediately if not granted
+    // Request permission immediately if not granted (LaunchedEffect(Unit) runs once)
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        if (cameraPermission != android.content.pm.PackageManager.PERMISSION_GRANTED && !permissionRequested) {
-            permissionRequested = true
+        if (cameraPermission != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
         }
     }
@@ -96,36 +97,38 @@ fun AnimatedQrScannerDialog(
     if (cameraPermission == android.content.pm.PackageManager.PERMISSION_GRANTED) {
         // UR decoder accumulates multi-frame scans
         val urDecoder = remember { URDecoder() }
-        var scanProgress by remember { mutableStateOf(0f) }
+        var scanProgress by remember { mutableFloatStateOf(0f) }
         var isComplete by remember { mutableStateOf(false) }
 
         Dialog(
             onDismissRequest = onDismiss,
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
                 shape = RoundedCornerShape(24.dp),
-                color = DarkSurface
+                color = DarkSurface,
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     // Header
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = "Scan Signed Transaction",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                         TextButton(onClick = onDismiss) {
                             Text("Cancel", color = TextSecondary)
@@ -133,113 +136,49 @@ fun AnimatedQrScannerDialog(
                     }
 
                     // Camera preview
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(300.dp)
-                            .padding(horizontal = 16.dp)
-                    ) {
-                        AndroidView(
-                            factory = { ctx ->
-                                androidx.camera.view.PreviewView(ctx).apply {
-                                    scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
-
-                                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                                    cameraProviderFuture.addListener({
-                                        val cameraProvider = cameraProviderFuture.get()
-
-                                        val preview = CameraPreview.Builder().build().also {
-                                            it.setSurfaceProvider(this@apply.surfaceProvider)
-                                        }
-
-                                        val imageAnalyzer = ImageAnalysis.Builder()
-                                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                            .build()
-                                            .also {
-                                                it.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                                                    if (isComplete) {
-                                                        imageProxy.close()
-                                                        return@setAnalyzer
-                                                    }
-
-                                                    val buffer = imageProxy.planes[0].buffer
-                                                    val data = ByteArray(buffer.remaining())
-                                                    buffer.get(data)
-
-                                                    val width = imageProxy.width
-                                                    val height = imageProxy.height
-                                                    val pixels = IntArray(width * height)
-
-                                                    for (i in data.indices) {
-                                                        val y = data[i].toInt() and 0xFF
-                                                        pixels[i] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
-                                                    }
-
-                                                    val source = RGBLuminanceSource(width, height, pixels)
-                                                    val binaryBitmap = BinaryBitmap(GlobalHistogramBinarizer(source))
-
-                                                    try {
-                                                        val result = MultiFormatReader().decode(binaryBitmap)
-                                                        val scannedText = result.text
-
-                                                        handleScannedQrData(
-                                                            scannedText = scannedText,
-                                                            urDecoder = urDecoder,
-                                                            onProgress = { progress ->
-                                                                scanProgress = progress
-                                                            },
-                                                            onComplete = { decodedData ->
-                                                                isComplete = true
-                                                                onDataReceived(decodedData)
-                                                            }
-                                                        )
-                                                    } catch (e: Exception) {
-                                                        // No QR code found in this frame
-                                                    } finally {
-                                                        imageProxy.close()
-                                                    }
-                                                }
-                                            }
-
-                                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-                                        try {
-                                            cameraProvider.unbindAll()
-                                            cameraProvider.bindToLifecycle(
-                                                lifecycleOwner,
-                                                cameraSelector,
-                                                preview,
-                                                imageAnalyzer
-                                            )
-                                        } catch (e: Exception) {
-                                            // Camera binding failed
-                                        }
-                                    }, ContextCompat.getMainExecutor(ctx))
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+                    QrCameraPreview(
+                        lifecycleOwner = lifecycleOwner,
+                        isComplete = isComplete,
+                        onFrameScanned = { scannedText ->
+                            handleScannedQrData(
+                                scannedText = scannedText,
+                                urDecoder = urDecoder,
+                                onProgress = { progress ->
+                                    scanProgress = progress
+                                },
+                                onComplete = { decodedData ->
+                                    isComplete = true
+                                    onDataReceived(decodedData)
+                                },
+                            )
+                        },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(300.dp)
+                                .padding(horizontal = 16.dp),
+                    )
 
                     // Progress indicator for multi-frame scanning
                     if (scanProgress > 0f && !isComplete) {
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
-                                .padding(top = 8.dp)
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp)
+                                    .padding(top = 8.dp),
                         ) {
                             LinearProgressIndicator(
                                 progress = { scanProgress },
                                 modifier = Modifier.fillMaxWidth(),
                                 color = BitcoinOrange,
-                                trackColor = BitcoinOrange.copy(alpha = 0.15f)
+                                trackColor = BitcoinOrange.copy(alpha = 0.15f),
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Scanning: ${(scanProgress * 100).toInt()}%",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     }
@@ -267,68 +206,69 @@ fun AnimatedQrScannerDialog(
 fun ImportQrScannerDialog(
     preferredAddressType: AddressType = AddressType.SEGWIT,
     onCodeScanned: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+
     @Suppress("DEPRECATION")
     val lifecycleOwner = LocalLifecycleOwner.current
     var cameraPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA)
+        mutableIntStateOf(
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA),
         )
     }
-    var permissionRequested by remember { mutableStateOf(false) }
-
-    val cameraPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            cameraPermission = android.content.pm.PackageManager.PERMISSION_GRANTED
-        } else {
-            onDismiss()
+    val cameraPermissionLauncher =
+        androidx.activity.compose.rememberLauncherForActivityResult(
+            contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        ) { isGranted ->
+            if (isGranted) {
+                cameraPermission = android.content.pm.PackageManager.PERMISSION_GRANTED
+            } else {
+                onDismiss()
+            }
         }
-    }
 
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        if (cameraPermission != android.content.pm.PackageManager.PERMISSION_GRANTED && !permissionRequested) {
-            permissionRequested = true
+        if (cameraPermission != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
         }
     }
 
     if (cameraPermission == android.content.pm.PackageManager.PERMISSION_GRANTED) {
         val urDecoder = remember { URDecoder() }
-        var scanProgress by remember { mutableStateOf(0f) }
+        var scanProgress by remember { mutableFloatStateOf(0f) }
         var isComplete by remember { mutableStateOf(false) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
 
         Dialog(
             onDismissRequest = onDismiss,
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
                 shape = RoundedCornerShape(24.dp),
-                color = DarkSurface
+                color = DarkSurface,
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     // Header
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = "Scan QR Code",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                         TextButton(onClick = onDismiss) {
                             Text("Cancel", color = TextSecondary)
@@ -336,117 +276,53 @@ fun ImportQrScannerDialog(
                     }
 
                     // Camera preview
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(300.dp)
-                            .padding(horizontal = 16.dp)
-                    ) {
-                        AndroidView(
-                            factory = { ctx ->
-                                androidx.camera.view.PreviewView(ctx).apply {
-                                    scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
-
-                                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                                    cameraProviderFuture.addListener({
-                                        val cameraProvider = cameraProviderFuture.get()
-
-                                        val preview = CameraPreview.Builder().build().also {
-                                            it.setSurfaceProvider(this@apply.surfaceProvider)
-                                        }
-
-                                        val imageAnalyzer = ImageAnalysis.Builder()
-                                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                            .build()
-                                            .also {
-                                                it.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                                                    if (isComplete) {
-                                                        imageProxy.close()
-                                                        return@setAnalyzer
-                                                    }
-
-                                                    val buffer = imageProxy.planes[0].buffer
-                                                    val data = ByteArray(buffer.remaining())
-                                                    buffer.get(data)
-
-                                                    val width = imageProxy.width
-                                                    val height = imageProxy.height
-                                                    val pixels = IntArray(width * height)
-
-                                                    for (i in data.indices) {
-                                                        val y = data[i].toInt() and 0xFF
-                                                        pixels[i] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
-                                                    }
-
-                                                    val source = RGBLuminanceSource(width, height, pixels)
-                                                    val binaryBitmap = BinaryBitmap(GlobalHistogramBinarizer(source))
-
-                                                    try {
-                                                        val result = MultiFormatReader().decode(binaryBitmap)
-                                                        val scannedText = result.text
-
-                                                        handleImportQrData(
-                                                            scannedText = scannedText,
-                                                            urDecoder = urDecoder,
-                                                            preferredAddressType = preferredAddressType,
-                                                            onProgress = { progress ->
-                                                                scanProgress = progress
-                                                            },
-                                                            onComplete = { decodedData ->
-                                                                isComplete = true
-                                                                onCodeScanned(decodedData)
-                                                            },
-                                                            onError = { msg ->
-                                                                errorMessage = msg
-                                                            }
-                                                        )
-                                                    } catch (e: Exception) {
-                                                        // No QR code found in this frame
-                                                    } finally {
-                                                        imageProxy.close()
-                                                    }
-                                                }
-                                            }
-
-                                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-                                        try {
-                                            cameraProvider.unbindAll()
-                                            cameraProvider.bindToLifecycle(
-                                                lifecycleOwner,
-                                                cameraSelector,
-                                                preview,
-                                                imageAnalyzer
-                                            )
-                                        } catch (e: Exception) {
-                                            // Camera binding failed
-                                        }
-                                    }, ContextCompat.getMainExecutor(ctx))
-                                }
-                            },
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+                    QrCameraPreview(
+                        lifecycleOwner = lifecycleOwner,
+                        isComplete = isComplete,
+                        onFrameScanned = { scannedText ->
+                            handleImportQrData(
+                                scannedText = scannedText,
+                                urDecoder = urDecoder,
+                                preferredAddressType = preferredAddressType,
+                                onProgress = { progress ->
+                                    scanProgress = progress
+                                },
+                                onComplete = { decodedData ->
+                                    isComplete = true
+                                    onCodeScanned(decodedData)
+                                },
+                                onError = { msg ->
+                                    errorMessage = msg
+                                },
+                            )
+                        },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(300.dp)
+                                .padding(horizontal = 16.dp),
+                    )
 
                     // Progress indicator for multi-frame scanning
                     if (scanProgress > 0f && !isComplete) {
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp)
-                                .padding(top = 8.dp)
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp)
+                                    .padding(top = 8.dp),
                         ) {
                             LinearProgressIndicator(
                                 progress = { scanProgress },
                                 modifier = Modifier.fillMaxWidth(),
                                 color = BitcoinOrange,
-                                trackColor = BitcoinOrange.copy(alpha = 0.15f)
+                                trackColor = BitcoinOrange.copy(alpha = 0.15f),
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = "Scanning: ${(scanProgress * 100).toInt()}%",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     }
@@ -457,9 +333,10 @@ fun ImportQrScannerDialog(
                             text = errorMessage!!,
                             style = MaterialTheme.typography.bodySmall,
                             color = ErrorRed,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 4.dp)
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 4.dp),
                         )
                     }
 
@@ -467,6 +344,92 @@ fun ImportQrScannerDialog(
                 }
             }
         }
+    }
+}
+
+/**
+ * Shared camera preview composable with QR code scanning.
+ * Extracted to its own @Composable function to resolve UiComposable applier inference.
+ */
+@Composable
+private fun QrCameraPreview(
+    lifecycleOwner: androidx.lifecycle.LifecycleOwner,
+    isComplete: Boolean,
+    onFrameScanned: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier) {
+        @Suppress("COMPOSE_APPLIER_CALL_MISMATCH")
+        AndroidView(
+            factory = { ctx ->
+                androidx.camera.view.PreviewView(ctx).apply {
+                    scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
+
+                    val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+                    cameraProviderFuture.addListener({
+                        val cameraProvider = cameraProviderFuture.get()
+
+                        val preview =
+                            CameraPreview.Builder().build().also {
+                                it.setSurfaceProvider(this@apply.surfaceProvider)
+                            }
+
+                        val imageAnalyzer =
+                            ImageAnalysis.Builder()
+                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                .build()
+                                .also {
+                                    it.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+                                        if (isComplete) {
+                                            imageProxy.close()
+                                            return@setAnalyzer
+                                        }
+
+                                        val buffer = imageProxy.planes[0].buffer
+                                        val data = ByteArray(buffer.remaining())
+                                        buffer.get(data)
+
+                                        val width = imageProxy.width
+                                        val height = imageProxy.height
+                                        val pixels = IntArray(width * height)
+
+                                        for (i in data.indices) {
+                                            val y = data[i].toInt() and 0xFF
+                                            pixels[i] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
+                                        }
+
+                                        val source = RGBLuminanceSource(width, height, pixels)
+                                        val binaryBitmap = BinaryBitmap(GlobalHistogramBinarizer(source))
+
+                                        try {
+                                            val result = MultiFormatReader().decode(binaryBitmap)
+                                            onFrameScanned(result.text)
+                                        } catch (_: Exception) {
+                                            // No QR code found in this frame
+                                        } finally {
+                                            imageProxy.close()
+                                        }
+                                    }
+                                }
+
+                        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+                        try {
+                            cameraProvider.unbindAll()
+                            cameraProvider.bindToLifecycle(
+                                lifecycleOwner,
+                                cameraSelector,
+                                preview,
+                                imageAnalyzer,
+                            )
+                        } catch (_: Exception) {
+                            // Camera binding failed
+                        }
+                    }, ContextCompat.getMainExecutor(ctx))
+                }
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
 
@@ -482,7 +445,7 @@ private fun handleImportQrData(
     preferredAddressType: AddressType,
     onProgress: (Float) -> Unit,
     onComplete: (String) -> Unit,
-    onError: (String) -> Unit
+    onError: (String) -> Unit,
 ) {
     val trimmed = scannedText.trim()
 
@@ -516,7 +479,7 @@ private fun handleImportQrData(
                     onError("Failed to decode UR QR code")
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Invalid UR part, ignore (might be a partial frame)
         }
         return
@@ -536,7 +499,7 @@ private fun handleScannedQrData(
     scannedText: String,
     urDecoder: URDecoder,
     onProgress: (Float) -> Unit,
-    onComplete: (String) -> Unit
+    onComplete: (String) -> Unit,
 ) {
     val trimmed = scannedText.trim()
 
@@ -547,21 +510,22 @@ private fun handleScannedQrData(
             val progress = urDecoder.estimatedPercentComplete
             onProgress(progress.toFloat())
 
-                if (urDecoder.result != null) {
-                    val result = urDecoder.result
-                    if (result.type == ResultType.SUCCESS) {
-                        val ur = result.ur
-                        // The UR toBytes() decodes CBOR wrapper and returns the raw payload
-                        // For crypto-psbt, this is the raw PSBT bytes
-                        val psbtBytes = ur.toBytes()
-                        val psbtBase64 = android.util.Base64.encodeToString(
+            if (urDecoder.result != null) {
+                val result = urDecoder.result
+                if (result.type == ResultType.SUCCESS) {
+                    val ur = result.ur
+                    // The UR toBytes() decodes CBOR wrapper and returns the raw payload
+                    // For crypto-psbt, this is the raw PSBT bytes
+                    val psbtBytes = ur.toBytes()
+                    val psbtBase64 =
+                        android.util.Base64.encodeToString(
                             psbtBytes,
-                            android.util.Base64.NO_WRAP
+                            android.util.Base64.NO_WRAP,
                         )
-                        onComplete(psbtBase64)
-                    }
+                    onComplete(psbtBase64)
                 }
-        } catch (e: Exception) {
+            }
+        } catch (_: Exception) {
             // Invalid UR part, ignore
         }
         return
@@ -570,8 +534,9 @@ private fun handleScannedQrData(
     // Not a UR - check if it's a plain base64 PSBT or raw hex transaction
     // Base64 PSBT typically starts with "cHNidP" (base64 of "psbt\xff")
     val isLikelyBase64Psbt = trimmed.startsWith("cHNidP")
-    val isLikelyHex = trimmed.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } &&
-        trimmed.length % 2 == 0 && trimmed.length > 20
+    val isLikelyHex =
+        trimmed.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } &&
+            trimmed.length % 2 == 0 && trimmed.length > 20
 
     if (isLikelyBase64Psbt || isLikelyHex) {
         onComplete(trimmed)

@@ -46,29 +46,31 @@ import androidx.camera.core.Preview as CameraPreview
 @Composable
 fun QrScannerDialog(
     onCodeScanned: (String) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+
     @Suppress("DEPRECATION")
     val lifecycleOwner = LocalLifecycleOwner.current
-    var cameraPermission by remember { 
+    var cameraPermission by remember {
         mutableStateOf(
-            ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA)
-        ) 
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.CAMERA),
+        )
     }
     var permissionRequested by remember { mutableStateOf(false) }
-    
-    val cameraPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            cameraPermission = android.content.pm.PackageManager.PERMISSION_GRANTED
-        } else {
-            // Permission denied, dismiss the dialog
-            onDismiss()
+
+    val cameraPermissionLauncher =
+        androidx.activity.compose.rememberLauncherForActivityResult(
+            contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        ) { isGranted ->
+            if (isGranted) {
+                cameraPermission = android.content.pm.PackageManager.PERMISSION_GRANTED
+            } else {
+                // Permission denied, dismiss the dialog
+                onDismiss()
+            }
         }
-    }
-    
+
     // Request permission immediately if not granted
     LaunchedEffect(Unit) {
         if (cameraPermission != android.content.pm.PackageManager.PERMISSION_GRANTED && !permissionRequested) {
@@ -76,103 +78,113 @@ fun QrScannerDialog(
             cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
         }
     }
-    
+
     if (cameraPermission == android.content.pm.PackageManager.PERMISSION_GRANTED) {
         Dialog(
             onDismissRequest = onDismiss,
-            properties = DialogProperties(usePlatformDefaultWidth = false)
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
                 shape = RoundedCornerShape(24.dp),
-                color = DarkSurface
+                color = DarkSurface,
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     // Header
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = "Scan QR Code",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                         TextButton(onClick = onDismiss) {
                             Text("Cancel", color = TextSecondary)
                         }
                     }
-                    
+
                     // Camera preview
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(300.dp)
-                            .padding(horizontal = 16.dp)
-                            .padding(bottom = 16.dp)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(300.dp)
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp),
                     ) {
                         AndroidView(
                             factory = { ctx ->
                                 androidx.camera.view.PreviewView(ctx).apply {
                                     scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
-                                    
+
                                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
                                     cameraProviderFuture.addListener({
                                         val cameraProvider = cameraProviderFuture.get()
-                                        
-                                        val preview = CameraPreview.Builder().build().also {
-                                            it.setSurfaceProvider(this@apply.surfaceProvider)
-                                        }
-                                        
-                                        val imageAnalyzer = ImageAnalysis.Builder()
-                                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                                            .build()
-                                            .also {
-                                                it.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
-                                                    val buffer = imageProxy.planes[0].buffer
-                                                    val data = ByteArray(buffer.remaining())
-                                                    buffer.get(data)
-                                                    
-                                                    val width = imageProxy.width
-                                                    val height = imageProxy.height
-                                                    val pixels = IntArray(width * height)
-                                                    
-                                                    for (i in data.indices) {
-                                                        val y = data[i].toInt() and 0xFF
-                                                        pixels[i] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
-                                                    }
-                                                    
-                                                    val source = RGBLuminanceSource(width, height, pixels)
-                                                    val binaryBitmap = BinaryBitmap(com.google.zxing.common.GlobalHistogramBinarizer(source))
-                                                    
-                                                    try {
-                                                        val result = MultiFormatReader().decode(binaryBitmap)
-                                                        onCodeScanned(result.text)
-                                                    } catch (e: Exception) {
-                                                        // No QR code found in this frame
-                                                    } finally {
-                                                        imageProxy.close()
+
+                                        val preview =
+                                            CameraPreview.Builder().build().also {
+                                                it.setSurfaceProvider(this@apply.surfaceProvider)
+                                            }
+
+                                        val imageAnalyzer =
+                                            ImageAnalysis.Builder()
+                                                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                                                .build()
+                                                .also {
+                                                    it.setAnalyzer(Executors.newSingleThreadExecutor()) { imageProxy ->
+                                                        val buffer = imageProxy.planes[0].buffer
+                                                        val data = ByteArray(buffer.remaining())
+                                                        buffer.get(data)
+
+                                                        val width = imageProxy.width
+                                                        val height = imageProxy.height
+                                                        val pixels = IntArray(width * height)
+
+                                                        for (i in data.indices) {
+                                                            val y = data[i].toInt() and 0xFF
+                                                            pixels[i] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
+                                                        }
+
+                                                        val source = RGBLuminanceSource(width, height, pixels)
+                                                        val binaryBitmap =
+                                                            BinaryBitmap(
+                                                                com.google.zxing.common.GlobalHistogramBinarizer(
+                                                                    source,
+                                                                ),
+                                                            )
+
+                                                        try {
+                                                            val result = MultiFormatReader().decode(binaryBitmap)
+                                                            onCodeScanned(result.text)
+                                                        } catch (e: Exception) {
+                                                            // No QR code found in this frame
+                                                        } finally {
+                                                            imageProxy.close()
+                                                        }
                                                     }
                                                 }
-                                            }
-                                        
+
                                         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-                                        
+
                                         try {
                                             cameraProvider.unbindAll()
                                             cameraProvider.bindToLifecycle(
                                                 lifecycleOwner,
                                                 cameraSelector,
                                                 preview,
-                                                imageAnalyzer
+                                                imageAnalyzer,
                                             )
                                         } catch (e: Exception) {
                                             // Camera binding failed
@@ -180,7 +192,7 @@ fun QrScannerDialog(
                                     }, ContextCompat.getMainExecutor(ctx))
                                 }
                             },
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier.fillMaxSize(),
                         )
                     }
                 }

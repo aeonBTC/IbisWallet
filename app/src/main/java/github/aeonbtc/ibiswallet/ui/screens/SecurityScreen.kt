@@ -63,28 +63,41 @@ fun SecurityScreen(
     onDisableSecurity: () -> Unit = {},
     onLockTimingChange: (SecureStorage.LockTiming) -> Unit = {},
     onScreenshotsDisabledChange: (Boolean) -> Unit = {},
-    onSetupDuress: (pin: String, mnemonic: String, passphrase: String?, customDerivationPath: String?, addressType: AddressType) -> Unit = { _, _, _, _, _ -> },
+    onSetupDuress: (
+        pin: String,
+        mnemonic: String,
+        passphrase: String?,
+        customDerivationPath: String?,
+        addressType: AddressType,
+    ) -> Unit = { _, _, _, _, _ -> },
     onDisableDuress: () -> Unit = {},
     onAutoWipeThresholdChange: (SecureStorage.AutoWipeThreshold) -> Unit = {},
     onEnableCloakMode: (code: String) -> Unit = {},
     onDisableCloakMode: () -> Unit = {},
-    onBack: () -> Unit = {}
+    onPinSetupActiveChange: (Boolean) -> Unit = {},
+    onBack: () -> Unit = {},
 ) {
     var showPinSetup by remember { mutableStateOf(false) }
     var showDuressSetup by remember { mutableStateOf(false) }
     var showCloakSetup by remember { mutableStateOf(false) }
+
+    // Notify parent when any PIN setup sub-screen is active
+    val isPinSetupActive = showPinSetup || showDuressSetup || showCloakSetup
+    LaunchedEffect(isPinSetupActive) {
+        onPinSetupActiveChange(isPinSetupActive)
+    }
     var showDisableConfirmDialog by remember { mutableStateOf(false) }
     var showDisableDuressDialog by remember { mutableStateOf(false) }
     var showAutoWipeConfirmDialog by remember { mutableStateOf(false) }
     var showDisableCloakDialog by remember { mutableStateOf(false) }
-    
+
     if (showCloakSetup) {
         CloakCodeSetupScreen(
             onCodeSet = { code ->
                 onEnableCloakMode(code)
                 showCloakSetup = false
             },
-            onBack = { showCloakSetup = false }
+            onBack = { showCloakSetup = false },
         )
     } else if (showDuressSetup) {
         DuressSetupScreen(
@@ -93,7 +106,7 @@ fun SecurityScreen(
                 onSetupDuress(pin, mnemonic, passphrase, customDerivationPath, addressType)
                 showDuressSetup = false
             },
-            onBack = { showDuressSetup = false }
+            onBack = { showDuressSetup = false },
         )
     } else if (showPinSetup) {
         PinSetupScreen(
@@ -103,34 +116,36 @@ fun SecurityScreen(
             },
             onBack = {
                 showPinSetup = false
-            }
+            },
         )
     } else {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // Header
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back"
+                        contentDescription = "Back",
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Security",
                     style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }
 
@@ -140,17 +155,18 @@ fun SecurityScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard)
+                colors = CardDefaults.cardColors(containerColor = DarkCard),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
                 ) {
                     Text(
                         text = "App Lock",
                         style = MaterialTheme.typography.titleMedium,
-                        color = BitcoinOrange
+                        color = BitcoinOrange,
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -158,50 +174,55 @@ fun SecurityScreen(
                     // Biometric Option
                     val isBiometricEnabled = currentSecurityMethod == SecureStorage.SecurityMethod.BIOMETRIC
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable(enabled = isBiometricAvailable) {
-                                if (!isBiometricEnabled) {
-                                    onEnableBiometric()
-                                } else {
-                                    showDisableConfirmDialog = true
-                                }
-                            },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(enabled = isBiometricAvailable) {
+                                    if (!isBiometricEnabled) {
+                                        onEnableBiometric()
+                                    } else {
+                                        showDisableConfirmDialog = true
+                                    }
+                                },
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Fingerprint,
                                 contentDescription = null,
                                 tint = if (isBiometricAvailable) BitcoinOrange else TextSecondary.copy(alpha = 0.5f),
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(24.dp),
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
                                     text = "Biometric",
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = if (isBiometricAvailable) 
-                                        MaterialTheme.colorScheme.onBackground 
-                                    else 
-                                        TextSecondary.copy(alpha = 0.5f)
+                                    color =
+                                        if (isBiometricAvailable) {
+                                            MaterialTheme.colorScheme.onBackground
+                                        } else {
+                                            TextSecondary.copy(alpha = 0.5f)
+                                        },
                                 )
                                 Text(
-                                    text = if (isBiometricAvailable) 
-                                        "Use fingerprint or face" 
-                                    else 
-                                        "Not available on this device",
+                                    text =
+                                        if (isBiometricAvailable) {
+                                            "Use fingerprint or face"
+                                        } else {
+                                            "Not available on this device"
+                                        },
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary
+                                    color = TextSecondary,
                                 )
                             }
                         }
-                        
+
                         SquareToggle(
                             checked = isBiometricEnabled,
                             onCheckedChange = { enabled ->
@@ -211,7 +232,7 @@ fun SecurityScreen(
                                     showDisableConfirmDialog = true
                                 }
                             },
-                            enabled = isBiometricAvailable
+                            enabled = isBiometricAvailable,
                         )
                     }
 
@@ -220,44 +241,45 @@ fun SecurityScreen(
                     // PIN Code Option
                     val isPinEnabled = currentSecurityMethod == SecureStorage.SecurityMethod.PIN
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                if (!isPinEnabled) {
-                                    showPinSetup = true
-                                } else {
-                                    showDisableConfirmDialog = true
-                                }
-                            },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    if (!isPinEnabled) {
+                                        showPinSetup = true
+                                    } else {
+                                        showDisableConfirmDialog = true
+                                    }
+                                },
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Lock,
                                 contentDescription = null,
                                 tint = BitcoinOrange,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(24.dp),
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
-                                    text = "PIN Code",
+                                    text = "PIN code",
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onBackground
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                                 Text(
                                     text = "$MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit unlock code",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary
+                                    color = TextSecondary,
                                 )
                             }
                         }
-                        
+
                         SquareToggle(
                             checked = isPinEnabled,
                             onCheckedChange = { enabled ->
@@ -266,108 +288,29 @@ fun SecurityScreen(
                                 } else {
                                     showDisableConfirmDialog = true
                                 }
-                            }
+                            },
                         )
                     }
-                    
+
                     // Lock timing dropdown (only shown when security is enabled)
                     if (currentSecurityMethod != SecureStorage.SecurityMethod.NONE) {
                         HorizontalDivider(
                             modifier = Modifier.padding(vertical = 12.dp),
-                            color = BorderColor
+                            color = BorderColor,
                         )
-                        
+
                         Text(
                             text = "Lock Timer",
                             style = MaterialTheme.typography.labelLarge,
-                            color = TextSecondary
+                            color = TextSecondary,
                         )
-                        
+
                         Spacer(modifier = Modifier.height(8.dp))
-                        
+
                         LockTimingDropdown(
                             currentTiming = currentLockTiming,
-                            onTimingSelected = onLockTimingChange
+                            onTimingSelected = onLockTimingChange,
                         )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Cloak Mode card — hidden in duress mode
-            if (!isDuressMode) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
-                    ) {
-                        Text(
-                            text = "Cloak Mode",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = BitcoinOrange
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (!isCloakModeEnabled) {
-                                        showCloakSetup = true
-                                    } else {
-                                        showDisableCloakDialog = true
-                                    }
-                                },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Visibility,
-                                    contentDescription = null,
-                                    tint = BitcoinOrange,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(12.dp))
-                                Column {
-                                    Text(
-                                        text = "Disguise as Calculator",
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onBackground
-                                    )
-                                    Text(
-                                        text = if (isCloakModeEnabled)
-                                            "App icon changes after restart"
-                                        else
-                                            "Hide Ibis behind a calculator app",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = TextSecondary
-                                    )
-                                }
-                            }
-
-                            SquareToggle(
-                                checked = isCloakModeEnabled,
-                                onCheckedChange = { enabled ->
-                                    if (enabled) {
-                                        showCloakSetup = true
-                                    } else {
-                                        showDisableCloakDialog = true
-                                    }
-                                }
-                            )
-                        }
                     }
                 }
             }
@@ -385,70 +328,83 @@ fun SecurityScreen(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard)
+                    colors = CardDefaults.cardColors(containerColor = DarkCard),
                 ) {
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
                     ) {
                         Text(
                             text = "Duress PIN",
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (canEnableDuress) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f)
+                            color = if (canEnableDuress) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f),
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
 
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .then(
-                                    if (canEnableDuress) {
-                                        Modifier.clickable {
-                                            if (!isDuressEnabled) {
-                                                showDuressSetup = true
-                                            } else {
-                                                showDisableDuressDialog = true
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .then(
+                                        if (canEnableDuress) {
+                                            Modifier.clickable {
+                                                if (!isDuressEnabled) {
+                                                    showDuressSetup = true
+                                                } else {
+                                                    showDisableDuressDialog = true
+                                                }
                                             }
-                                        }
-                                    } else {
-                                        Modifier
-                                    }
-                                ),
+                                        } else {
+                                            Modifier
+                                        },
+                                    ),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Shield,
                                     contentDescription = null,
                                     tint = if (canEnableDuress) BitcoinOrange else TextSecondary.copy(alpha = 0.4f),
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(24.dp),
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
                                         text = "Duress PIN",
                                         style = MaterialTheme.typography.bodyLarge,
-                                        color = if (canEnableDuress)
-                                            MaterialTheme.colorScheme.onBackground
-                                        else
-                                            TextSecondary.copy(alpha = 0.4f)
+                                        color =
+                                            if (canEnableDuress) {
+                                                MaterialTheme.colorScheme.onBackground
+                                            } else {
+                                                TextSecondary.copy(alpha = 0.4f)
+                                            },
                                     )
                                     Text(
-                                        text = if (!isSecurityActive)
-                                            "Set up PIN or biometric to enable"
-                                        else if (!hasWallet)
-                                            "Import a wallet first"
-                                        else
-                                            "Unlock Ibis into a decoy wallet",
+                                        text =
+                                            if (!isSecurityActive) {
+                                                "Set up PIN or biometric to enable"
+                                            } else if (!hasWallet) {
+                                                "Import a wallet first"
+                                            } else {
+                                                "Unlock Ibis into a decoy wallet"
+                                            },
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = if (canEnableDuress) TextSecondary else TextSecondary.copy(alpha = 0.4f)
+                                        color =
+                                            if (canEnableDuress) {
+                                                TextSecondary
+                                            } else {
+                                                TextSecondary.copy(
+                                                    alpha = 0.4f,
+                                                )
+                                            },
                                     )
                                 }
                             }
@@ -462,7 +418,7 @@ fun SecurityScreen(
                                         showDisableDuressDialog = true
                                     }
                                 },
-                                enabled = canEnableDuress
+                                enabled = canEnableDuress,
                             )
                         }
                     }
@@ -480,17 +436,18 @@ fun SecurityScreen(
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard)
+                    colors = CardDefaults.cardColors(containerColor = DarkCard),
                 ) {
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
                     ) {
                         Text(
                             text = "Auto-Wipe",
                             style = MaterialTheme.typography.titleMedium,
-                            color = if (isSecurityActive) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f)
+                            color = if (isSecurityActive) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f),
                         )
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -498,40 +455,53 @@ fun SecurityScreen(
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Warning,
                                     contentDescription = null,
-                                    tint = if (isSecurityActive && autoWipeThreshold != SecureStorage.AutoWipeThreshold.DISABLED)
-                                        ErrorRed
-                                    else if (isSecurityActive)
-                                        BitcoinOrange
-                                    else
-                                        TextSecondary.copy(alpha = 0.4f),
-                                    modifier = Modifier.size(24.dp)
+                                    tint =
+                                        if (isSecurityActive && autoWipeThreshold != SecureStorage.AutoWipeThreshold.DISABLED) {
+                                            ErrorRed
+                                        } else if (isSecurityActive) {
+                                            BitcoinOrange
+                                        } else {
+                                            TextSecondary.copy(alpha = 0.4f)
+                                        },
+                                    modifier = Modifier.size(24.dp),
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
-                                        text = "Wipe after failed attempts",
+                                        text = "Wipe after unlock attempts",
                                         style = MaterialTheme.typography.bodyLarge,
-                                        color = if (isSecurityActive)
-                                            MaterialTheme.colorScheme.onBackground
-                                        else
-                                            TextSecondary.copy(alpha = 0.4f)
+                                        color =
+                                            if (isSecurityActive) {
+                                                MaterialTheme.colorScheme.onBackground
+                                            } else {
+                                                TextSecondary.copy(alpha = 0.4f)
+                                            },
                                     )
                                     Text(
-                                        text = if (isSecurityActive)
-                                            "Erase app data after failed unlock"
-                                        else
-                                            "Set up PIN or biometric to enable",
+                                        text =
+                                            if (isSecurityActive) {
+                                                "Erase app data after failed unlock"
+                                            } else {
+                                                "Set up PIN code to enable"
+                                            },
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = if (isSecurityActive) TextSecondary else TextSecondary.copy(alpha = 0.4f)
+                                        color =
+                                            if (isSecurityActive) {
+                                                TextSecondary
+                                            } else {
+                                                TextSecondary.copy(
+                                                    alpha = 0.4f,
+                                                )
+                                            },
                                     )
                                 }
                             }
@@ -545,7 +515,7 @@ fun SecurityScreen(
                                         onAutoWipeThresholdChange(SecureStorage.AutoWipeThreshold.DISABLED)
                                     }
                                 },
-                                enabled = isSecurityActive
+                                enabled = isSecurityActive,
                             )
                         }
 
@@ -556,7 +526,7 @@ fun SecurityScreen(
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 SecureStorage.AutoWipeThreshold.entries
                                     .filter { it != SecureStorage.AutoWipeThreshold.DISABLED }
@@ -564,25 +534,29 @@ fun SecurityScreen(
                                         val isSelected = threshold == autoWipeThreshold
                                         Box(
                                             contentAlignment = Alignment.Center,
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(
-                                                    if (isSelected) ErrorRed.copy(alpha = 0.15f)
-                                                    else Color.Transparent
-                                                )
-                                                .border(
-                                                    width = 1.dp,
-                                                    color = if (isSelected) ErrorRed else BorderColor,
-                                                    shape = RoundedCornerShape(8.dp)
-                                                )
-                                                .clickable { onAutoWipeThresholdChange(threshold) }
-                                                .padding(vertical = 8.dp)
+                                            modifier =
+                                                Modifier
+                                                    .weight(1f)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(
+                                                        if (isSelected) {
+                                                            ErrorRed.copy(alpha = 0.15f)
+                                                        } else {
+                                                            Color.Transparent
+                                                        },
+                                                    )
+                                                    .border(
+                                                        width = 1.dp,
+                                                        color = if (isSelected) ErrorRed else BorderColor,
+                                                        shape = RoundedCornerShape(8.dp),
+                                                    )
+                                                    .clickable { onAutoWipeThresholdChange(threshold) }
+                                                    .padding(vertical = 8.dp),
                                         ) {
                                             Text(
                                                 text = "${threshold.attempts}",
                                                 style = MaterialTheme.typography.bodyMedium,
-                                                color = if (isSelected) ErrorRed else TextSecondary
+                                                color = if (isSelected) ErrorRed else TextSecondary,
                                             )
                                         }
                                     }
@@ -594,60 +568,142 @@ fun SecurityScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
+            // Cloak Mode card — hidden in duress mode
+            if (!isDuressMode) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = DarkCard),
+                ) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                    ) {
+                        Text(
+                            text = "Cloak Mode",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = BitcoinOrange,
+                        )
 
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (!isCloakModeEnabled) {
+                                            showCloakSetup = true
+                                        } else {
+                                            showDisableCloakDialog = true
+                                        }
+                                    },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Visibility,
+                                    contentDescription = null,
+                                    tint = BitcoinOrange,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Disguise as calculator",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                    )
+                                    Text(
+                                        text =
+                                            if (isCloakModeEnabled) {
+                                                "App icon changes after restart"
+                                            } else {
+                                                "Hide Ibis behind a calculator app"
+                                            },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary,
+                                    )
+                                }
+                            }
+
+                            SquareToggle(
+                                checked = isCloakModeEnabled,
+                                onCheckedChange = { enabled ->
+                                    if (enabled) {
+                                        showCloakSetup = true
+                                    } else {
+                                        showDisableCloakDialog = true
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Screenshot Prevention
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard)
+                colors = CardDefaults.cardColors(containerColor = DarkCard),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onScreenshotsDisabledChange(!screenshotsDisabled) },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onScreenshotsDisabledChange(!screenshotsDisabled) },
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.VisibilityOff,
                                 contentDescription = null,
                                 tint = BitcoinOrange,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(24.dp),
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Column {
                                 Text(
                                     text = "Disable Screenshots",
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onBackground
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                                 Text(
                                     text = "Blocks screenshots and app previews",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary
+                                    color = TextSecondary,
                                 )
                             }
                         }
 
                         SquareToggle(
                             checked = screenshotsDisabled,
-                            onCheckedChange = onScreenshotsDisabledChange
+                            onCheckedChange = onScreenshotsDisabledChange,
                         )
                     }
                 }
             }
-
 
             Spacer(modifier = Modifier.height(12.dp))
         }
@@ -660,14 +716,14 @@ fun SecurityScreen(
                     Text(
                         text = "Disable Cloak Mode?",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                 },
                 text = {
                     Text(
                         text = "The app icon will revert to Ibis Wallet after restart. You may need to re-add the homescreen shortcut.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 },
                 confirmButton = {
@@ -675,7 +731,7 @@ fun SecurityScreen(
                         onClick = {
                             onDisableCloakMode()
                             showDisableCloakDialog = false
-                        }
+                        },
                     ) {
                         Text("Disable", color = ErrorRed)
                     }
@@ -686,7 +742,7 @@ fun SecurityScreen(
                     }
                 },
                 containerColor = DarkSurface,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
             )
         }
 
@@ -698,14 +754,14 @@ fun SecurityScreen(
                     Text(
                         text = "Disable Duress PIN?",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                 },
                 text = {
                     Text(
                         text = "The decoy wallet will be removed.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 },
                 confirmButton = {
@@ -713,7 +769,7 @@ fun SecurityScreen(
                         onClick = {
                             onDisableDuress()
                             showDisableDuressDialog = false
-                        }
+                        },
                     ) {
                         Text("Disable", color = ErrorRed)
                     }
@@ -724,7 +780,7 @@ fun SecurityScreen(
                     }
                 },
                 containerColor = DarkSurface,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
             )
         }
 
@@ -736,7 +792,7 @@ fun SecurityScreen(
                     Text(
                         text = "Enable Auto-Wipe?",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                 },
                 text = {
@@ -744,12 +800,12 @@ fun SecurityScreen(
                         Text(
                             text = "All wallet data will be permanently erased after repeated failed unlock attempts. This cannot be undone.",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary
+                            color = TextSecondary,
                         )
                         Text(
                             text = "Make sure your seed phrases are backed up. Without a backup, your funds will be lost permanently.",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = ErrorRed
+                            color = ErrorRed,
                         )
                     }
                 },
@@ -758,7 +814,7 @@ fun SecurityScreen(
                         onClick = {
                             onAutoWipeThresholdChange(SecureStorage.AutoWipeThreshold.AFTER_10)
                             showAutoWipeConfirmDialog = false
-                        }
+                        },
                     ) {
                         Text("Enable", color = ErrorRed)
                     }
@@ -769,7 +825,7 @@ fun SecurityScreen(
                     }
                 },
                 containerColor = DarkSurface,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
             )
         }
 
@@ -781,14 +837,14 @@ fun SecurityScreen(
                     Text(
                         text = "Disable Security?",
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground
+                        color = MaterialTheme.colorScheme.onBackground,
                     )
                 },
                 text = {
                     Text(
                         text = "Anyone with access to your device will be able to open the app.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 },
                 confirmButton = {
@@ -796,7 +852,7 @@ fun SecurityScreen(
                         onClick = {
                             onDisableSecurity()
                             showDisableConfirmDialog = false
-                        }
+                        },
                     ) {
                         Text("Disable", color = ErrorRed)
                     }
@@ -807,7 +863,7 @@ fun SecurityScreen(
                     }
                 },
                 containerColor = DarkSurface,
-                shape = RoundedCornerShape(12.dp)
+                shape = RoundedCornerShape(12.dp),
             )
         }
     }
@@ -816,7 +872,7 @@ fun SecurityScreen(
 @Composable
 private fun PinSetupScreen(
     onPinSet: (String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
 ) {
     var pin by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
@@ -824,21 +880,23 @@ private fun PinSetupScreen(
     var error by remember { mutableStateOf<String?>(null) }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(DarkBackground),
+        contentAlignment = Alignment.Center,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // Header with back button
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = {
                     if (step == 2) {
@@ -852,7 +910,7 @@ private fun PinSetupScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.onBackground
+                        tint = MaterialTheme.colorScheme.onBackground,
                     )
                 }
             }
@@ -863,18 +921,19 @@ private fun PinSetupScreen(
             Text(
                 text = if (step == 1) "Create PIN" else "Confirm PIN",
                 style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
             )
 
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = when {
-                    step == 1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
-                    else -> "Enter the PIN again to confirm"
-                },
+                text =
+                    when {
+                        step == 1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
+                        else -> "Enter the PIN again to confirm"
+                    },
                 style = MaterialTheme.typography.bodyLarge,
-                color = TextSecondary
+                color = TextSecondary,
             )
 
             Spacer(modifier = Modifier.height(48.dp))
@@ -884,14 +943,15 @@ private fun PinSetupScreen(
             if (currentPin.isNotEmpty()) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     repeat(currentPin.length) {
                         Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(BitcoinOrange)
+                            modifier =
+                                Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(BitcoinOrange),
                         )
                     }
                 }
@@ -904,14 +964,14 @@ private fun PinSetupScreen(
             // Error message
             Box(
                 modifier = Modifier.height(24.dp),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 if (error != null) {
                     Text(
                         text = error!!,
                         style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -942,22 +1002,25 @@ private fun PinSetupScreen(
                         error = null
                     }
                 },
-                onConfirmClick = if (step == 1 && pin.length >= MIN_PIN_LENGTH) {
-                    {
-                        step = 2
-                        error = null
-                    }
-                } else if (step == 2 && confirmPin.length == pin.length) {
-                    {
-                        if (pin == confirmPin) {
-                            onPinSet(pin)
-                        } else {
-                            error = "PINs don't match, try again"
-                            confirmPin = ""
+                onConfirmClick =
+                    if (step == 1 && pin.length >= MIN_PIN_LENGTH) {
+                        {
+                            step = 2
+                            error = null
                         }
-                    }
-                } else null,
-                confirmLabel = if (step == 1) "Next" else "Confirm"
+                    } else if (step == 2 && confirmPin.length == pin.length) {
+                        {
+                            if (pin == confirmPin) {
+                                onPinSet(pin)
+                            } else {
+                                error = "PINs don't match, try again"
+                                confirmPin = ""
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                confirmLabel = if (step == 1) "Next" else "Confirm",
             )
 
             Spacer(modifier = Modifier.height(48.dp))
@@ -970,23 +1033,24 @@ private fun PinNumberPad(
     onNumberClick: (String) -> Unit,
     onBackspaceClick: () -> Unit,
     onConfirmClick: (() -> Unit)? = null,
-    confirmLabel: String = "Confirm"
+    confirmLabel: String = "Confirm",
 ) {
-    val numbers = listOf(
-        listOf("1", "2", "3"),
-        listOf("4", "5", "6"),
-        listOf("7", "8", "9"),
-        listOf("", "0", "")
-    )
+    val numbers =
+        listOf(
+            listOf("1", "2", "3"),
+            listOf("4", "5", "6"),
+            listOf("7", "8", "9"),
+            listOf("", "0", ""),
+        )
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         numbers.forEachIndexed { rowIndex, row ->
             Row(
                 horizontalArrangement = Arrangement.spacedBy(24.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 row.forEachIndexed { colIndex, number ->
                     when {
@@ -998,16 +1062,17 @@ private fun PinNumberPad(
                         rowIndex == 3 && colIndex == 2 -> {
                             IconButton(
                                 onClick = onBackspaceClick,
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .clip(CircleShape)
-                                    .background(DarkCard)
+                                modifier =
+                                    Modifier
+                                        .size(72.dp)
+                                        .clip(CircleShape)
+                                        .background(DarkCard),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Backspace,
                                     contentDescription = "Backspace",
                                     tint = TextSecondary,
-                                    modifier = Modifier.size(28.dp)
+                                    modifier = Modifier.size(28.dp),
                                 )
                             }
                         }
@@ -1017,16 +1082,17 @@ private fun PinNumberPad(
                                 onClick = { onNumberClick(number) },
                                 modifier = Modifier.size(72.dp),
                                 shape = CircleShape,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = DarkCard,
-                                    contentColor = MaterialTheme.colorScheme.onBackground
-                                ),
-                                contentPadding = PaddingValues(0.dp)
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = DarkCard,
+                                        contentColor = MaterialTheme.colorScheme.onBackground,
+                                    ),
+                                contentPadding = PaddingValues(0.dp),
                             ) {
                                 Text(
                                     text = number,
                                     style = MaterialTheme.typography.headlineMedium,
-                                    fontSize = 28.sp
+                                    fontSize = 28.sp,
                                 )
                             }
                         }
@@ -1038,27 +1104,29 @@ private fun PinNumberPad(
                 }
             }
         }
-        
+
         // Confirm button row below the number pad
         Spacer(modifier = Modifier.height(8.dp))
-        
+
         Button(
             onClick = { onConfirmClick?.invoke() },
             enabled = onConfirmClick != null,
-            modifier = Modifier
-                .width(240.dp)
-                .height(48.dp),
+            modifier =
+                Modifier
+                    .width(240.dp)
+                    .height(48.dp),
             shape = RoundedCornerShape(8.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = BitcoinOrange,
-                contentColor = DarkBackground,
-                disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
-                disabledContentColor = DarkBackground.copy(alpha = 0.5f)
-            )
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = BitcoinOrange,
+                    contentColor = DarkBackground,
+                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                    disabledContentColor = DarkBackground.copy(alpha = 0.5f),
+                ),
         ) {
             Text(
                 text = confirmLabel,
-                style = MaterialTheme.typography.titleMedium
+                style = MaterialTheme.typography.titleMedium,
             )
         }
     }
@@ -1068,41 +1136,44 @@ private fun PinNumberPad(
 @Composable
 private fun LockTimingDropdown(
     currentTiming: SecureStorage.LockTiming,
-    onTimingSelected: (SecureStorage.LockTiming) -> Unit
+    onTimingSelected: (SecureStorage.LockTiming) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    
+
     ExposedDropdownMenuBox(
         expanded = expanded,
-        onExpandedChange = { expanded = it }
+        onExpandedChange = { expanded = it },
     ) {
         OutlinedTextField(
             value = currentTiming.displayName,
             onValueChange = {},
             readOnly = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .menuAnchor(),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(),
             trailingIcon = {
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = BitcoinOrange,
-                unfocusedBorderColor = BorderColor,
-                focusedLabelColor = BitcoinOrange,
-                unfocusedLabelColor = TextSecondary,
-                focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                unfocusedTextColor = MaterialTheme.colorScheme.onBackground
-            ),
-            shape = RoundedCornerShape(8.dp)
+            colors =
+                OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = BitcoinOrange,
+                    unfocusedBorderColor = BorderColor,
+                    focusedLabelColor = BitcoinOrange,
+                    unfocusedLabelColor = TextSecondary,
+                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                ),
+            shape = RoundedCornerShape(8.dp),
         )
-        
+
         ExposedDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier
-                .exposedDropdownSize(true)
-                .background(DarkSurface)
+            modifier =
+                Modifier
+                    .exposedDropdownSize(true)
+                    .background(DarkSurface),
         ) {
             SecureStorage.LockTiming.entries.forEach { timing ->
                 DropdownMenuItem(
@@ -1110,10 +1181,12 @@ private fun LockTimingDropdown(
                         Text(
                             text = timing.displayName,
                             style = MaterialTheme.typography.bodyLarge,
-                            color = if (timing == currentTiming) 
-                                BitcoinOrange 
-                            else 
-                                MaterialTheme.colorScheme.onBackground
+                            color =
+                                if (timing == currentTiming) {
+                                    BitcoinOrange
+                                } else {
+                                    MaterialTheme.colorScheme.onBackground
+                                },
                         )
                     },
                     onClick = {
@@ -1125,10 +1198,10 @@ private fun LockTimingDropdown(
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = "Selected",
-                                tint = BitcoinOrange
+                                tint = BitcoinOrange,
                             )
                         }
-                    }
+                    },
                 )
             }
         }
@@ -1140,7 +1213,9 @@ private fun LockTimingDropdown(
  */
 private sealed class DuressMnemonicValidation {
     data object NotChecked : DuressMnemonicValidation()
+
     data object Valid : DuressMnemonicValidation()
+
     data class Invalid(val error: String) : DuressMnemonicValidation()
 }
 
@@ -1150,8 +1225,14 @@ private sealed class DuressMnemonicValidation {
 @Composable
 private fun DuressSetupScreen(
     currentSecurityMethod: SecureStorage.SecurityMethod,
-    onDuressSet: (pin: String, mnemonic: String, passphrase: String?, customDerivationPath: String?, addressType: AddressType) -> Unit,
-    onBack: () -> Unit
+    onDuressSet: (
+        pin: String,
+        mnemonic: String,
+        passphrase: String?,
+        customDerivationPath: String?,
+        addressType: AddressType,
+    ) -> Unit,
+    onBack: () -> Unit,
 ) {
     var pin by remember { mutableStateOf("") }
     var confirmPin by remember { mutableStateOf("") }
@@ -1172,52 +1253,57 @@ private fun DuressSetupScreen(
     val bip39WordSet = remember { QrFormatParser.getWordlist(context).toSet() }
     val bip39PrefixSet = remember { bip39WordSet.map { it.take(4) }.toSet() }
 
-    val words = remember(seedPhrase) {
-        seedPhrase.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
-    }
+    val words =
+        remember(seedPhrase) {
+            seedPhrase.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+        }
     val wordCount = words.size
     val isValidWordCount = wordCount in listOf(12, 15, 18, 21, 24)
 
-    val invalidWords = remember(words, bip39WordSet, bip39PrefixSet) {
-        words.filter { word ->
-            word.length >= 4 && word.take(4) !in bip39PrefixSet
+    val invalidWords =
+        remember(words, bip39WordSet, bip39PrefixSet) {
+            words.filter { word ->
+                word.length >= 4 && word.take(4) !in bip39PrefixSet
+            }
         }
-    }
     val allTypedWordsValid = invalidWords.isEmpty()
     val allWordsComplete = words.all { it in bip39WordSet }
 
-    val mnemonicValidation = remember(seedPhrase, isValidWordCount, allTypedWordsValid, allWordsComplete) {
-        if (!isValidWordCount || !allTypedWordsValid || !allWordsComplete) {
-            DuressMnemonicValidation.NotChecked
-        } else {
-            try {
-                Mnemonic.fromString(seedPhrase.trim())
-                DuressMnemonicValidation.Valid
-            } catch (e: Exception) {
-                DuressMnemonicValidation.Invalid(e.message ?: "Invalid mnemonic")
+    val mnemonicValidation =
+        remember(seedPhrase, isValidWordCount, allTypedWordsValid, allWordsComplete) {
+            if (!isValidWordCount || !allTypedWordsValid || !allWordsComplete) {
+                DuressMnemonicValidation.NotChecked
+            } else {
+                try {
+                    Mnemonic.fromString(seedPhrase.trim())
+                    DuressMnemonicValidation.Valid
+                } catch (e: Exception) {
+                    DuressMnemonicValidation.Invalid(e.message ?: "Invalid mnemonic")
+                }
             }
         }
-    }
 
     val isMnemonicValid = mnemonicValidation is DuressMnemonicValidation.Valid
 
     if (step <= 2) {
         // PIN entry steps (reuses the same pattern as PinSetupScreen)
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(DarkBackground),
-            contentAlignment = Alignment.Center
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(DarkBackground),
+            contentAlignment = Alignment.Center,
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconButton(onClick = {
                         when (step) {
@@ -1232,29 +1318,41 @@ private fun DuressSetupScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Back",
-                            tint = MaterialTheme.colorScheme.onBackground
+                            tint = MaterialTheme.colorScheme.onBackground,
                         )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(32.dp))
+                Spacer(modifier = Modifier.height(18.dp))
 
                 Text(
                     text = if (step == 1) "Create Duress PIN" else "Confirm Duress PIN",
                     style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = when (step) {
-                        1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
-                        else -> "Enter the PIN again to confirm"
-                    },
+                    text =
+                        when (step) {
+                            1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
+                            else -> "Enter the PIN again to confirm"
+                        },
                     style = MaterialTheme.typography.bodyLarge,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
+
+                if (currentSecurityMethod == SecureStorage.SecurityMethod.BIOMETRIC) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "To trigger biometric unlock, press 'C' on the lock screen PIN pad",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ErrorRed,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(48.dp))
 
@@ -1263,14 +1361,15 @@ private fun DuressSetupScreen(
                 if (currentPin.isNotEmpty()) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         repeat(currentPin.length) {
                             Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(CircleShape)
-                                    .background(BitcoinOrange)
+                                modifier =
+                                    Modifier
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(BitcoinOrange),
                             )
                         }
                     }
@@ -1282,14 +1381,14 @@ private fun DuressSetupScreen(
                 // Error message
                 Box(
                     modifier = Modifier.height(24.dp),
-                    contentAlignment = Alignment.Center
+                    contentAlignment = Alignment.Center,
                 ) {
                     if (error != null) {
                         Text(
                             text = error!!,
                             style = MaterialTheme.typography.bodyMedium,
                             color = ErrorRed,
-                            textAlign = TextAlign.Center
+                            textAlign = TextAlign.Center,
                         )
                     }
                 }
@@ -1319,32 +1418,35 @@ private fun DuressSetupScreen(
                             error = null
                         }
                     },
-                    onConfirmClick = if (step == 1 && pin.length >= MIN_PIN_LENGTH) {
-                        {
-                            // Validate duress PIN != real PIN (if PIN security mode)
-                            // Use pinMatchesCurrent() to avoid incrementing the failed attempt counter
-                            if (currentSecurityMethod == SecureStorage.SecurityMethod.PIN &&
-                                secureStorage.pinMatchesCurrent(pin)
-                            ) {
-                                error = "Must differ from your unlock PIN"
-                                pin = ""
-                            } else {
-                                step = 2
-                                error = null
+                    onConfirmClick =
+                        if (step == 1 && pin.length >= MIN_PIN_LENGTH) {
+                            {
+                                // Validate duress PIN != real PIN (if PIN security mode)
+                                // Use pinMatchesCurrent() to avoid incrementing the failed attempt counter
+                                if (currentSecurityMethod == SecureStorage.SecurityMethod.PIN &&
+                                    secureStorage.pinMatchesCurrent(pin)
+                                ) {
+                                    error = "Must differ from your unlock PIN"
+                                    pin = ""
+                                } else {
+                                    step = 2
+                                    error = null
+                                }
                             }
-                        }
-                    } else if (step == 2 && confirmPin.length == pin.length) {
-                        {
-                            if (pin == confirmPin) {
-                                step = 3
-                                error = null
-                            } else {
-                                error = "PINs don't match, try again"
-                                confirmPin = ""
+                        } else if (step == 2 && confirmPin.length == pin.length) {
+                            {
+                                if (pin == confirmPin) {
+                                    step = 3
+                                    error = null
+                                } else {
+                                    error = "PINs don't match, try again"
+                                    confirmPin = ""
+                                }
                             }
-                        }
-                    } else null,
-                    confirmLabel = if (step == 1) "Next" else "Next"
+                        } else {
+                            null
+                        },
+                    confirmLabel = if (step == 1) "Next" else "Next",
                 )
 
                 Spacer(modifier = Modifier.height(48.dp))
@@ -1353,17 +1455,19 @@ private fun DuressSetupScreen(
     } else {
         // Step 3: Seed phrase entry with advanced options
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = {
                     step = 2
@@ -1372,14 +1476,14 @@ private fun DuressSetupScreen(
                 }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back"
+                        contentDescription = "Back",
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Decoy Wallet Seed",
                     style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }
 
@@ -1388,7 +1492,7 @@ private fun DuressSetupScreen(
             Text(
                 text = "Enter the seed phrase for the decoy wallet that will be shown when the duress PIN is used.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = TextSecondary
+                color = TextSecondary,
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -1398,12 +1502,12 @@ private fun DuressSetupScreen(
                 text = "Address Type",
                 style = MaterialTheme.typography.labelLarge,
                 color = TextSecondary,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             )
             Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 AddressType.entries
                     .filter { it != AddressType.NESTED_SEGWIT }
@@ -1414,21 +1518,22 @@ private fun DuressSetupScreen(
                         val borderColor = if (isSelected) BitcoinOrange else BorderColor
                         Surface(
                             onClick = { selectedAddressType = addressType },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(40.dp),
+                            modifier =
+                                Modifier
+                                    .weight(1f)
+                                    .height(40.dp),
                             shape = RoundedCornerShape(8.dp),
                             color = backgroundColor,
-                            border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
+                            border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize(),
                             ) {
                                 Text(
                                     text = addressType.displayName,
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = contentColor
+                                    color = contentColor,
                                 )
                             }
                         }
@@ -1439,7 +1544,7 @@ private fun DuressSetupScreen(
                 text = selectedAddressType.description,
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -1449,25 +1554,28 @@ private fun DuressSetupScreen(
                 onValueChange = { newValue ->
                     seedPhrase = newValue.lowercase()
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(120.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(120.dp),
                 placeholder = {
                     Text(
                         text = "Enter 12 or 24 word BIP39 seed phrase",
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 },
-                keyboardOptions = KeyboardOptions(
-                    autoCorrect = false,
-                    capitalization = KeyboardCapitalization.None
-                ),
+                keyboardOptions =
+                    KeyboardOptions(
+                        autoCorrect = false,
+                        capitalization = KeyboardCapitalization.None,
+                    ),
                 shape = RoundedCornerShape(8.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = BitcoinOrange,
-                    unfocusedBorderColor = BorderColor,
-                    cursorColor = BitcoinOrange
-                )
+                colors =
+                    OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = BitcoinOrange,
+                        unfocusedBorderColor = BorderColor,
+                        cursorColor = BitcoinOrange,
+                    ),
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1478,14 +1586,14 @@ private fun DuressSetupScreen(
                     Text(
                         text = "Valid BIP39 seed phrase",
                         style = MaterialTheme.typography.bodySmall,
-                        color = SuccessGreen
+                        color = SuccessGreen,
                     )
                 }
                 mnemonicValidation is DuressMnemonicValidation.Invalid -> {
                     Text(
                         text = (mnemonicValidation as DuressMnemonicValidation.Invalid).error,
                         style = MaterialTheme.typography.bodySmall,
-                        color = ErrorRed
+                        color = ErrorRed,
                     )
                 }
                 invalidWords.isNotEmpty() -> {
@@ -1493,28 +1601,28 @@ private fun DuressSetupScreen(
                     Text(
                         text = "Invalid word(s): $display",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ErrorRed
+                        color = ErrorRed,
                     )
                 }
                 isValidWordCount && allTypedWordsValid -> {
                     Text(
                         text = "$wordCount words entered",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
                 wordCount > 0 && wordCount !in listOf(12, 15, 18, 21, 24) && wordCount > 11 -> {
                     Text(
                         text = "$wordCount words \u2014 need 12, 15, 18, 21, or 24",
                         style = MaterialTheme.typography.bodySmall,
-                        color = ErrorRed
+                        color = ErrorRed,
                     )
                 }
                 wordCount > 0 -> {
                     Text(
                         text = "$wordCount words entered",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
             }
@@ -1525,25 +1633,27 @@ private fun DuressSetupScreen(
 
             // Use BIP39 Passphrase
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { usePassphrase = !usePassphrase },
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { usePassphrase = !usePassphrase },
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Checkbox(
                     checked = usePassphrase,
                     onCheckedChange = { usePassphrase = it },
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = BitcoinOrange,
-                        uncheckedColor = TextSecondary
-                    )
+                    colors =
+                        CheckboxDefaults.colors(
+                            checkedColor = BitcoinOrange,
+                            uncheckedColor = TextSecondary,
+                        ),
                 )
                 Text(
                     text = "Use BIP39 Passphrase",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }
 
@@ -1551,76 +1661,85 @@ private fun DuressSetupScreen(
             AnimatedVisibility(
                 visible = usePassphrase,
                 enter = expandVertically(),
-                exit = shrinkVertically()
+                exit = shrinkVertically(),
             ) {
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = passphrase,
                         onValueChange = { passphrase = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 12.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 12.dp),
                         placeholder = {
                             Text(
                                 "Enter passphrase",
-                                color = TextSecondary.copy(alpha = 0.5f)
+                                color = TextSecondary.copy(alpha = 0.5f),
                             )
                         },
-                        visualTransformation = if (showPassphrase)
-                            VisualTransformation.None
-                        else
-                            PasswordVisualTransformation(),
-                        keyboardOptions = KeyboardOptions(
-                            autoCorrect = false,
-                            keyboardType = KeyboardType.Password
-                        ),
+                        visualTransformation =
+                            if (showPassphrase) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
+                        keyboardOptions =
+                            KeyboardOptions(
+                                autoCorrect = false,
+                                keyboardType = KeyboardType.Password,
+                            ),
                         trailingIcon = {
                             IconButton(onClick = { showPassphrase = !showPassphrase }) {
                                 Icon(
-                                    imageVector = if (showPassphrase)
-                                        Icons.Default.Visibility
-                                    else
-                                        Icons.Default.VisibilityOff,
+                                    imageVector =
+                                        if (showPassphrase) {
+                                            Icons.Default.Visibility
+                                        } else {
+                                            Icons.Default.VisibilityOff
+                                        },
                                     contentDescription = null,
-                                    tint = TextSecondary
+                                    tint = TextSecondary,
                                 )
                             }
                         },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BitcoinOrange,
-                            unfocusedBorderColor = BorderColor,
-                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            cursorColor = BitcoinOrange
-                        )
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                cursorColor = BitcoinOrange,
+                            ),
                     )
                 }
             }
 
             // Use Custom Derivation Path
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { useCustomPath = !useCustomPath },
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { useCustomPath = !useCustomPath },
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Checkbox(
                     checked = useCustomPath,
                     onCheckedChange = { useCustomPath = it },
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = BitcoinOrange,
-                        uncheckedColor = TextSecondary
-                    )
+                    colors =
+                        CheckboxDefaults.colors(
+                            checkedColor = BitcoinOrange,
+                            uncheckedColor = TextSecondary,
+                        ),
                 )
                 Text(
                     text = "Use Custom Derivation Path",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }
 
@@ -1628,38 +1747,40 @@ private fun DuressSetupScreen(
             AnimatedVisibility(
                 visible = useCustomPath,
                 enter = expandVertically(),
-                exit = shrinkVertically()
+                exit = shrinkVertically(),
             ) {
                 Column {
                     Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = customPath,
                         onValueChange = { customPath = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 12.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 12.dp),
                         placeholder = {
                             Text(
                                 selectedAddressType.defaultPath,
-                                color = TextSecondary.copy(alpha = 0.5f)
+                                color = TextSecondary.copy(alpha = 0.5f),
                             )
                         },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BitcoinOrange,
-                            unfocusedBorderColor = BorderColor,
-                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                            cursorColor = BitcoinOrange
-                        )
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                cursorColor = BitcoinOrange,
+                            ),
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Default: ${selectedAddressType.defaultPath}",
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary.copy(alpha = 0.7f),
-                        modifier = Modifier.padding(start = 12.dp)
+                        modifier = Modifier.padding(start = 12.dp),
                     )
                 }
             }
@@ -1673,24 +1794,26 @@ private fun DuressSetupScreen(
                         seedPhrase.trim(),
                         if (usePassphrase) passphrase.ifBlank { null } else null,
                         if (useCustomPath) customPath.ifBlank { null } else null,
-                        selectedAddressType
+                        selectedAddressType,
                     )
                 },
                 enabled = isMnemonicValid,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                 shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BitcoinOrange,
-                    contentColor = DarkBackground,
-                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
-                    disabledContentColor = DarkBackground.copy(alpha = 0.5f)
-                )
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        contentColor = DarkBackground,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        disabledContentColor = DarkBackground.copy(alpha = 0.5f),
+                    ),
             ) {
                 Text(
                     text = "Enable Duress PIN",
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
 
@@ -1709,7 +1832,7 @@ private const val MAX_CLOAK_CODE_LENGTH = 12
 @Composable
 private fun CloakCodeSetupScreen(
     onCodeSet: (String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
 ) {
     var code by remember { mutableStateOf("") }
     var confirmCode by remember { mutableStateOf("") }
@@ -1717,21 +1840,23 @@ private fun CloakCodeSetupScreen(
     var error by remember { mutableStateOf<String?>(null) }
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground),
-        contentAlignment = Alignment.Center
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(DarkBackground),
+        contentAlignment = Alignment.Center,
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // Header with back button
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = {
                     if (step == 2) {
@@ -1745,7 +1870,7 @@ private fun CloakCodeSetupScreen(
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = "Back",
-                        tint = MaterialTheme.colorScheme.onBackground
+                        tint = MaterialTheme.colorScheme.onBackground,
                     )
                 }
             }
@@ -1755,27 +1880,26 @@ private fun CloakCodeSetupScreen(
             Text(
                 text = if (step == 1) "Set Unlock Pin" else "Confirm Unlock Pin",
                 style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
             )
 
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text =  "Enter a $MIN_CLOAK_CODE_LENGTH\u2013$MAX_CLOAK_CODE_LENGTH digit pin for cloak mode",
+                text = "Enter a $MIN_CLOAK_CODE_LENGTH\u2013$MAX_CLOAK_CODE_LENGTH digit pin for cloak mode",
                 style = MaterialTheme.typography.bodyLarge,
                 color = TextSecondary,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
             )
 
+            Spacer(modifier = Modifier.height(6.dp))
 
-                Spacer(modifier = Modifier.height(6.dp))
-
-                Text(
-                    text = "Enter this pin in the calculator app and press the '=' key to unlock",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ErrorRed,
-                    textAlign = TextAlign.Center
-                )
+            Text(
+                text = "Enter this pin in the calculator app and press the '=' key to unlock",
+                style = MaterialTheme.typography.bodyMedium,
+                color = ErrorRed,
+                textAlign = TextAlign.Center,
+            )
 
             Spacer(modifier = Modifier.height(48.dp))
 
@@ -1784,14 +1908,15 @@ private fun CloakCodeSetupScreen(
             if (currentCode.isNotEmpty()) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     repeat(currentCode.length) {
                         Box(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .clip(CircleShape)
-                                .background(BitcoinOrange)
+                            modifier =
+                                Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(BitcoinOrange),
                         )
                     }
                 }
@@ -1804,14 +1929,14 @@ private fun CloakCodeSetupScreen(
             // Error message
             Box(
                 modifier = Modifier.height(24.dp),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.Center,
             ) {
                 if (error != null) {
                     Text(
                         text = error!!,
                         style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
                 }
             }
@@ -1842,22 +1967,25 @@ private fun CloakCodeSetupScreen(
                         error = null
                     }
                 },
-                onConfirmClick = if (step == 1 && code.length >= MIN_CLOAK_CODE_LENGTH) {
-                    {
-                        step = 2
-                        error = null
-                    }
-                } else if (step == 2 && confirmCode.length == code.length) {
-                    {
-                        if (code == confirmCode) {
-                            onCodeSet(code)
-                        } else {
-                            error = "Pin doesn't match, try again"
-                            confirmCode = ""
+                onConfirmClick =
+                    if (step == 1 && code.length >= MIN_CLOAK_CODE_LENGTH) {
+                        {
+                            step = 2
+                            error = null
                         }
-                    }
-                } else null,
-                confirmLabel = if (step == 1) "Next" else "Enable"
+                    } else if (step == 2 && confirmCode.length == code.length) {
+                        {
+                            if (code == confirmCode) {
+                                onCodeSet(code)
+                            } else {
+                                error = "Pin doesn't match, try again"
+                                confirmCode = ""
+                            }
+                        }
+                    } else {
+                        null
+                    },
+                confirmLabel = if (step == 1) "Next" else "Enable",
             )
 
             Spacer(modifier = Modifier.height(24.dp))

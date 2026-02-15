@@ -9,40 +9,39 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
 
-private val DarkColorScheme = darkColorScheme(
-    primary = BitcoinOrange,
-    onPrimary = DarkBackground,
-    primaryContainer = BitcoinOrangeDark,
-    onPrimaryContainer = TextPrimary,
-    secondary = AccentTeal,
-    onSecondary = DarkBackground,
-    secondaryContainer = DarkSurfaceVariant,
-    onSecondaryContainer = TextPrimary,
-    tertiary = AccentGreen,
-    onTertiary = DarkBackground,
-    tertiaryContainer = DarkSurfaceVariant,
-    onTertiaryContainer = TextPrimary,
-    error = ErrorRed,
-    onError = TextPrimary,
-    errorContainer = ErrorRed.copy(alpha = 0.2f),
-    onErrorContainer = ErrorRed,
-    background = DarkBackground,
-    onBackground = TextPrimary,
-    surface = DarkSurface,
-    onSurface = TextPrimary,
-    surfaceVariant = DarkSurfaceVariant,
-    onSurfaceVariant = TextSecondary,
-    outline = BorderColor,
-    outlineVariant = BorderColor.copy(alpha = 0.5f),
-    inverseSurface = TextPrimary,
-    inverseOnSurface = DarkBackground,
-    inversePrimary = BitcoinOrangeDark
-)
+private val DarkColorScheme =
+    darkColorScheme(
+        primary = BitcoinOrange,
+        onPrimary = DarkBackground,
+        primaryContainer = BitcoinOrangeDark,
+        onPrimaryContainer = TextPrimary,
+        secondary = AccentTeal,
+        onSecondary = DarkBackground,
+        secondaryContainer = DarkSurfaceVariant,
+        onSecondaryContainer = TextPrimary,
+        tertiary = AccentGreen,
+        onTertiary = DarkBackground,
+        tertiaryContainer = DarkSurfaceVariant,
+        onTertiaryContainer = TextPrimary,
+        error = ErrorRed,
+        onError = TextPrimary,
+        errorContainer = ErrorRed.copy(alpha = 0.2f),
+        onErrorContainer = ErrorRed,
+        background = DarkBackground,
+        onBackground = TextPrimary,
+        surface = DarkSurface,
+        onSurface = TextPrimary,
+        surfaceVariant = DarkSurfaceVariant,
+        onSurfaceVariant = TextSecondary,
+        outline = BorderColor,
+        outlineVariant = BorderColor.copy(alpha = 0.5f),
+        inverseSurface = TextPrimary,
+        inverseOnSurface = DarkBackground,
+        inversePrimary = BitcoinOrangeDark,
+    )
 
 @Composable
-fun IbisWalletTheme(
-    content: @Composable () -> Unit
-) {
+fun IbisWalletTheme(content: @Composable () -> Unit) {
     val colorScheme = DarkColorScheme // Always use dark theme for this app
 
     val view = LocalView.current
@@ -59,6 +58,6 @@ fun IbisWalletTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         typography = Typography,
-        content = content
+        content = content,
     )
 }

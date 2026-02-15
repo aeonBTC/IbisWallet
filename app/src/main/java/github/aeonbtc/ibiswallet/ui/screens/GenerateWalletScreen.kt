@@ -88,7 +88,7 @@ fun GenerateWalletScreen(
     onBack: () -> Unit,
     existingWalletNames: List<String> = emptyList(),
     isLoading: Boolean = false,
-    error: String? = null
+    error: String? = null,
 ) {
     val context = LocalContext.current
 
@@ -132,64 +132,70 @@ fun GenerateWalletScreen(
     LaunchedEffect(generatedMnemonic, selectedAddressType, passphrase, usePassphrase) {
         val mnemonic = generatedMnemonic
         if (mnemonic != null) {
-            derivedFingerprint = withContext(Dispatchers.Default) {
-                try {
-                    val mnemonicObj = Mnemonic.fromString(mnemonic)
-                    val pass = if (usePassphrase && passphrase.isNotBlank()) passphrase else null
-                    val secretKey = DescriptorSecretKey(Network.BITCOIN, mnemonicObj, pass)
-                    val descriptor = when (selectedAddressType) {
-                        AddressType.LEGACY -> Descriptor.newBip44(secretKey, KeychainKind.EXTERNAL, Network.BITCOIN)
-                        AddressType.NESTED_SEGWIT -> Descriptor.newBip49(secretKey, KeychainKind.EXTERNAL, Network.BITCOIN)
-                        AddressType.SEGWIT -> Descriptor.newBip84(secretKey, KeychainKind.EXTERNAL, Network.BITCOIN)
-                        AddressType.TAPROOT -> Descriptor.newBip86(secretKey, KeychainKind.EXTERNAL, Network.BITCOIN)
+            derivedFingerprint =
+                withContext(Dispatchers.Default) {
+                    try {
+                        val mnemonicObj = Mnemonic.fromString(mnemonic)
+                        val pass = if (usePassphrase && passphrase.isNotBlank()) passphrase else null
+                        val secretKey = DescriptorSecretKey(Network.BITCOIN, mnemonicObj, pass)
+                        val descriptor =
+                            when (selectedAddressType) {
+                                AddressType.LEGACY -> Descriptor.newBip44(secretKey, KeychainKind.EXTERNAL, Network.BITCOIN)
+                                AddressType.NESTED_SEGWIT -> Descriptor.newBip49(secretKey, KeychainKind.EXTERNAL, Network.BITCOIN)
+                                AddressType.SEGWIT -> Descriptor.newBip84(secretKey, KeychainKind.EXTERNAL, Network.BITCOIN)
+                                AddressType.TAPROOT -> Descriptor.newBip86(secretKey, KeychainKind.EXTERNAL, Network.BITCOIN)
+                            }
+                        """\[([a-fA-F0-9]{8})/""".toRegex()
+                            .find(descriptor.toString())?.groupValues?.get(1)?.lowercase()
+                    } catch (_: Exception) {
+                        null
                     }
-                    """\[([a-fA-F0-9]{8})/""".toRegex()
-                        .find(descriptor.toString())?.groupValues?.get(1)?.lowercase()
-                } catch (_: Exception) {
-                    null
                 }
-            }
         } else {
             derivedFingerprint = null
         }
     }
 
     // Auto-generate wallet name based on address type with incremental suffix
-    val autoWalletName = remember(selectedAddressType, existingWalletNames) {
-        val base = selectedAddressType.displayName
-        val count = existingWalletNames.count { name ->
-            name == base || name.matches(Regex("${Regex.escape(base)}_(\\d+)"))
+    val autoWalletName =
+        remember(selectedAddressType, existingWalletNames) {
+            val base = selectedAddressType.displayName
+            val count =
+                existingWalletNames.count { name ->
+                    name == base || name.matches(Regex("${Regex.escape(base)}_(\\d+)"))
+                }
+            if (count == 0) base else "${base}_${count + 1}"
         }
-        if (count == 0) base else "${base}_${count + 1}"
-    }
 
     val canCreate = generatedMnemonic != null && backedUp && !isLoading
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Header
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back"
+                    contentDescription = "Back",
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "Generate Wallet",
                 style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
             )
         }
 
@@ -199,18 +205,19 @@ fun GenerateWalletScreen(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkCard)
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
             ) {
                 // Wallet Name
                 Text(
                     text = "Wallet Name",
                     style = MaterialTheme.typography.labelLarge,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 OutlinedTextField(
@@ -220,13 +227,14 @@ fun GenerateWalletScreen(
                     placeholder = { Text(autoWalletName, color = TextSecondary.copy(alpha = 0.5f)) },
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BitcoinOrange,
-                        unfocusedBorderColor = BorderColor,
-                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                        cursorColor = BitcoinOrange
-                    )
+                    colors =
+                        OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BitcoinOrange,
+                            unfocusedBorderColor = BorderColor,
+                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                            cursorColor = BitcoinOrange,
+                        ),
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -235,12 +243,12 @@ fun GenerateWalletScreen(
                 Text(
                     text = "Address Type",
                     style = MaterialTheme.typography.labelLarge,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     AddressType.entries
                         .filter { it != AddressType.NESTED_SEGWIT }
@@ -249,7 +257,7 @@ fun GenerateWalletScreen(
                                 addressType = addressType,
                                 isSelected = selectedAddressType == addressType,
                                 onClick = { selectedAddressType = addressType },
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier.weight(1f),
                             )
                         }
                 }
@@ -257,7 +265,7 @@ fun GenerateWalletScreen(
                 Text(
                     text = selectedAddressType.description,
                     style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(20.dp))
@@ -266,12 +274,12 @@ fun GenerateWalletScreen(
                 Text(
                     text = "Seed Phrase Length",
                     style = MaterialTheme.typography.labelLarge,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     WordCountOption.entries.forEach { option ->
                         val isSelected = selectedWordCount == option.wordCount
@@ -285,21 +293,22 @@ fun GenerateWalletScreen(
                                 generatedMnemonic = null
                                 backedUp = false
                             },
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(40.dp),
+                            modifier =
+                                Modifier
+                                    .weight(1f)
+                                    .height(40.dp),
                             shape = RoundedCornerShape(8.dp),
                             color = backgroundColor,
-                            border = BorderStroke(1.dp, borderColor)
+                            border = BorderStroke(1.dp, borderColor),
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
-                                modifier = Modifier.fillMaxSize()
+                                modifier = Modifier.fillMaxSize(),
                             ) {
                                 Text(
                                     text = option.label,
                                     style = MaterialTheme.typography.labelLarge,
-                                    color = contentColor
+                                    color = contentColor,
                                 )
                             }
                         }
@@ -309,7 +318,7 @@ fun GenerateWalletScreen(
                 Text(
                     text = "${selectedWordCount.toEntropy()} bits of entropy",
                     style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
             }
         }
@@ -320,35 +329,38 @@ fun GenerateWalletScreen(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkCard)
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
         ) {
             Column(
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 Surface(
                     onClick = { showAdvancedOptions = !showAdvancedOptions },
                     color = DarkCard,
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
                 ) {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = "Advanced Options",
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                         Icon(
-                            imageVector = if (showAdvancedOptions)
-                                Icons.Default.KeyboardArrowUp
-                            else
-                                Icons.Default.KeyboardArrowDown,
+                            imageVector =
+                                if (showAdvancedOptions) {
+                                    Icons.Default.KeyboardArrowUp
+                                } else {
+                                    Icons.Default.KeyboardArrowDown
+                                },
                             contentDescription = if (showAdvancedOptions) "Collapse" else "Expand",
-                            tint = TextSecondary
+                            tint = TextSecondary,
                         )
                     }
                 }
@@ -356,13 +368,14 @@ fun GenerateWalletScreen(
                 AnimatedVisibility(
                     visible = showAdvancedOptions,
                     enter = expandVertically(),
-                    exit = shrinkVertically()
+                    exit = shrinkVertically(),
                 ) {
                     Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp)
-                            .padding(bottom = 16.dp)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .padding(bottom = 16.dp),
                     ) {
                         HorizontalDivider(color = BorderColor)
 
@@ -370,139 +383,152 @@ fun GenerateWalletScreen(
 
                         // Use BIP39 Passphrase
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { usePassphrase = !usePassphrase },
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { usePassphrase = !usePassphrase },
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
                                 checked = usePassphrase,
                                 onCheckedChange = { usePassphrase = it },
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = BitcoinOrange,
-                                    uncheckedColor = TextSecondary
-                                )
+                                colors =
+                                    CheckboxDefaults.colors(
+                                        checkedColor = BitcoinOrange,
+                                        uncheckedColor = TextSecondary,
+                                    ),
                             )
                             Text(
                                 text = "Use BIP39 Passphrase",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                         }
 
                         AnimatedVisibility(
                             visible = usePassphrase,
                             enter = expandVertically(),
-                            exit = shrinkVertically()
+                            exit = shrinkVertically(),
                         ) {
                             Column {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 OutlinedTextField(
                                     value = passphrase,
                                     onValueChange = { passphrase = it },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 12.dp),
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 12.dp),
                                     placeholder = {
                                         Text(
                                             "Enter passphrase",
-                                            color = TextSecondary.copy(alpha = 0.5f)
+                                            color = TextSecondary.copy(alpha = 0.5f),
                                         )
                                     },
-                                    visualTransformation = if (showPassphrase)
-                                        VisualTransformation.None
-                                    else
-                                        PasswordVisualTransformation(),
-                                    keyboardOptions = KeyboardOptions(
-                                        autoCorrect = false,
-                                        keyboardType = KeyboardType.Password
-                                    ),
+                                    visualTransformation =
+                                        if (showPassphrase) {
+                                            VisualTransformation.None
+                                        } else {
+                                            PasswordVisualTransformation()
+                                        },
+                                    keyboardOptions =
+                                        KeyboardOptions(
+                                            autoCorrect = false,
+                                            keyboardType = KeyboardType.Password,
+                                        ),
                                     trailingIcon = {
                                         IconButton(onClick = { showPassphrase = !showPassphrase }) {
                                             Icon(
-                                                imageVector = if (showPassphrase)
-                                                    Icons.Default.Visibility
-                                                else
-                                                    Icons.Default.VisibilityOff,
+                                                imageVector =
+                                                    if (showPassphrase) {
+                                                        Icons.Default.Visibility
+                                                    } else {
+                                                        Icons.Default.VisibilityOff
+                                                    },
                                                 contentDescription = null,
-                                                tint = TextSecondary
+                                                tint = TextSecondary,
                                             )
                                         }
                                     },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = BitcoinOrange,
-                                        unfocusedBorderColor = BorderColor,
-                                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                                        cursorColor = BitcoinOrange
-                                    )
+                                    colors =
+                                        OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = BitcoinOrange,
+                                            unfocusedBorderColor = BorderColor,
+                                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                            cursorColor = BitcoinOrange,
+                                        ),
                                 )
                             }
                         }
 
                         // Use Custom Derivation Path
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(36.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { useCustomPath = !useCustomPath },
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(36.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { useCustomPath = !useCustomPath },
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
                                 checked = useCustomPath,
                                 onCheckedChange = { useCustomPath = it },
-                                colors = CheckboxDefaults.colors(
-                                    checkedColor = BitcoinOrange,
-                                    uncheckedColor = TextSecondary
-                                )
+                                colors =
+                                    CheckboxDefaults.colors(
+                                        checkedColor = BitcoinOrange,
+                                        uncheckedColor = TextSecondary,
+                                    ),
                             )
                             Text(
                                 text = "Use Custom Derivation Path",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                         }
 
                         AnimatedVisibility(
                             visible = useCustomPath,
                             enter = expandVertically(),
-                            exit = shrinkVertically()
+                            exit = shrinkVertically(),
                         ) {
                             Column {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 OutlinedTextField(
                                     value = customPath,
                                     onValueChange = { customPath = it },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 12.dp),
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(start = 12.dp),
                                     placeholder = {
                                         Text(
                                             selectedAddressType.defaultPath,
-                                            color = TextSecondary.copy(alpha = 0.5f)
+                                            color = TextSecondary.copy(alpha = 0.5f),
                                         )
                                     },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedBorderColor = BitcoinOrange,
-                                        unfocusedBorderColor = BorderColor,
-                                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                                        cursorColor = BitcoinOrange
-                                    )
+                                    colors =
+                                        OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = BitcoinOrange,
+                                            unfocusedBorderColor = BorderColor,
+                                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                            cursorColor = BitcoinOrange,
+                                        ),
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = "Default: ${selectedAddressType.defaultPath}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary.copy(alpha = 0.7f),
-                                    modifier = Modifier.padding(start = 12.dp)
+                                    modifier = Modifier.padding(start = 12.dp),
                                 )
                             }
                         }
@@ -517,9 +543,10 @@ fun GenerateWalletScreen(
         if (generatedMnemonic == null) {
             IbisButton(
                 onClick = { generateMnemonic() },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
             ) {
                 Text(
                     text = "Generate Seed Phrase",
@@ -531,28 +558,29 @@ fun GenerateWalletScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard)
+                colors = CardDefaults.cardColors(containerColor = DarkCard),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = "Your Seed Phrase",
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onBackground
+                            color = MaterialTheme.colorScheme.onBackground,
                         )
                         derivedFingerprint?.let { fp ->
                             Text(
                                 text = "Fingerprint: $fp",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = BitcoinOrange
+                                color = BitcoinOrange,
                             )
                         }
                     }
@@ -572,7 +600,7 @@ fun GenerateWalletScreen(
                                     Box(modifier = Modifier.weight(1f)) {
                                         SeedWordItem(
                                             index = rightIndex + 1,
-                                            word = words[rightIndex]
+                                            word = words[rightIndex],
                                         )
                                     }
                                 } else {
@@ -587,7 +615,7 @@ fun GenerateWalletScreen(
                     // Copy + Regenerate buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         OutlinedButton(
                             onClick = {
@@ -598,18 +626,18 @@ fun GenerateWalletScreen(
                             },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, BorderColor)
+                            border = BorderStroke(1.dp, BorderColor),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
                                 contentDescription = null,
                                 tint = if (copied) SuccessGreen else TextSecondary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(18.dp),
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = if (copied) "Copied!" else "Copy",
-                                color = if (copied) SuccessGreen else TextSecondary
+                                color = if (copied) SuccessGreen else TextSecondary,
                             )
                         }
 
@@ -617,18 +645,18 @@ fun GenerateWalletScreen(
                             onClick = { generateMnemonic() },
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, BorderColor)
+                            border = BorderStroke(1.dp, BorderColor),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
                                 contentDescription = null,
                                 tint = TextSecondary,
-                                modifier = Modifier.size(18.dp)
+                                modifier = Modifier.size(18.dp),
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = "Regenerate",
-                                color = TextSecondary
+                                color = TextSecondary,
                             )
                         }
                     }
@@ -639,24 +667,26 @@ fun GenerateWalletScreen(
 
             // Backup confirmation checkbox
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { backedUp = !backedUp },
-                verticalAlignment = Alignment.CenterVertically
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { backedUp = !backedUp },
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Checkbox(
                     checked = backedUp,
                     onCheckedChange = { backedUp = it },
-                    colors = CheckboxDefaults.colors(
-                        checkedColor = BitcoinOrange,
-                        uncheckedColor = TextSecondary
-                    )
+                    colors =
+                        CheckboxDefaults.colors(
+                            checkedColor = BitcoinOrange,
+                            uncheckedColor = TextSecondary,
+                        ),
                 )
                 Text(
                     text = "I have backed up my seed phrase",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
             }
 
@@ -668,31 +698,34 @@ fun GenerateWalletScreen(
                     val passphraseValue = if (usePassphrase && passphrase.isNotBlank()) passphrase else null
                     val customPathValue = if (useCustomPath && customPath.isNotBlank()) customPath else null
                     val finalName = walletName.trim().ifBlank { autoWalletName }
-                    val config = WalletImportConfig(
-                        name = finalName,
-                        keyMaterial = generatedMnemonic!!,
-                        addressType = selectedAddressType,
-                        passphrase = passphraseValue,
-                        customDerivationPath = customPathValue,
-                        network = WalletNetwork.BITCOIN
-                    )
+                    val config =
+                        WalletImportConfig(
+                            name = finalName,
+                            keyMaterial = generatedMnemonic!!,
+                            addressType = selectedAddressType,
+                            passphrase = passphraseValue,
+                            customDerivationPath = customPathValue,
+                            network = WalletNetwork.BITCOIN,
+                        )
                     onGenerate(config)
                 },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                 shape = RoundedCornerShape(8.dp),
                 enabled = canCreate,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BitcoinOrange,
-                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f)
-                )
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                    ),
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
                         color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp
+                        strokeWidth = 2.dp,
                     )
                 } else {
                     Text("Create Wallet")
@@ -706,15 +739,16 @@ fun GenerateWalletScreen(
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = ErrorRed.copy(alpha = 0.1f)
-                )
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = ErrorRed.copy(alpha = 0.1f),
+                    ),
             ) {
                 Text(
                     text = error,
                     style = MaterialTheme.typography.bodyMedium,
                     color = ErrorRed,
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier.padding(16.dp),
                 )
             }
         }
@@ -726,25 +760,26 @@ fun GenerateWalletScreen(
 @Composable
 private fun SeedWordItem(
     index: Int,
-    word: String
+    word: String,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = "$index.",
             style = MaterialTheme.typography.labelSmall,
             color = TextSecondary.copy(alpha = 0.6f),
-            modifier = Modifier.width(24.dp)
+            modifier = Modifier.width(24.dp),
         )
         Text(
             text = word,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1
+            maxLines = 1,
         )
     }
 }
@@ -754,7 +789,7 @@ private fun GenerateAddressTypeButton(
     addressType: AddressType,
     isSelected: Boolean,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
     val backgroundColor = if (isSelected) BitcoinOrange else DarkSurfaceVariant
     val contentColor = if (isSelected) DarkBackground else TextSecondary
@@ -765,16 +800,16 @@ private fun GenerateAddressTypeButton(
         modifier = modifier.height(40.dp),
         shape = RoundedCornerShape(8.dp),
         color = backgroundColor,
-        border = BorderStroke(1.dp, borderColor)
+        border = BorderStroke(1.dp, borderColor),
     ) {
         Box(
             contentAlignment = Alignment.Center,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
         ) {
             Text(
                 text = addressType.displayName,
                 style = MaterialTheme.typography.labelLarge,
-                color = contentColor
+                color = contentColor,
             )
         }
     }
@@ -782,13 +817,14 @@ private fun GenerateAddressTypeButton(
 
 private enum class WordCountOption(val label: String, val wordCount: WordCount) {
     TWELVE("12 words", WordCount.WORDS12),
-    TWENTY_FOUR("24 words", WordCount.WORDS24);
+    TWENTY_FOUR("24 words", WordCount.WORDS24),
 }
 
-private fun WordCount.toEntropy(): Int = when (this) {
-    WordCount.WORDS12 -> 128
-    WordCount.WORDS15 -> 160
-    WordCount.WORDS18 -> 192
-    WordCount.WORDS21 -> 224
-    WordCount.WORDS24 -> 256
-}
+private fun WordCount.toEntropy(): Int =
+    when (this) {
+        WordCount.WORDS12 -> 128
+        WordCount.WORDS15 -> 160
+        WordCount.WORDS18 -> 192
+        WordCount.WORDS21 -> 224
+        WordCount.WORDS24 -> 256
+    }

@@ -70,31 +70,32 @@ fun BroadcastTransactionScreen(
     isConnected: Boolean,
     onBroadcast: (String) -> Unit,
     onClear: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
 ) {
     var inputData by remember { mutableStateOf("") }
     var showQrScanner by remember { mutableStateOf(false) }
-    
+
     val context = LocalContext.current
-    
+
     // File picker for loading transaction from file (.psbt, .txn, .txt, or any file)
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val result = parseTxFileBytes(stream.readBytes())
-                    if (result != null) {
-                        inputData = result.data
+    val filePickerLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument(),
+        ) { uri: Uri? ->
+            if (uri != null) {
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val result = parseTxFileBytes(stream.readBytes())
+                        if (result != null) {
+                            inputData = result.data
+                        }
                     }
+                } catch (_: Exception) {
+                    // File read failed — ignore silently
                 }
-            } catch (_: Exception) {
-                // File read failed — ignore silently
             }
         }
-    }
-    
+
     // QR Scanner Dialog
     if (showQrScanner) {
         AnimatedQrScannerDialog(
@@ -102,16 +103,17 @@ fun BroadcastTransactionScreen(
                 inputData = data
                 showQrScanner = false
             },
-            onDismiss = { showQrScanner = false }
+            onDismiss = { showQrScanner = false },
         )
     }
-    
+
     // Detect input format for display
     val trimmedInput = inputData.trim()
-    val detectedFormat = remember(trimmedInput) {
-        detectFormat(trimmedInput)
-    }
-    
+    val detectedFormat =
+        remember(trimmedInput) {
+            detectFormat(trimmedInput)
+        }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -119,7 +121,7 @@ fun BroadcastTransactionScreen(
                     Text(
                         "Manual Broadcast",
                         style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
                     )
                 },
                 navigationIcon = {
@@ -129,42 +131,46 @@ fun BroadcastTransactionScreen(
                     }) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = "Back",
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkBackground
-                )
+                colors =
+                    TopAppBarDefaults.topAppBarColors(
+                        containerColor = DarkBackground,
+                    ),
             )
         },
-        containerColor = DarkBackground
+        containerColor = DarkBackground,
     ) { paddingValues ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState())
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(horizontal = 16.dp)
+                    .verticalScroll(rememberScrollState()),
         ) {
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             // --- Input card (input field, format indicator, load file) ---
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = DarkCard
-                )
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = DarkCard,
+                    ),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
                 ) {
                     // Input text field with QR button at bottom right
                     Box(
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
                         OutlinedTextField(
                             value = inputData,
@@ -175,123 +181,131 @@ fun BroadcastTransactionScreen(
                                     onClear()
                                 }
                             },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(180.dp),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp),
                             placeholder = {
                                 Text(
                                     "Paste signed transaction hex or PSBT base64",
-                                    color = TextSecondary.copy(alpha = 0.6f)
+                                    color = TextSecondary.copy(alpha = 0.6f),
                                 )
                             },
-                            textStyle = MaterialTheme.typography.bodySmall.copy(
-                                fontFamily = FontFamily.Monospace
-                            ),
+                            textStyle =
+                                MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                ),
                             shape = RoundedCornerShape(8.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = BitcoinOrange,
-                                unfocusedBorderColor = BorderColor,
-                                cursorColor = BitcoinOrange
-                            )
+                            colors =
+                                OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = BitcoinOrange,
+                                    unfocusedBorderColor = BorderColor,
+                                    cursorColor = BitcoinOrange,
+                                ),
                         )
-                        
+
                         // QR scan button at bottom right
                         IconButton(
                             onClick = { showQrScanner = true },
-                            modifier = Modifier.align(Alignment.BottomEnd)
+                            modifier = Modifier.align(Alignment.BottomEnd),
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCodeScanner,
                                 contentDescription = "Scan QR",
-                                tint = BitcoinOrange
+                                tint = BitcoinOrange,
                             )
                         }
                     }
-                    
+
                     // Format detection indicator
                     if (trimmedInput.isNotEmpty()) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = when (detectedFormat) {
-                                InputFormat.RAW_HEX -> "Raw transaction hex detected"
-                                InputFormat.PSBT_BASE64 -> "Signed PSBT detected"
-                                InputFormat.INVALID -> "Unrecognized format"
-                            },
+                            text =
+                                when (detectedFormat) {
+                                    InputFormat.RAW_HEX -> "Raw transaction hex detected"
+                                    InputFormat.PSBT_BASE64 -> "Signed PSBT detected"
+                                    InputFormat.INVALID -> "Unrecognized format"
+                                },
                             style = MaterialTheme.typography.bodySmall,
-                            color = when (detectedFormat) {
-                                InputFormat.RAW_HEX, InputFormat.PSBT_BASE64 -> TextSecondary
-                                InputFormat.INVALID -> WarningYellow
-                            }
+                            color =
+                                when (detectedFormat) {
+                                    InputFormat.RAW_HEX, InputFormat.PSBT_BASE64 -> TextSecondary
+                                    InputFormat.INVALID -> WarningYellow
+                                },
                         )
                     }
-                    
+
                     Spacer(modifier = Modifier.height(16.dp))
-                    
+
                     // Import from file
                     IbisButton(
                         onClick = {
                             filePickerLauncher.launch(arrayOf("*/*"))
                         },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(48.dp),
                     ) {
                         Text("Load File")
                     }
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(8.dp))
-            
+
             // --- Not connected warning ---
             if (!isConnected) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = WarningYellow.copy(alpha = 0.1f)
-                    )
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = WarningYellow.copy(alpha = 0.1f),
+                        ),
                 ) {
                     Text(
                         text = "Connect to an Electrum server to broadcast",
                         style = MaterialTheme.typography.bodySmall,
                         color = WarningYellow,
                         modifier = Modifier.padding(16.dp),
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
                     )
                 }
-
             }
             Spacer(modifier = Modifier.height(8.dp))
             // --- Broadcast button ---
-            val canBroadcast = trimmedInput.isNotEmpty() &&
+            val canBroadcast =
+                trimmedInput.isNotEmpty() &&
                     detectedFormat != InputFormat.INVALID &&
                     isConnected &&
                     !broadcastState.isBroadcasting
-            
+
             IbisButton(
                 onClick = { onBroadcast(trimmedInput) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                 enabled = canBroadcast,
-                activeColor = TextSecondary
+                activeColor = TextSecondary,
             ) {
                 if (broadcastState.isBroadcasting) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
                         color = BitcoinOrange,
-                        strokeWidth = 2.dp
+                        strokeWidth = 2.dp,
                     )
                 } else {
                     Text(
                         "Broadcast",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
-            
+
             // --- Broadcast status ---
             if (broadcastState.isBroadcasting && broadcastState.broadcastStatus != null) {
                 Spacer(modifier = Modifier.height(8.dp))
@@ -300,78 +314,82 @@ fun BroadcastTransactionScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                     modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center
+                    textAlign = TextAlign.Center,
                 )
             }
-            
+
             // --- Success card ---
             if (broadcastState.txid != null) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = SuccessGreen.copy(alpha = 0.1f)
-                    )
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = SuccessGreen.copy(alpha = 0.1f),
+                        ),
                 ) {
                     Column(
-                        modifier = Modifier.padding(16.dp)
+                        modifier = Modifier.padding(16.dp),
                     ) {
                         Text(
                             text = "Transaction Broadcast",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
-                            color = SuccessGreen
+                            color = SuccessGreen,
                         )
-                        
+
                         Spacer(modifier = Modifier.height(8.dp))
-                        
+
                         Text(
                             text = broadcastState.txid,
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = SuccessGreen.copy(alpha = 0.8f),
                             maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
                         )
-                        
+
                         Spacer(modifier = Modifier.height(12.dp))
-                        
+
                         TextButton(
                             onClick = {
                                 SecureClipboard.copyAndScheduleClear(
-                                    context, "txid", broadcastState.txid
+                                    context,
+                                    "txid",
+                                    broadcastState.txid,
                                 )
-                            }
+                            },
                         ) {
                             Text(
                                 "Copy Txid",
-                                color = SuccessGreen
+                                color = SuccessGreen,
                             )
                         }
                     }
                 }
             }
-            
+
             // --- Error card ---
             if (broadcastState.error != null) {
                 Spacer(modifier = Modifier.height(16.dp))
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = ErrorRed.copy(alpha = 0.1f)
-                    )
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = ErrorRed.copy(alpha = 0.1f),
+                        ),
                 ) {
                     Text(
                         text = broadcastState.error,
                         style = MaterialTheme.typography.bodySmall,
                         color = ErrorRed,
-                        modifier = Modifier.padding(16.dp)
+                        modifier = Modifier.padding(16.dp),
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.height(48.dp))
         }
     }
@@ -380,7 +398,7 @@ fun BroadcastTransactionScreen(
 private enum class InputFormat {
     RAW_HEX,
     PSBT_BASE64,
-    INVALID
+    INVALID,
 }
 
 /**
@@ -388,17 +406,20 @@ private enum class InputFormat {
  */
 private fun detectFormat(input: String): InputFormat {
     if (input.isEmpty()) return InputFormat.INVALID
-    
+
     val isHex = input.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
     if (isHex && input.length % 2 == 0 && input.length > 20) {
         return InputFormat.RAW_HEX
     }
-    
+
     // Base64 characters (standard + URL-safe variants) with possible padding
-    val isBase64 = input.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '+' || it == '/' || it == '=' || it == '-' || it == '_' }
+    val isBase64 =
+        input.all {
+            it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '+' || it == '/' || it == '=' || it == '-' || it == '_'
+        }
     if (isBase64 && input.length > 10) {
         return InputFormat.PSBT_BASE64
     }
-    
+
     return InputFormat.INVALID
 }

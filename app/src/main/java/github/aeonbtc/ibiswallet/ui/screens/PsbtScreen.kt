@@ -53,7 +53,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -68,7 +67,6 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
-import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
@@ -91,50 +89,53 @@ fun PsbtScreen(
     onSignedDataReceived: (String) -> Unit,
     onConfirmBroadcast: () -> Unit,
     onCancelBroadcast: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
 ) {
     val context = LocalContext.current
     var showScanner by remember { mutableStateOf(false) }
     var showPasteDialog by remember { mutableStateOf(false) }
-    
+
     // File picker for saving unsigned PSBT
-    val savePsbtLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/octet-stream")
-    ) { uri: Uri? ->
-        if (uri != null && psbtState.unsignedPsbtBase64 != null) {
-            try {
-                context.contentResolver.openOutputStream(uri)?.use { stream ->
-                    // Write raw PSBT bytes (base64-decoded) for maximum compatibility
-                    val bytes = android.util.Base64.decode(
-                        psbtState.unsignedPsbtBase64,
-                        android.util.Base64.DEFAULT
-                    )
-                    stream.write(bytes)
-                }
-                Toast.makeText(context, "PSBT saved", Toast.LENGTH_SHORT).show()
-            } catch (_: Exception) {
-                Toast.makeText(context, "Failed to save PSBT", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
-    
-    // File picker for loading signed PSBT/tx (.psbt, .txn, .txt, or any file)
-    val loadSignedLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            try {
-                context.contentResolver.openInputStream(uri)?.use { stream ->
-                    val result = parseTxFileBytes(stream.readBytes())
-                    if (result != null) {
-                        onSignedDataReceived(result.data)
+    val savePsbtLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
+        ) { uri: Uri? ->
+            if (uri != null && psbtState.unsignedPsbtBase64 != null) {
+                try {
+                    context.contentResolver.openOutputStream(uri)?.use { stream ->
+                        // Write raw PSBT bytes (base64-decoded) for maximum compatibility
+                        val bytes =
+                            android.util.Base64.decode(
+                                psbtState.unsignedPsbtBase64,
+                                android.util.Base64.DEFAULT,
+                            )
+                        stream.write(bytes)
                     }
+                    Toast.makeText(context, "PSBT saved", Toast.LENGTH_SHORT).show()
+                } catch (_: Exception) {
+                    Toast.makeText(context, "Failed to save PSBT", Toast.LENGTH_SHORT).show()
                 }
-            } catch (_: Exception) {
-                Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
             }
         }
-    }
+
+    // File picker for loading signed PSBT/tx (.psbt, .txn, .txt, or any file)
+    val loadSignedLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument(),
+        ) { uri: Uri? ->
+            if (uri != null) {
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        val result = parseTxFileBytes(stream.readBytes())
+                        if (result != null) {
+                            onSignedDataReceived(result.data)
+                        }
+                    }
+                } catch (_: Exception) {
+                    Toast.makeText(context, "Failed to read file", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
 
     // Scanner dialog
     if (showScanner) {
@@ -143,10 +144,10 @@ fun PsbtScreen(
                 showScanner = false
                 onSignedDataReceived(data)
             },
-            onDismiss = { showScanner = false }
+            onDismiss = { showScanner = false },
         )
     }
-    
+
     // Paste signed transaction dialog
     if (showPasteDialog) {
         PasteSignedTransactionDialog(
@@ -158,7 +159,7 @@ fun PsbtScreen(
                 showPasteDialog = false
                 showScanner = true
             },
-            onDismiss = { showPasteDialog = false }
+            onDismiss = { showPasteDialog = false },
         )
     }
 
@@ -168,33 +169,35 @@ fun PsbtScreen(
                 title = {
                     Text(
                         text = "Build PSBT",
-                        style = MaterialTheme.typography.titleMedium
+                        style = MaterialTheme.typography.titleMedium,
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back"
+                            contentDescription = "Back",
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkBackground,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                    navigationIconContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                colors =
+                    TopAppBarDefaults.topAppBarColors(
+                        containerColor = DarkBackground,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground,
+                        navigationIconContentColor = MaterialTheme.colorScheme.onBackground,
+                    ),
             )
         },
-        containerColor = DarkBackground
+        containerColor = DarkBackground,
     ) { paddingValues ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -204,13 +207,13 @@ fun PsbtScreen(
                     Spacer(modifier = Modifier.height(80.dp))
                     CircularProgressIndicator(
                         color = BitcoinOrange,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(48.dp),
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = "Creating PSBT...",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
 
@@ -219,13 +222,13 @@ fun PsbtScreen(
                     Spacer(modifier = Modifier.height(80.dp))
                     CircularProgressIndicator(
                         color = BitcoinOrange,
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(48.dp),
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = psbtState.broadcastStatus ?: "Broadcasting transaction...",
                         style = MaterialTheme.typography.bodyLarge,
-                        color = TextSecondary
+                        color = TextSecondary,
                     )
                 }
 
@@ -235,7 +238,7 @@ fun PsbtScreen(
                         psbtState = psbtState,
                         uiState = uiState,
                         onConfirm = onConfirmBroadcast,
-                        onCancel = onCancelBroadcast
+                        onCancel = onCancelBroadcast,
                     )
                 }
 
@@ -245,19 +248,20 @@ fun PsbtScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkCard)
+                        colors = CardDefaults.cardColors(containerColor = DarkCard),
                     ) {
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
                                 text = "Step 1: Export Unsigned PSBT",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
 
                             Spacer(modifier = Modifier.height(4.dp))
@@ -266,7 +270,7 @@ fun PsbtScreen(
                                 text = "Scan or save PSBT for signing.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
                             )
 
                             Spacer(modifier = Modifier.height(16.dp))
@@ -274,7 +278,7 @@ fun PsbtScreen(
                             // Animated QR code
                             AnimatedQrCode(
                                 psbtBase64 = psbtState.unsignedPsbtBase64,
-                                qrSize = 280.dp
+                                qrSize = 280.dp,
                             )
 
                             Spacer(modifier = Modifier.height(12.dp))
@@ -282,50 +286,54 @@ fun PsbtScreen(
                             // Export options: Copy + Save to File
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center
+                                horizontalArrangement = Arrangement.Center,
                             ) {
                                 OutlinedButton(
                                     onClick = {
                                         savePsbtLauncher.launch("unsigned.psbt")
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, BorderColor)
+                                    border = BorderStroke(1.dp, BorderColor),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Save,
                                         contentDescription = null,
                                         modifier = Modifier.size(16.dp),
-                                        tint = TextSecondary
+                                        tint = TextSecondary,
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "Save File",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = TextSecondary
+                                        color = TextSecondary,
                                     )
                                 }
-                                
+
                                 Spacer(modifier = Modifier.width(8.dp))
 
                                 OutlinedButton(
                                     onClick = {
-                                        SecureClipboard.copyAndScheduleClear(context, "PSBT", psbtState.unsignedPsbtBase64)
+                                        SecureClipboard.copyAndScheduleClear(
+                                            context,
+                                            "PSBT",
+                                            psbtState.unsignedPsbtBase64,
+                                        )
                                         Toast.makeText(context, "PSBT copied", Toast.LENGTH_SHORT).show()
                                     },
                                     shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, BorderColor)
+                                    border = BorderStroke(1.dp, BorderColor),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.ContentCopy,
                                         contentDescription = null,
                                         modifier = Modifier.size(16.dp),
-                                        tint = TextSecondary
+                                        tint = TextSecondary,
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "Copy PSBT",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = TextSecondary
+                                        color = TextSecondary,
                                     )
                                 }
                             }
@@ -338,18 +346,19 @@ fun PsbtScreen(
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = DarkCard)
+                            colors = CardDefaults.cardColors(containerColor = DarkCard),
                         ) {
                             Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp)
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
                             ) {
                                 Text(
                                     text = "Transaction Details",
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onBackground
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
 
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -358,22 +367,23 @@ fun PsbtScreen(
                                 if (!psbtState.recipientAddress.isNullOrBlank()) {
                                     PsbtDetailRow(
                                         label = "To",
-                                        value = psbtState.recipientAddress.take(12) + "..." +
-                                            psbtState.recipientAddress.takeLast(8)
+                                        value =
+                                            psbtState.recipientAddress.take(12) + "..." +
+                                                psbtState.recipientAddress.takeLast(8),
                                     )
                                 }
 
                                 // Send amount
                                 PsbtDetailRow(
                                     label = "Amount",
-                                    value = formatSats(psbtState.recipientAmountSats)
+                                    value = formatSats(psbtState.recipientAmountSats),
                                 )
 
                                 // Change
                                 if (psbtState.changeAmountSats != null) {
                                     PsbtDetailRow(
                                         label = "Change",
-                                        value = formatSats(psbtState.changeAmountSats)
+                                        value = formatSats(psbtState.changeAmountSats),
                                     )
                                 }
 
@@ -381,7 +391,7 @@ fun PsbtScreen(
                                 PsbtDetailRow(
                                     label = "Fee",
                                     value = formatSats(psbtState.actualFeeSats),
-                                    valueColor = BitcoinOrange
+                                    valueColor = BitcoinOrange,
                                 )
                             }
                         }
@@ -393,19 +403,20 @@ fun PsbtScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkCard)
+                        colors = CardDefaults.cardColors(containerColor = DarkCard),
                     ) {
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
                                 text = "Step 2: Import Signed PSBT",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
 
                             Spacer(modifier = Modifier.height(4.dp))
@@ -414,84 +425,88 @@ fun PsbtScreen(
                                 text = "Scan or load signed PSBT for broadcasting.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
                             )
 
                             Spacer(modifier = Modifier.height(16.dp))
 
                             Button(
                                 onClick = { showScanner = true },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp),
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp),
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = BitcoinOrange,
-                                    contentColor = DarkBackground
-                                )
+                                colors =
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = BitcoinOrange,
+                                        contentColor = DarkBackground,
+                                    ),
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.QrCodeScanner,
                                     contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(20.dp),
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "Scan QR",
-                                    style = MaterialTheme.typography.titleMedium
+                                    style = MaterialTheme.typography.titleMedium,
                                 )
                             }
-                            
+
                             Spacer(modifier = Modifier.height(8.dp))
-                            
+
                             // Import from file or paste
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 OutlinedButton(
                                     onClick = {
                                         loadSignedLauncher.launch(arrayOf("*/*"))
                                     },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(48.dp),
+                                    modifier =
+                                        Modifier
+                                            .weight(1f)
+                                            .height(48.dp),
                                     shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, BorderColor)
+                                    border = BorderStroke(1.dp, BorderColor),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.FileOpen,
                                         contentDescription = null,
                                         modifier = Modifier.size(18.dp),
-                                        tint = TextSecondary
+                                        tint = TextSecondary,
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "Load File",
                                         style = MaterialTheme.typography.labelLarge,
-                                        color = TextSecondary
+                                        color = TextSecondary,
                                     )
                                 }
-                                
+
                                 OutlinedButton(
                                     onClick = { showPasteDialog = true },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(48.dp),
+                                    modifier =
+                                        Modifier
+                                            .weight(1f)
+                                            .height(48.dp),
                                     shape = RoundedCornerShape(8.dp),
-                                    border = BorderStroke(1.dp, BorderColor)
+                                    border = BorderStroke(1.dp, BorderColor),
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.ContentPaste,
                                         contentDescription = null,
                                         modifier = Modifier.size(18.dp),
-                                        tint = TextSecondary
+                                        tint = TextSecondary,
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = "Paste",
                                         style = MaterialTheme.typography.labelLarge,
-                                        color = TextSecondary
+                                        color = TextSecondary,
                                     )
                                 }
                             }
@@ -501,7 +516,7 @@ fun PsbtScreen(
                                 Text(
                                     text = "Connect to Electrum to broadcast",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary
+                                    color = TextSecondary,
                                 )
                             }
                         }
@@ -513,16 +528,17 @@ fun PsbtScreen(
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = ErrorRed.copy(alpha = 0.1f)
-                            )
+                            colors =
+                                CardDefaults.cardColors(
+                                    containerColor = ErrorRed.copy(alpha = 0.1f),
+                                ),
                         ) {
                             Text(
                                 text = psbtState.error,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ErrorRed,
                                 modifier = Modifier.padding(16.dp),
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
                             )
                         }
                     }
@@ -534,28 +550,30 @@ fun PsbtScreen(
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = ErrorRed.copy(alpha = 0.1f)
-                        )
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor = ErrorRed.copy(alpha = 0.1f),
+                            ),
                     ) {
                         Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
                                 text = "Failed to Create PSBT",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = ErrorRed
+                                color = ErrorRed,
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = psbtState.error,
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ErrorRed,
-                                textAlign = TextAlign.Center
+                                textAlign = TextAlign.Center,
                             )
                         }
                     }
@@ -576,24 +594,25 @@ private fun BroadcastConfirmation(
     psbtState: PsbtState,
     uiState: WalletUiState,
     onConfirm: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkCard)
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
                 text = "Confirm Broadcast",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onBackground
+                color = MaterialTheme.colorScheme.onBackground,
             )
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -602,7 +621,7 @@ private fun BroadcastConfirmation(
                 text = "Signed transaction received. Review and confirm to broadcast.",
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
             )
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -611,20 +630,21 @@ private fun BroadcastConfirmation(
             if (!psbtState.recipientAddress.isNullOrBlank()) {
                 PsbtDetailRow(
                     label = "To",
-                    value = psbtState.recipientAddress.take(12) + "..." +
-                        psbtState.recipientAddress.takeLast(8)
+                    value =
+                        psbtState.recipientAddress.take(12) + "..." +
+                            psbtState.recipientAddress.takeLast(8),
                 )
             }
 
             PsbtDetailRow(
                 label = "Amount",
-                value = formatSats(psbtState.recipientAmountSats)
+                value = formatSats(psbtState.recipientAmountSats),
             )
 
             if (psbtState.changeAmountSats != null) {
                 PsbtDetailRow(
                     label = "Change",
-                    value = formatSats(psbtState.changeAmountSats)
+                    value = formatSats(psbtState.changeAmountSats),
                 )
             }
 
@@ -632,7 +652,7 @@ private fun BroadcastConfirmation(
                 PsbtDetailRow(
                     label = "Fee",
                     value = formatSats(psbtState.actualFeeSats),
-                    valueColor = BitcoinOrange
+                    valueColor = BitcoinOrange,
                 )
             }
 
@@ -642,7 +662,7 @@ private fun BroadcastConfirmation(
                 Spacer(modifier = Modifier.height(4.dp))
                 PsbtDetailRow(
                     label = "Total",
-                    value = formatSats(psbtState.recipientAmountSats + psbtState.actualFeeSats)
+                    value = formatSats(psbtState.recipientAmountSats + psbtState.actualFeeSats),
                 )
             }
 
@@ -651,19 +671,21 @@ private fun BroadcastConfirmation(
             // Confirm broadcast
             Button(
                 onClick = onConfirm,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                 shape = RoundedCornerShape(8.dp),
                 enabled = uiState.isConnected,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = BitcoinOrange,
-                    contentColor = DarkBackground
-                )
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        contentColor = DarkBackground,
+                    ),
             ) {
                 Text(
                     text = "Broadcast Transaction",
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
 
@@ -672,7 +694,7 @@ private fun BroadcastConfirmation(
                 Text(
                     text = "Connect to Electrum to broadcast",
                     style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
             }
 
@@ -681,16 +703,17 @@ private fun BroadcastConfirmation(
             // Cancel
             OutlinedButton(
                 onClick = onCancel,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
                 shape = RoundedCornerShape(8.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor)
+                border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
             ) {
                 Text(
                     text = "Cancel",
                     style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
             }
         }
@@ -702,16 +725,17 @@ private fun BroadcastConfirmation(
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = ErrorRed.copy(alpha = 0.1f)
-            )
+            colors =
+                CardDefaults.cardColors(
+                    containerColor = ErrorRed.copy(alpha = 0.1f),
+                ),
         ) {
             Text(
                 text = psbtState.error,
                 style = MaterialTheme.typography.bodySmall,
                 color = ErrorRed,
                 modifier = Modifier.padding(16.dp),
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
             )
         }
     }
@@ -724,90 +748,96 @@ private fun BroadcastConfirmation(
 private fun PasteSignedTransactionDialog(
     onSubmit: (String) -> Unit,
     onScanQr: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
 ) {
     var inputText by remember { mutableStateOf("") }
-    
+
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
             shape = RoundedCornerShape(12.dp),
-            color = DarkSurface
+            color = DarkSurface,
         ) {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp)
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
             ) {
                 Text(
                     text = "Paste Signed Transaction",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
-                
+
                 Spacer(modifier = Modifier.height(4.dp))
-                
+
                 Text(
                     text = "Paste signed PSBT base64 or raw transaction hex",
                     style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary
+                    color = TextSecondary,
                 )
-                
+
                 Spacer(modifier = Modifier.height(12.dp))
-                
+
                 Box(
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
                     OutlinedTextField(
                         value = inputText,
                         onValueChange = { inputText = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(150.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(150.dp),
                         placeholder = {
                             Text(
                                 "Signed PSBT or raw tx hex",
-                                color = TextSecondary.copy(alpha = 0.6f)
+                                color = TextSecondary.copy(alpha = 0.6f),
                             )
                         },
-                        textStyle = MaterialTheme.typography.bodySmall.copy(
-                            fontFamily = FontFamily.Monospace
-                        ),
+                        textStyle =
+                            MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
                         shape = RoundedCornerShape(8.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BitcoinOrange,
-                            unfocusedBorderColor = BorderColor,
-                            cursorColor = BitcoinOrange
-                        )
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                cursorColor = BitcoinOrange,
+                            ),
                     )
                 }
-                
+
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(onClick = onDismiss) {
                         Text("Cancel", color = TextSecondary)
                     }
-                    
+
                     Spacer(modifier = Modifier.width(8.dp))
-                    
+
                     Button(
                         onClick = { onSubmit(inputText.trim()) },
                         enabled = inputText.isNotBlank(),
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = BitcoinOrange,
-                            contentColor = DarkBackground
-                        )
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = BitcoinOrange,
+                                contentColor = DarkBackground,
+                            ),
                     ) {
                         Text("Submit")
                     }
@@ -821,24 +851,25 @@ private fun PasteSignedTransactionDialog(
 private fun PsbtDetailRow(
     label: String,
     value: String,
-    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onBackground
+    valueColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onBackground,
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodySmall,
-            color = TextSecondary
+            color = TextSecondary,
         )
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
-            color = valueColor
+            color = valueColor,
         )
     }
 }
