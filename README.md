@@ -27,7 +27,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Duress Pin** - Configure a secondary PIN that opens a decoy wallet
 - **Auto-Wipe** - Set a threshold for failed unlock that automatically and irreversibly wipes all app data
 - **Cloak Mode** - Disguise Ibis as a calculator app
-- **PIN & biometrics** — configurable lock timing, screenshot prevention
+- **PIN & biometrics** — With configurable lock timing
 - **Built with** [BDK](https://bitcoindevkit.org/).
 
 ## Building
