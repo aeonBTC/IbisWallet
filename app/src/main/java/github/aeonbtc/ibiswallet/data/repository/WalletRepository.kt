@@ -4886,13 +4886,13 @@ class WalletRepository(context: Context) {
                 ),
                 ElectrumConfig(
                     name = "Mullvad",
-                    url = "bitcoin.mullah.net",
+                    url = "bitcoin.mullvad.net",
                     port = 5010,
                     useSsl = true,
                 ),
                 ElectrumConfig(
                     name = "Bull Bitcoin",
-                    url = "fulcrum.bull-bitcoin.com",
+                    url = "electrum.bullbitcoin.com",
                     port = 50002,
                     useSsl = true,
                 ),
