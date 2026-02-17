@@ -13,21 +13,22 @@ Designed for experienced users - no hand-holding, no training wheels.
 
 ## Key Features
 
-- **Multi-wallet** — Create, import, and switch between BIP39 wallets
-- **Watch-only wallets** — Import xpub/zpub, output descriptors, or QR codes
-- **Sweep Private Key** - Sweep private keys (WIF format) to specified bitcoin address
-- **Hardware wallet signing** — Animated QR codes for PSBTs
+- **Multi-wallet** — Create, import, export, and switch between multiple wallets
+- **Multi-Seed** - Supports BIP39 or Electrum seed phrases for importing
+- **Watch-only wallets** — Import xpub/zpub, output descriptors, or single address
+- **Import Private Key** - Sweep or import private keys (WIF format)
+- **Hardware wallet signing** — Animated QR codes for air gapped PSBTs
+- **Built-in Tor** — Native Tor integreation, no need for Orbot or external Tor proxies
+- **Custom Electrum server** — Connect to your own server, TCP, SSL, and Tor support
 - **Coin control** — Select specific UTXOs, freeze/unfreeze, send from individual outputs
 - **RBF & CPFP** — Bump fees on unconfirmed transactions, both outgoing and incoming
-- **Manual Broadcast Raw Transactions** - Broadcast any signed transaction directly to the Bitcoin network
-- **Multi-recipient** — Batch multiple outputs in a single transaction
-- **Built-in Tor** — Automatic .onion detection, all traffic routed through Tor when enabled
-- **Custom Electrum server** — Connect to your own server, QR import, SSL and Tor support
-- **Encrypted backups** — AES-256-GCM with optional labels, import/export via file
+- **PIN & biometrics** — With configurable lock timing
 - **Duress Pin** - Configure a secondary PIN that opens a decoy wallet
 - **Auto-Wipe** - Set a threshold for failed unlock that automatically and irreversibly wipes all app data
 - **Cloak Mode** - Disguise Ibis as a calculator app
-- **PIN & biometrics** — With configurable lock timing
+- **Manual Broadcast Raw Transactions** - Broadcast any signed transaction directly to the Bitcoin network
+- **Multi-recipient** — Batch multiple outputs in a single transaction
+- **Encrypted backups** — AES-256 encryption with optional label and custom server backup, import/export via file
 - **Built with** [BDK](https://bitcoindevkit.org/).
 
 ## Building
