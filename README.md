@@ -13,22 +13,22 @@ Designed for experienced users - no hand-holding, no training wheels.
 
 ## Key Features
 
-- **Multi-wallet** — Create, import, export, and switch between multiple wallets
+- **Multi-Wallet** — Create, import, export, and switch between multiple wallets
 - **Multi-Seed** - Supports BIP39 or Electrum seed phrases for importing
-- **Watch-only wallets** — Import xpub/zpub, output descriptors, or single address
+- **Watch-only Wallets** — Import xpub/zpub, output descriptors, or single address
 - **Import Private Key** - Sweep or import private keys (WIF format)
-- **Hardware wallet signing** — Animated QR codes for air gapped PSBTs
+- **Hardware Wallet Signing** — Animated QR codes for air gapped PSBTs
 - **Built-in Tor** — Native Tor integreation, no need for Orbot or external Tor proxies
-- **Custom Electrum server** — Connect to your own server, TCP, SSL, and Tor support
-- **Coin control** — Select specific UTXOs, freeze/unfreeze, send from individual outputs
+- **Custom Servers** — Connect to your own Electrum, fee estimation, and block explorer servers
+- **Coin Control** — Select specific UTXOs, freeze/unfreeze, send from individual outputs
 - **RBF & CPFP** — Bump fees on unconfirmed transactions, both outgoing and incoming
-- **PIN & biometrics** — With configurable lock timing
+- **PIN & Biometrics** — With configurable lock timing
 - **Duress Pin** - Configure a secondary PIN that opens a decoy wallet
 - **Auto-Wipe** - Set a threshold for failed unlock that automatically and irreversibly wipes all app data
 - **Cloak Mode** - Disguise Ibis as a calculator app
 - **Manual Broadcast Raw Transactions** - Broadcast any signed transaction directly to the Bitcoin network
-- **Multi-recipient** — Batch multiple outputs in a single transaction
-- **Encrypted backups** — AES-256 encryption with optional label and custom server backup, import/export via file
+- **Multi-Recipient** — Batch multiple outputs in a single transaction
+- **Encrypted Backups** — AES-256 encryption with optional label and custom server backup, import/export via file
 - **Built with** [BDK](https://bitcoindevkit.org/).
 
 ## Building
