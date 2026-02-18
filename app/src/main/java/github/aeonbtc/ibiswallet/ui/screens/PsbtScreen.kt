@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.net.Uri
@@ -154,10 +156,6 @@ fun PsbtScreen(
             onSubmit = { data ->
                 showPasteDialog = false
                 onSignedDataReceived(data)
-            },
-            onScanQr = {
-                showPasteDialog = false
-                showScanner = true
             },
             onDismiss = { showPasteDialog = false },
         )
@@ -708,7 +706,7 @@ private fun BroadcastConfirmation(
                         .fillMaxWidth()
                         .height(48.dp),
                 shape = RoundedCornerShape(8.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, BorderColor),
+                border = BorderStroke(1.dp, BorderColor),
             ) {
                 Text(
                     text = "Cancel",
@@ -747,7 +745,6 @@ private fun BroadcastConfirmation(
 @Composable
 private fun PasteSignedTransactionDialog(
     onSubmit: (String) -> Unit,
-    onScanQr: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var inputText by remember { mutableStateOf("") }

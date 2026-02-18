@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.compose.foundation.BorderStroke
@@ -15,20 +17,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.Button
@@ -53,16 +50,10 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -87,7 +78,6 @@ import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
-import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
@@ -252,9 +242,6 @@ fun SendScreen(
         }
     val isAddressValid = recipientAddress.isNotBlank() && addressValidationError == null
 
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
 
     // Save draft whenever relevant state changes
@@ -292,7 +279,7 @@ fun SendScreen(
                     (amountInput.toDoubleOrNull() ?: 0.0) * 100_000_000
                 }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             0.0
         }
 
@@ -334,8 +321,8 @@ fun SendScreen(
     // vBytes, change, and input count. No heuristic guessing needed.
     val dryRunOk = dryRunResult != null && !dryRunResult.isError
     val dryRunError = dryRunResult?.error
-    val estimatedFeeSats = if (dryRunOk) dryRunResult!!.feeSats else null
-    val estimatedVBytes = if (dryRunOk) dryRunResult!!.txVBytes else null
+    val estimatedFeeSats = if (dryRunOk) dryRunResult.feeSats else null
+    val estimatedVBytes = if (dryRunOk) dryRunResult.txVBytes else null
 
     // --- Single-mode: trigger BDK dry-run when address, amount, or fee rate changes ---
     val selectedUtxoSnapshot = selectedUtxos.toList()
@@ -351,7 +338,7 @@ fun SendScreen(
                 recipientAddress,
                 amountSats.roundToLong().toULong(),
                 feeRate,
-                if (selectedUtxoSnapshot.isNotEmpty()) selectedUtxoSnapshot else null,
+                selectedUtxoSnapshot.ifEmpty { null },
                 isMaxMode,
             )
         } else {
@@ -371,7 +358,7 @@ fun SendScreen(
             onEstimateFeeMulti(
                 multiRecipientList,
                 feeRate,
-                if (selectedUtxoSnapshot.isNotEmpty()) selectedUtxoSnapshot else null,
+                selectedUtxoSnapshot.ifEmpty { null },
             )
         } else {
             onClearDryRun()
@@ -414,7 +401,7 @@ fun SendScreen(
         if (isMaxMode && !isMultiMode) {
             val maxSats =
                 if (dryRunOk) {
-                    dryRunResult!!.recipientAmountSats
+                    dryRunResult.recipientAmountSats
                 } else {
                     // Rough estimate while dry-run is pending
                     maxOf(0L, availableSats - (feeRate.toLong() * 150))
@@ -423,7 +410,7 @@ fun SendScreen(
                 when {
                     isUsdMode && btcPrice != null && btcPrice > 0 -> {
                         val usdValue = (maxSats.toDouble() / 100_000_000.0) * btcPrice
-                        String.format(java.util.Locale.US, "%.2f", usdValue)
+                        String.format(Locale.US, "%.2f", usdValue)
                     }
                     useSats -> maxSats.toString()
                     else -> formatBtc(maxSats.toULong())
@@ -465,7 +452,6 @@ fun SendScreen(
             recipients = multiRecipients,
             useSats = useSats,
             isUsdMode = isUsdMode,
-            btcPrice = btcPrice,
             privacyMode = privacyMode,
             availableSats = availableSats,
             estimatedFeeSats = estimatedFeeSats,
@@ -978,7 +964,7 @@ fun SendScreen(
                                         .clip(RoundedCornerShape(8.dp))
                                         .clickable {
                                             // Convert current amount when switching modes
-                                            if (amountInput.isNotEmpty() && btcPrice != null && btcPrice > 0) {
+                                            if (amountInput.isNotEmpty()) {
                                                 val currentSats =
                                                     when {
                                                         isUsdMode -> {
@@ -1000,13 +986,13 @@ fun SendScreen(
                                                     if (!isUsdMode) {
                                                         // Switching to USD mode
                                                         val usdValue = (currentSats / 100_000_000.0) * btcPrice
-                                                        String.format("%.2f", usdValue)
+                                                        String.format(Locale.US, "%.2f", usdValue)
                                                     } else {
                                                         // Switching to BTC/sats mode
                                                         if (useSats) {
                                                             currentSats.toString()
                                                         } else {
-                                                            String.format("%.8f", currentSats / 100_000_000.0)
+                                                            String.format(Locale.US, "%.8f", currentSats / 100_000_000.0)
                                                         }
                                                     }
                                             }
@@ -1196,7 +1182,7 @@ fun SendScreen(
                                                 when {
                                                     isUsdMode && btcPrice != null && btcPrice > 0 -> {
                                                         val usdValue = (roughMaxSats.toDouble() / 100_000_000.0) * btcPrice
-                                                        String.format(java.util.Locale.US, "%.2f", usdValue)
+                        String.format(Locale.US, "%.2f", usdValue)
                                                     }
                                                     useSats -> roughMaxSats.toString()
                                                     else -> formatBtc(roughMaxSats.toULong())
@@ -1368,27 +1354,36 @@ fun SendScreen(
         // Watch-only wallets can create PSBTs without Electrum connection
         val isButtonEnabled =
             if (isWatchOnly) {
-                canSend && walletState.isInitialized && !uiState.isSending
+                canSend
             } else {
-                canSend && uiState.isConnected && !uiState.isSending
+                canSend && uiState.isConnected
             }
 
-        IbisButton(
+        Button(
             onClick = { showConfirmDialog = true },
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .height(48.dp),
+            shape = RoundedCornerShape(8.dp),
             enabled = isButtonEnabled,
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = BitcoinOrange,
+                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                ),
         ) {
             if (uiState.isSending) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(24.dp),
-                    color = BitcoinOrange,
+                    color = MaterialTheme.colorScheme.onPrimary,
                     strokeWidth = 2.dp,
                 )
             } else {
-                Text(if (isWatchOnly) "Review PSBT" else "Review Transaction")
+                Text(
+                    text = if (isWatchOnly) "Review PSBT" else "Review Transaction",
+                    style = MaterialTheme.typography.titleMedium,
+                )
             }
         }
 
@@ -1423,7 +1418,10 @@ fun SendScreen(
                     .fillMaxWidth()
                     .height(48.dp),
         ) {
-            Text("Manual Broadcast")
+            Text(
+                text = "Manual Broadcast",
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -1744,7 +1742,7 @@ private fun SendConfirmationDialog(
             ) {
                 Text(
                     text = if (isWatchOnly) "Review PSBT" else "Review Transaction",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
@@ -2158,7 +2156,7 @@ private fun validateBase58CheckAddress(address: String): String? {
     val base58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
     // Check length
-    if (address.length < 25 || address.length > 35) {
+    if (address.length !in 25..35) {
         return "Invalid address length"
     }
 
@@ -2234,7 +2232,7 @@ private fun validateBech32Address(
         return "Invalid format"
     }
 
-    val hrp = lower.substring(0, separatorPos)
+    val hrp = lower.take(separatorPos)
     val data = lower.substring(separatorPos + 1)
 
     // Check data characters
@@ -2294,7 +2292,6 @@ private fun MultiRecipientDialog(
     recipients: MutableList<Pair<String, String>>,
     useSats: Boolean,
     isUsdMode: Boolean,
-    btcPrice: Double? = null,
     privacyMode: Boolean = false,
     availableSats: Long = 0L,
     estimatedFeeSats: Long? = null,

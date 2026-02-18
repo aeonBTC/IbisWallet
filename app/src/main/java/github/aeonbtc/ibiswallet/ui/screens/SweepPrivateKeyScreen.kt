@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.compose.foundation.BorderStroke
@@ -34,7 +36,6 @@ fun SweepPrivateKeyScreen(
     onSweep: (wif: String, destination: String, feeRate: Float) -> Unit,
     onReset: () -> Unit,
     onBack: () -> Unit,
-    currentReceiveAddress: String? = null,
     isWifValid: (String) -> Boolean,
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
     minFeeRate: Double = 1.0,
@@ -308,7 +309,7 @@ fun SweepPrivateKeyScreen(
                         .height(80.dp),
                 shape = RoundedCornerShape(8.dp),
                 placeholder = { Text("Enter WIF key (K..., L..., 5...)", color = TextSecondary.copy(alpha = 0.5f)) },
-                keyboardOptions = KeyboardOptions(autoCorrect = false),
+                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
                 singleLine = false,
                 colors =
                     OutlinedTextFieldDefaults.colors(
@@ -363,7 +364,7 @@ fun SweepPrivateKeyScreen(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(8.dp),
             placeholder = { Text("Bitcoin address to receive funds", color = TextSecondary.copy(alpha = 0.5f)) },
-            keyboardOptions = KeyboardOptions(autoCorrect = false),
+            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
             singleLine = true,
             trailingIcon = {
                 IconButton(onClick = { showDestQrScanner = true }) {
@@ -511,11 +512,6 @@ fun SweepPrivateKeyScreen(
             ) {
                 Text("Review Sweep")
             }
-        } else if (!sweepState.isScanning && sweepState.scanResults.isEmpty() && sweepState.error == null &&
-            wifKey.isNotBlank() && isValidWif && sweepState.scanProgress == null &&
-            sweepState.totalBalanceSats == 0UL && sweepState.sweepTxids.isEmpty()
-        ) {
-            // Show "no funds" only after a scan has been attempted (scanResults is empty but no error)
         }
 
         // Error display

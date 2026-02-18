@@ -93,14 +93,15 @@ private class CalcState(
         } else {
             rawInput += d
             val plain = display.replace(",", "")
-            when {
+            display = when {
                 plain == "0" && d != "." -> {
-                    display = d
+                    d
                 }
+
                 d == "." && plain.contains(".") -> return
                 plain.replace(".", "").replace("-", "").length >= 12 -> return
                 else -> {
-                    display = formatPlain(plain + d)
+                    formatPlain(plain + d)
                 }
             }
         }

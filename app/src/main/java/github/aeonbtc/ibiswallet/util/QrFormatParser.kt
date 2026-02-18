@@ -66,7 +66,7 @@ object QrFormatParser {
         // 2. CompactSeedQR: raw binary, 16 bytes (12 words) or 32 bytes (24 words)
         //    ZXing may deliver this as a string with raw byte values.
         //    Check for non-printable chars as a heuristic.
-        if (trimmed.length in listOf(16, 32) && trimmed.any { it.code < 32 || it.code > 126 }) {
+        if (trimmed.length in listOf(16, 32) && trimmed.any { it.code !in 32..126 }) {
             val mnemonic = decodeCompactSeedQr(context, trimmed.toByteArray(Charsets.ISO_8859_1))
             if (mnemonic != null) return mnemonic
         }
@@ -122,7 +122,7 @@ object QrFormatParser {
             if (ssl == null) {
                 ssl = (flag == "s")
             }
-            trimmed = trimmed.substring(0, match.range.first)
+            trimmed = trimmed.take(match.range.first)
         }
 
         // Extract host and port
@@ -131,7 +131,7 @@ object QrFormatParser {
             val potentialPort = trimmed.substring(lastColon + 1)
             val port = potentialPort.toIntOrNull()
             if (port != null && port in 1..65535) {
-                val host = trimmed.substring(0, lastColon)
+                val host = trimmed.take(lastColon)
                 val useSsl = ssl ?: (port == 50002 || port == 443)
                 return ServerConfig(host, port, useSsl)
             }
@@ -160,7 +160,7 @@ object QrFormatParser {
         for (i in 0 until wordCount) {
             val indexStr = digits.substring(i * 4, i * 4 + 4)
             val index = indexStr.toIntOrNull() ?: return null
-            if (index < 0 || index >= 2048) return null
+            if (index !in 0 until 2048) return null
             words.add(wordlist[index])
         }
 
@@ -215,7 +215,7 @@ object QrFormatParser {
                     index = index or (1 shl (10 - b))
                 }
             }
-            if (index < 0 || index >= 2048) return null
+            if (index !in 0 until 2048) return null
             words.add(wordlist[index])
         }
 

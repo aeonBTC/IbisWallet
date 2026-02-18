@@ -99,4 +99,6 @@ dependencies {
 
     // BC-UR (Uniform Resources) for animated QR codes (PSBT exchange with hardware wallets)
     implementation(libs.hummingbird)
+
+
 }

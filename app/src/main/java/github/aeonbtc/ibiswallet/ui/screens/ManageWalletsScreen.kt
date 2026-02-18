@@ -1,7 +1,11 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.graphics.Bitmap
 import android.net.Uri
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.set
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -11,6 +15,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +24,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +38,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
@@ -63,24 +70,32 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -95,6 +110,7 @@ import github.aeonbtc.ibiswallet.util.SecureClipboard
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 data class WalletInfo(
     val id: String,
@@ -135,8 +151,9 @@ fun ManageWalletsScreen(
     onViewWallet: (WalletInfo) -> KeyMaterialInfo?,
     onDeleteWallet: (WalletInfo) -> Unit,
     onSelectWallet: (WalletInfo) -> Unit,
-    onExportWallet: (walletId: String, uri: Uri, includeLabels: Boolean, password: String?) -> Unit = { _, _, _, _ -> },
+    onExportWallet: (walletId: String, uri: Uri, includeLabels: Boolean, includeServerSettings: Boolean, password: String?) -> Unit = { _, _, _, _, _ -> },
     onEditWallet: (walletId: String, newName: String, newFingerprint: String?) -> Unit = { _, _, _ -> },
+    onReorderWallets: (List<String>) -> Unit = {},
     onFullSync: (WalletInfo) -> Unit = {},
     syncingWalletId: String? = null,
 ) {
@@ -246,11 +263,12 @@ fun ManageWalletsScreen(
             mutableStateOf(walletToEdit!!.masterFingerprint ?: "")
         }
         val isWatchOnly = walletToEdit!!.isWatchOnly
+        val isWatchAddress = walletToEdit!!.isWatchAddress
         val fingerprintRegex = remember { Regex("^[0-9a-fA-F]{0,8}$") }
         val fingerprintValid = editFingerprint.isBlank() || editFingerprint.length == 8
         val nameChanged = editName.trim().isNotBlank() && editName.trim() != walletToEdit?.name
         val fingerprintChanged =
-            isWatchOnly &&
+            isWatchOnly && !isWatchAddress &&
                 editFingerprint.trim().lowercase() != (walletToEdit?.masterFingerprint ?: "").lowercase()
         val canSave = editName.trim().isNotBlank() && fingerprintValid && (nameChanged || fingerprintChanged)
 
@@ -278,7 +296,7 @@ fun ManageWalletsScreen(
                             ),
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    if (isWatchOnly) {
+                    if (isWatchOnly && !isWatchAddress) {
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
                             value = editFingerprint,
@@ -297,7 +315,7 @@ fun ManageWalletsScreen(
                                 } else {
                                     {
                                         Text(
-                                            "8 hex characters for PSBT key origin",
+                                            "8 hex characters",
                                             color = TextSecondary.copy(alpha = 0.5f),
                                         )
                                     }
@@ -471,20 +489,71 @@ fun ManageWalletsScreen(
         ExportWalletDialog(
             wallet = walletToExport!!,
             onDismiss = { walletToExport = null },
-            onExport = { uri, includeLabels, password ->
+            onExport = { uri, includeLabels, includeServerSettings, password ->
                 walletToExport?.let { wallet ->
-                    onExportWallet(wallet.id, uri, includeLabels, password)
+                    onExportWallet(wallet.id, uri, includeLabels, includeServerSettings, password)
                 }
                 walletToExport = null
             },
         )
     }
 
+    // Local mutable copy for reordering
+    val reorderableWallets = remember(wallets) { wallets.toMutableStateList() }
+
+    // ---- Drag state ----
+    val itemHeightDp = 140.dp          // approximate card height
+    val spacingDp = 8.dp
+    val density = LocalDensity.current
+    val itemHeightPx = with(density) { itemHeightDp.toPx() }
+    val spacingPx = with(density) { spacingDp.toPx() }
+    var draggedIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+
+    // Measured item heights for variable-height cards
+    val measuredHeights = remember { mutableMapOf<Int, Float>() }
+
+    // Track header height (buttons row + spacer) so drag hit-test starts at correct Y
+    val headerSpacingPx = with(density) { 6.dp.toPx() }
+    var headerHeightPx by remember { mutableFloatStateOf(0f) }
+    val scrollState = rememberScrollState()
+
+    /** Given how far the dragged item has moved, return its new logical index. */
+    fun calcTargetIndex(fromIndex: Int, offsetY: Float): Int {
+        val count = reorderableWallets.size
+        if (count <= 1) return fromIndex
+        var accumulated = 0f
+        var target = fromIndex
+        if (offsetY > 0) {
+            // Moving down
+            for (i in fromIndex until count - 1) {
+                val nextSlot = (measuredHeights[i + 1] ?: itemHeightPx) / 2f + (measuredHeights[i] ?: itemHeightPx) / 2f + spacingPx
+                accumulated += nextSlot
+                if (offsetY > accumulated - nextSlot / 2f) {
+                    target = i + 1
+                } else {
+                    break
+                }
+            }
+        } else {
+            // Moving up
+            for (i in fromIndex downTo 1) {
+                val prevSlot = (measuredHeights[i - 1] ?: itemHeightPx) / 2f + (measuredHeights[i] ?: itemHeightPx) / 2f + spacingPx
+                accumulated -= prevSlot
+                if (offsetY < accumulated + prevSlot / 2f) {
+                    target = i - 1
+                } else {
+                    break
+                }
+            }
+        }
+        return target.coerceIn(0, count - 1)
+    }
+
     Column(
         modifier =
             Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp),
     ) {
         // Header
@@ -511,46 +580,81 @@ fun ManageWalletsScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Generate + Import wallet buttons
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            IbisButton(
-                onClick = onGenerateWallet,
-                modifier = Modifier.weight(1f),
+        if (reorderableWallets.isEmpty()) {
+            // Generate + Import wallet buttons (for empty state, not scrolling)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(
-                    imageVector = Icons.Default.Key,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Generate")
+                Button(
+                    onClick = onGenerateWallet,
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        ),
+                    contentPadding = ButtonDefaults.TextButtonContentPadding,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Key,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Generate",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
+
+                Button(
+                    onClick = onImportWallet,
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        ),
+                    contentPadding = ButtonDefaults.TextButtonContentPadding,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FileDownload,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Import",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    }
+                }
             }
 
-            IbisButton(
-                onClick = onImportWallet,
-                modifier = Modifier.weight(1f),
-            ) {
-                Icon(
-                    imageVector = Icons.Default.FileDownload,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Import")
-            }
-        }
+            Spacer(modifier = Modifier.height(6.dp))
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        if (wallets.isEmpty()) {
             // Empty state
             Box(
                 modifier =
                     Modifier
                         .fillMaxWidth()
+                        .weight(1f)
                         .padding(vertical = 48.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -571,28 +675,216 @@ fun ManageWalletsScreen(
                 }
             }
         } else {
-            // Wallet list
-            wallets.forEachIndexed { index, wallet ->
-                WalletCard(
-                    wallet = wallet,
-                    onView = {
-                        walletToView = wallet
-                        showWarningDialog = true
-                    },
-                    onDelete = { walletToDelete = wallet },
-                    onExport = { walletToExport = wallet },
-                    onEdit = { walletToEdit = wallet },
-                    onClick = { onSelectWallet(wallet) },
-                    onSync = { walletToSync = wallet },
-                    isSyncing = syncingWalletId == wallet.id,
-                )
-                if (index < wallets.size - 1) {
-                    Spacer(modifier = Modifier.height(12.dp))
+            // Reorderable wallet list
+            val showDragHandles = reorderableWallets.size > 1
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .then(
+                        if (showDragHandles) {
+                            Modifier.pointerInput(reorderableWallets.size) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { offset ->
+                                        // Adjust for header content (buttons row + spacer) and scroll position
+                                        val adjustedY = offset.y + scrollState.value.toFloat() - headerHeightPx
+                                        if (adjustedY < 0f) return@detectDragGesturesAfterLongPress
+                                        // Determine which card was long-pressed based on Y
+                                        var accumulated = 0f
+                                        for (i in reorderableWallets.indices) {
+                                            val h = measuredHeights[i] ?: itemHeightPx
+                                            if (adjustedY < accumulated + h + spacingPx) {
+                                                draggedIndex = i
+                                                dragOffsetY = 0f
+                                                break
+                                            }
+                                            accumulated += h + spacingPx
+                                        }
+                                    },
+                                    onDrag = { change, dragAmount ->
+                                        change.consume()
+                                        val idx = draggedIndex ?: return@detectDragGesturesAfterLongPress
+                                        // Clamp offset so the card can't be dragged beyond list bounds
+                                        val maxUp = -(0 until idx).sumOf {
+                                            ((measuredHeights[it] ?: itemHeightPx) + spacingPx).toDouble()
+                                        }.toFloat()
+                                        val maxDown = (idx + 1 until reorderableWallets.size).sumOf {
+                                            ((measuredHeights[it] ?: itemHeightPx) + spacingPx).toDouble()
+                                        }.toFloat()
+                                        dragOffsetY = (dragOffsetY + dragAmount.y).coerceIn(maxUp, maxDown)
+                                    },
+                                    onDragEnd = {
+                                        val idx = draggedIndex
+                                        if (idx != null) {
+                                            val target = calcTargetIndex(idx, dragOffsetY)
+                                            if (target != idx) {
+                                                reorderableWallets.apply {
+                                                    add(target, removeAt(idx))
+                                                }
+                                                onReorderWallets(reorderableWallets.map { it.id })
+                                            }
+                                        }
+                                        draggedIndex = null
+                                        dragOffsetY = 0f
+                                    },
+                                    onDragCancel = {
+                                        draggedIndex = null
+                                        dragOffsetY = 0f
+                                    },
+                                )
+                            }
+                        } else {
+                            Modifier
+                        },
+                    ),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState, enabled = draggedIndex == null),
+                ) {
+                    // Generate + Import wallet buttons (inside scrollable area)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onGloballyPositioned { coords ->
+                                headerHeightPx = coords.size.height.toFloat() + headerSpacingPx
+                            },
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Button(
+                            onClick = onGenerateWallet,
+                            modifier =
+                                Modifier
+                                    .weight(1f)
+                                    .height(48.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor = BitcoinOrange,
+                                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                                ),
+                            contentPadding = ButtonDefaults.TextButtonContentPadding,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Key,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Generate",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = onImportWallet,
+                            modifier =
+                                Modifier
+                                    .weight(1f)
+                                    .height(48.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor = BitcoinOrange,
+                                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                                ),
+                            contentPadding = ButtonDefaults.TextButtonContentPadding,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FileDownload,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Import",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    reorderableWallets.forEachIndexed { index, wallet ->
+                        val isDragging = draggedIndex == index
+                        val targetIndex = draggedIndex?.let { calcTargetIndex(it, dragOffsetY) }
+
+                        // Calculate displacement for non-dragged items
+                        val displacementPx = if (!isDragging && draggedIndex != null && targetIndex != null) {
+                            val dragIdx = draggedIndex!!
+                            val draggedH = measuredHeights[dragIdx] ?: itemHeightPx
+                            when (index) {
+                                // Dragged item moved down past this item → shift up
+                                in (dragIdx + 1)..targetIndex ->
+                                    -(draggedH + spacingPx)
+                                // Dragged item moved up past this item → shift down
+                                in targetIndex until dragIdx ->
+                                    draggedH + spacingPx
+                                else -> 0f
+                            }
+                        } else {
+                            0f
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .zIndex(if (isDragging) 1f else 0f)
+                                .offset {
+                                    IntOffset(
+                                        x = 0,
+                                        y = if (isDragging) {
+                                            dragOffsetY.roundToInt()
+                                        } else {
+                                            displacementPx.roundToInt()
+                                        },
+                                    )
+                                }
+                                .graphicsLayer {
+                                    if (isDragging) {
+                                        shadowElevation = 8f
+                                        alpha = 0.95f
+                                    }
+                                },
+                        ) {
+                            WalletCard(
+                                wallet = wallet,
+                                onView = {
+                                    walletToView = wallet
+                                    showWarningDialog = true
+                                },
+                                onDelete = { walletToDelete = wallet },
+                                onExport = { walletToExport = wallet },
+                                onEdit = { walletToEdit = wallet },
+                                onClick = {
+                                    if (draggedIndex == null) onSelectWallet(wallet)
+                                },
+                                onSync = { walletToSync = wallet },
+                                isSyncing = syncingWalletId == wallet.id,
+                                showDragHandle = showDragHandles,
+                                onMeasured = { heightPx ->
+                                    measuredHeights[index] = heightPx
+                                },
+                            )
+                        }
+                        if (index < reorderableWallets.size - 1) {
+                            Spacer(modifier = Modifier.height(spacingDp))
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
     }
 }
 
@@ -610,9 +902,11 @@ private enum class KeyViewType {
 private fun ExportWalletDialog(
     wallet: WalletInfo,
     onDismiss: () -> Unit,
-    onExport: (uri: Uri, includeLabels: Boolean, password: String?) -> Unit,
+    onExport: (uri: Uri, includeLabels: Boolean, includeServerSettings: Boolean, password: String?) -> Unit,
 ) {
+    val context = LocalContext.current
     var includeLabels by remember { mutableStateOf(true) }
+    var includeServerSettings by remember { mutableStateOf(false) }
     var encryptBackup by remember { mutableStateOf(true) }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -630,7 +924,20 @@ private fun ExportWalletDialog(
         ) { uri: Uri? ->
             if (uri != null) {
                 exportUri = uri
-                exportFileName = uri.lastPathSegment?.substringAfterLast('/') ?: suggestedFileName
+                // Query the real display name from the content resolver
+                exportFileName =
+                    try {
+                        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                if (idx >= 0) cursor.getString(idx) else null
+                            } else {
+                                null
+                            }
+                        }
+                    } catch (_: Exception) {
+                        null
+                    } ?: suggestedFileName
             }
         }
 
@@ -716,7 +1023,7 @@ private fun ExportWalletDialog(
                                 if (wallet.isWatchOnly) {
                                     "This backup contains your extended public key. Store it securely."
                                 } else {
-                                    "This backup contains your seed phrase. Anyone with access to it can steal your funds. Store it securely."
+                                    "This backup contains your seed phrase. Store it securely."
                                 },
                             style = MaterialTheme.typography.bodySmall,
                             color = ErrorRed,
@@ -751,6 +1058,36 @@ private fun ExportWalletDialog(
                     SquareToggle(
                         checked = includeLabels,
                         onCheckedChange = { includeLabels = it },
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Include Server Settings toggle
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { includeServerSettings = !includeServerSettings },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Include Server Settings",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        Text(
+                            text = "Electrum servers, block explorer, fee source",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                        )
+                    }
+                    SquareToggle(
+                        checked = includeServerSettings,
+                        onCheckedChange = { includeServerSettings = it },
                     )
                 }
 
@@ -816,7 +1153,7 @@ private fun ExportWalletDialog(
                                 },
                             keyboardOptions =
                                 KeyboardOptions(
-                                    autoCorrect = false,
+                                    autoCorrectEnabled = false,
                                     keyboardType = KeyboardType.Password,
                                 ),
                             trailingIcon = {
@@ -858,7 +1195,7 @@ private fun ExportWalletDialog(
                                 },
                             keyboardOptions =
                                 KeyboardOptions(
-                                    autoCorrect = false,
+                                    autoCorrectEnabled = false,
                                     keyboardType = KeyboardType.Password,
                                 ),
                             isError = confirmPassword.isNotEmpty() && !passwordsMatch,
@@ -961,6 +1298,7 @@ private fun ExportWalletDialog(
                                 onExport(
                                     uri,
                                     includeLabels,
+                                    includeServerSettings,
                                     if (encryptBackup) password else null,
                                 )
                             }
@@ -1002,7 +1340,6 @@ private fun KeyMaterialDialog(
     var showQrCode by remember { mutableStateOf(false) }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    val isWatchOnly = keyMaterialInfo.isWatchOnly
     val hasSeedPhrase = keyMaterialInfo.mnemonic != null
     val hasXpub = keyMaterialInfo.extendedPublicKey != null
     val hasPrivateKey = keyMaterialInfo.privateKey != null
@@ -1118,17 +1455,6 @@ private fun KeyMaterialDialog(
                                 Text("Seed Phrase")
                             }
 
-                            if (!hasSeedPhrase) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Not available for watch-only wallets",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary.copy(alpha = 0.5f),
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
                             // Extended Public Key button
                             IbisButton(
                                 onClick = { selectedViewType = KeyViewType.EXTENDED_PUBLIC_KEY },
@@ -1146,7 +1472,6 @@ private fun KeyMaterialDialog(
 
                             // Private Key button (WIF wallets)
                             if (hasPrivateKey) {
-                                Spacer(modifier = Modifier.height(12.dp))
                                 IbisButton(
                                     onClick = { selectedViewType = KeyViewType.PRIVATE_KEY },
                                     modifier = Modifier.fillMaxWidth(),
@@ -1163,7 +1488,6 @@ private fun KeyMaterialDialog(
 
                             // Watch Address button
                             if (hasWatchAddress) {
-                                Spacer(modifier = Modifier.height(12.dp))
                                 IbisButton(
                                     onClick = { selectedViewType = KeyViewType.WATCH_ADDRESS },
                                     modifier = Modifier.fillMaxWidth(),
@@ -1182,8 +1506,11 @@ private fun KeyMaterialDialog(
                 } else {
                     // Revealed state
 
-                    // Master fingerprint (shown for all wallet types)
-                    if (keyMaterialInfo.masterFingerprint != null) {
+                    // Master fingerprint (shown for HD wallets only, not single-address/key wallets)
+                    if (keyMaterialInfo.masterFingerprint != null &&
+                        selectedViewType != KeyViewType.WATCH_ADDRESS &&
+                        selectedViewType != KeyViewType.PRIVATE_KEY
+                    ) {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
@@ -1256,15 +1583,24 @@ private fun KeyMaterialDialog(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
+                        val qrSubtitle = when (selectedViewType) {
+                            KeyViewType.SEED_PHRASE -> "seed phrase"
+                            KeyViewType.EXTENDED_PUBLIC_KEY -> "extended public key"
+                            KeyViewType.PRIVATE_KEY -> "private key"
+                            else -> "address"
+                        }
                         Text(
-                            text = "Scan this QR code to import the ${if (selectedViewType == KeyViewType.SEED_PHRASE) "seed phrase" else "extended public key"}",
+                            text = "Scan this QR code to import the $qrSubtitle",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.fillMaxWidth(),
                         )
-                    } else if (selectedViewType == KeyViewType.EXTENDED_PUBLIC_KEY && currentKeyMaterial != null) {
-                        // Extended public key - show as text
+                    } else if ((selectedViewType == KeyViewType.EXTENDED_PUBLIC_KEY ||
+                            selectedViewType == KeyViewType.PRIVATE_KEY ||
+                            selectedViewType == KeyViewType.WATCH_ADDRESS) && currentKeyMaterial != null
+                    ) {
+                        // Extended public key, WIF private key, or watch address - show as text
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
@@ -1421,18 +1757,15 @@ private fun generateQrCode(content: String): Bitmap? {
                 size,
             )
 
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
+        val bitmap = createBitmap(size, size, Bitmap.Config.RGB_565)
         for (x in 0 until size) {
             for (y in 0 until size) {
-                bitmap.setPixel(
-                    x,
-                    y,
-                    if (bitMatrix[x, y]) Color.Black.toArgb() else Color.White.toArgb(),
-                )
+                bitmap[x, y] =
+                    if (bitMatrix[x, y]) Color.Black.toArgb() else Color.White.toArgb()
             }
         }
         bitmap
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
     }
 }
@@ -1475,6 +1808,8 @@ private fun WalletCard(
     onClick: () -> Unit,
     onSync: () -> Unit = {},
     isSyncing: Boolean = false,
+    showDragHandle: Boolean = false,
+    onMeasured: (Float) -> Unit = {},
 ) {
     val cardColor =
         if (wallet.isActive) {
@@ -1492,7 +1827,11 @@ private fun WalletCard(
 
     Card(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { coordinates ->
+                onMeasured(coordinates.size.height.toFloat())
+            },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = cardColor),
         border = BorderStroke(1.dp, borderColor),
@@ -1516,6 +1855,21 @@ private fun WalletCard(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    when {
+                        wallet.isWatchAddress || wallet.isWatchOnly -> Icon(
+                            imageVector = Icons.Default.Visibility,
+                            contentDescription = if (wallet.isWatchAddress) "Watch Address" else "Watch Only",
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        else -> Icon(
+                            imageVector = Icons.Default.Key,
+                            contentDescription = if (wallet.isPrivateKey) "Private Key" else "Seed Phrase",
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                     if (wallet.isActive) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
@@ -1678,6 +2032,20 @@ private fun WalletCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary.copy(alpha = 0.7f),
             )
+
+            if (showDragHandle) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.BottomEnd,
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DragHandle,
+                        contentDescription = "Drag to reorder",
+                        tint = TextSecondary.copy(alpha = 0.5f),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
         }
     }
 }

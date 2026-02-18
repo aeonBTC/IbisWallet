@@ -427,21 +427,17 @@ object UrAccountParser {
         if (expressions.isNullOrEmpty()) return null
 
         // Filter out cosigner wrapper
-        val filtered = expressions.filter { it != ScriptExpression.COSIGNER }
-
-        return when {
-            filtered == listOf(ScriptExpression.WITNESS_PUBLIC_KEY_HASH) ->
+        return when (expressions.filter { it != ScriptExpression.COSIGNER }) {
+            listOf(ScriptExpression.WITNESS_PUBLIC_KEY_HASH) ->
                 AddressType.SEGWIT
-            filtered ==
-                listOf(
-                    ScriptExpression.SCRIPT_HASH,
-                    ScriptExpression.WITNESS_PUBLIC_KEY_HASH,
-                )
-            ->
+            listOf(
+                ScriptExpression.SCRIPT_HASH,
+                ScriptExpression.WITNESS_PUBLIC_KEY_HASH,
+            ) ->
                 AddressType.NESTED_SEGWIT
-            filtered == listOf(ScriptExpression.PUBLIC_KEY_HASH) ->
+            listOf(ScriptExpression.PUBLIC_KEY_HASH) ->
                 AddressType.LEGACY
-            filtered == listOf(ScriptExpression.TAPROOT) ->
+            listOf(ScriptExpression.TAPROOT) ->
                 AddressType.TAPROOT
             else -> null
         }

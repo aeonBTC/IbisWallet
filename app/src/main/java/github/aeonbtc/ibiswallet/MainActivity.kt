@@ -237,9 +237,7 @@ class MainActivity : FragmentActivity() {
         // Check if we need to lock based on timing settings
         if (wasInBackground) {
             wasInBackground = false
-            val lockTiming = secureStorage.getLockTiming()
-
-            when (lockTiming) {
+            when (val lockTiming = secureStorage.getLockTiming()) {
                 SecureStorage.LockTiming.DISABLED -> {
                     // Never auto-lock after initial unlock
                 }
@@ -322,12 +320,9 @@ class MainActivity : FragmentActivity() {
                         // User can still use PIN as fallback
                     }
 
-                    override fun onAuthenticationFailed() {
-                        super.onAuthenticationFailed()
-                        // Biometric failures do not count toward auto-wipe — only
-                        // PIN failures do. The OS already rate-limits biometric
-                        // attempts and falls back to PIN entry.
-                    }
+                    // onAuthenticationFailed not overridden — biometric failures
+                    // do not count toward auto-wipe; the OS already rate-limits
+                    // biometric attempts and falls back to PIN entry.
                 },
             )
     }

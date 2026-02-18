@@ -1,7 +1,7 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -108,7 +108,7 @@ fun AboutScreen(onBack: () -> Unit = {}) {
                             val intent =
                                 Intent(
                                     Intent.ACTION_VIEW,
-                                    Uri.parse("https://github.com/aeonbtc/IbisWallet"),
+                                    "https://github.com/aeonbtc/IbisWallet".toUri(),
                                 )
                             context.startActivity(intent)
                         }

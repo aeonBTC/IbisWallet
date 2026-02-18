@@ -435,7 +435,7 @@ fun GenerateWalletScreen(
                                         },
                                     keyboardOptions =
                                         KeyboardOptions(
-                                            autoCorrect = false,
+                                            autoCorrectEnabled = false,
                                             keyboardType = KeyboardType.Password,
                                         ),
                                     trailingIcon = {
@@ -541,16 +541,22 @@ fun GenerateWalletScreen(
 
         // Generate / Seed phrase display
         if (generatedMnemonic == null) {
-            IbisButton(
+            Button(
                 onClick = { generateMnemonic() },
                 modifier =
                     Modifier
                         .fillMaxWidth()
                         .height(48.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                    ),
             ) {
                 Text(
                     text = "Generate Seed Phrase",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
         } else {
@@ -728,7 +734,10 @@ fun GenerateWalletScreen(
                         strokeWidth = 2.dp,
                     )
                 } else {
-                    Text("Create Wallet")
+                    Text(
+                        text = "Create Wallet",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
             }
         }

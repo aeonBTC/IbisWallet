@@ -186,13 +186,13 @@ fun FeeRateSection(
             )
         } else {
             val isLoading = feeEstimationState is FeeEstimationResult.Loading
-            val isError = feeEstimationState is FeeEstimationResult.Error
             val isElectrum = estimates?.source == FeeEstimateSource.ELECTRUM_SERVER
             val fastLabel = if (isElectrum) "~2 blocks" else "~1 block"
             val medLabel = if (isElectrum) "~6 blocks" else "~3 blocks"
             val slowLabel = if (isElectrum) "~12 blocks" else "~6 blocks"
 
-            if (isError) {
+            val errorState = feeEstimationState as? FeeEstimationResult.Error
+            if (errorState != null) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -210,7 +210,7 @@ fun FeeRateSection(
                             color = WarningYellow,
                         )
                         Text(
-                            text = (feeEstimationState as FeeEstimationResult.Error).message,
+                            text = errorState.message,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary.copy(alpha = 0.7f),
                         )
@@ -328,8 +328,8 @@ internal fun FeeTargetButton(
     isSelected: Boolean,
     onClick: () -> Unit,
     enabled: Boolean,
-    isLoading: Boolean = false,
     modifier: Modifier = Modifier,
+    isLoading: Boolean = false,
 ) {
     val backgroundColor = if (isSelected) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface
     val borderColor = if (isSelected) BitcoinOrange else BorderColor

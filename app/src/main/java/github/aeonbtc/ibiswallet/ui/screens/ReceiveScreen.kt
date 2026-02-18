@@ -1,8 +1,12 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.set
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -80,11 +84,11 @@ fun ReceiveScreen(
     var labelText by remember(walletState.currentAddressInfo?.label) {
         mutableStateOf(walletState.currentAddressInfo?.label ?: "")
     }
-    var amountText by remember { mutableStateOf("") }
-    var showLabelField by remember { mutableStateOf(false) }
     var showAmountField by remember { mutableStateOf(false) }
+    var amountText by remember { mutableStateOf("") }
     var isUsdMode by remember { mutableStateOf(false) }
     var showEnlargedQr by remember { mutableStateOf(false) }
+    var showLabelField by remember { mutableStateOf(false) }
 
     // Convert amount to sats for URI (handles BTC, sats, and USD input)
     val amountInSats =
@@ -513,10 +517,8 @@ fun ReceiveScreen(
                                 if (labelText.isNotEmpty() && walletState.currentAddress != null) {
                                     androidx.compose.material3.TextButton(
                                         onClick = {
-                                            walletState.currentAddress?.let { address ->
-                                                onSaveLabel(address, labelText)
-                                                Toast.makeText(context, "Label saved", Toast.LENGTH_SHORT).show()
-                                            }
+                                            onSaveLabel(walletState.currentAddress, labelText)
+                                            Toast.makeText(context, "Label saved", Toast.LENGTH_SHORT).show()
                                         },
                                     ) {
                                         Text("Save", color = BitcoinOrange)
@@ -541,7 +543,10 @@ fun ReceiveScreen(
                 modifier = Modifier.weight(1f),
                 enabled = walletState.isInitialized,
             ) {
-                Text("All Addresses")
+                Text(
+                    text = "All Addresses",
+                    style = MaterialTheme.typography.titleMedium,
+                )
             }
 
             IbisButton(
@@ -549,7 +554,10 @@ fun ReceiveScreen(
                 modifier = Modifier.weight(1f),
                 enabled = walletState.isInitialized,
             ) {
-                Text("All UTXOs")
+                Text(
+                    text = "All UTXOs",
+                    style = MaterialTheme.typography.titleMedium,
+                )
             }
         }
 
@@ -592,30 +600,29 @@ private fun generateQrCode(content: String): Bitmap? {
                 hints,
             )
 
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(size, size, Bitmap.Config.ARGB_8888)
         for (x in 0 until size) {
             for (y in 0 until size) {
-                bitmap.setPixel(
-                    x,
-                    y,
-                    if (bitMatrix[x, y]) Color.Black.toArgb() else Color.White.toArgb(),
-                )
+                bitmap[x, y] =
+                    if (bitMatrix[x, y]) Color.Black.toArgb() else Color.White.toArgb()
             }
         }
         bitmap
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
     }
 }
 
 /**
- * Formats a Bitcoin address for display: chunks every 6 characters, split across 2 lines.
+ * Formats a Bitcoin address for display: chunks every 7 characters.
+ * Segwit (42 chars) → 2 lines, Taproot (62 chars) → 3 lines.
  */
 private fun formatAddress(address: String?): String {
     if (address == null) return "No wallet"
-    val chunks = address.chunked(6)
-    val mid = (chunks.size + 1) / 2
-    val line1 = chunks.take(mid).joinToString(" ")
-    val line2 = chunks.drop(mid).joinToString(" ")
-    return "$line1\n$line2"
+    val chunks = address.chunked(7)
+    val numLines = if (address.length > 50) 3 else 2
+    val perLine = (chunks.size + numLines - 1) / numLines
+    return chunks
+        .chunked(perLine)
+        .joinToString("\n") { it.joinToString(" ") }
 }

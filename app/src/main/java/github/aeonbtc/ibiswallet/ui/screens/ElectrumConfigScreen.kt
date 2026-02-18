@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.compose.foundation.BorderStroke
@@ -31,6 +33,8 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,7 +58,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.R
@@ -78,9 +81,7 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ElectrumConfigScreen(
-    onConnect: (ElectrumConfig) -> Unit,
     onBack: () -> Unit,
-    currentConfig: ElectrumConfig? = null,
     isConnecting: Boolean = false,
     isConnected: Boolean = false,
     error: String? = null,
@@ -98,6 +99,9 @@ fun ElectrumConfigScreen(
     // Disconnect support
     onDisconnect: () -> Unit = {},
     onCancelConnection: () -> Unit = {},
+    // Auto-switch server on disconnect
+    autoSwitchServer: Boolean = false,
+    onAutoSwitchServerChange: (Boolean) -> Unit = {},
     // Server info
     serverVersion: String? = null,
     blockHeight: UInt? = null,
@@ -144,7 +148,10 @@ fun ElectrumConfigScreen(
     // Delete confirmation dialog
     serverToDelete?.let { server ->
         AlertDialog(
-            onDismissRequest = { serverToDelete = null },
+            onDismissRequest = {
+                @Suppress("AssignedValueIsNeverRead")
+                serverToDelete = null
+            },
             title = {
                 Text(
                     text = "Delete Server",
@@ -211,18 +218,30 @@ fun ElectrumConfigScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         // 1. Add Server Button (at top, always visible)
-        IbisButton(
+        Button(
             onClick = { if (!showAddServerForm) showAddServerForm = true },
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+            shape = RoundedCornerShape(8.dp),
             enabled = !showAddServerForm,
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = BitcoinOrange,
+                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                ),
         ) {
             Icon(
                 imageVector = Icons.Default.Add,
                 contentDescription = null,
-                modifier = Modifier.size(18.dp),
+                modifier = Modifier.size(20.dp),
             )
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Add Server")
+            Text(
+                text = "Add Server",
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -233,6 +252,7 @@ fun ElectrumConfigScreen(
             server = activeServer,
             isConnecting = isConnecting,
             isConnected = isConnected,
+            error = error,
             serverVersion = serverVersion,
             blockHeight = blockHeight,
             onConnect = { activeServerId?.let { onConnectToServer(it) } },
@@ -337,6 +357,36 @@ fun ElectrumConfigScreen(
                                 Spacer(modifier = Modifier.height(12.dp))
                             }
                         }
+
+                        // Auto-switch toggle
+                        if (savedServers.size >= 2) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            HorizontalDivider(color = BorderColor)
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Auto-switch on disconnect",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                    )
+                                    Text(
+                                        text = "Try next server if connection drops",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary,
+                                    )
+                                }
+                                SquareToggle(
+                                    checked = autoSwitchServer,
+                                    onCheckedChange = onAutoSwitchServerChange,
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -403,26 +453,6 @@ fun ElectrumConfigScreen(
                     useSsl = false
                 },
             )
-        }
-
-        // Error message
-        if (error != null) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor = ErrorRed.copy(alpha = 0.1f),
-                    ),
-            ) {
-                Text(
-                    text = error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ErrorRed,
-                    modifier = Modifier.padding(16.dp),
-                    textAlign = TextAlign.Center,
-                )
-            }
         }
 
         // Bottom spacing for scroll area
@@ -507,6 +537,7 @@ private fun CurrentServerCard(
     server: ElectrumConfig?,
     isConnecting: Boolean,
     isConnected: Boolean,
+    error: String? = null,
     serverVersion: String? = null,
     blockHeight: UInt? = null,
     onConnect: () -> Unit = {},
@@ -740,6 +771,16 @@ private fun CurrentServerCard(
                             value = "%,d".format(blockHeight.toInt()),
                         )
                     }
+                }
+
+                // Error message inside server card
+                if (error != null && !isConnecting && !isConnected) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ErrorRed,
+                    )
                 }
             } else {
                 // No server selected
@@ -994,7 +1035,7 @@ private fun TorStatusCard(
             }
 
             SquareToggleGreen(
-                checked = isElectrumViaTor,
+                checked = isTorEnabled,
                 onCheckedChange = onTorEnabledChange,
             )
         }
@@ -1187,13 +1228,23 @@ private fun ServerConfigDialog(
         },
         confirmButton = {
             val isEnabled = isValidName && isValidUrl && isValidPort
-            IbisButton(
+            Button(
                 onClick = onSave,
-                modifier = Modifier.fillMaxWidth(),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                shape = RoundedCornerShape(8.dp),
                 enabled = isEnabled,
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                    ),
             ) {
                 Text(
                     text = if (isEditMode) "Update & Connect" else "Save & Connect",
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
         },

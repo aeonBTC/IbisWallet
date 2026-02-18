@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.net.Uri
@@ -28,6 +30,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -248,7 +252,10 @@ fun BroadcastTransactionScreen(
                                 .fillMaxWidth()
                                 .height(48.dp),
                     ) {
-                        Text("Load File")
+                        Text(
+                            text = "Load File",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
                     }
                 }
             }
@@ -282,26 +289,30 @@ fun BroadcastTransactionScreen(
                     isConnected &&
                     !broadcastState.isBroadcasting
 
-            IbisButton(
+            Button(
                 onClick = { onBroadcast(trimmedInput) },
                 modifier =
                     Modifier
                         .fillMaxWidth()
                         .height(48.dp),
+                shape = RoundedCornerShape(8.dp),
                 enabled = canBroadcast,
-                activeColor = TextSecondary,
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                    ),
             ) {
                 if (broadcastState.isBroadcasting) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
-                        color = BitcoinOrange,
+                        color = MaterialTheme.colorScheme.onPrimary,
                         strokeWidth = 2.dp,
                     )
                 } else {
                     Text(
-                        "Broadcast",
+                        text = "Broadcast",
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }

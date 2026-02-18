@@ -26,6 +26,7 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.security.cert.X509Certificate
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
@@ -45,6 +46,9 @@ sealed class ElectrumNotification {
 
     /** A new block was mined. */
     data class NewBlockHeader(val height: Int, val hexHeader: String) : ElectrumNotification()
+
+    /** Subscription socket detected the server connection is dead. */
+    data object ConnectionLost : ElectrumNotification()
 }
 
 /**
@@ -89,6 +93,20 @@ class CachingElectrumProxy(
         private const val TOR_RETRY_DELAY_MS = 2000L
         const val DEFAULT_MIN_FEE_RATE = 1.0
         private const val BTC_PER_KB_TO_SAT_PER_VB = 100_000.0
+
+        /** Read timeout for the subscription socket (5 minutes).
+         *  If no data arrives in this window (not even a block header),
+         *  we ping the server to verify it's still alive. */
+        private const val SUB_SOCKET_TIMEOUT_MS = 300_000
+
+        /** Read timeout applied to the direct socket during ping() only (8s).
+         *  Shorter than the heartbeat coroutine timeout (10s) so readLine()
+         *  completes and releases directLock before the coroutine is cancelled. */
+        private const val PING_SOCKET_TIMEOUT_MS = 8_000
+
+        /** How long to wait for directLock before assuming the connection is
+         *  alive (another operation is actively using the socket). */
+        private const val PING_LOCK_TIMEOUT_MS = 3_000L
     }
 
     // ==================== Bridge (BDK traffic) ====================
@@ -179,6 +197,10 @@ class CachingElectrumProxy(
         closeQuietly(bridgeTargetSocket)
         closeQuietly(preConnectedSocket)
         closeQuietly(serverSocket)
+        // Close the direct socket first (without the lock) to interrupt any
+        // blocking readLine() inside ping()/subscribeScriptHashes(). This
+        // causes the holder of directLock to throw and release it promptly.
+        closeQuietly(directSocket)
         closeDirectConnection()
         clientSocket = null
         bridgeTargetSocket = null
@@ -699,6 +721,61 @@ class CachingElectrumProxy(
         }
     }
 
+    /**
+     * Lightweight health check: sends `server.ping` on the direct query socket.
+     * Returns true if the server responded, false if the connection is dead.
+     *
+     * Uses [tryLock] so that if another operation (sync, verbose tx fetch)
+     * is actively using the direct socket, ping returns true immediately —
+     * lock contention proves the connection is alive. A tighter socket read
+     * timeout ([PING_SOCKET_TIMEOUT_MS]) ensures readLine() completes and
+     * releases the lock before the heartbeat coroutine timeout fires,
+     * preventing cascading failures from stale lock holds.
+     */
+    fun ping(): Boolean {
+        // If we can't acquire the lock, someone else is actively using the
+        // direct socket — the connection is alive by definition.
+        if (!directLock.tryLock(PING_LOCK_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            if (BuildConfig.DEBUG) Log.d(TAG, "Ping: direct socket busy (lock held), treating as alive")
+            return true
+        }
+        try {
+            if (!ensureDirectConnectionLocked()) return false
+            val writer = directWriter ?: return false
+            val reader = directReader ?: return false
+            val socket = directSocket ?: return false
+
+            // Temporarily tighten the read timeout so readLine() completes
+            // well within the heartbeat's coroutine timeout, then restore.
+            val originalTimeout = socket.soTimeout
+            try {
+                socket.soTimeout = PING_SOCKET_TIMEOUT_MS
+                val response =
+                    sendDirectRequestLocked(
+                        writer,
+                        reader,
+                        "server.ping",
+                        JSONArray(),
+                    )
+                return response != null
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Ping failed: ${e.message}")
+                closeDirectConnectionLocked()
+                return false
+            } finally {
+                // Restore only if the socket wasn't closed by the catch block
+                if (!socket.isClosed) {
+                    try {
+                        socket.soTimeout = originalTimeout
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+        } finally {
+            directLock.unlock()
+        }
+    }
+
     // ==================== Subscription Socket (real-time push) ====================
 
     /**
@@ -721,9 +798,9 @@ class CachingElectrumProxy(
         closeSubConnectionLocked()
         try {
             val socket = createTargetConnection() ?: return false
-            // Subscription socket waits indefinitely for push notifications.
-            // Use 0 = infinite so readLine() blocks until data arrives or socket closes.
-            socket.soTimeout = 0
+            // Subscription socket uses a read timeout so we can detect silently-dead
+            // servers. On timeout we ping to verify, and emit ConnectionLost if dead.
+            socket.soTimeout = SUB_SOCKET_TIMEOUT_MS
             subSocket = socket
 
             val newWriter = PrintWriter(socket.getOutputStream(), false)
@@ -976,6 +1053,20 @@ class CachingElectrumProxy(
                             withContext(Dispatchers.IO) {
                                 try {
                                     reader.readLine()
+                                } catch (_: SocketTimeoutException) {
+                                    // No data in SUB_SOCKET_TIMEOUT_MS — verify connection
+                                    // is alive with a lightweight ping on the direct socket.
+                                    if (BuildConfig.DEBUG) Log.d(TAG, "Sub socket timeout, pinging server...")
+                                    if (ping()) {
+                                        // Server is alive, just quiet. Continue listening.
+                                        if (BuildConfig.DEBUG) Log.d(TAG, "Ping OK, server still alive")
+                                        return@withContext "" // blank line = continue
+                                    } else {
+                                        // Server is dead — emit ConnectionLost
+                                        if (BuildConfig.DEBUG) Log.w(TAG, "Ping failed, server is dead")
+                                        _notifications.tryEmit(ElectrumNotification.ConnectionLost)
+                                        return@withContext null
+                                    }
                                 } catch (_: Exception) {
                                     null
                                 }

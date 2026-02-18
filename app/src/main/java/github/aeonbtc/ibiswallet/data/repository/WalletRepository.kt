@@ -15,6 +15,7 @@ import github.aeonbtc.ibiswallet.data.model.KeychainType
 import github.aeonbtc.ibiswallet.data.model.PsbtDetails
 import github.aeonbtc.ibiswallet.data.model.ReceiveAddressInfo
 import github.aeonbtc.ibiswallet.data.model.Recipient
+import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.SyncProgress
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
@@ -24,6 +25,7 @@ import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
 import github.aeonbtc.ibiswallet.data.model.WalletResult
 import github.aeonbtc.ibiswallet.data.model.WalletState
+import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
 import github.aeonbtc.ibiswallet.tor.CachingElectrumProxy
 import github.aeonbtc.ibiswallet.tor.ElectrumNotification
 import github.aeonbtc.ibiswallet.util.TofuTrustManager
@@ -510,12 +512,22 @@ class WalletRepository(context: Context) {
             // Derive the extended public key from the mnemonic
             val xpub =
                 try {
-                    deriveExtendedPublicKey(
-                        mnemonic = mnemonic,
-                        passphrase = secureStorage.getPassphrase(walletId),
-                        addressType = storedWallet.addressType,
-                        network = storedWallet.network,
-                    )
+                    when (storedWallet.seedFormat) {
+                        SeedFormat.ELECTRUM_STANDARD -> {
+                            val seed = ElectrumSeedUtil.mnemonicToSeed(mnemonic, secureStorage.getPassphrase(walletId))
+                            ElectrumSeedUtil.deriveExtendedPublicKey(seed, ElectrumSeedUtil.ElectrumSeedType.STANDARD)
+                        }
+                        SeedFormat.ELECTRUM_SEGWIT -> {
+                            val seed = ElectrumSeedUtil.mnemonicToSeed(mnemonic, secureStorage.getPassphrase(walletId))
+                            ElectrumSeedUtil.deriveExtendedPublicKey(seed, ElectrumSeedUtil.ElectrumSeedType.SEGWIT)
+                        }
+                        else -> deriveExtendedPublicKey(
+                            mnemonic = mnemonic,
+                            passphrase = secureStorage.getPassphrase(walletId),
+                            addressType = storedWallet.addressType,
+                            network = storedWallet.network,
+                        )
+                    }
                 } catch (_: Exception) {
                     null
                 }
@@ -612,18 +624,6 @@ class WalletRepository(context: Context) {
         network: WalletNetwork,
     ): String? {
         return try {
-            // If the wallet is loaded, use publicDescriptor() for reliable extraction
-            val currentWallet = wallet
-            if (currentWallet != null) {
-                try {
-                    val pubDescStr = currentWallet.publicDescriptor(KeychainKind.EXTERNAL)
-                    val fp = extractFingerprint(pubDescStr)
-                    if (fp != null) return fp
-                } catch (_: Exception) {
-                    // Fall through
-                }
-            }
-
             val bdkNetwork = network.toBdkNetwork()
             val mnemonicObj = Mnemonic.fromString(mnemonic)
             val descriptorSecretKey =
@@ -663,10 +663,28 @@ class WalletRepository(context: Context) {
                 val isWif = isWifPrivateKey(trimmedKey)
                 val isSingleAddress = isBitcoinAddress(trimmedKey)
 
+                // Detect Electrum native seed format
+                val isElectrumSeed = config.seedFormat != SeedFormat.BIP39
+                val electrumSeedType = if (isElectrumSeed) {
+                    when (config.seedFormat) {
+                        SeedFormat.ELECTRUM_STANDARD -> ElectrumSeedUtil.ElectrumSeedType.STANDARD
+                        SeedFormat.ELECTRUM_SEGWIT -> ElectrumSeedUtil.ElectrumSeedType.SEGWIT
+                        else -> null
+                    }
+                } else {
+                    null
+                }
+
                 // Extract fingerprint from key origin if present, fall back to user-provided
                 val fingerprint = extractFingerprint(trimmedKey) ?: config.masterFingerprint
 
-                val derivationPath = config.customDerivationPath ?: if (isWif || isSingleAddress) "single" else config.addressType.defaultPath
+                val derivationPath = when {
+                    config.customDerivationPath != null -> config.customDerivationPath
+                    isWif || isSingleAddress -> "single"
+                    electrumSeedType == ElectrumSeedUtil.ElectrumSeedType.STANDARD -> "m"
+                    electrumSeedType == ElectrumSeedUtil.ElectrumSeedType.SEGWIT -> "m/0'"
+                    else -> config.addressType.defaultPath
+                }
                 val walletId = UUID.randomUUID().toString()
 
                 // For full wallets, derive the master fingerprint from the mnemonic
@@ -674,6 +692,11 @@ class WalletRepository(context: Context) {
                     when {
                         isWif || isSingleAddress -> null
                         isWatchOnly -> fingerprint
+                        isElectrumSeed ->
+                            deriveElectrumFingerprint(
+                                config.keyMaterial,
+                                config.passphrase,
+                            )
                         else ->
                             deriveMasterFingerprint(
                                 config.keyMaterial,
@@ -726,6 +749,13 @@ class WalletRepository(context: Context) {
                                     config.addressType,
                                     bdkNetwork,
                                     resolvedFingerprint,
+                                )
+                            electrumSeedType != null ->
+                                createDescriptorsFromElectrumSeed(
+                                    mnemonic = config.keyMaterial,
+                                    passphrase = config.passphrase,
+                                    seedType = electrumSeedType,
+                                    network = bdkNetwork,
                                 )
                             else ->
                                 createDescriptorsFromMnemonic(
@@ -785,6 +815,7 @@ class WalletRepository(context: Context) {
                         isWatchOnly = isWatchOnly,
                         network = config.network,
                         masterFingerprint = resolvedFingerprint,
+                        seedFormat = config.seedFormat,
                     )
                 secureStorage.saveWalletMetadata(storedWallet)
 
@@ -810,7 +841,8 @@ class WalletRepository(context: Context) {
 
                 WalletResult.Success(Unit)
             } catch (e: Exception) {
-                WalletResult.Error("Failed to import wallet", e)
+                Log.e(TAG, "Failed to import wallet", e)
+                WalletResult.Error("Failed to import wallet: ${e.message ?: e.javaClass.simpleName}", e)
             }
         }
 
@@ -906,12 +938,31 @@ class WalletRepository(context: Context) {
                                     secureStorage.getMnemonic(walletId)
                                         ?: return@withContext WalletResult.Error("No mnemonic found")
                                 val passphrase = secureStorage.getPassphrase(walletId)
-                                createDescriptorsFromMnemonic(
-                                    mnemonic,
-                                    passphrase,
-                                    storedWallet.addressType,
-                                    bdkNetwork,
-                                )
+
+                                // Route Electrum seeds through their own derivation
+                                when (storedWallet.seedFormat) {
+                                    SeedFormat.ELECTRUM_STANDARD ->
+                                        createDescriptorsFromElectrumSeed(
+                                            mnemonic,
+                                            passphrase,
+                                            ElectrumSeedUtil.ElectrumSeedType.STANDARD,
+                                            bdkNetwork,
+                                        )
+                                    SeedFormat.ELECTRUM_SEGWIT ->
+                                        createDescriptorsFromElectrumSeed(
+                                            mnemonic,
+                                            passphrase,
+                                            ElectrumSeedUtil.ElectrumSeedType.SEGWIT,
+                                            bdkNetwork,
+                                        )
+                                    else ->
+                                        createDescriptorsFromMnemonic(
+                                            mnemonic,
+                                            passphrase,
+                                            storedWallet.addressType,
+                                            bdkNetwork,
+                                        )
+                                }
                             }
                         }
 
@@ -1023,6 +1074,40 @@ class WalletRepository(context: Context) {
                     )
                 Pair(external, internal)
             }
+        }
+    }
+
+    /**
+     * Create descriptors from an Electrum native seed phrase.
+     *
+     * Electrum seeds use different key stretching (PBKDF2 with "electrum" salt)
+     * and different derivation paths (m/ for Standard, m/0'/ for Segwit)
+     * compared to BIP39 seeds. We derive the xprv ourselves and build raw
+     * descriptor strings that BDK can parse.
+     */
+    private fun createDescriptorsFromElectrumSeed(
+        mnemonic: String,
+        passphrase: String?,
+        seedType: ElectrumSeedUtil.ElectrumSeedType,
+        network: Network,
+    ): Pair<Descriptor, Descriptor> {
+        val seed = ElectrumSeedUtil.mnemonicToSeed(mnemonic, passphrase)
+        val (externalStr, internalStr) = ElectrumSeedUtil.buildDescriptorStrings(seed, seedType)
+        return Pair(Descriptor(externalStr, network), Descriptor(internalStr, network))
+    }
+
+    /**
+     * Derive the master fingerprint from an Electrum seed.
+     */
+    private fun deriveElectrumFingerprint(
+        mnemonic: String,
+        passphrase: String?,
+    ): String? {
+        return try {
+            val seed = ElectrumSeedUtil.mnemonicToSeed(mnemonic, passphrase)
+            ElectrumSeedUtil.computeMasterFingerprint(seed)
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -1522,8 +1607,8 @@ class WalletRepository(context: Context) {
                             targetPort = config.port,
                             useSsl = true,
                             useTorProxy = useTor,
-                            connectionTimeoutMs = if (useTor) 90000 else 60000,
-                            soTimeoutMs = if (useTor) 90000 else 60000,
+                            connectionTimeoutMs = if (useTor) 30000 else 15000,
+                            soTimeoutMs = if (useTor) 30000 else 15000,
                             sslTrustManager = bridgeTrustManager,
                             cache = electrumCache,
                         )
@@ -1550,8 +1635,8 @@ class WalletRepository(context: Context) {
                             targetPort = config.port,
                             useSsl = false,
                             useTorProxy = true,
-                            connectionTimeoutMs = 90000,
-                            soTimeoutMs = 90000,
+                            connectionTimeoutMs = 30000,
+                            soTimeoutMs = 30000,
                             cache = electrumCache,
                         )
                     val localPort = proxy.start()
@@ -1572,8 +1657,8 @@ class WalletRepository(context: Context) {
                             targetPort = config.port,
                             useSsl = false,
                             useTorProxy = false,
-                            connectionTimeoutMs = 60000,
-                            soTimeoutMs = 60000,
+                            connectionTimeoutMs = 15000,
+                            soTimeoutMs = 15000,
                             cache = electrumCache,
                         )
                     val localPort = proxy.start()
@@ -1665,8 +1750,8 @@ class WalletRepository(context: Context) {
                             targetPort = config.port,
                             useSsl = true,
                             useTorProxy = useTor,
-                            connectionTimeoutMs = if (useTor) 90000 else 60000,
-                            soTimeoutMs = if (useTor) 90000 else 60000,
+                            connectionTimeoutMs = if (useTor) 30000 else 15000,
+                            soTimeoutMs = if (useTor) 30000 else 15000,
                             sslTrustManager = bridgeTrustManager,
                             cache = electrumCache,
                         )
@@ -1689,8 +1774,8 @@ class WalletRepository(context: Context) {
                             targetPort = config.port,
                             useSsl = false,
                             useTorProxy = true,
-                            connectionTimeoutMs = 90000,
-                            soTimeoutMs = 90000,
+                            connectionTimeoutMs = 30000,
+                            soTimeoutMs = 30000,
                             cache = electrumCache,
                         )
                     val localPort = proxy.start()
@@ -1711,8 +1796,8 @@ class WalletRepository(context: Context) {
                             targetPort = config.port,
                             useSsl = false,
                             useTorProxy = false,
-                            connectionTimeoutMs = 60000,
-                            soTimeoutMs = 60000,
+                            connectionTimeoutMs = 15000,
+                            soTimeoutMs = 15000,
                             cache = electrumCache,
                         )
                     val localPort = proxy.start()
@@ -1789,10 +1874,12 @@ class WalletRepository(context: Context) {
                 return@withContext fullSync()
             }
 
-            // Mutex: skip if another sync is already running
+            // Mutex: skip if another sync is already running.
+            // Return Error (not Success) so callers like the background sync loop
+            // don't reset their failure counters on a no-op skip.
             if (!syncMutex.tryLock()) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "Sync already in progress, skipping")
-                return@withContext WalletResult.Success(Unit)
+                return@withContext WalletResult.Error("Sync skipped (already in progress)")
             }
 
             try {
@@ -2566,6 +2653,13 @@ class WalletRepository(context: Context) {
 
                 proxy.notifications.collect { notification ->
                     if (!isActive) return@collect
+
+                    // Subscription socket detected dead server — stop collecting.
+                    // The heartbeat loop in ViewModel will handle disconnect + auto-switch.
+                    if (notification is ElectrumNotification.ConnectionLost) {
+                        if (BuildConfig.DEBUG) Log.w(TAG, "Subscription socket reported connection lost")
+                        return@collect
+                    }
 
                     pendingNotifications.add(notification)
                     lastNotificationTime = System.currentTimeMillis()
@@ -4647,6 +4741,16 @@ class WalletRepository(context: Context) {
     }
 
     /**
+     * Reorder wallets to the given ID order.
+     * Updates persistent storage and refreshes wallet state so both
+     * ManageWallets and WalletSelectorPanel reflect the new order.
+     */
+    fun reorderWallets(orderedIds: List<String>) {
+        secureStorage.reorderWalletIds(orderedIds)
+        updateWalletState()
+    }
+
+    /**
      * Delete a specific wallet
      */
     suspend fun deleteWallet(walletId: String): WalletResult<Unit> =
@@ -4689,6 +4793,15 @@ class WalletRepository(context: Context) {
                 WalletResult.Error("Failed to delete wallet", e)
             }
         }
+
+    /**
+     * Lightweight server health check via the proxy's direct socket.
+     * Returns true if the server responded to a ping, false if dead.
+     * Does NOT hold the sync mutex — safe to call from a heartbeat loop.
+     */
+    fun pingServer(): Boolean {
+        return cachingProxy?.ping() ?: false
+    }
 
     /**
      * Disconnect from Electrum server and clean up resources
@@ -4975,6 +5088,22 @@ class WalletRepository(context: Context) {
                 null
             }
         }
+
+    // ==================== Auto-Switch Server ====================
+
+    /**
+     * Check if auto-switch to another saved server on disconnect is enabled
+     */
+    fun isAutoSwitchServerEnabled(): Boolean {
+        return secureStorage.isAutoSwitchServerEnabled()
+    }
+
+    /**
+     * Set auto-switch server on disconnect state
+     */
+    fun setAutoSwitchServerEnabled(enabled: Boolean) {
+        secureStorage.setAutoSwitchServerEnabled(enabled)
+    }
 
     // ==================== Tor Settings ====================
 

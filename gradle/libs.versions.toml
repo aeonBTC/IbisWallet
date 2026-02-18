@@ -19,6 +19,7 @@ biometric = "1.1.0"
 material = "1.12.0"
 hummingbird = "1.7.2"
 
+
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version.ref = "lifecycleRuntimeKtx" }
@@ -43,6 +44,7 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 google-material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 hummingbird = { group = "com.sparrowwallet", name = "hummingbird", version.ref = "hummingbird" }
+
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

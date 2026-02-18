@@ -99,7 +99,7 @@ fun DrawerContent(
 
                 Text(
                     text = "Ibis Wallet",
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             }
@@ -133,7 +133,7 @@ fun DrawerContent(
 
             Text(
                 text = "Version ${BuildConfig.VERSION_NAME}",
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary.copy(alpha = 0.6f),
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
@@ -167,7 +167,7 @@ private fun DrawerMenuItem(
 
         Text(
             text = item.title,
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
     }

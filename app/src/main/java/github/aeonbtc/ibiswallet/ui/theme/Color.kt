@@ -3,7 +3,7 @@ package github.aeonbtc.ibiswallet.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // Primary Bitcoin Orange - muted for professional look
-val BitcoinOrange = Color(0xFFD4860F)
+val BitcoinOrange = Color(0xFFD08010)
 val BitcoinOrangeLight = Color(0xFFE09530)
 val BitcoinOrangeDark = Color(0xFFB87310)
 

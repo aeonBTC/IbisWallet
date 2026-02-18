@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
@@ -14,7 +16,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Backspace
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
@@ -46,6 +48,7 @@ import org.bitcoindevkit.Mnemonic
 private const val MIN_PIN_LENGTH = 4
 private const val MAX_PIN_LENGTH = 12
 
+@Suppress("AssignedValueIsNeverRead")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SecurityScreen(
@@ -202,7 +205,7 @@ fun SecurityScreen(
                             Column {
                                 Text(
                                     text = "Biometric",
-                                    style = MaterialTheme.typography.bodyLarge,
+                                    style = MaterialTheme.typography.titleMedium,
                                     color =
                                         if (isBiometricAvailable) {
                                             MaterialTheme.colorScheme.onBackground
@@ -217,7 +220,7 @@ fun SecurityScreen(
                                         } else {
                                             "Not available on this device"
                                         },
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                 )
                             }
@@ -269,12 +272,12 @@ fun SecurityScreen(
                             Column {
                                 Text(
                                     text = "PIN code",
-                                    style = MaterialTheme.typography.bodyLarge,
+                                    style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
                                 Text(
                                     text = "$MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit unlock code",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                 )
                             }
@@ -379,7 +382,7 @@ fun SecurityScreen(
                                 Column {
                                     Text(
                                         text = "Duress PIN",
-                                        style = MaterialTheme.typography.bodyLarge,
+                                        style = MaterialTheme.typography.titleMedium,
                                         color =
                                             if (canEnableDuress) {
                                                 MaterialTheme.colorScheme.onBackground
@@ -396,7 +399,7 @@ fun SecurityScreen(
                                             } else {
                                                 "Unlock Ibis into a decoy wallet"
                                             },
-                                        style = MaterialTheme.typography.bodySmall,
+                                        style = MaterialTheme.typography.bodyMedium,
                                         color =
                                             if (canEnableDuress) {
                                                 TextSecondary
@@ -478,7 +481,7 @@ fun SecurityScreen(
                                 Column {
                                     Text(
                                         text = "Wipe after unlock attempts",
-                                        style = MaterialTheme.typography.bodyLarge,
+                                        style = MaterialTheme.typography.titleMedium,
                                         color =
                                             if (isSecurityActive) {
                                                 MaterialTheme.colorScheme.onBackground
@@ -493,7 +496,7 @@ fun SecurityScreen(
                                             } else {
                                                 "Set up PIN code to enable"
                                             },
-                                        style = MaterialTheme.typography.bodySmall,
+                                        style = MaterialTheme.typography.bodyMedium,
                                         color =
                                             if (isSecurityActive) {
                                                 TextSecondary
@@ -618,7 +621,7 @@ fun SecurityScreen(
                                 Column {
                                     Text(
                                         text = "Disguise as calculator",
-                                        style = MaterialTheme.typography.bodyLarge,
+                                        style = MaterialTheme.typography.titleMedium,
                                         color = MaterialTheme.colorScheme.onBackground,
                                     )
                                     Text(
@@ -628,7 +631,7 @@ fun SecurityScreen(
                                             } else {
                                                 "Hide Ibis behind a calculator app"
                                             },
-                                        style = MaterialTheme.typography.bodySmall,
+                                        style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary,
                                     )
                                 }
@@ -686,12 +689,12 @@ fun SecurityScreen(
                             Column {
                                 Text(
                                     text = "Disable Screenshots",
-                                    style = MaterialTheme.typography.bodyLarge,
+                                    style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
                                 Text(
                                     text = "Blocks screenshots and app previews",
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                 )
                             }
@@ -915,7 +918,7 @@ private fun PinSetupScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Title
             Text(
@@ -932,11 +935,11 @@ private fun PinSetupScreen(
                         step == 1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
                         else -> "Enter the PIN again to confirm"
                     },
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.titleMedium,
                 color = TextSecondary,
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // PIN dots indicator - only show entered digits
             val currentPin = if (step == 1) pin else confirmPin
@@ -956,9 +959,9 @@ private fun PinSetupScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
             } else {
-                Spacer(modifier = Modifier.height(36.dp))
+                Spacer(modifier = Modifier.height(28.dp))
             }
 
             // Error message
@@ -976,7 +979,7 @@ private fun PinSetupScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // Number pad
             PinNumberPad(
@@ -1023,7 +1026,7 @@ private fun PinSetupScreen(
                 confirmLabel = if (step == 1) "Next" else "Confirm",
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(24.dp))
         }
     }
 }
@@ -1069,7 +1072,7 @@ private fun PinNumberPad(
                                         .background(DarkCard),
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Backspace,
+                                    imageVector = Icons.AutoMirrored.Filled.Backspace,
                                     contentDescription = "Backspace",
                                     tint = TextSecondary,
                                     modifier = Modifier.size(28.dp),
@@ -1151,7 +1154,7 @@ private fun LockTimingDropdown(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .menuAnchor(),
+                    .menuAnchor(MenuAnchorType.PrimaryNotEditable),
             trailingIcon = {
                 ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
             },
@@ -1180,7 +1183,7 @@ private fun LockTimingDropdown(
                     text = {
                         Text(
                             text = timing.displayName,
-                            style = MaterialTheme.typography.bodyLarge,
+                            style = MaterialTheme.typography.titleMedium,
                             color =
                                 if (timing == currentTiming) {
                                     BitcoinOrange
@@ -1339,7 +1342,7 @@ private fun DuressSetupScreen(
                             1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
                             else -> "Enter the PIN again to confirm"
                         },
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
                 )
 
@@ -1347,7 +1350,7 @@ private fun DuressSetupScreen(
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "To trigger biometric unlock, press 'C' on the lock screen PIN pad",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 16.dp),
@@ -1373,27 +1376,27 @@ private fun DuressSetupScreen(
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.height(24.dp))
-                } else {
-                    Spacer(modifier = Modifier.height(36.dp))
-                }
+                Spacer(modifier = Modifier.height(16.dp))
+            } else {
+                Spacer(modifier = Modifier.height(28.dp))
+            }
 
-                // Error message
-                Box(
-                    modifier = Modifier.height(24.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (error != null) {
-                        Text(
-                            text = error!!,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = ErrorRed,
-                            textAlign = TextAlign.Center,
-                        )
-                    }
+            // Error message
+            Box(
+                modifier = Modifier.height(24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (error != null) {
+                    Text(
+                        text = error!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ErrorRed,
+                        textAlign = TextAlign.Center,
+                    )
                 }
+            }
 
-                Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(24.dp))
 
                 PinNumberPad(
                     onNumberClick = { number ->
@@ -1482,7 +1485,7 @@ private fun DuressSetupScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Decoy Wallet Seed",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             }
@@ -1542,7 +1545,7 @@ private fun DuressSetupScreen(
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = selectedAddressType.description,
-                style = MaterialTheme.typography.bodySmall,
+                style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -1566,7 +1569,7 @@ private fun DuressSetupScreen(
                 },
                 keyboardOptions =
                     KeyboardOptions(
-                        autoCorrect = false,
+                        autoCorrectEnabled = false,
                         capitalization = KeyboardCapitalization.None,
                     ),
                 shape = RoundedCornerShape(8.dp),
@@ -1585,14 +1588,14 @@ private fun DuressSetupScreen(
                 mnemonicValidation is DuressMnemonicValidation.Valid -> {
                     Text(
                         text = "Valid BIP39 seed phrase",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = SuccessGreen,
                     )
                 }
                 mnemonicValidation is DuressMnemonicValidation.Invalid -> {
                     Text(
-                        text = (mnemonicValidation as DuressMnemonicValidation.Invalid).error,
-                        style = MaterialTheme.typography.bodySmall,
+                        text = mnemonicValidation.error,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
                     )
                 }
@@ -1600,28 +1603,28 @@ private fun DuressSetupScreen(
                     val display = invalidWords.take(3).joinToString(", ") { "\"$it\"" }
                     Text(
                         text = "Invalid word(s): $display",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
                     )
                 }
                 isValidWordCount && allTypedWordsValid -> {
                     Text(
                         text = "$wordCount words entered",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary,
                     )
                 }
                 wordCount > 0 && wordCount !in listOf(12, 15, 18, 21, 24) && wordCount > 11 -> {
                     Text(
                         text = "$wordCount words \u2014 need 12, 15, 18, 21, or 24",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
                     )
                 }
                 wordCount > 0 -> {
                     Text(
                         text = "$wordCount words entered",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary,
                     )
                 }
@@ -1686,7 +1689,7 @@ private fun DuressSetupScreen(
                             },
                         keyboardOptions =
                             KeyboardOptions(
-                                autoCorrect = false,
+                                autoCorrectEnabled = false,
                                 keyboardType = KeyboardType.Password,
                             ),
                         trailingIcon = {
@@ -1778,7 +1781,7 @@ private fun DuressSetupScreen(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "Default: ${selectedAddressType.defaultPath}",
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary.copy(alpha = 0.7f),
                         modifier = Modifier.padding(start = 12.dp),
                     )
@@ -1875,7 +1878,7 @@ private fun CloakCodeSetupScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Text(
                 text = if (step == 1) "Set Unlock Pin" else "Confirm Unlock Pin",
@@ -1887,7 +1890,7 @@ private fun CloakCodeSetupScreen(
 
             Text(
                 text = "Enter a $MIN_CLOAK_CODE_LENGTH\u2013$MAX_CLOAK_CODE_LENGTH digit pin for cloak mode",
-                style = MaterialTheme.typography.bodyLarge,
+                style = MaterialTheme.typography.titleMedium,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,
             )
@@ -1901,7 +1904,7 @@ private fun CloakCodeSetupScreen(
                 textAlign = TextAlign.Center,
             )
 
-            Spacer(modifier = Modifier.height(48.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // PIN dots indicator
             val currentCode = if (step == 1) code else confirmCode
@@ -1921,9 +1924,9 @@ private fun CloakCodeSetupScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
             } else {
-                Spacer(modifier = Modifier.height(36.dp))
+                Spacer(modifier = Modifier.height(28.dp))
             }
 
             // Error message
@@ -1941,14 +1944,14 @@ private fun CloakCodeSetupScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.weight(1f))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // Number pad
             PinNumberPad(
                 onNumberClick = { number ->
                     val maxLen = if (step == 2) code.length else MAX_CLOAK_CODE_LENGTH
-                    val curCode = if (step == 1) code else confirmCode
-                    if (curCode.length < maxLen) {
+                    val currentCode = if (step == 1) code else confirmCode
+                    if (currentCode.length < maxLen) {
                         if (step == 1) {
                             code += number
                             error = null

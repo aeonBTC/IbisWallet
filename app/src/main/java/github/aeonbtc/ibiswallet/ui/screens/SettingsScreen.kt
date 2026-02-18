@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.compose.foundation.background
@@ -137,12 +139,12 @@ fun SettingsScreen(
                         Column {
                             Text(
                                 text = if (isSats) "Sats" else "BTC",
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
                             Text(
                                 text = if (isSats) "Amounts shown in satoshis" else "Amounts shown in bitcoin",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
                         }
@@ -212,12 +214,12 @@ fun SettingsScreen(
                         Column {
                             Text(
                                 text = "Spend Unconfirmed",
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
                             Text(
                                 text = "Allow spending unconfirmed UTXOs",
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
                         }
@@ -263,7 +265,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Fee Rate Source",
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = TextSecondary,
                     )
                 }
@@ -274,6 +276,14 @@ fun SettingsScreen(
                     currentSource = currentFeeSource,
                     onSourceSelected = onFeeSourceChange,
                 )
+
+                // Tor status indicator (shown when onion option is selected)
+                if (currentFeeSource == SecureStorage.FEE_SOURCE_MEMPOOL_ONION) {
+                    TorStatusIndicator(
+                        torStatus = torStatus,
+                        modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+                    )
+                }
 
                 // Custom fee server URL field (shown only when Custom is selected)
                 if (currentFeeSource == SecureStorage.FEE_SOURCE_CUSTOM) {
@@ -354,7 +364,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "Block Explorer",
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = TextSecondary,
                     )
                 }
@@ -414,7 +424,7 @@ fun SettingsScreen(
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
                         text = "USD Price Source",
-                        style = MaterialTheme.typography.labelLarge,
+                        style = MaterialTheme.typography.titleMedium,
                         color = TextSecondary,
                     )
                 }
@@ -425,6 +435,14 @@ fun SettingsScreen(
                     currentSource = currentPriceSource,
                     onSourceSelected = onPriceSourceChange,
                 )
+
+                // Tor status indicator (shown when onion option is selected)
+                if (currentPriceSource == SecureStorage.PRICE_SOURCE_MEMPOOL_ONION) {
+                    TorStatusIndicator(
+                        torStatus = torStatus,
+                        modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+                    )
+                }
             }
         }
 
@@ -485,7 +503,7 @@ private fun MempoolServerDropdown(
         CompactDropdownField(
             value = selectedOption.name,
             expanded = expanded,
-            modifier = Modifier.menuAnchor(),
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
         )
 
         ExposedDropdownMenu(
@@ -502,7 +520,7 @@ private fun MempoolServerDropdown(
                         Column {
                             Text(
                                 text = option.name,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 color =
                                     if (option.id == currentServer) {
                                         BitcoinOrange
@@ -512,7 +530,7 @@ private fun MempoolServerDropdown(
                             )
                             Text(
                                 text = option.description,
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
                         }
@@ -569,6 +587,11 @@ private fun FeeSourceDropdown(
                 description = "Fetch from mempool.space",
             ),
             FeeSourceOption(
+                id = SecureStorage.FEE_SOURCE_MEMPOOL_ONION,
+                name = "mempool.space (Onion)",
+                description = "Fetch from mempool.space over Tor",
+            ),
+            FeeSourceOption(
                 id = SecureStorage.FEE_SOURCE_ELECTRUM,
                 name = "Electrum Server",
                 description = "Fetch from connected Electrum server",
@@ -589,7 +612,7 @@ private fun FeeSourceDropdown(
         CompactDropdownField(
             value = selectedOption.name,
             expanded = expanded,
-            modifier = Modifier.menuAnchor(),
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
         )
 
         ExposedDropdownMenu(
@@ -606,7 +629,7 @@ private fun FeeSourceDropdown(
                         Column {
                             Text(
                                 text = option.name,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 color =
                                     if (option.id == currentSource) {
                                         BitcoinOrange
@@ -616,7 +639,7 @@ private fun FeeSourceDropdown(
                             )
                             Text(
                                 text = option.description,
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
                         }
@@ -670,12 +693,17 @@ private fun PriceSourceDropdown(
             PriceSourceOption(
                 id = SecureStorage.PRICE_SOURCE_MEMPOOL,
                 name = "mempool.space",
-                description = "Fetch price from mempool.space",
+                description = "Fetch from mempool.space",
+            ),
+            PriceSourceOption(
+                id = SecureStorage.PRICE_SOURCE_MEMPOOL_ONION,
+                name = "mempool.space (Onion)",
+                description = "Fetch from mempool.space over Tor",
             ),
             PriceSourceOption(
                 id = SecureStorage.PRICE_SOURCE_COINGECKO,
                 name = "CoinGecko",
-                description = "Fetch price from CoinGecko",
+                description = "Fetch from CoinGecko",
             ),
         )
 
@@ -688,7 +716,7 @@ private fun PriceSourceDropdown(
         CompactDropdownField(
             value = selectedOption.name,
             expanded = expanded,
-            modifier = Modifier.menuAnchor(),
+            modifier = Modifier.menuAnchor(MenuAnchorType.PrimaryNotEditable),
         )
 
         ExposedDropdownMenu(
@@ -705,7 +733,7 @@ private fun PriceSourceDropdown(
                         Column {
                             Text(
                                 text = option.name,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = MaterialTheme.typography.titleMedium,
                                 color =
                                     if (option.id == currentSource) {
                                         BitcoinOrange
@@ -715,7 +743,7 @@ private fun PriceSourceDropdown(
                             )
                             Text(
                                 text = option.description,
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
                         }
@@ -786,17 +814,63 @@ private fun validateServerUrl(url: String): String? {
 /**
  * Compact editable text field with a right-aligned Save button and optional error message.
  */
+/**
+ * Tor connection status indicator — colored dot + status text.
+ * Reused for any onion-based source (fee, price, custom URL).
+ */
+@Composable
+private fun TorStatusIndicator(
+    torStatus: TorStatus,
+    modifier: Modifier = Modifier,
+) {
+    val torStatusColor =
+        when (torStatus) {
+            TorStatus.CONNECTED -> SuccessGreen
+            TorStatus.CONNECTING, TorStatus.STARTING -> SuccessGreen.copy(alpha = 0.6f)
+            TorStatus.ERROR -> ErrorRed
+            TorStatus.DISCONNECTED -> TextSecondary
+        }
+    val torStatusText =
+        when (torStatus) {
+            TorStatus.CONNECTED -> "Tor connected"
+            TorStatus.CONNECTING -> "Tor connecting..."
+            TorStatus.STARTING -> "Tor starting..."
+            TorStatus.ERROR -> "Tor error"
+            TorStatus.DISCONNECTED -> "Tor will start automatically"
+        }
+
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.End,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(torStatusColor),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = torStatusText,
+            style = MaterialTheme.typography.bodySmall,
+            color = torStatusColor,
+        )
+    }
+}
+
 @Composable
 private fun CompactTextFieldWithSave(
     value: String,
     onValueChange: (String) -> Unit,
     onSave: () -> Unit,
     placeholder: String,
+    modifier: Modifier = Modifier,
     errorMessage: String? = null,
     successMessage: String? = null,
     torStatusText: String? = null,
     torStatusColor: androidx.compose.ui.graphics.Color? = null,
-    modifier: Modifier = Modifier,
 ) {
     val borderColor =
         when {
@@ -866,7 +940,7 @@ private fun CompactTextFieldWithSave(
                 if (errorMessage != null) {
                     Text(
                         text = errorMessage,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
                         modifier = Modifier.padding(start = 4.dp),
                     )
@@ -885,7 +959,7 @@ private fun CompactTextFieldWithSave(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = torStatusText,
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = torStatusColor,
                         )
                     }

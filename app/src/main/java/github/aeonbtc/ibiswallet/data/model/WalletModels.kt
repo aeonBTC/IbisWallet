@@ -1,6 +1,19 @@
 package github.aeonbtc.ibiswallet.data.model
 
 /**
+ * Seed phrase format used to derive the wallet.
+ * Determines key stretching algorithm and derivation paths.
+ */
+enum class SeedFormat {
+    /** Standard BIP39 mnemonic — PBKDF2 with "mnemonic" salt, BIP44/49/84/86 paths */
+    BIP39,
+    /** Electrum v2+ Standard — PBKDF2 with "electrum" salt, P2PKH at m/ */
+    ELECTRUM_STANDARD,
+    /** Electrum v2+ Segwit — PBKDF2 with "electrum" salt, P2WPKH at m/0'/ */
+    ELECTRUM_SEGWIT,
+}
+
+/**
  * Address type for the wallet (determines derivation path and address format)
  */
 enum class AddressType(
@@ -47,6 +60,7 @@ data class StoredWallet(
     val network: WalletNetwork = WalletNetwork.BITCOIN,
     val createdAt: Long = System.currentTimeMillis(),
     val masterFingerprint: String? = null, // Master key fingerprint (8 hex chars) for watch-only wallets
+    val seedFormat: SeedFormat = SeedFormat.BIP39,
 )
 
 /**
@@ -204,12 +218,13 @@ data class WalletImportConfig(
     val network: WalletNetwork = WalletNetwork.BITCOIN,
     val isWatchOnly: Boolean = false,
     val masterFingerprint: String? = null, // Master key fingerprint (8 hex chars) for hardware wallet PSBT signing
+    val seedFormat: SeedFormat = SeedFormat.BIP39,
 ) {
     /** Redact sensitive fields to prevent accidental logging of key material. */
     override fun toString(): String =
         "WalletImportConfig(name=$name, addressType=$addressType, network=$network, " +
             "isWatchOnly=$isWatchOnly, hasPassphrase=${passphrase != null}, " +
-            "keyMaterial=[REDACTED ${keyMaterial.length} chars])"
+            "seedFormat=$seedFormat, keyMaterial=[REDACTED ${keyMaterial.length} chars])"
 }
 
 /**

@@ -1,6 +1,8 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.graphics.Bitmap
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.set
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -50,7 +52,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +89,7 @@ import java.util.Locale
 
 private const val ADDRESS_DISPLAY_LIMIT = 20
 
+@Suppress("AssignedValueIsNeverRead")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AllAddressesScreen(
@@ -96,7 +98,6 @@ fun AllAddressesScreen(
     usedAddresses: List<WalletAddress>,
     denomination: String = SecureStorage.DENOMINATION_BTC,
     privacyMode: Boolean = false,
-    onGenerateReceiveAddress: suspend () -> String? = { null },
     onSaveLabel: (address: String, label: String) -> Unit = { _, _ -> },
     onDeleteLabel: (address: String) -> Unit = { },
 ) {
@@ -107,11 +108,9 @@ fun AllAddressesScreen(
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
 
     val receiveListState = rememberLazyListState()
-    val coroutineScope = rememberCoroutineScope()
     var scrollToAddress by remember { mutableStateOf<String?>(null) }
     var showQrForAddress by remember { mutableStateOf<String?>(null) }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    val context = LocalContext.current
 
     // Generate QR code when showing
     LaunchedEffect(showQrForAddress) {
@@ -586,7 +585,7 @@ private fun AddressCard(
                     style = MaterialTheme.typography.bodyMedium,
                     fontFamily = FontFamily.Monospace,
                     color = MaterialTheme.colorScheme.onBackground,
-                    maxLines = 2,
+                    maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
@@ -703,18 +702,15 @@ private fun generateQrCode(content: String): Bitmap? {
         val bitMatrix = qrCodeWriter.encode(content, BarcodeFormat.QR_CODE, 512, 512, hints)
         val width = bitMatrix.width
         val height = bitMatrix.height
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565)
+        val bitmap = createBitmap(width, height, Bitmap.Config.RGB_565)
         for (x in 0 until width) {
             for (y in 0 until height) {
-                bitmap.setPixel(
-                    x,
-                    y,
-                    if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE,
-                )
+                bitmap[x, y] =
+                    if (bitMatrix[x, y]) android.graphics.Color.BLACK else android.graphics.Color.WHITE
             }
         }
         bitmap
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
     }
 }

@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.net.Uri
@@ -68,10 +70,12 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.data.model.AddressType
+import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.ImportQrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -81,6 +85,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
 import github.aeonbtc.ibiswallet.util.QrFormatParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -96,7 +101,7 @@ import org.json.JSONObject
 @Composable
 fun ImportWalletScreen(
     onImport: (config: WalletImportConfig) -> Unit,
-    onImportFromBackup: (backupJson: JSONObject) -> Unit = {},
+    onImportFromBackup: (backupJson: JSONObject, importServerSettings: Boolean) -> Unit = { _, _ -> },
     onParseBackupFile: suspend (uri: Uri, password: String?) -> JSONObject = { _, _ -> JSONObject() },
     onBack: () -> Unit,
     onSweepPrivateKey: () -> Unit = {},
@@ -122,6 +127,7 @@ fun ImportWalletScreen(
     var backupParsedJson by remember { mutableStateOf<JSONObject?>(null) }
     var backupWalletName by remember { mutableStateOf<String?>(null) }
     var isParsingBackup by remember { mutableStateOf(false) }
+    var importServerSettings by remember { mutableStateOf(true) }
     val backupCoroutineScope = rememberCoroutineScope()
 
     val backupFilePickerLauncher =
@@ -350,7 +356,7 @@ fun ImportWalletScreen(
         words.isNotEmpty() && invalidWords.isEmpty() &&
             words.all { it in bip39WordSet }
 
-    // Full BIP39 mnemonic validation (wordlist + checksum) via BDK.
+    // Full mnemonic validation: try BIP39 first, then Electrum native seed detection.
     // Only runs when word count is valid and every word is a complete BIP39 word.
     val mnemonicValidation =
         remember(keyMaterial) {
@@ -358,14 +364,21 @@ fun ImportWalletScreen(
                 try {
                     Mnemonic.fromString(keyMaterial.trim())
                     MnemonicValidation.Valid
-                } catch (e: Exception) {
-                    MnemonicValidation.Invalid(e.message ?: "Invalid checksum")
+                } catch (_: Exception) {
+                    // BIP39 checksum failed — check if it's an Electrum native seed
+                    val electrumType = ElectrumSeedUtil.getElectrumSeedType(keyMaterial.trim())
+                    if (electrumType != null) {
+                        MnemonicValidation.ValidElectrum(electrumType)
+                    } else {
+                        MnemonicValidation.Invalid("Invalid checksum")
+                    }
                 }
             } else {
                 MnemonicValidation.NotChecked
             }
         }
-    val isValidMnemonic = mnemonicValidation is MnemonicValidation.Valid
+    val isValidMnemonic = mnemonicValidation is MnemonicValidation.Valid ||
+        mnemonicValidation is MnemonicValidation.ValidElectrum
 
     val isValidInput = isWatchOnlyKey || isExtendedKey || isValidMnemonic || isWifKey || isBitcoinAddress
 
@@ -385,6 +398,19 @@ fun ImportWalletScreen(
             if (count == 0) base else "${base}_${count + 1}"
         }
 
+    // Track whether address type is locked by Electrum seed detection
+    val isElectrumSeed = mnemonicValidation is MnemonicValidation.ValidElectrum
+    val electrumSeedType = (mnemonicValidation as? MnemonicValidation.ValidElectrum)?.seedType
+
+    // Auto-select the correct address type when Electrum seed is detected
+    LaunchedEffect(electrumSeedType) {
+        when (electrumSeedType) {
+            ElectrumSeedUtil.ElectrumSeedType.STANDARD -> selectedAddressType = AddressType.LEGACY
+            ElectrumSeedUtil.ElectrumSeedType.SEGWIT -> selectedAddressType = AddressType.SEGWIT
+            null -> { /* no change */ }
+        }
+    }
+
     val canImport = keyMaterial.isNotBlank() && isValidInput && !isLoading
 
     // Dynamically derive master fingerprint
@@ -395,8 +421,21 @@ fun ImportWalletScreen(
             parsedFingerprint != null -> {
                 derivedFingerprint = parsedFingerprint
             }
-            // For valid seed phrases, derive from mnemonic
-            isValidMnemonic -> {
+            // For Electrum seeds, derive fingerprint using Electrum key stretching
+            isElectrumSeed -> {
+                derivedFingerprint =
+                    withContext(Dispatchers.Default) {
+                        try {
+                            val pass = if (usePassphrase && passphrase.isNotBlank()) passphrase else null
+                            val seed = ElectrumSeedUtil.mnemonicToSeed(keyMaterial.trim(), pass)
+                            ElectrumSeedUtil.computeMasterFingerprint(seed)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+            }
+            // For valid BIP39 seed phrases, derive from mnemonic
+            mnemonicValidation is MnemonicValidation.Valid -> {
                 derivedFingerprint =
                     withContext(Dispatchers.Default) {
                         try {
@@ -424,13 +463,6 @@ fun ImportWalletScreen(
     }
 
     // Get derivation path to use
-    val derivationPath =
-        if (useCustomPath && customPath.isNotBlank()) {
-            customPath
-        } else {
-            selectedAddressType.defaultPath
-        }
-
     // QR Scanner Dialog - supports single-frame, animated UR, and all key formats
     if (showQrScanner) {
         ImportQrScannerDialog(
@@ -538,7 +570,8 @@ fun ImportWalletScreen(
                         .filter { it != AddressType.NESTED_SEGWIT }
                         .forEach { addressType ->
                             val enabled =
-                                !(addressType == AddressType.LEGACY && isLegacyDisabled) &&
+                                !isElectrumSeed &&
+                                    !(addressType == AddressType.LEGACY && isLegacyDisabled) &&
                                     !(isBitcoinAddress && detectedAddressType != null && addressType != detectedAddressType)
                             AddressTypeButton(
                                 addressType = addressType,
@@ -563,7 +596,7 @@ fun ImportWalletScreen(
 
                 // Seed Phrase / Extended Key / WIF / Address Input
                 Text(
-                    text = "Seed Phrase, Key, or Address",
+                    text = "Seed Phrase, Private Key, Extended Key, or Address",
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -623,11 +656,11 @@ fun ImportWalletScreen(
                         shape = RoundedCornerShape(8.dp),
                         placeholder = {
                             Text(
-                                "Seed, xpub/zpub, WIF key, or address",
+                                "BIP39 seed, Electrum seed, WIF private key, xpub/zpub, or any address",
                                 color = TextSecondary.copy(alpha = 0.5f),
                             )
                         },
-                        keyboardOptions = KeyboardOptions(autoCorrect = false),
+                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
                         colors =
                             OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = BitcoinOrange,
@@ -730,6 +763,14 @@ fun ImportWalletScreen(
                                     color = BitcoinOrange,
                                 )
                             }
+                            mnemonicValidation is MnemonicValidation.ValidElectrum -> {
+                                val seedLabel = mnemonicValidation.seedType.label
+                                Text(
+                                    text = "Electrum $seedLabel seed ($wordCount words)",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = SuccessGreen,
+                                )
+                            }
                             isValidMnemonic -> {
                                 Text(
                                     text = "Valid BIP39 seed phrase",
@@ -739,7 +780,7 @@ fun ImportWalletScreen(
                             }
                             isValidWordCount && mnemonicValidation is MnemonicValidation.Invalid -> {
                                 Text(
-                                    text = (mnemonicValidation as MnemonicValidation.Invalid).error,
+                                    text = mnemonicValidation.error,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = ErrorRed,
                                 )
@@ -753,7 +794,7 @@ fun ImportWalletScreen(
                                     color = ErrorRed,
                                 )
                             }
-                            isValidWordCount && invalidWords.isEmpty() -> {
+                            isValidWordCount -> {
                                 // Valid count, no bad words, but last word still being typed
                                 Text(
                                     text = "$wordCount words entered",
@@ -952,7 +993,7 @@ fun ImportWalletScreen(
                                 enabled = !isExtendedKey,
                             )
                             Text(
-                                text = "Use BIP39 Passphrase",
+                                text = "Use Passphrase",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color =
                                     if (isExtendedKey) {
@@ -992,7 +1033,7 @@ fun ImportWalletScreen(
                                         },
                                     keyboardOptions =
                                         KeyboardOptions(
-                                            autoCorrect = false,
+                                            autoCorrectEnabled = false,
                                             keyboardType = KeyboardType.Password,
                                         ),
                                     trailingIcon = {
@@ -1140,6 +1181,14 @@ fun ImportWalletScreen(
                         }
 
                 val finalName = walletName.trim().ifBlank { autoWalletName }
+
+                // Determine seed format for proper derivation in the repository
+                val seedFormat = when (electrumSeedType) {
+                    ElectrumSeedUtil.ElectrumSeedType.STANDARD -> SeedFormat.ELECTRUM_STANDARD
+                    ElectrumSeedUtil.ElectrumSeedType.SEGWIT -> SeedFormat.ELECTRUM_SEGWIT
+                    null -> SeedFormat.BIP39
+                }
+
                 val config =
                     WalletImportConfig(
                         name = finalName,
@@ -1150,6 +1199,7 @@ fun ImportWalletScreen(
                         network = selectedNetwork,
                         isWatchOnly = isWatchOnly || isBitcoinAddress,
                         masterFingerprint = fingerprintValue,
+                        seedFormat = seedFormat,
                     )
                 onImport(config)
             },
@@ -1173,11 +1223,12 @@ fun ImportWalletScreen(
                 )
             } else {
                 Text(
-                    when {
+                    text = when {
                         isBitcoinAddress -> "Watch Address"
                         isWifKey -> "Import Key"
                         else -> "Import Wallet"
                     },
+                    style = MaterialTheme.typography.titleMedium,
                 )
             }
         }
@@ -1239,6 +1290,7 @@ fun ImportWalletScreen(
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = backupFileName ?: "Select backup file",
+                style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -1299,7 +1351,7 @@ fun ImportWalletScreen(
                         },
                     keyboardOptions =
                         KeyboardOptions(
-                            autoCorrect = false,
+                            autoCorrectEnabled = false,
                             keyboardType = KeyboardType.Password,
                         ),
                     trailingIcon = {
@@ -1356,7 +1408,10 @@ fun ImportWalletScreen(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = backupPassword.isNotEmpty(),
                 ) {
-                    Text("Decrypt")
+                    Text(
+                        text = "Decrypt",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
             }
 
@@ -1407,6 +1462,57 @@ fun ImportWalletScreen(
                                 color = TextSecondary,
                             )
                         }
+
+                        val hasServerSettings = backupParsedJson!!.optJSONObject("serverSettings") != null
+                        if (hasServerSettings) {
+                            val settingsObj = backupParsedJson!!.optJSONObject("serverSettings")!!
+                            val serverCount = settingsObj.optJSONArray("electrumServers")?.length() ?: 0
+                            val explorerType = settingsObj.optJSONObject("blockExplorer")?.optString("type", "") ?: ""
+                            val feeType = settingsObj.optJSONObject("feeSource")?.optString("type", "") ?: ""
+
+                            val parts = mutableListOf<String>()
+                            if (serverCount > 0) parts.add("$serverCount Electrum server${if (serverCount != 1) "s" else ""}")
+                            if (explorerType.isNotBlank()) parts.add("block explorer")
+                            if (feeType.isNotBlank()) parts.add("fee source")
+
+                            Text(
+                                text = "Server settings: ${parts.joinToString(", ")}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                            )
+                        }
+                    }
+                }
+
+                // Import Server Settings toggle (only shown if backup contains them)
+                val hasServerSettingsForToggle = backupParsedJson!!.optJSONObject("serverSettings") != null
+                if (hasServerSettingsForToggle) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { importServerSettings = !importServerSettings },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Import Server Settings",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                            Text(
+                                text = "Electrum servers, block explorer, fee source",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                            )
+                        }
+                        SquareToggle(
+                            checked = importServerSettings,
+                            onCheckedChange = { importServerSettings = it },
+                        )
                     }
                 }
 
@@ -1415,7 +1521,7 @@ fun ImportWalletScreen(
                 Button(
                     onClick = {
                         backupParsedJson?.let { json ->
-                            onImportFromBackup(json)
+                            onImportFromBackup(json, importServerSettings)
                         }
                     },
                     modifier =
@@ -1443,7 +1549,10 @@ fun ImportWalletScreen(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Restore Wallet")
+                        Text(
+                            text = "Restore Wallet",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
                     }
                 }
             }
@@ -1516,7 +1625,10 @@ fun ImportWalletScreen(
                 modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Input private key")
+            Text(
+                text = "Input Private Key",
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -1527,9 +1639,9 @@ fun ImportWalletScreen(
 private fun AddressTypeButton(
     addressType: AddressType,
     isSelected: Boolean,
+    modifier: Modifier = Modifier,
     enabled: Boolean = true,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val backgroundColor =
         when {
@@ -1577,7 +1689,11 @@ private fun AddressTypeButton(
 private sealed class MnemonicValidation {
     data object NotChecked : MnemonicValidation()
 
+    /** Valid BIP39 seed phrase */
     data object Valid : MnemonicValidation()
+
+    /** Valid Electrum native seed phrase */
+    data class ValidElectrum(val seedType: ElectrumSeedUtil.ElectrumSeedType) : MnemonicValidation()
 
     data class Invalid(val error: String) : MnemonicValidation()
 }

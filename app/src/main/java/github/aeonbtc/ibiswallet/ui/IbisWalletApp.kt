@@ -1,3 +1,5 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui
 
 import android.widget.Toast
@@ -134,12 +136,12 @@ fun IbisWalletApp(
     val uiState by viewModel.uiState.collectAsState()
     val serversState by viewModel.serversState.collectAsState()
     val torState by viewModel.torState.collectAsState()
+    val autoSwitchServer by viewModel.autoSwitchServer.collectAsState()
     val denomination by viewModel.denominationState.collectAsState()
     val mempoolServer by viewModel.mempoolServerState.collectAsState()
     val feeSource by viewModel.feeSourceState.collectAsState()
     val feeEstimationState by viewModel.feeEstimationState.collectAsState()
     val minFeeRate by viewModel.minFeeRate.collectAsState()
-    val preSelectedUtxo by viewModel.preSelectedUtxo.collectAsState()
     val priceSource by viewModel.priceSourceState.collectAsState()
     val btcPrice by viewModel.btcPriceState.collectAsState()
     val syncingWalletId by viewModel.syncingWalletId.collectAsState()
@@ -180,17 +182,6 @@ fun IbisWalletApp(
                 Screen.Send.route,
             )
 
-    // Check if we're on a drawer screen (should show bottom nav but not main top bar)
-    val isDrawerScreen =
-        currentDestination?.route in
-            listOf(
-                Screen.ManageWallets.route,
-                Screen.ElectrumConfig.route,
-                Screen.Settings.route,
-                Screen.Security.route,
-                Screen.About.route,
-            )
-
     // Check if we're on a sub-screen that should show back button in main TopAppBar
     val isSubScreenWithTopBar =
         currentDestination?.route in
@@ -226,7 +217,6 @@ fun IbisWalletApp(
             isOnion = electrumConfig?.isOnionAddress() ?: false,
             serverVersion = uiState.serverVersion,
             isTorActive = torState.status == TorStatus.CONNECTED,
-            lastSyncTimestamp = walletState.lastSyncTimestamp,
             blockHeight = walletState.blockHeight,
             onDismiss = { showConnectionStatusDialog = false },
             onConnect = {
@@ -402,10 +392,6 @@ fun IbisWalletApp(
                                         wallets = filteredWallets,
                                         expanded = walletSelectorExpanded,
                                         onToggle = { walletSelectorExpanded = !walletSelectorExpanded },
-                                        onDismiss = { walletSelectorExpanded = false },
-                                        onSelectWallet = { walletId ->
-                                            viewModel.switchWallet(walletId)
-                                        },
                                     )
                                 }
                                 if (isMainScreen && isSecurityEnabled) {
@@ -558,7 +544,6 @@ fun IbisWalletApp(
 
                         BalanceScreen(
                             walletState = walletState,
-                            uiState = uiState,
                             denomination = denomination,
                             mempoolUrl = viewModel.getMempoolUrl(),
                             mempoolServer = viewModel.getMempoolServer(),
@@ -729,11 +714,14 @@ fun IbisWalletApp(
                             onSelectWallet = { wallet ->
                                 viewModel.switchWallet(wallet.id)
                             },
-                            onExportWallet = { walletId, uri, includeLabels, password ->
-                                viewModel.exportWallet(walletId, uri, includeLabels, password)
+                            onExportWallet = { walletId, uri, includeLabels, includeServerSettings, password ->
+                                viewModel.exportWallet(walletId, uri, includeLabels, includeServerSettings, password)
                             },
                             onEditWallet = { walletId, newName, newFingerprint ->
                                 viewModel.editWallet(walletId, newName, newFingerprint)
+                            },
+                            onReorderWallets = { orderedIds ->
+                                viewModel.reorderWallets(orderedIds)
                             },
                             onFullSync = { wallet ->
                                 viewModel.fullSync(wallet.id)
@@ -762,8 +750,8 @@ fun IbisWalletApp(
                             onImport = { config ->
                                 viewModel.importWallet(config)
                             },
-                            onImportFromBackup = { backupJson ->
-                                viewModel.importFromBackup(backupJson)
+                            onImportFromBackup = { backupJson, importServerSettings ->
+                                viewModel.importFromBackup(backupJson, importServerSettings)
                             },
                             onParseBackupFile = { uri, password ->
                                 viewModel.parseBackupFile(uri, password)
@@ -827,7 +815,6 @@ fun IbisWalletApp(
                             onSweep = { wif, dest, rate -> viewModel.sweepPrivateKey(wif, dest, rate) },
                             onReset = { viewModel.resetSweepState() },
                             onBack = { navController.popBackStack() },
-                            currentReceiveAddress = walletState.currentAddress,
                             isWifValid = { viewModel.isWifPrivateKey(it) },
                             feeEstimationState = feeEstimationState,
                             minFeeRate = minFeeRate,
@@ -852,11 +839,7 @@ fun IbisWalletApp(
                         },
                     ) {
                         ElectrumConfigScreen(
-                            onConnect = { config ->
-                                viewModel.connectToElectrum(config)
-                            },
                             onBack = { navController.popBackStack() },
-                            currentConfig = viewModel.getElectrumConfig(),
                             isConnecting = uiState.isConnecting,
                             isConnected = uiState.isConnected,
                             error = uiState.error,
@@ -867,6 +850,8 @@ fun IbisWalletApp(
                             onConnectToServer = { serverId -> viewModel.connectToServer(serverId) },
                             onDisconnect = { viewModel.disconnect() },
                             onCancelConnection = { viewModel.cancelConnection() },
+                            autoSwitchServer = autoSwitchServer,
+                            onAutoSwitchServerChange = { enabled -> viewModel.setAutoSwitchServer(enabled) },
                             torState = torState,
                             isTorEnabled = viewModel.isTorEnabled(),
                             onTorEnabledChange = { enabled -> viewModel.setTorEnabled(enabled) },
@@ -911,8 +896,8 @@ fun IbisWalletApp(
                                 val wasOnion = viewModel.isFeeSourceOnion()
                                 viewModel.setFeeSource(newSource)
                                 // If switching away from .onion fee source, stop Tor
-                                // if Electrum doesn't need it either
-                                if (wasOnion && !viewModel.isFeeSourceOnion() && !viewModel.isTorEnabled()) {
+                                // if neither Electrum nor price source need it
+                                if (wasOnion && !viewModel.isFeeSourceOnion() && !viewModel.isTorEnabled() && !viewModel.isPriceSourceOnion()) {
                                     viewModel.stopTor()
                                 }
                             },
@@ -930,14 +915,21 @@ fun IbisWalletApp(
                                 if (isNewUrlOnion && !viewModel.isTorReady()) {
                                     // Start Tor for .onion fee source
                                     viewModel.startTor()
-                                } else if (wasOnion && !isNewUrlOnion && !viewModel.isTorEnabled()) {
-                                    // Switched from .onion to clearnet — stop Tor if Electrum doesn't need it
+                                } else if (wasOnion && !isNewUrlOnion && !viewModel.isTorEnabled() && !viewModel.isPriceSourceOnion()) {
+                                    // Switched from .onion to clearnet — stop Tor if nothing else needs it
                                     viewModel.stopTor()
                                 }
                             },
                             currentPriceSource = priceSource,
                             onPriceSourceChange = { newSource ->
+                                val wasOnion = viewModel.isPriceSourceOnion()
                                 viewModel.setPriceSource(newSource)
+                                val isNowOnion = viewModel.isPriceSourceOnion()
+                                if (isNowOnion && !viewModel.isTorReady()) {
+                                    viewModel.startTor()
+                                } else if (wasOnion && !isNowOnion && !viewModel.isTorEnabled() && !viewModel.isFeeSourceOnion()) {
+                                    viewModel.stopTor()
+                                }
                             },
                             currentMempoolServer = mempoolServer,
                             onMempoolServerChange = { newServer ->
@@ -1129,11 +1121,6 @@ fun IbisWalletApp(
                             usedAddresses = addresses.third,
                             denomination = denomination,
                             privacyMode = privacyMode,
-                            onGenerateReceiveAddress = {
-                                val newAddress = viewModel.getNewAddressSuspend()
-                                addressListVersion++
-                                newAddress
-                            },
                             onSaveLabel = { address, label ->
                                 viewModel.saveAddressLabel(address, label)
                                 addressListVersion++
@@ -1183,7 +1170,6 @@ fun IbisWalletApp(
                             onDeleteLabel = { address ->
                                 viewModel.deleteAddressLabel(address)
                             },
-                            onBack = { navController.popBackStack() },
                         )
                     }
                     composable(
@@ -1438,7 +1424,6 @@ private fun ConnectionStatusDialog(
     isOnion: Boolean,
     serverVersion: String?,
     isTorActive: Boolean,
-    lastSyncTimestamp: Long?,
     blockHeight: UInt? = null,
     onDismiss: () -> Unit,
     onConnect: () -> Unit,

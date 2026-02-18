@@ -29,7 +29,6 @@ class CertificateMismatchException(
     val host: String,
     val port: Int,
     val storedFingerprint: String,
-    val presentedFingerprint: String,
     val certInfo: CertificateInfo,
 ) : CertificateException("Certificate fingerprint mismatch for $host:$port")
 
@@ -55,20 +54,18 @@ class CertificateFirstUseException(
  * 2. Catching CertificateMismatchException and showing a warning
  * 3. Storing the approved fingerprint via SecureStorage
  */
+@Suppress("CustomX509TrustManager")
 class TofuTrustManager(
     private val host: String,
     private val port: Int,
     private val storedFingerprint: String?,
     private val isOnionHost: Boolean = host.endsWith(".onion"),
 ) : X509TrustManager {
-    /** The fingerprint of the certificate presented during the last handshake */
-    var presentedFingerprint: String? = null
-        private set
-
     /** Full certificate info from the last handshake */
     var presentedCertInfo: CertificateInfo? = null
         private set
 
+    @Suppress("TrustAllX509TrustManager")
     override fun checkClientTrusted(
         chain: Array<out X509Certificate>,
         authType: String,
@@ -84,7 +81,6 @@ class TofuTrustManager(
 
         val cert = chain[0]
         val fingerprint = computeFingerprint(cert)
-        presentedFingerprint = fingerprint
 
         val certInfo =
             CertificateInfo(
@@ -113,7 +109,6 @@ class TofuTrustManager(
                     host = host,
                     port = port,
                     storedFingerprint = storedFingerprint,
-                    presentedFingerprint = fingerprint,
                     certInfo = certInfo,
                 )
             }

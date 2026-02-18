@@ -1,8 +1,12 @@
+@file:Suppress("AssignedValueIsNeverRead")
+
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
 import android.graphics.Bitmap
-import android.net.Uri
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.set
+import androidx.core.net.toUri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -102,7 +106,6 @@ import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
-import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -120,7 +123,6 @@ enum class SpeedUpMethod {
 @Composable
 fun BalanceScreen(
     walletState: WalletState = WalletState(),
-    uiState: WalletUiState = WalletUiState(),
     denomination: String = SecureStorage.DENOMINATION_BTC,
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
@@ -323,9 +325,9 @@ fun BalanceScreen(
                                     if (privacyMode) {
                                         HIDDEN_AMOUNT
                                     } else if (useSats) {
-                                        "${formatAmount(walletState.balanceSats, useSats)} sats"
+                                        "${formatAmount(walletState.balanceSats, true)} sats"
                                     } else {
-                                        "\u20BF ${formatAmount(walletState.balanceSats, useSats)}"
+                                        "\u20BF ${formatAmount(walletState.balanceSats, false)}"
                                     },
                                 style = MaterialTheme.typography.displaySmall,
                                 fontWeight = FontWeight.Bold,
@@ -635,10 +637,10 @@ fun BalanceScreen(
                         val remaining = totalCount - visibleCount
                         TextButton(
                             onClick = {
-                                if (displayLimit <= 25) {
-                                    displayLimit = 100
+                                displayLimit = if (displayLimit <= 25) {
+                                    100
                                 } else {
-                                    displayLimit = Int.MAX_VALUE
+                                    Int.MAX_VALUE
                                 }
                             },
                             modifier =
@@ -737,7 +739,7 @@ fun BalanceScreen(
                         horizontalArrangement = Arrangement.Center,
                     ) {
                         Text(
-                            text = "${address.take(8)}...${address.takeLast(8)}",
+                            text = "${address.take(9)}...${address.takeLast(9)}",
                             style = MaterialTheme.typography.bodySmall,
                             fontFamily = FontFamily.Monospace,
                             color = TextSecondary,
@@ -844,7 +846,7 @@ private fun TransactionItem(
                 )
                 if (label != null) {
                     Text(
-                        text = "$label",
+                        text = label,
                         style = MaterialTheme.typography.bodyMedium,
                         color = AccentTeal,
                         maxLines = 1,
@@ -904,8 +906,8 @@ private fun formatBtc(sats: ULong): String {
 }
 
 private fun formatDateTime(timestamp: Long): String {
-    val date = java.util.Date(timestamp * 1000) // Convert seconds to milliseconds
-    val format = java.text.SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
+    val date = Date(timestamp * 1000) // Convert seconds to milliseconds
+    val format = SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
     return format.format(date)
 }
 
@@ -1065,7 +1067,6 @@ fun TransactionDetailDialog(
             cpfpSpendableOutput = cpfpSpendableOutput,
             feeEstimationState = feeEstimationState,
             useSats = useSats,
-            btcPrice = btcPrice,
             privacyMode = privacyMode,
             onRefreshFees = onRefreshFees,
             onConfirm = { feeRate ->
@@ -1203,7 +1204,7 @@ fun TransactionDetailDialog(
                         if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                             val usdValue = (amountAbs.toDouble() / 100_000_000.0) * btcPrice
                             Text(
-                                text = "${formatUsd(usdValue)}",
+                                text = formatUsd(usdValue),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                                 modifier = Modifier.padding(top = 2.dp),
@@ -1514,7 +1515,7 @@ fun TransactionDetailDialog(
                                 // Recalculate fee rate using the fractional vsize
                                 val displayFeeRate =
                                     if (displayVsize != null && displayVsize > 0.0) {
-                                        transaction.fee!!.toDouble() / displayVsize
+                                        transaction.fee.toDouble() / displayVsize
                                     } else {
                                         transaction.feeRate
                                     }
@@ -1671,18 +1672,18 @@ fun TransactionDetailDialog(
                                 // Try to open Tor Browser automatically for onion addresses
                                 val torBrowserPackage = "org.torproject.torbrowser"
                                 val intent =
-                                    Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                    Intent(Intent.ACTION_VIEW, url.toUri()).apply {
                                         setPackage(torBrowserPackage)
                                     }
                                 try {
                                     context.startActivity(intent)
-                                } catch (e: Exception) {
+                                } catch (_: Exception) {
                                     // Tor Browser not installed, show error
                                     showTorBrowserError = true
                                 }
                             } else {
                                 // Open directly for clearnet
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                val intent = Intent(Intent.ACTION_VIEW, url.toUri())
                                 context.startActivity(intent)
                             }
                         },
@@ -1732,8 +1733,6 @@ fun TransactionDetailDialog(
  */
 @Composable
 private fun TorBrowserErrorDialog(onDismiss: () -> Unit) {
-    val context = LocalContext.current
-
     Dialog(
         onDismissRequest = onDismiss,
         properties =
@@ -1814,7 +1813,6 @@ private fun SpeedUpDialog(
     cpfpSpendableOutput: ULong = 0UL,
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
     useSats: Boolean = true,
-    btcPrice: Double? = null,
     privacyMode: Boolean = false,
     onRefreshFees: () -> Unit = {},
     onConfirm: (Float) -> Unit,
@@ -2321,18 +2319,15 @@ private fun generateQrCode(content: String): Bitmap? {
                 size,
                 hints,
             )
-        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val bitmap = createBitmap(size, size, Bitmap.Config.ARGB_8888)
         for (x in 0 until size) {
             for (y in 0 until size) {
-                bitmap.setPixel(
-                    x,
-                    y,
-                    if (bitMatrix[x, y]) Color.Black.toArgb() else Color.White.toArgb(),
-                )
+                bitmap[x, y] =
+                    if (bitMatrix[x, y]) Color.Black.toArgb() else Color.White.toArgb()
             }
         }
         bitmap
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null
     }
 }

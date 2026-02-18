@@ -84,7 +84,6 @@ fun AllUtxosScreen(
     onSendFromUtxo: (UtxoInfo) -> Unit = {},
     onSaveLabel: (address: String, label: String) -> Unit = { _, _ -> },
     onDeleteLabel: (address: String) -> Unit = {},
-    onBack: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val useSats = denomination == SecureStorage.DENOMINATION_SATS

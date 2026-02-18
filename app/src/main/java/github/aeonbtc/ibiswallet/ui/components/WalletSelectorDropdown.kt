@@ -10,6 +10,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,9 +18,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Check
@@ -48,6 +52,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
+import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -65,8 +70,6 @@ fun WalletSelectorDropdown(
     wallets: List<StoredWallet>,
     expanded: Boolean,
     onToggle: () -> Unit,
-    onDismiss: () -> Unit,
-    onSelectWallet: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val chevronRotation by animateFloatAsState(
@@ -170,31 +173,38 @@ fun WalletSelectorPanel(
                                 onClick = {}, // consume clicks so they don't hit scrim
                             ),
                 ) {
-                    wallets.forEach { wallet ->
-                        val isActive = wallet.id == activeWallet?.id
-                        WalletPanelItem(
-                            wallet = wallet,
-                            isActive = isActive,
-                            isSyncing = syncingWalletId == wallet.id,
-                            lastFullSyncTime = lastFullSyncTimes[wallet.id],
-                            onClick = {
-                                if (!isActive) {
-                                    onSelectWallet(wallet.id)
-                                }
-                                onDismiss()
-                            },
-                            onSync = { onFullSync(wallet) },
-                        )
-                        HorizontalDivider(
-                            color = Color.White.copy(alpha = 0.06f),
-                            thickness = 0.5.dp,
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                        )
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 500.dp),
+                    ) {
+                        items(wallets, key = { it.id }) { wallet ->
+                            val isActive = wallet.id == activeWallet?.id
+                            WalletPanelItem(
+                                wallet = wallet,
+                                isActive = isActive,
+                                isSyncing = syncingWalletId == wallet.id,
+                                lastFullSyncTime = lastFullSyncTimes[wallet.id],
+                                onClick = {
+                                    if (!isActive) {
+                                        onSelectWallet(wallet.id)
+                                    }
+                                    onDismiss()
+                                },
+                                onSync = { onFullSync(wallet) },
+                            )
+                            HorizontalDivider(
+                                color = BorderColor,
+                                thickness = 1.dp,
+                                modifier = Modifier.padding(horizontal = 20.dp),
+                            )
+                        }
                     }
 
                     // Manage Wallets option
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End,
                         modifier =
                             Modifier
                                 .fillMaxWidth()
@@ -210,7 +220,7 @@ fun WalletSelectorPanel(
                             tint = BitcoinOrange,
                             modifier = Modifier.size(18.dp),
                         )
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Manage Wallets",
                             style = MaterialTheme.typography.bodyLarge,
@@ -256,7 +266,7 @@ private fun WalletPanelItem(
                 Text(
                     text = wallet.name,
                     style =
-                        MaterialTheme.typography.bodyLarge.copy(
+                        MaterialTheme.typography.titleMedium.copy(
                             fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
                         ),
                     color =
@@ -275,13 +285,23 @@ private fun WalletPanelItem(
                     isWatchAddress || wallet.isWatchOnly -> Icon(
                         imageVector = Icons.Default.Visibility,
                         contentDescription = if (isWatchAddress) "Watch Address" else "Watch Only",
-                        tint = TextTertiary,
+                        tint =
+                            if (isActive) {
+                                BitcoinOrange
+                            } else {
+                                TextSecondary
+                            },
                         modifier = Modifier.size(14.dp),
                     )
-                    isPrivateKey -> Icon(
+                    else -> Icon(
                         imageVector = Icons.Default.Key,
-                        contentDescription = "Private Key",
-                        tint = TextTertiary,
+                        contentDescription = if (isPrivateKey) "Private Key" else "Seed Phrase",
+                        tint =
+                            if (isActive) {
+                                BitcoinOrange
+                            } else {
+                                TextSecondary
+                            },
                         modifier = Modifier.size(14.dp),
                     )
                 }
@@ -295,9 +315,16 @@ private fun WalletPanelItem(
             }
             Text(
                 text = "${wallet.addressType.displayName}  -  $walletKind",
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
-                color = TextSecondary,
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp),
+                color = if (isActive) BitcoinOrange else TextSecondary,
             )
+            if (wallet.derivationPath != "single" && wallet.masterFingerprint != null) {
+                Text(
+                    text = "Fingerprint: ${wallet.masterFingerprint}",
+                    style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp),
+                    color = if (isActive) BitcoinOrange.copy(alpha = 0.8f) else TextTertiary.copy(alpha = 0.9f),
+                )
+            }
             val syncText =
                 if (lastFullSyncTime != null) {
                     val formatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
@@ -307,8 +334,8 @@ private fun WalletPanelItem(
                 }
             Text(
                 text = syncText,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.sp),
-                color = TextSecondary.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.bodyLarge.copy(fontSize = 14.sp),
+                color = if (isActive) BitcoinOrange.copy(alpha = 0.8f) else TextTertiary.copy(alpha = 0.9f),
             )
         }
 
@@ -319,14 +346,14 @@ private fun WalletPanelItem(
             contentAlignment = Alignment.Center,
             modifier =
                 Modifier
-                    .size(28.dp)
+                    .size(32.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(DarkBackground.copy(alpha = 0.6f))
                     .clickable(enabled = !isSyncing) { onSync() },
         ) {
             if (isSyncing) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(12.dp),
+                    modifier = Modifier.size(14.dp),
                     color = BitcoinOrange,
                     strokeWidth = 1.5.dp,
                 )
@@ -335,7 +362,7 @@ private fun WalletPanelItem(
                     imageVector = Icons.Default.Sync,
                     contentDescription = "Full Sync",
                     tint = TextSecondary,
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }

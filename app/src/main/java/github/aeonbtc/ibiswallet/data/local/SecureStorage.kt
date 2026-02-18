@@ -8,6 +8,7 @@ import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.ElectrumConfig
+import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
 import org.json.JSONArray
@@ -136,6 +137,7 @@ class SecureStorage(private val context: Context) {
                 put("network", wallet.network.name)
                 put("createdAt", wallet.createdAt)
                 wallet.masterFingerprint?.let { put("masterFingerprint", it) }
+                put("seedFormat", wallet.seedFormat.name)
             }
 
         regularPrefs.edit { putString("${KEY_WALLET_PREFIX}${wallet.id}", walletJson.toString()) }
@@ -169,6 +171,12 @@ class SecureStorage(private val context: Context) {
                 } catch (_: IllegalArgumentException) {
                     WalletNetwork.BITCOIN
                 }
+            val seedFormat =
+                try {
+                    SeedFormat.valueOf(jsonObject.optString("seedFormat", SeedFormat.BIP39.name))
+                } catch (_: IllegalArgumentException) {
+                    SeedFormat.BIP39
+                }
 
             StoredWallet(
                 id = jsonObject.getString("id"),
@@ -182,6 +190,7 @@ class SecureStorage(private val context: Context) {
                     jsonObject.optString("masterFingerprint", null.toString()).let {
                         if (it == "null" || it.isBlank()) null else it
                     },
+                seedFormat = seedFormat,
             )
         } catch (_: Exception) {
             null
@@ -212,6 +221,21 @@ class SecureStorage(private val context: Context) {
             }
         saveWalletMetadata(updated)
         return true
+    }
+
+    /**
+     * Reorder wallet IDs to the given order.
+     * Only IDs that already exist in storage are kept; the order is replaced entirely.
+     */
+    fun reorderWalletIds(orderedIds: List<String>) {
+        val existing = getWalletIds().toSet()
+        // Keep only IDs that actually exist, in the requested order
+        val validated = orderedIds.filter { it in existing }
+        // Append any IDs that were missing from the request (shouldn't happen, but be safe)
+        val missing = existing - validated.toSet()
+        val finalOrder = validated + missing
+        val jsonArray = JSONArray(finalOrder)
+        regularPrefs.edit { putString(KEY_WALLET_IDS, jsonArray.toString()) }
     }
 
     /**
@@ -551,6 +575,22 @@ class SecureStorage(private val context: Context) {
         regularPrefs.edit { putBoolean(KEY_DEFAULT_SERVERS_SEEDED, seeded) }
     }
 
+    // ==================== Auto-Switch Server ====================
+
+    /**
+     * Check if auto-switch to another saved server on disconnect is enabled
+     */
+    fun isAutoSwitchServerEnabled(): Boolean {
+        return regularPrefs.getBoolean(KEY_AUTO_SWITCH_SERVER, false)
+    }
+
+    /**
+     * Set auto-switch server on disconnect state
+     */
+    fun setAutoSwitchServerEnabled(enabled: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_AUTO_SWITCH_SERVER, enabled) }
+    }
+
     // ==================== Last Sync Time (per wallet) ====================
 
     fun saveLastSyncTime(
@@ -731,7 +771,7 @@ class SecureStorage(private val context: Context) {
         return when (getMempoolServer()) {
             MEMPOOL_DISABLED -> ""
             MEMPOOL_SPACE -> "https://mempool.space"
-            MEMPOOL_ONION -> "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v7oahrz2vh6jjg6m6qd.onion"
+            MEMPOOL_ONION -> "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion"
             MEMPOOL_CUSTOM -> getCustomMempoolUrl() ?: "https://mempool.space"
             else -> ""
         }
@@ -758,13 +798,7 @@ class SecureStorage(private val context: Context) {
      * Default is OFF (manual entry only)
      */
     fun getFeeSource(): String {
-        val source = regularPrefs.getString(KEY_FEE_SOURCE, FEE_SOURCE_OFF) ?: FEE_SOURCE_OFF
-        // Migrate old onion setting to OFF (custom is now supported)
-        return if (source == "MEMPOOL_ONION") {
-            FEE_SOURCE_OFF
-        } else {
-            source
-        }
+        return regularPrefs.getString(KEY_FEE_SOURCE, FEE_SOURCE_OFF) ?: FEE_SOURCE_OFF
     }
 
     /**
@@ -783,6 +817,7 @@ class SecureStorage(private val context: Context) {
         return when (getFeeSource()) {
             FEE_SOURCE_OFF -> null
             FEE_SOURCE_MEMPOOL -> "https://mempool.space"
+            FEE_SOURCE_MEMPOOL_ONION -> "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion"
             FEE_SOURCE_ELECTRUM -> null // Electrum uses the connected client, not a URL
             FEE_SOURCE_CUSTOM -> getCustomFeeSourceUrl()?.ifBlank { null }
             else -> null
@@ -1507,15 +1542,6 @@ class SecureStorage(private val context: Context) {
     }
 
     /**
-     * Increment the shared failed attempt counter.
-     * Used by biometric failures to share the same counter as PIN failures.
-     */
-    fun incrementFailedAttempts() {
-        val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
-        securePrefs.edit { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
-    }
-
-    /**
      * Check if auto-wipe should trigger based on current failed attempts.
      * Returns true if threshold is enabled and attempts have reached or exceeded it.
      */
@@ -1592,6 +1618,7 @@ class SecureStorage(private val context: Context) {
         private const val KEY_SERVER_PREFIX = "server_config_"
         private const val KEY_SERVER_CERT_PREFIX = "server_cert_"
         private const val KEY_DEFAULT_SERVERS_SEEDED = "default_servers_seeded"
+        private const val KEY_AUTO_SWITCH_SERVER = "auto_switch_server"
 
         // Sync settings
         private const val KEY_SYNC_BATCH_SIZE = "sync_batch_size"
@@ -1617,6 +1644,7 @@ class SecureStorage(private val context: Context) {
         private const val KEY_FEE_SOURCE_CUSTOM_URL = "fee_source_custom_url"
         const val FEE_SOURCE_OFF = "OFF"
         const val FEE_SOURCE_MEMPOOL = "MEMPOOL_SPACE"
+        const val FEE_SOURCE_MEMPOOL_ONION = "MEMPOOL_ONION"
         const val FEE_SOURCE_ELECTRUM = "ELECTRUM_SERVER"
         const val FEE_SOURCE_CUSTOM = "CUSTOM"
 
@@ -1624,6 +1652,7 @@ class SecureStorage(private val context: Context) {
         private const val KEY_PRICE_SOURCE = "price_source"
         const val PRICE_SOURCE_OFF = "OFF"
         const val PRICE_SOURCE_MEMPOOL = "MEMPOOL_SPACE"
+        const val PRICE_SOURCE_MEMPOOL_ONION = "MEMPOOL_ONION"
         const val PRICE_SOURCE_COINGECKO = "COINGECKO"
 
         // Address labels
