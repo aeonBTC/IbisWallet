@@ -17,9 +17,9 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Multi-Seed** - Supports BIP39 or Electrum seed phrases for importing
 - **Watch-only Wallets** — Import xpub/zpub, output descriptors, or single address
 - **Import Private Key** - Sweep or import private keys (WIF format)
-- **Hardware Wallet Signing** — Animated QR codes for air gapped PSBTs
+- **Hardware Wallet Signing** — Use animated QR codes or .psbt files for air gapped key signing
 - **Built-in Tor** — Native Tor integreation, no need for Orbot or external Tor proxies
-- **Custom Servers** — Connect to your own Electrum, fee estimation, and block explorer servers
+- **Custom Servers** — Connect to your own Electrum, block explorer, and fee estimation servers
 - **Coin Control** — Select specific UTXOs, freeze/unfreeze, send from individual outputs
 - **RBF & CPFP** — Bump fees on unconfirmed transactions, both outgoing and incoming
 - **PIN & Biometrics** — With configurable lock timing
