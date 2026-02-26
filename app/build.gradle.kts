@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    jacoco
 }
 
 android {
@@ -37,11 +38,11 @@ android {
         }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "21"
     }
     buildFeatures {
         compose = true
@@ -52,6 +53,52 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+    testOptions {
+        unitTests.all {
+            it.useJUnitPlatform()
+            it.extensions.configure(JacocoTaskExtension::class) {
+                isIncludeNoLocationClasses = true
+                excludes = listOf("jdk.internal.*")
+            }
+        }
+    }
+}
+
+tasks.register<JacocoReport>("jacocoUnitTestReport") {
+    dependsOn("testDebugUnitTest")
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+
+    // Source files (Kotlin)
+    sourceDirectories.setFrom(
+        files("${projectDir}/src/main/java")
+    )
+
+    // Compiled class files — exclude generated/framework classes
+    val excludes = listOf(
+        "**/R.class", "**/R$*.class",
+        "**/BuildConfig.*",
+        "**/Manifest*.*",
+        "**/*Test*.*",
+        "android/**/*.*",
+        "**/databinding/**",
+        "**/hilt_aggregated_deps/**",
+        "**/*_Hilt*",
+        "**/*ComposableSingletons*",
+        // Jetpack Compose generated
+        "**/*\$*\$*.*",
+    )
+    classDirectories.setFrom(
+        fileTree("${buildDir}/intermediates/javac/debug/classes") { exclude(excludes) },
+        fileTree("${buildDir}/tmp/kotlin-classes/debug") { exclude(excludes) },
+    )
+
+    executionData.setFrom(
+        fileTree(buildDir) { include("jacoco/testDebugUnitTest.exec") }
+    )
 }
 
 dependencies {
@@ -100,5 +147,12 @@ dependencies {
     // BC-UR (Uniform Resources) for animated QR codes (PSBT exchange with hardware wallets)
     implementation(libs.hummingbird)
 
-
+    // Testing
+    testImplementation(libs.kotest.runner.junit5)
+    testImplementation(libs.kotest.assertions.core)
+    testImplementation(libs.kotest.property)
+    testImplementation(libs.mockk)
+    testImplementation(libs.kotlinx.coroutines.test)
+    // Real org.json implementation for unit tests (Android stubs don't implement JSON methods)
+    testImplementation("org.json:json:20231013")
 }
