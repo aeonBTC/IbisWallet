@@ -38,8 +38,8 @@ Requires Android Studio with JDK 17.
 ```bash
 ./gradlew :app:assembleDebug      # Debug
 ./gradlew :app:assembleRelease    # Release
-./gradlew testDebugUnitTest       # Tests
-./gradlew :app:jacocoUnitTestReport # Coverage Report to /app/build/reports/jacoco/jacocoUnitTestReport/html/index.html
+./gradlew testDebugUnitTest       # Tests Report to app/build/reports/tests/testDebugUnitTest/index.html
+./gradlew :app:jacocoUnitTestReport # Coverage Report to app/build/reports/jacoco/jacocoUnitTestReport/html/index.html
 ```
 
 **Min SDK:** 26 (Android 8.0) | **Target SDK:** 35 | **ARM only** (armeabi-v7a, arm64-v8a)
