@@ -39,6 +39,7 @@ Requires Android Studio with JDK 17.
 ./gradlew :app:assembleDebug      # Debug
 ./gradlew :app:assembleRelease    # Release
 ./gradlew testDebugUnitTest       # Tests
+./gradlew jacocoUnitTestReport    # Generate coverage report
 ```
 
 **Min SDK:** 26 (Android 8.0) | **Target SDK:** 35 | **ARM only** (armeabi-v7a, arm64-v8a)
