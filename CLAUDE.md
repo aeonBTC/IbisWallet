@@ -4,6 +4,11 @@ A self-custody Bitcoin wallet for Android built with Kotlin, Jetpack Compose, an
 
 ---
 
+## Purpose Of This File
+
+This file is just a notebook to help guide Claude Code, if you use it.   You can modify this file in any way you like to help guide Claude during coding sessions.
+
+
 ## Toolchain Standards
 
 ### JDK — Eclipse Temurin 21 (LTS)
