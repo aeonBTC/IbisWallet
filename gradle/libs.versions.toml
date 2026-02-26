@@ -18,6 +18,9 @@ okhttp = "4.12.0"
 biometric = "1.1.0"
 material = "1.12.0"
 hummingbird = "1.7.2"
+kotest = "5.9.1"
+mockk = "1.13.13"
+coroutinesTest = "1.9.0"
 
 
 [libraries]
@@ -44,6 +47,14 @@ okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhtt
 androidx-biometric = { group = "androidx.biometric", name = "biometric", version.ref = "biometric" }
 google-material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 hummingbird = { group = "com.sparrowwallet", name = "hummingbird", version.ref = "hummingbird" }
+
+# Testing
+kotest-runner-junit5 = { group = "io.kotest", name = "kotest-runner-junit5", version.ref = "kotest" }
+kotest-assertions-core = { group = "io.kotest", name = "kotest-assertions-core", version.ref = "kotest" }
+kotest-property = { group = "io.kotest", name = "kotest-property", version.ref = "kotest" }
+kotest-extensions-android = { group = "io.kotest.extensions", name = "kotest-extensions-android", version = "1.1.3" }
+mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutinesTest" }
 
 
 [plugins]
