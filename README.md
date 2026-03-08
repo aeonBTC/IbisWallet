@@ -27,7 +27,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Auto-Wipe** - Set a threshold for failed unlock that automatically and irreversibly wipes all app data
 - **Cloak Mode** - Disguise Ibis as a calculator app
 - **Manual Broadcast Raw Transactions** - Broadcast any signed transaction directly to the Bitcoin network
-- **Multi-Recipient** - Batch multiple outputs in a single transaction
+- **Batch sending** - Send to multiple recipients in a single transaction
 - **Encrypted Backups** - AES-256 encryption with optional label and custom server backup, import/export via file
 - **Built with** [BDK](https://bitcoindevkit.org/)
 ## Building
