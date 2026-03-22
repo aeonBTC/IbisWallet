@@ -8,9 +8,11 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.NFC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
 
     <application
         android:allowBackup="false"
@@ -23,6 +25,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.IbisWallet"
         tools:targetApi="31">
+
+        <activity
+            android:name=".LaunchActivity"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.IbisWallet.Launch" />
         
         <activity
             android:name=".MainActivity"
@@ -30,14 +38,17 @@
             android:launchMode="singleTask"
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
             android:theme="@style/Theme.IbisWallet">
-            <!-- Handle bitcoin: URI links from other apps and browsers -->
+            <!-- Handle Bitcoin, Lightning, and Liquid URI links from other apps and browsers -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="bitcoin" />
+                <data android:scheme="lightning" />
+                <data android:scheme="liquidnetwork" />
+                <data android:scheme="liquid" />
             </intent-filter>
-            <!-- NFC reading is handled via foreground dispatch on the Send screen only.
+            <!-- NFC reading is handled via enableReaderMode on Send/Balance screens.
                  No manifest intent filter — the app does not intercept NFC tags globally. -->
         </activity>
         
@@ -49,7 +60,7 @@
             android:roundIcon="@mipmap/ic_launcher_round"
             android:enabled="true"
             android:exported="true"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".LaunchActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -64,14 +75,14 @@
             android:roundIcon="@mipmap/ic_launcher_calculator_round"
             android:enabled="false"
             android:exported="true"
-            android:targetActivity=".MainActivity">
+            android:targetActivity=".LaunchActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity-alias>
         
-        <!-- NFC Host Card Emulation: broadcasts bitcoin: URI when tapped -->
+        <!-- NFC Host Card Emulation: broadcasts the active send payload when tapped -->
         <service
             android:name=".nfc.NdefHostApduService"
             android:exported="true"

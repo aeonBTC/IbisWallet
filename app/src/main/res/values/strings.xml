@@ -3,4 +3,6 @@
     <string name="wallet_added">Wallet added</string>
     <string name="cloak_calculator_label">Calculator</string>
     <string name="nfc_service_description">Bitcoin payment address</string>
+    <string name="startup_loading_artwork">Ibis launch artwork</string>
+    <string name="version_format">Version: %1$s</string>
 </resources>
