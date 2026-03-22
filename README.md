@@ -1,6 +1,6 @@
 # Ibis Wallet
 
-A self-custody Bitcoin wallet for Android, inspired by [Sparrow Wallet](https://sparrowwallet.com/) but built for mobile. 
+A self-custody Bitcoin wallet for Android, inspired by [Sparrow Wallet](https://sparrowwallet.com/) and realized as a mobile wallet. 
 
 Designed for experienced users - no hand-holding, no training wheels.
 
