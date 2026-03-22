@@ -87,7 +87,9 @@ internal object BullBoltzBehavior : BoltzBehaviorPort {
             PendingLightningPaymentPhase.FUNDING,
             PendingLightningPaymentPhase.IN_PROGRESS,
             -> !session.fundingTxid.isNullOrBlank()
-            PendingLightningPaymentPhase.FAILED -> false
+            PendingLightningPaymentPhase.REFUNDING,
+            PendingLightningPaymentPhase.FAILED,
+            -> false
         }
     }
 

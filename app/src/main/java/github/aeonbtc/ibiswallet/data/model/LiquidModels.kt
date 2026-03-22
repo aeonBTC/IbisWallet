@@ -107,6 +107,7 @@ sealed interface LightningPaymentExecutionPlan {
         val estimatedLockupAmountSats: Long,
         val paymentAmountSats: Long,
         val swapFeeSats: Long,
+        val refundAddress: String? = null,
     ) : LightningPaymentExecutionPlan
 
     data class BoltzSwap(
@@ -431,7 +432,7 @@ data class PendingLightningInvoiceSession(
     val createdAt: Long = System.currentTimeMillis(),
 )
 
-enum class PendingLightningPaymentPhase { PREPARED, FUNDING, IN_PROGRESS, FAILED }
+enum class PendingLightningPaymentPhase { PREPARED, FUNDING, IN_PROGRESS, REFUNDING, FAILED }
 
 enum class LightningPaymentBackend {
     LWK_PREPARE_PAY,
@@ -457,6 +458,10 @@ data class PendingLightningPaymentSession(
     val phase: PendingLightningPaymentPhase = PendingLightningPaymentPhase.PREPARED,
     val status: String = "",
     val fundingTxid: String? = null,
+    val boltzClaimPublicKey: String? = null,
+    val timeoutBlockHeight: Int? = null,
+    val swapTree: String? = null,
+    val blindingKey: String? = null,
 )
 
 // ──────────────────────────────────────────────

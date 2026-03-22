@@ -1922,13 +1922,35 @@ private fun LightningSendReviewContent(
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text = abbreviateMiddle(preview.recipientDisplay, prefixChars = 20, suffixChars = 16, maxLength = 96),
+        text = abbreviateMiddle(preview.recipientDisplay, prefixChars = 16, suffixChars = 16, maxLength = 96),
         style = MaterialTheme.typography.bodyLarge,
         fontFamily = FontFamily.Monospace,
         color = TextPrimary,
-        maxLines = 4,
-        overflow = TextOverflow.Ellipsis,
+        maxLines = 1,
     )
+
+    val refundAddress =
+        when (val plan = preview.executionPlan) {
+            is LightningPaymentExecutionPlan.BoltzSwap -> plan.refundAddress
+            is LightningPaymentExecutionPlan.BoltzQuote -> plan.refundAddress
+            else -> null
+        }
+    if (refundAddress != null) {
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = "Refund Address",
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextSecondary,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = abbreviateMiddle(refundAddress, prefixChars = 16, suffixChars = 16, maxLength = 96),
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+            color = TextTertiary,
+            maxLines = 1,
+        )
+    }
 
     preview.label?.let { label ->
         Spacer(modifier = Modifier.height(10.dp))
@@ -1942,15 +1964,6 @@ private fun LightningSendReviewContent(
             text = label,
             style = MaterialTheme.typography.bodyLarge,
             color = LiquidTeal,
-        )
-    }
-
-    preview.note?.let { note ->
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            text = note,
-            style = MaterialTheme.typography.bodyLarge,
-            color = TextTertiary,
         )
     }
 
@@ -2002,6 +2015,15 @@ private fun LightningSendReviewContent(
             text = "Funding from $count selected UTXO${if (count > 1) "s" else ""}",
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary,
+        )
+    }
+
+    preview.note?.let { note ->
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = note,
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextTertiary,
         )
     }
 }

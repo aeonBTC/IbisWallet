@@ -3039,82 +3039,15 @@ class LiquidRepository(
             getCachedLightningPaymentResolution(executionPlan.paymentInput, executionPlan.requestedAmountSats)
                 ?: resolveBoltzLightningPaymentInput(executionPlan.paymentInput, executionPlan.requestedAmountSats)
         try {
-            if (resolvedPayment.fetchedInvoice != null) {
-                val refundDetails = allocateBoltzSubmarineRefundDetails()
-                logBoltzTrace(
-                    "prepare_rest_submarine",
-                    trace.copy(backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE.name, source = "rest"),
-                    "invoice" to summarizeValue(resolvedPayment.fetchedInvoice),
-                    "refundAddress" to summarizeValue(refundDetails.refundAddress),
-                )
-                logDebug(
-                    "prepareLightningPaymentExecutionPlan using cached resolution " +
-                        "requestKey=$requestKey amount=${executionPlan.paymentAmountSats} " +
-                        "refund=${summarizeValue(refundDetails.refundAddress)}",
-                )
-                val response =
-                    boltzProvider.createLegacySubmarineSwap(
-                        invoice = resolvedPayment.fetchedInvoice,
-                        refundPublicKey = refundDetails.refundPublicKey,
-                    )
-                val paymentAmountSats =
-                    executionPlan.requestedAmountSats.takeIf { it != null && it > 0L } ?: executionPlan.paymentAmountSats
-                val lockupAmountSats = maxOf(response.expectedAmount, safeAddSats(paymentAmountSats, 0L))
-                val swapFeeSats = (lockupAmountSats - paymentAmountSats).coerceAtLeast(0L)
-                val session =
-                    PendingLightningPaymentSession(
-                        swapId = response.id,
-                        backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE,
-                        requestKey = requestKey,
-                        paymentInput = executionPlan.paymentInput,
-                        lockupAddress = response.address,
-                        lockupAmountSats = lockupAmountSats,
-                        refundAddress = refundDetails.refundAddress,
-                        requestedAmountSats = executionPlan.requestedAmountSats,
-                        resolvedPaymentInput = resolvedPayment.paymentInput,
-                        fetchedInvoice = resolvedPayment.fetchedInvoice,
-                        refundPublicKey = refundDetails.refundPublicKey,
-                        paymentAmountSats = paymentAmountSats,
-                        swapFeeSats = swapFeeSats,
-                        phase = PendingLightningPaymentPhase.PREPARED,
-                        status = "Prepared Lightning payment. Awaiting funding.",
-                    )
-                persistPreparedLightningPaymentSession(session)
-                logBoltzTrace(
-                    "prepared",
-                    trace.copy(
-                        swapId = response.id,
-                        backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE.name,
-                        source = "rest",
-                    ),
-                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                    "lockupAmountSats" to lockupAmountSats,
-                    "paymentAmountSats" to paymentAmountSats,
-                    "swapFeeSats" to swapFeeSats,
-                )
-                return@withContext LightningPaymentExecutionPlan.BoltzSwap(
-                    paymentInput = executionPlan.paymentInput,
-                    backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE,
-                    requestKey = requestKey,
-                    resolvedPaymentInput = resolvedPayment.paymentInput,
-                    requestedAmountSats = executionPlan.requestedAmountSats,
-                    swapId = response.id,
-                    lockupAddress = response.address,
-                    lockupAmountSats = lockupAmountSats,
-                    refundAddress = refundDetails.refundAddress,
-                    fetchedInvoice = resolvedPayment.fetchedInvoice,
-                    refundPublicKey = refundDetails.refundPublicKey,
-                    paymentAmountSats = paymentAmountSats,
-                    swapFeeSats = swapFeeSats,
-                )
-            }
+            val lwkPaymentInput = resolvedPayment.fetchedInvoice ?: executionPlan.resolvedPaymentInput
             val refundAddress = getNewAddress() ?: throw Exception("No Liquid refund address available")
-            val payment = createLightningPayment(executionPlan.resolvedPaymentInput)
+            val payment = createLightningPayment(lwkPaymentInput)
             logBoltzTrace(
                 "prepare_lwk",
                 trace.copy(backend = LightningPaymentBackend.LWK_PREPARE_PAY.name, source = "lwk"),
                 "refundAddress" to summarizeValue(refundAddress),
-                "payment" to summarizeValue(executionPlan.resolvedPaymentInput),
+                "payment" to summarizeValue(lwkPaymentInput),
+                "hasFetchedInvoice" to (resolvedPayment.fetchedInvoice != null),
             )
             return@withContext withBoltzOperationLock(operation = "prepareLightningPaymentExecutionPlan") {
                 val walletId = currentWalletId ?: throw Exception("Wallet not loaded")
@@ -3143,6 +3076,7 @@ class LiquidRepository(
                         snapshot = snapshot,
                         requestedAmountSats = executionPlan.requestedAmountSats,
                         resolvedPaymentInput = executionPlan.resolvedPaymentInput,
+                        fetchedInvoice = resolvedPayment.fetchedInvoice,
                         paymentAmountSats = paymentAmountSats,
                         swapFeeSats = effectiveSwapFeeSats,
                         phase = PendingLightningPaymentPhase.PREPARED,
@@ -3160,6 +3094,7 @@ class LiquidRepository(
                     "lockupAmountSats" to lockupAmountSats,
                     "paymentAmountSats" to paymentAmountSats,
                     "swapFeeSats" to effectiveSwapFeeSats,
+                    "hasFetchedInvoice" to (resolvedPayment.fetchedInvoice != null),
                 )
                 LightningPaymentExecutionPlan.BoltzSwap(
                     paymentInput = executionPlan.paymentInput,
@@ -3171,7 +3106,7 @@ class LiquidRepository(
                     lockupAddress = response.uriAddress().toString(),
                     lockupAmountSats = lockupAmountSats,
                     refundAddress = refundAddress,
-                    fetchedInvoice = null,
+                    fetchedInvoice = resolvedPayment.fetchedInvoice,
                     refundPublicKey = null,
                     paymentAmountSats = paymentAmountSats,
                     swapFeeSats = effectiveSwapFeeSats,
@@ -3192,6 +3127,22 @@ class LiquidRepository(
                 amountSats = direct.amountSats,
             )
         } catch (e: Exception) {
+            if (resolvedPayment.fetchedInvoice != null && e !is LwkException.MagicRoutingHint) {
+                logBoltzTrace(
+                    "lwk_failed_falling_back_to_rest",
+                    trace,
+                    level = BoltzTraceLevel.WARN,
+                    throwable = e,
+                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                )
+                return@withContext prepareRestSubmarineSwapFallback(
+                    executionPlan = executionPlan,
+                    resolvedPayment = resolvedPayment,
+                    requestKey = requestKey,
+                    trace = trace,
+                    traceStartedAt = traceStartedAt,
+                )
+            }
             logBoltzTrace(
                 "failed",
                 trace,
@@ -3203,6 +3154,85 @@ class LiquidRepository(
         } finally {
             logTiming("prepareLightningPaymentExecutionPlan[fromPreview]", startedAt)
         }
+    }
+
+    private suspend fun prepareRestSubmarineSwapFallback(
+        executionPlan: LightningPaymentExecutionPlan.BoltzQuote,
+        resolvedPayment: ResolvedLightningPaymentInput,
+        requestKey: String,
+        trace: BoltzTraceContext,
+        traceStartedAt: Long,
+    ): LightningPaymentExecutionPlan.BoltzSwap {
+        val fetchedInvoice = resolvedPayment.fetchedInvoice
+            ?: throw Exception("REST fallback requires a fetched invoice")
+        val refundDetails = allocateBoltzSubmarineRefundDetails()
+        logBoltzTrace(
+            "prepare_rest_submarine_fallback",
+            trace.copy(backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE.name, source = "rest"),
+            "invoice" to summarizeValue(fetchedInvoice),
+            "refundAddress" to summarizeValue(refundDetails.refundAddress),
+        )
+        val response =
+            boltzProvider.createLegacySubmarineSwap(
+                invoice = fetchedInvoice,
+                refundPublicKey = refundDetails.refundPublicKey,
+            )
+        val paymentAmountSats =
+            executionPlan.requestedAmountSats.takeIf { it != null && it > 0L }
+                ?: executionPlan.paymentAmountSats
+        val lockupAmountSats = maxOf(response.expectedAmount, safeAddSats(paymentAmountSats, 0L))
+        val swapFeeSats = (lockupAmountSats - paymentAmountSats).coerceAtLeast(0L)
+        val session =
+            PendingLightningPaymentSession(
+                swapId = response.id,
+                backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE,
+                requestKey = requestKey,
+                paymentInput = executionPlan.paymentInput,
+                lockupAddress = response.address,
+                lockupAmountSats = lockupAmountSats,
+                refundAddress = refundDetails.refundAddress,
+                requestedAmountSats = executionPlan.requestedAmountSats,
+                resolvedPaymentInput = resolvedPayment.paymentInput,
+                fetchedInvoice = fetchedInvoice,
+                refundPublicKey = refundDetails.refundPublicKey,
+                paymentAmountSats = paymentAmountSats,
+                swapFeeSats = swapFeeSats,
+                phase = PendingLightningPaymentPhase.PREPARED,
+                status = "Prepared Lightning payment. Awaiting funding.",
+                boltzClaimPublicKey = response.claimPublicKey,
+                timeoutBlockHeight = response.timeoutBlockHeight,
+                swapTree = response.swapTree,
+                blindingKey = response.blindingKey,
+            )
+        persistPreparedLightningPaymentSession(session)
+        logBoltzTrace(
+            "prepared",
+            trace.copy(
+                swapId = response.id,
+                backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE.name,
+                source = "rest",
+            ),
+            "elapsedMs" to boltzElapsedMs(traceStartedAt),
+            "lockupAmountSats" to lockupAmountSats,
+            "paymentAmountSats" to paymentAmountSats,
+            "swapFeeSats" to swapFeeSats,
+            "timeoutBlockHeight" to response.timeoutBlockHeight,
+        )
+        return LightningPaymentExecutionPlan.BoltzSwap(
+            paymentInput = executionPlan.paymentInput,
+            backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE,
+            requestKey = requestKey,
+            resolvedPaymentInput = resolvedPayment.paymentInput,
+            requestedAmountSats = executionPlan.requestedAmountSats,
+            swapId = response.id,
+            lockupAddress = response.address,
+            lockupAmountSats = lockupAmountSats,
+            refundAddress = refundDetails.refundAddress,
+            fetchedInvoice = fetchedInvoice,
+            refundPublicKey = refundDetails.refundPublicKey,
+            paymentAmountSats = paymentAmountSats,
+            swapFeeSats = swapFeeSats,
+        )
     }
 
     suspend fun resolveLightningPaymentPreview(
@@ -3226,6 +3256,7 @@ class LiquidRepository(
                     estimatedLockupAmountSats = context.estimatedLockupAmountSats,
                     paymentAmountSats = context.paymentAmountSats,
                     swapFeeSats = context.estimatedSwapFeeSats,
+                    refundAddress = _liquidState.value.currentAddress,
                 )
         val preview =
             buildLightningPreviewFromExecutionPlan(

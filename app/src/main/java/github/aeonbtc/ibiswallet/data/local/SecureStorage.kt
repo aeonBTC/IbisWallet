@@ -1991,6 +1991,10 @@ class SecureStorage private constructor(private val context: Context) {
                 put("phase", session.phase.name)
                 put("status", session.status)
                 put("fundingTxid", session.fundingTxid)
+                put("boltzClaimPublicKey", session.boltzClaimPublicKey)
+                put("timeoutBlockHeight", session.timeoutBlockHeight)
+                put("swapTree", session.swapTree)
+                put("blindingKey", session.blindingKey)
             }.toString()
         regularPrefs.edit(commit = true) {
             putString("${KEY_PENDING_BOLTZ_LIGHTNING_PAYMENT_PREFIX}$walletId", json)
@@ -2045,6 +2049,22 @@ class SecureStorage private constructor(private val context: Context) {
                 fundingTxid =
                     json.optString("fundingTxid", "").takeIf {
                         it.isNotBlank() && !json.isNull("fundingTxid")
+                    },
+                boltzClaimPublicKey =
+                    json.optString("boltzClaimPublicKey", "").takeIf {
+                        it.isNotBlank() && !json.isNull("boltzClaimPublicKey")
+                    },
+                timeoutBlockHeight =
+                    json.optInt("timeoutBlockHeight", -1).takeIf {
+                        it >= 0 && !json.isNull("timeoutBlockHeight")
+                    },
+                swapTree =
+                    json.optString("swapTree", "").takeIf {
+                        it.isNotBlank() && !json.isNull("swapTree")
+                    },
+                blindingKey =
+                    json.optString("blindingKey", "").takeIf {
+                        it.isNotBlank() && !json.isNull("blindingKey")
                     },
             )
         } catch (_: Exception) {

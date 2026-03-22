@@ -1118,7 +1118,22 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     selectedUtxos = null,
                     label = null,
                 )
-            if (session.fundingTxid != null) {
+            if (session.phase == PendingLightningPaymentPhase.REFUNDING && session.fundingTxid != null) {
+                _sendState.value = LiquidSendState.Sending(
+                    preview = preview,
+                    status = "Lightning payment failed. Awaiting refund to your wallet...",
+                    refundAddress = session.refundAddress,
+                    detail = "Close anytime. The refund will arrive at the address below.",
+                    canDismiss = true,
+                )
+                monitorPreparedLightningPayment(
+                    backend = session.backend,
+                    swapId = session.swapId,
+                    paymentReference = session.paymentInput,
+                    fundingTxid = session.fundingTxid,
+                    preview = preview,
+                )
+            } else if (session.fundingTxid != null) {
                 _sendState.value = LiquidSendState.Sending(
                     preview = preview,
                     status = "Funding broadcast. Waiting for Boltz payment...",
@@ -2982,22 +2997,27 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                 "invoice.failedToPay", "swap.expired", "transaction.lockupFailed" -> {
                                     val failedSession = repository.getPendingLightningPaymentSession()
                                     logBoltzTrace(
-                                        "failed_status",
+                                        "failed_status_awaiting_lwk_refund",
                                         trace,
                                         level = BoltzTraceLevel.WARN,
                                         "elapsedMs" to boltzElapsedMs(traceStartedAt),
                                         "status" to boltzUpdate.status,
                                     )
-                                    repository.failPreparedLightningPayment(swapId)
-                                    presentLightningPaymentFailure(
-                                        error =
-                                            "Boltz could not complete the Lightning payment. " +
-                                                "The receiver may have rejected it or the amount may have been too small. " +
-                                                "If the payment is refunded, it will return to the refund address below.",
+                                    _sendState.value = LiquidSendState.Sending(
                                         preview = preview,
+                                        status = "Lightning payment failed. LWK is processing the refund...",
                                         refundAddress = failedSession?.refundAddress,
+                                        detail = "Close anytime. Refund continues in background.",
+                                        canDismiss = true,
                                     )
-                                    return@monitor
+                                    failedSession?.let { s ->
+                                        repository.savePendingLightningPaymentSession(
+                                            s.copy(
+                                                phase = PendingLightningPaymentPhase.REFUNDING,
+                                                status = "Lightning payment failed. Awaiting refund via LWK.",
+                                            ),
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -3062,6 +3082,15 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                 level = BoltzTraceLevel.WARN,
                                 "elapsedMs" to boltzElapsedMs(traceStartedAt),
                             )
+                            if (session != null && isLightningRefundDetected(session)) {
+                                repository.failPreparedLightningPayment(swapId)
+                                presentLightningPaymentFailure(
+                                    error = "The Lightning payment failed and the refund has already returned to your Liquid wallet.",
+                                    preview = preview,
+                                    refundAddress = session.refundAddress,
+                                )
+                                return@monitor
+                            }
                             repository.failPreparedLightningPayment(swapId)
                             presentLightningPaymentFailure(
                                 error =
@@ -3216,21 +3245,25 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         boltzStatus in setOf("invoice.failedToPay", "swap.expired", "transaction.lockupFailed") -> {
                             logBoltzTrace(
-                                "failed_status",
+                                "failed_status_awaiting_refund",
                                 trace,
                                 level = BoltzTraceLevel.WARN,
                                 "elapsedMs" to boltzElapsedMs(traceStartedAt),
                                 "status" to boltzStatus,
                             )
-                            repository.failPreparedLightningPayment(swapId)
-                            presentLightningPaymentFailure(
-                                error =
-                                    "Boltz could not complete the Lightning payment. " +
-                                        "If the payment is refunded, it will return to the refund address below.",
-                                preview = preview,
-                                refundAddress = session.refundAddress,
+                            repository.savePendingLightningPaymentSession(
+                                session.copy(
+                                    phase = PendingLightningPaymentPhase.REFUNDING,
+                                    status = "Lightning payment failed ($boltzStatus). Awaiting refund.",
+                                ),
                             )
-                            return@monitor
+                            _sendState.value = LiquidSendState.Sending(
+                                preview = preview,
+                                status = "Lightning payment failed. Awaiting refund to your wallet...",
+                                refundAddress = session.refundAddress,
+                                detail = "Close anytime. The refund will arrive at the address below.",
+                                canDismiss = true,
+                            )
                         }
                         else -> {
                             logBoltzTrace(

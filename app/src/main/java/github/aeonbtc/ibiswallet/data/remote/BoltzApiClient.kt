@@ -48,6 +48,16 @@ data class BoltzFetchedBolt12Invoice(
     val invoice: String,
 )
 
+data class BoltzRefundDetails(
+    val pubNonce: String,
+    val transactionHash: String,
+)
+
+data class BoltzRefundResponse(
+    val pubNonce: String,
+    val partialSignature: String,
+)
+
 /**
  * Client for the Boltz API v2 endpoints still used by the app.
  *
@@ -400,6 +410,44 @@ class BoltzApiClient(
             )
             throw error
         }
+    }
+
+    // ── Submarine Swap: Cooperative Refund ──
+
+    /**
+     * GET /v2/swap/submarine/{id}/refund
+     * Fetch Boltz's partial signature details for a cooperative key path refund.
+     * Only available when the swap is in a failed/refundable state.
+     */
+    suspend fun getSubmarineRefundDetails(swapId: String): BoltzRefundDetails {
+        val j = get("/v2/swap/submarine/$swapId/refund")
+        return BoltzRefundDetails(
+            pubNonce = j.getString("pubNonce"),
+            transactionHash = j.getString("transactionHash"),
+        )
+    }
+
+    /**
+     * POST /v2/swap/submarine/{id}/refund
+     * Submit client's partial signature for a cooperative key path refund.
+     * Returns Boltz's partial signature to complete the aggregated Schnorr signature.
+     */
+    suspend fun postSubmarineCooperativeRefund(
+        swapId: String,
+        pubNonce: String,
+        transaction: String,
+        index: Int = 0,
+    ): BoltzRefundResponse {
+        val body = JSONObject().apply {
+            put("pubNonce", pubNonce)
+            put("transaction", transaction)
+            put("index", index)
+        }
+        val j = post("/v2/swap/submarine/$swapId/refund", body)
+        return BoltzRefundResponse(
+            pubNonce = j.getString("pubNonce"),
+            partialSignature = j.getString("partialSignature"),
+        )
     }
 
     // ── Swap Status ──
