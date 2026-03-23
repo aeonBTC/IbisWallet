@@ -37,12 +37,12 @@ Ibis gives you complete control over your wallet and is designed for experienced
 
 ### Privacy & Security
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
-- **Offline Mode** - Electrum servers and external services are disabled by default
 - **PIN & Biometrics** - With configurable lock timing
 - **Individual Wallet Lock** - Lock specific wallets independently
 - **Duress PIN** - Configure a secondary PIN that opens a decoy wallet
 - **Auto-Wipe** - Set a threshold for failed unlock that automatically and irreversibly wipes all app data
 - **Cloak Mode** - Disguise Ibis as a calculator app
+- **Offline Mode** - Electrum servers and external services are disabled by default
 
 ### Connectivity & Servers
 - **Custom Servers** - Connect to your own Electrum, block explorer, and fee estimation servers
