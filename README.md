@@ -2,7 +2,7 @@
 
 A self-custody Bitcoin wallet for Android, inspired by [Sparrow Wallet](https://sparrowwallet.com/) but built for mobile. 
 
-Ibis gives you complete control over your wallet and is designed for experienced users - no hand-holding, no training wheels. By default all external APIs and services are diabled in Ibis, allowing users to customize their security and wallet experience.
+Ibis gives you complete control over your wallet and is designed for experienced users - no hand-holding, no training wheels. By default all external APIs and services are disabled in Ibis, allowing users to customize their security and wallet experience.
 
 <img width="1700" height="841" alt="1" src="https://github.com/user-attachments/assets/839e9230-0280-4f16-84cc-5525ad9cbef9" />
 
@@ -26,7 +26,7 @@ Ibis gives you complete control over your wallet and is designed for experienced
 - **Built with** - [BDK](https://bitcoindevkit.org/)
 
 ### Layer 2 — Liquid Network (Ark coming soon)
-- **Modular Integration** - Toggle layer 2 integreation on or off
+- **Modular Integration** - Toggle layer 2 integration on or off
 - **Send & Receive L-BTC** - Full Liquid wallet with confidential transactions
 - **Lightning Payments** - Pay Bolt 11 and Bolt 12 invoices via Boltz submarine swaps
 - **Lightning Invoices** - Generate Bolt 11 invoices via Boltz reverse swaps
