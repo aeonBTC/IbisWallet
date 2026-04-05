@@ -22,7 +22,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Manual Broadcast** - Broadcast any signed raw transaction directly to the Bitcoin network
 - **Batch Sending** - Send to multiple recipients in a single transaction
 - **BIP329 Labels** - Industry-standard wallet labels for transactions and addresses
-- **Transaction Search** - Search transaction history by date, amount, or label
+- **Transaction Search** - Search transaction history by date, amount, address, or label
 
 ### Layer 2 — Liquid Network (Ark coming soon)
 - **Modular Integration** - Enable or disable Liquid for each wallet
