@@ -1,0 +1,12 @@
+- Added support for paying to LNURL Lightning addresses
+- Added international fiat currency display options
+- Added full Liquid USDt support
+- Added support for Liquid watch-only wallets using SLIP77 descriptors
+- Added gap limit support for Liquid wallets
+- Added pending payment details to the Liquid send screen
+- Improved seed input field with dynamic word completion
+- Tor connections are now managed automatically when `.onion` servers are detected
+- Various bug fixes and stability improvements
+- Various UI improvements and tweaks
+
+See full changelogs on GitHub.
