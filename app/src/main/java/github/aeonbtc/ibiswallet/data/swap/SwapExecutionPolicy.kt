@@ -2,6 +2,7 @@ package github.aeonbtc.ibiswallet.data.swap
 
 import github.aeonbtc.ibiswallet.data.model.PendingSwapSession
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
+import github.aeonbtc.ibiswallet.data.model.SwapService
 
 data class BitcoinSwapFundingRequest(
     val recipientAddress: String,
@@ -39,12 +40,23 @@ fun buildLiquidSwapFundingRequest(
     pendingSwap: PendingSwapSession,
     feeRateSatPerVb: Double,
 ): LiquidSwapFundingRequest {
+    val exactAmount =
+        if (
+            pendingSwap.service == SwapService.BOLTZ &&
+            pendingSwap.direction == SwapDirection.LBTC_TO_BTC &&
+            pendingSwap.usesMaxAmount
+        ) {
+            pendingSwap.boltzVerifiedRecipientAmountSats?.takeIf { it > 0L } ?: pendingSwap.sendAmount
+        } else {
+            pendingSwap.sendAmount
+        }
     return LiquidSwapFundingRequest(
         recipientAddress = pendingSwap.depositAddress,
-        amountSats = pendingSwap.sendAmount,
+        amountSats = exactAmount,
         feeRateSatPerVb = feeRateSatPerVb,
-        // Swap execution should always fund the reviewed exact amount.
-        isMaxSend = false,
+        // Reviewed max Liquid-funded swaps should replay the same drain semantics
+        // used when the provider lockup amount was normalized.
+        isMaxSend = pendingSwap.direction == SwapDirection.LBTC_TO_BTC && pendingSwap.usesMaxAmount,
     )
 }
 

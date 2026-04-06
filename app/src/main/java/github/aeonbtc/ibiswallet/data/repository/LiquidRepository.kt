@@ -234,6 +234,9 @@ class LiquidRepository(
     private var walletSwitchGeneration: Long = 0
 
     @Volatile
+    private var lastKnownBlockHeight: UInt? = null
+
+    @Volatile
     private var pendingSyncRequested = false
 
     @Volatile
@@ -1027,6 +1030,7 @@ class LiquidRepository(
                 stopNotificationCollector()
                 subscribedScriptHashes.clear()
                 scriptHashStatusCache.clear()
+                lastKnownBlockHeight = null
                 liquidElectrumProxy?.stop()
                 liquidElectrumProxy = null
                 withBoltzOperationLock(operation = "disconnect") {
@@ -1849,6 +1853,14 @@ class LiquidRepository(
             pendingForceFullSyncRequested = false
             pendingFullSyncProgressRequested = false
             _liquidState.value = _liquidState.value.copy(isSyncing = true)
+            val currentTipHeight =
+                runCatching { client.tip().height() }
+                    .getOrNull()
+            val previousTipHeight = lastKnownBlockHeight
+            val newBlockDetected =
+                currentTipHeight != null &&
+                    previousTipHeight != null &&
+                    currentTipHeight > previousTipHeight
             updateLiquidFullSyncProgress(
                 showFullSyncProgress = showFullSyncProgress,
                 status = "Preparing sync...",
@@ -1856,10 +1868,13 @@ class LiquidRepository(
                 total = 0UL,
             )
 
-            if (!forceFullScan && scriptHashStatusCache.isNotEmpty()) {
+            if (!forceFullScan && !newBlockDetected && scriptHashStatusCache.isNotEmpty()) {
                 val hasChanges = liquidElectrumProxy?.checkForScriptHashChanges(scriptHashStatusCache) ?: true
                 if (!hasChanges) {
                     if (syncGeneration != walletSwitchGeneration) return false
+                    if (currentTipHeight != null) {
+                        lastKnownBlockHeight = currentTipHeight
+                    }
                     _liquidState.value = _liquidState.value.copy(
                         isSyncing = false,
                         lastSyncTimestamp = System.currentTimeMillis(),
@@ -1921,8 +1936,16 @@ class LiquidRepository(
                 }
                 refreshScriptHashStatusCache(wollet)
                 subscribeNewlyRevealedAddresses()
+                lastKnownBlockHeight =
+                    runCatching { client.tip().height() }
+                        .getOrNull()
+                        ?: currentTipHeight
+                        ?: lastKnownBlockHeight
             } else {
                 if (syncGeneration == walletSwitchGeneration) {
+                    if (currentTipHeight != null) {
+                        lastKnownBlockHeight = currentTipHeight
+                    }
                     _liquidState.value = _liquidState.value.copy(
                         isSyncing = false,
                         lastSyncTimestamp = System.currentTimeMillis(),
@@ -2038,6 +2061,10 @@ class LiquidRepository(
                 return@withContext SubscriptionResult.FAILED
             }
 
+            lastKnownBlockHeight =
+                runCatching { lwkClient?.tip()?.height() }
+                    .getOrNull()
+
             subscribedScriptHashes.clear()
             subscribedScriptHashes.addAll(currentStatuses.keys)
 
@@ -2087,6 +2114,10 @@ class LiquidRepository(
                         Log.w(TAG, "Liquid subscription socket reported connection lost")
                         _connectionEvents.tryEmit(ConnectionEvent.ConnectionLost)
                         return@collect
+                    }
+
+                    if (notification is ElectrumNotification.NewBlockHeader) {
+                        lastKnownBlockHeight = notification.height.toUInt()
                     }
 
                     pendingNotifications.add(notification)
@@ -2685,7 +2716,11 @@ class LiquidRepository(
                     ?.takeIf { it.isNotEmpty() }
                     ?.sumOf { it.amountSats.toLong() }
                     ?: _liquidState.value.balanceSats.coerceAtLeast(0L)
-            val totalRecipientSats = (availableSats - feeSats).coerceAtLeast(0L)
+            val totalRecipientSats =
+                extractLiquidPreviewRecipientAmount(
+                    pset = pset,
+                    recipientAddress = address,
+                ) ?: (availableSats - feeSats).coerceAtLeast(0L)
             val txVBytes = if (feeRateSatPerVb > 0.0) feeSats.toDouble() / feeRateSatPerVb else null
             val effectiveFeeRate = if (txVBytes != null && txVBytes > 0.0) feeSats.toDouble() / txVBytes else feeRateSatPerVb
             LiquidSendPreview(
@@ -3309,6 +3344,21 @@ class LiquidRepository(
                     amountSats = output.amount()?.toLong(),
                 )
             }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun extractLiquidPreviewRecipientAmount(
+        pset: Pset,
+        recipientAddress: String,
+    ): Long? {
+        return try {
+            val recipientScript = Address(recipientAddress).scriptPubkey().toString()
+            pset.outputs()
+                .firstOrNull { output -> output.scriptPubkey().toString() == recipientScript }
+                ?.amount()
+                ?.toLong()
         } catch (_: Exception) {
             null
         }

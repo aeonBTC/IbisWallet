@@ -5335,8 +5335,16 @@ class WalletRepository(context: Context) {
      * Returns true if the server responded to a ping, false if dead.
      * Does NOT hold the sync mutex — safe to call from a heartbeat loop.
      */
-    fun pingServer(): Boolean {
-        return cachingProxy?.ping() ?: false
+    fun pingServer(
+        socketTimeoutMs: Int = 8_000,
+        lockTimeoutMs: Long = 3_000L,
+        allowReconnect: Boolean = true,
+    ): Boolean {
+        return cachingProxy?.ping(
+            socketTimeoutMs = socketTimeoutMs,
+            lockTimeoutMs = lockTimeoutMs,
+            allowReconnect = allowReconnect,
+        ) ?: false
     }
 
     /**
@@ -5844,6 +5852,14 @@ class WalletRepository(context: Context) {
 
     fun setWalletNotificationsEnabled(enabled: Boolean) {
         secureStorage.setWalletNotificationsEnabled(enabled)
+    }
+
+    fun isForegroundConnectivityEnabled(): Boolean {
+        return secureStorage.isForegroundConnectivityEnabled()
+    }
+
+    fun setForegroundConnectivityEnabled(enabled: Boolean) {
+        secureStorage.setForegroundConnectivityEnabled(enabled)
     }
 
     // ==================== Fee Estimation Settings ====================
@@ -6696,6 +6712,14 @@ class WalletRepository(context: Context) {
      */
     fun setDisableScreenshots(disabled: Boolean) {
         secureStorage.setDisableScreenshots(disabled)
+    }
+
+    fun getRandomizePinPad(): Boolean {
+        return secureStorage.getRandomizePinPad()
+    }
+
+    fun setRandomizePinPad(enabled: Boolean) {
+        secureStorage.setRandomizePinPad(enabled)
     }
 
     // ==================== Duress PIN / Decoy Wallet ====================

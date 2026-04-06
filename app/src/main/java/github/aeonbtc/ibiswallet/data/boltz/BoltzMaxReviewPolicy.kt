@@ -65,6 +65,38 @@ fun shouldRecreateBoltzMaxOrder(
         verifiedAmount != quotedAmount
 }
 
+fun isBoltzMaxFundingShortfallError(
+    direction: SwapDirection,
+    error: Throwable,
+): Boolean {
+    val texts =
+        generateSequence(error) { current -> current.cause }
+            .flatMap { throwable ->
+                sequenceOf(
+                    throwable.message,
+                    throwable.toString(),
+                )
+            }
+            .filterNotNull()
+            .toList()
+    if (texts.isEmpty()) {
+        return false
+    }
+
+    fun matches(vararg needles: String): Boolean {
+        return texts.any { text ->
+            needles.any { needle ->
+                text.contains(needle, ignoreCase = true)
+            }
+        }
+    }
+
+    return when (direction) {
+        SwapDirection.BTC_TO_LBTC -> matches("Insufficient funds", "missing_sats")
+        SwapDirection.LBTC_TO_BTC -> matches("InsufficientFunds", "missing_sats", "Insufficient L-BTC")
+    }
+}
+
 fun hasBoltzMaxReviewMismatch(
     usesMaxAmount: Boolean,
     state: BoltzMaxReviewState,

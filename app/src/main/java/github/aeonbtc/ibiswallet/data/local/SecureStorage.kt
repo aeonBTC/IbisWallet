@@ -793,7 +793,9 @@ class SecureStorage private constructor(private val context: Context) {
             remove("${KEY_LIQUID_GAP_LIMIT_PREFIX}$walletId")
             remove("${KEY_ACTIVE_LAYER_PREFIX}$walletId")
             remove("${KEY_NOTIFIED_TXIDS_PREFIX}$walletId")
+            remove("${KEY_NOTIFIED_TXIDS_BASELINE_PREFIX}$walletId")
             remove("${KEY_NOTIFIED_LIQUID_TXIDS_PREFIX}$walletId")
+            remove("${KEY_NOTIFIED_LIQUID_TXIDS_BASELINE_PREFIX}$walletId")
             remove(liquidScriptHashStatusBlobKey(walletId))
             remove(liquidScriptHashStatusIndexKey(walletId))
             removeWalletScopedRegularPrefs(this, walletId)
@@ -1100,7 +1102,7 @@ class SecureStorage private constructor(private val context: Context) {
     }
 
     /**
-     * Get whether NFC broadcasting is enabled on the Receive screen.
+     * Get whether NFC tap-to-read/share is enabled in the app.
      * Defaults to false — user must opt in via Settings.
      */
     fun isNfcEnabled(): Boolean {
@@ -1108,7 +1110,7 @@ class SecureStorage private constructor(private val context: Context) {
     }
 
     /**
-     * Set whether NFC broadcasting is enabled.
+     * Set whether NFC tap-to-read/share is enabled.
      */
     fun setNfcEnabled(enabled: Boolean) {
         regularPrefs.edit { putBoolean(KEY_NFC_ENABLED, enabled) }
@@ -1129,6 +1131,14 @@ class SecureStorage private constructor(private val context: Context) {
         regularPrefs.edit { putBoolean(KEY_WALLET_NOTIFICATIONS_ENABLED, enabled) }
     }
 
+    fun isForegroundConnectivityEnabled(): Boolean {
+        return regularPrefs.getBoolean(KEY_FOREGROUND_CONNECTIVITY_ENABLED, false)
+    }
+
+    fun setForegroundConnectivityEnabled(enabled: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_FOREGROUND_CONNECTIVITY_ENABLED, enabled) }
+    }
+
     // ==================== Notified Transaction IDs (per wallet) ====================
 
     fun getNotifiedTxids(walletId: String): Set<String> {
@@ -1144,6 +1154,16 @@ class SecureStorage private constructor(private val context: Context) {
         }
     }
 
+    fun hasNotifiedTxidsBaseline(walletId: String): Boolean {
+        return regularPrefs.getBoolean("${KEY_NOTIFIED_TXIDS_BASELINE_PREFIX}$walletId", false)
+    }
+
+    fun setNotifiedTxidsBaseline(walletId: String, established: Boolean) {
+        regularPrefs.edit {
+            putBoolean("${KEY_NOTIFIED_TXIDS_BASELINE_PREFIX}$walletId", established)
+        }
+    }
+
     fun getNotifiedLiquidTxids(walletId: String): Set<String> {
         val raw = regularPrefs.getString("${KEY_NOTIFIED_LIQUID_TXIDS_PREFIX}$walletId", null)
             ?: return emptySet()
@@ -1154,6 +1174,16 @@ class SecureStorage private constructor(private val context: Context) {
     fun saveNotifiedLiquidTxids(walletId: String, txids: Set<String>) {
         regularPrefs.edit {
             putString("${KEY_NOTIFIED_LIQUID_TXIDS_PREFIX}$walletId", txids.joinToString(","))
+        }
+    }
+
+    fun hasNotifiedLiquidTxidsBaseline(walletId: String): Boolean {
+        return regularPrefs.getBoolean("${KEY_NOTIFIED_LIQUID_TXIDS_BASELINE_PREFIX}$walletId", false)
+    }
+
+    fun setNotifiedLiquidTxidsBaseline(walletId: String, established: Boolean) {
+        regularPrefs.edit {
+            putBoolean("${KEY_NOTIFIED_LIQUID_TXIDS_BASELINE_PREFIX}$walletId", established)
         }
     }
 
@@ -2482,21 +2512,6 @@ class SecureStorage private constructor(private val context: Context) {
     }
 
     /**
-     * Get the stored PIN length hint (for UI display of dot indicators).
-     * Returns null if no PIN is set.
-     */
-    fun getStoredPinLength(): Int? {
-        if (!hasPin()) return null
-        // If we have a stored length, use it
-        val length = securePrefs.getInt(KEY_PIN_LENGTH, -1)
-        if (length > 0) return length
-        // Legacy: unhashed PIN stored directly, length can be read
-        val stored = securePrefs.getString(KEY_PIN_CODE, null) ?: return null
-        if (!securePrefs.contains(KEY_PIN_SALT)) return stored.length
-        return null // Unknown length for migrated PINs without stored length
-    }
-
-    /**
      * Check if PIN is set
      */
     fun hasPin(): Boolean {
@@ -2607,6 +2622,14 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun setDisableScreenshots(disabled: Boolean) {
         securePrefs.edit { putBoolean(KEY_DISABLE_SCREENSHOTS, disabled) }
+    }
+
+    fun getRandomizePinPad(): Boolean {
+        return securePrefs.getBoolean(KEY_RANDOMIZE_PIN_PAD, false)
+    }
+
+    fun setRandomizePinPad(enabled: Boolean) {
+        securePrefs.edit { putBoolean(KEY_RANDOMIZE_PIN_PAD, enabled) }
     }
 
     // ==================== Cloak Mode ====================
@@ -2747,14 +2770,6 @@ class SecureStorage private constructor(private val context: Context) {
         }
 
         return matches
-    }
-
-    /**
-     * Get the stored duress PIN length hint (for lock screen auto-submit).
-     */
-    fun getDuressPinLength(): Int? {
-        val length = securePrefs.getInt(KEY_DURESS_PIN_LENGTH, -1)
-        return if (length > 0) length else null
     }
 
     /**
@@ -3039,7 +3054,9 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_NFC_ENABLED = "nfc_enabled"
         private const val KEY_WALLET_NOTIFICATIONS_ENABLED = "wallet_notifications_enabled"
         private const val KEY_NOTIFIED_TXIDS_PREFIX = "notified_txids_"
+        private const val KEY_NOTIFIED_TXIDS_BASELINE_PREFIX = "notified_txids_baseline_"
         private const val KEY_NOTIFIED_LIQUID_TXIDS_PREFIX = "notified_liquid_txids_"
+        private const val KEY_NOTIFIED_LIQUID_TXIDS_BASELINE_PREFIX = "notified_liquid_txids_baseline_"
 
         // Frozen UTXOs
         private const val KEY_FROZEN_UTXOS_PREFIX = "frozen_utxos_"
@@ -3057,7 +3074,9 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_LOCK_TIMING = "lock_timing"
         private const val KEY_LAST_BACKGROUND_TIME = "last_background_time"
         private const val KEY_DISABLE_SCREENSHOTS = "disable_screenshots"
+        private const val KEY_RANDOMIZE_PIN_PAD = "randomize_pin_pad"
         private const val KEY_PRIVACY_MODE = "privacy_mode"
+        private const val KEY_FOREGROUND_CONNECTIVITY_ENABLED = "foreground_connectivity_enabled"
 
         // Auto-wipe
         private const val KEY_AUTO_WIPE_THRESHOLD = "auto_wipe_threshold"
