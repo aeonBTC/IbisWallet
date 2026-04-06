@@ -1,0 +1,5 @@
+- Added foreground service option to keep electrum and tor server connections alive
+- Added security option for randomizing pin pad number
+- Fixed NFC broadcasting bug
+
+See full changelogs on GitHub.
