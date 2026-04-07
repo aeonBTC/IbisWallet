@@ -73,6 +73,6 @@ Open source. See [LICENSE](LICENSE) for details.
 
 ## Disclaimer
 
-This wallet is mostly vibe-coded and audited by today's top frontier AI models.
+Ibis is mostly vibe-coded and audited by today's top frontier AI models.
 
 Yes this is a flex, because Ibis is likely more secure and better engineered than most wallets out there.
