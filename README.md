@@ -68,3 +68,8 @@ Requires Android Studio with JDK 17.
 ## License
 
 Open source. See [LICENSE](LICENSE) for details.
+
+## Disclaimer
+
+This wallet is proudly vibe-coded and audited by the current top frontier AI models.
+Yes, that is a flex and it is likely more secure and better engineered than most wallets out there.
