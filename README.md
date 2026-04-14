@@ -74,4 +74,4 @@ Open source. See [LICENSE](LICENSE) for details.
 
 ## Disclaimer
 
-Ibis is vibecoded and audited by the current top frontier AI models.
+Ibis is vibecoded and audited by the most current frontier AI models.
