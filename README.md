@@ -40,6 +40,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 ### Privacy & Security
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
 - **PIN & Biometrics** - With configurable lock timing
+- **Privacy Toggle** - Hide all wallet amounts and balances
 - **Individual Wallet Lock** - Lock specific wallets independently
 - **Duress PIN** - Configure a secondary PIN that opens a decoy wallet
 - **Auto-Wipe** - Set a threshold for failed unlock that automatically and irreversibly wipes all app data
@@ -73,6 +74,4 @@ Open source. See [LICENSE](LICENSE) for details.
 
 ## Disclaimer
 
-Ibis is vibe-coded and audited by the current top frontier AI models.
-
-Yes this is a flex, Ibis is likely more secure and better engineered than most wallets.
+Ibis is vibecoded and audited by the current top frontier AI models.
