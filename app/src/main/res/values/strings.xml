@@ -5,6 +5,16 @@
     <string name="nfc_service_description">Bitcoin payment address</string>
     <string name="startup_loading_artwork">Ibis launch artwork</string>
     <string name="version_format">Version: %1$s</string>
+    <string name="drawer_version_short_format">v%1$s</string>
+    <string name="drawer_update_checking">Checking</string>
+    <string name="drawer_update_up_to_date">No update available</string>
+    <string name="drawer_update_available">Update available: %1$s</string>
+    <string name="drawer_update_check_failed">Check failed</string>
+    <string name="download_update">Download update</string>
+    <string name="update_popup_title">New update available</string>
+    <string name="update_popup_message">Ibis Wallet %1$s is available.</string>
+    <string name="update_popup_view">View</string>
+    <string name="update_popup_close">Close</string>
     <string name="wallet_notifications_title">Wallet Notifications</string>
     <string name="wallet_notifications_subtitle_default">Incoming transaction alerts</string>
     <string name="wallet_notifications_subtitle_permission_required">Grant Android notification permission</string>
@@ -25,4 +35,12 @@
     <string name="nfc_status_received">NFC Received</string>
     <string name="nfc_status_share_ready">NFC Share</string>
     <string name="nfc_status_sharing">NFC Sharing</string>
+    <string name="welcome_logo_content_description">Ibis Wallet logo</string>
+    <string name="welcome_title">Welcome to Ibis</string>
+    <string name="welcome_intro">Ibis is a self-custody wallet built for power users with a focus on customizability. All network services and external connections are disabled by default.</string>
+    <string name="welcome_menu_prompt">Open the options menu to begin configuring Ibis to your liking.</string>
+    <string name="welcome_continue">Continue</string>
+    <string name="liquid_enable_info_title">Layer 2 is modular</string>
+    <string name="liquid_enable_info_message">Open the Wallet Management screen to enable Liquid support for your desired wallets.\n\n*Liquid can only be enabled on BIP39 wallets.</string>
+    <string name="liquid_enable_info_confirm">Got it</string>
 </resources>
