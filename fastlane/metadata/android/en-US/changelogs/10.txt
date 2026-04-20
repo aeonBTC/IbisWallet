@@ -1,0 +1,6 @@
+- Added check for app update feature
+- Added welcome screen for first app launch
+- Privacy mode is now disabled by tap and holding the icon. 
+- Optimized transaction history search for wallets with extensive history.
+
+See full changelogs on GitHub.
