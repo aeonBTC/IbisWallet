@@ -810,6 +810,7 @@ class SecureStorage private constructor(private val context: Context) {
             "${KEY_ADDRESS_LABEL_PREFIX}${walletId}_",
             "${KEY_LIQUID_ADDRESS_LABEL_PREFIX}${walletId}_",
             "${KEY_TX_LABEL_PREFIX}${walletId}_",
+            "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_",
             "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_",
             "${KEY_LIQUID_TX_SOURCE_PREFIX}${walletId}_",
             "${KEY_LIQUID_TX_SWAP_DETAILS_PREFIX}${walletId}_",
@@ -1139,6 +1140,32 @@ class SecureStorage private constructor(private val context: Context) {
         regularPrefs.edit { putBoolean(KEY_FOREGROUND_CONNECTIVITY_ENABLED, enabled) }
     }
 
+    fun hasSeenWelcome(): Boolean = regularPrefs.getBoolean(KEY_HAS_SEEN_WELCOME, false)
+
+    fun setHasSeenWelcome(seen: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_HAS_SEEN_WELCOME, seen) }
+    }
+
+    fun hasSeenLiquidEnableInfo(): Boolean = regularPrefs.getBoolean(KEY_HAS_SEEN_LIQUID_ENABLE_INFO, false)
+
+    fun setHasSeenLiquidEnableInfo(seen: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_HAS_SEEN_LIQUID_ENABLE_INFO, seen) }
+    }
+
+    fun getSeenAppUpdateVersion(): String? {
+        return regularPrefs.getString(KEY_SEEN_APP_UPDATE_VERSION, null)
+    }
+
+    fun setSeenAppUpdateVersion(versionName: String?) {
+        regularPrefs.edit {
+            if (versionName.isNullOrBlank()) {
+                remove(KEY_SEEN_APP_UPDATE_VERSION)
+            } else {
+                putString(KEY_SEEN_APP_UPDATE_VERSION, versionName.trim())
+            }
+        }
+    }
+
     // ==================== Notified Transaction IDs (per wallet) ====================
 
     fun getNotifiedTxids(walletId: String): Set<String> {
@@ -1359,6 +1386,14 @@ class SecureStorage private constructor(private val context: Context) {
         regularPrefs.edit { putString(key, label) }
     }
 
+    fun deleteTransactionLabel(
+        walletId: String,
+        txid: String,
+    ) {
+        val key = "${KEY_TX_LABEL_PREFIX}${walletId}_$txid"
+        regularPrefs.edit { remove(key) }
+    }
+
     /**
      * Get the label for a transaction
      */
@@ -1409,6 +1444,14 @@ class SecureStorage private constructor(private val context: Context) {
     ) {
         val key = "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_$txid"
         regularPrefs.edit { putString(key, label) }
+    }
+
+    fun deleteLiquidTransactionLabel(
+        walletId: String,
+        txid: String,
+    ) {
+        val key = "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_$txid"
+        regularPrefs.edit { remove(key) }
     }
 
     /**
@@ -1494,6 +1537,51 @@ class SecureStorage private constructor(private val context: Context) {
         regularPrefs.edit(commit = true) {
             putString(key, json.toString())
         }
+    }
+
+    fun saveTransactionSwapDetails(
+        walletId: String,
+        txid: String,
+        details: LiquidSwapDetails,
+    ) {
+        val key = "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_$txid"
+        val json =
+            JSONObject().apply {
+                put("service", details.service.name)
+                put("direction", details.direction.name)
+                put("swapId", details.swapId)
+                put("role", details.role.name)
+                put("depositAddress", details.depositAddress)
+                put("receiveAddress", details.receiveAddress)
+                put("refundAddress", details.refundAddress)
+                put("sendAmountSats", details.sendAmountSats)
+                put("expectedReceiveAmountSats", details.expectedReceiveAmountSats)
+                put("paymentInput", details.paymentInput)
+                put("resolvedPaymentInput", details.resolvedPaymentInput)
+                put("invoice", details.invoice)
+                put("status", details.status)
+                put("timeoutBlockHeight", details.timeoutBlockHeight)
+                put("refundPublicKey", details.refundPublicKey)
+                put("claimPublicKey", details.claimPublicKey)
+                put("swapTree", details.swapTree)
+                put("blindingKey", details.blindingKey)
+            }
+        regularPrefs.edit(commit = true) {
+            putString(key, json.toString())
+        }
+    }
+
+    fun getAllTransactionSwapDetails(walletId: String): Map<String, LiquidSwapDetails> {
+        val prefix = "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_"
+        val txSwapDetails = mutableMapOf<String, LiquidSwapDetails>()
+        regularPrefs.all.forEach { (key, value) ->
+            if (key.startsWith(prefix) && value is String) {
+                val txid = key.removePrefix(prefix)
+                val details = parseLiquidSwapDetails(value) ?: return@forEach
+                txSwapDetails[txid] = details
+            }
+        }
+        return txSwapDetails
     }
 
     fun getAllLiquidSwapDetails(walletId: String): Map<String, LiquidSwapDetails> {
@@ -3022,6 +3110,7 @@ class SecureStorage private constructor(private val context: Context) {
 
         // Transaction labels
         private const val KEY_TX_LABEL_PREFIX = "tx_label_"
+        private const val KEY_TX_SWAP_DETAILS_PREFIX = "tx_swap_details_"
         private const val KEY_LIQUID_TX_LABEL_PREFIX = "liquid_tx_label_"
         private const val KEY_LIQUID_TX_SOURCE_PREFIX = "liquid_tx_source_"
         private const val KEY_LIQUID_TX_SWAP_DETAILS_PREFIX = "liquid_tx_swap_details_"
@@ -3077,6 +3166,9 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_RANDOMIZE_PIN_PAD = "randomize_pin_pad"
         private const val KEY_PRIVACY_MODE = "privacy_mode"
         private const val KEY_FOREGROUND_CONNECTIVITY_ENABLED = "foreground_connectivity_enabled"
+        private const val KEY_HAS_SEEN_WELCOME = "has_seen_welcome"
+        private const val KEY_HAS_SEEN_LIQUID_ENABLE_INFO = "has_seen_liquid_enable_info"
+        private const val KEY_SEEN_APP_UPDATE_VERSION = "seen_app_update_version"
 
         // Auto-wipe
         private const val KEY_AUTO_WIPE_THRESHOLD = "auto_wipe_threshold"

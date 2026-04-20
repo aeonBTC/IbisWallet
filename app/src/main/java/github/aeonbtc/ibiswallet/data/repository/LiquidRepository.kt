@@ -42,6 +42,9 @@ import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidTxType
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchFilters
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchLayer
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
 import github.aeonbtc.ibiswallet.data.model.PendingLightningInvoiceSession
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentPhase
@@ -71,6 +74,7 @@ import github.aeonbtc.ibiswallet.util.Blech32Util
 import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
 import github.aeonbtc.ibiswallet.util.ElementsPsetSigner
 import github.aeonbtc.ibiswallet.util.TofuTrustManager
+import github.aeonbtc.ibiswallet.util.buildLiquidTransactionSearchDocument
 import github.aeonbtc.ibiswallet.util.findMaxExactSendAmount
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -124,6 +128,14 @@ import java.net.URLDecoder
 import java.security.MessageDigest
 import java.util.Locale
 
+internal fun findEarliestUnusedLiquidExternalIndex(occupiedIndices: Set<UInt>): UInt {
+    var index = 0u
+    while (index in occupiedIndices) {
+        index++
+    }
+    return index
+}
+
 /**
  * Repository for all Liquid Network wallet operations.
  *
@@ -148,12 +160,60 @@ class LiquidRepository(
     private val secureStorage: SecureStorage,
     private val torManager: TorManager,
 ) {
+    private fun buildLiquidTransactionSearchDocuments(
+        walletId: String,
+        transactions: Collection<LiquidTransaction>,
+    ) = run {
+        val labels = secureStorage.getAllLiquidTransactionLabels(walletId)
+        transactions.map { transaction ->
+            buildLiquidTransactionSearchDocument(
+                walletId = walletId,
+                transaction = transaction,
+                transactionLabel = labels[transaction.txid],
+            )
+        }
+    }
+
+    private fun scheduleLiquidTransactionSearchIndexRefresh(
+        walletId: String?,
+        transactions: Collection<LiquidTransaction>,
+    ) {
+        val resolvedWalletId = walletId ?: return
+        val transactionSnapshot = transactions.toList()
+        liquidSearchIndexJob?.cancel()
+        liquidSearchIndexJob =
+            repositoryScope.launch {
+                electrumCache.replaceTransactionSearchDocuments(
+                    walletId = resolvedWalletId,
+                    layer = TransactionSearchLayer.LIQUID,
+                    documents = buildLiquidTransactionSearchDocuments(resolvedWalletId, transactionSnapshot),
+                )
+            }
+    }
+
+    private fun upsertLiquidTransactionSearchDocument(
+        walletId: String?,
+        transaction: LiquidTransaction,
+    ) {
+        val resolvedWalletId = walletId ?: return
+        electrumCache.upsertTransactionSearchDocuments(
+            listOf(
+                buildLiquidTransactionSearchDocument(
+                    walletId = resolvedWalletId,
+                    transaction = transaction,
+                    transactionLabel = secureStorage.getAllLiquidTransactionLabels(resolvedWalletId)[transaction.txid],
+                ),
+            ),
+        )
+    }
+
     companion object {
         private const val TAG = "LiquidRepository"
         private const val BOLTZ_LOG_TAG = "BoltzDebug"
         private const val LWK_DB_DIR = "lwk"
         private const val ADDRESS_PEEK_AHEAD = 60
         private const val ADDRESS_INTERNAL_PEEK_AHEAD = 60
+        private const val MAX_LIQUID_ADDRESS_SCAN_ATTEMPTS = 10_000
         private const val NOTIFICATION_DEBOUNCE_MS = 1_000L
         private const val LIQUID_SYNC_TIMEOUT_MS = 90_000L
 
@@ -226,9 +286,16 @@ class LiquidRepository(
     private var currentWalletId: String? = null
     private var notificationCollectorJob: Job? = null
     private var transactionRefreshJob: Job? = null
+    private var liquidSearchIndexJob: Job? = null
     private val subscribedScriptHashes = mutableSetOf<String>()
     private val scriptHashStatusCache = mutableMapOf<String, String?>()
     private val lightningResolutionCache = mutableMapOf<String, CachedLightningResolution>()
+
+    // Cached address strings keyed by derivation index, per keychain. LWK derives addresses
+    // through a JNI call (external) or manual blech32/SLIP-77 derivation (internal) that adds
+    // up on wallets with thousands of revealed addresses. Cleared on wallet switch/unload.
+    private val liquidExternalAddressCache = java.util.concurrent.ConcurrentHashMap<UInt, String>()
+    private val liquidInternalAddressCache = java.util.concurrent.ConcurrentHashMap<UInt, String>()
 
     @Volatile
     private var walletSwitchGeneration: Long = 0
@@ -473,10 +540,17 @@ class LiquidRepository(
             currentWalletId = walletId
             _loadedWalletId.value = walletId
 
-            refreshLiquidWalletState(
-                wollet = wollet,
-                updateLastSyncTimestamp = false,
-            )
+            if (preserveVisibleState) {
+                scheduleDetailedLiquidTransactionRefresh(
+                    wollet = wollet,
+                    switchGeneration = walletSwitchGeneration,
+                )
+            } else {
+                refreshLiquidWalletState(
+                    wollet = wollet,
+                    updateLastSyncTimestamp = false,
+                )
+            }
 
             Log.d(TAG, "Liquid wallet initialized successfully")
         } catch (e: LwkException) {
@@ -542,10 +616,17 @@ class LiquidRepository(
             invalidateMetadataCache()
             currentWalletId = walletId
             _loadedWalletId.value = walletId
-            refreshLiquidWalletState(
-                wollet = wollet,
-                updateLastSyncTimestamp = false,
-            )
+            if (preserveVisibleState) {
+                scheduleDetailedLiquidTransactionRefresh(
+                    wollet = wollet,
+                    switchGeneration = walletSwitchGeneration,
+                )
+            } else {
+                refreshLiquidWalletState(
+                    wollet = wollet,
+                    updateLastSyncTimestamp = false,
+                )
+            }
 
             Log.d(TAG, "Liquid wallet loaded from descriptor")
         } catch (e: LwkException) {
@@ -560,8 +641,12 @@ class LiquidRepository(
     private fun beginWalletSwitchLocked() {
         walletSwitchGeneration++
         stopNotificationCollector()
+        transactionRefreshJob?.cancel()
+        liquidSearchIndexJob?.cancel()
         subscribedScriptHashes.clear()
         scriptHashStatusCache.clear()
+        liquidExternalAddressCache.clear()
+        liquidInternalAddressCache.clear()
         _loadedWalletId.value = null
         _liquidState.value = LiquidWalletState()
     }
@@ -572,8 +657,12 @@ class LiquidRepository(
     ) {
         walletSwitchGeneration++
         stopNotificationCollector()
+        transactionRefreshJob?.cancel()
+        liquidSearchIndexJob?.cancel()
         subscribedScriptHashes.clear()
         scriptHashStatusCache.clear()
+        liquidExternalAddressCache.clear()
+        liquidInternalAddressCache.clear()
         withBoltzOperationLock(operation = "unloadWallet") {
             resetBoltzSessionStateLocked()
         }
@@ -614,6 +703,7 @@ class LiquidRepository(
             if (currentWalletId == walletId) {
                 unloadWallet()
             }
+            electrumCache.clearTransactionSearchDocuments(walletId)
             if (!deleteWalletDatabaseFiles(walletId)) {
                 Log.e(TAG, "Failed to delete Liquid wallet database for $walletId")
             }
@@ -657,7 +747,10 @@ class LiquidRepository(
             val lbtcBalance = wollet.balance()[policyAsset]?.toLong() ?: 0L
 
             val addr = try {
-                wollet.address(null)
+                resolveEarliestUnusedLiquidExternalAddress(
+                    wollet = wollet,
+                    walletId = walletId,
+                )
             } catch (_: Exception) {
                 null
             }
@@ -695,8 +788,8 @@ class LiquidRepository(
                 isInitialized = true,
                 balanceSats = lbtcBalance,
                 transactions = transactions,
-                currentAddress = addr?.address()?.toString(),
-                currentAddressIndex = addr?.index(),
+                currentAddress = addr?.address,
+                currentAddressIndex = addr?.index,
             )
             return true
         } catch (e: Exception) {
@@ -1082,8 +1175,11 @@ class LiquidRepository(
 
         val existingState = _liquidState.value
         val derivedCurrentAddress = try {
-            val addrResult = wollet.address(null)
-            addrResult.index() to addrResult.address().toString()
+            val addrResult = resolveEarliestUnusedLiquidExternalAddress(
+                wollet = wollet,
+                walletId = walletId,
+            )
+            addrResult.index to addrResult.address
         } catch (_: Exception) {
             null
         }
@@ -1115,6 +1211,7 @@ class LiquidRepository(
             },
             error = null,
         )
+        scheduleLiquidTransactionSearchIndexRefresh(walletId, transactions)
     }
 
     private fun refreshLiquidWalletStateLightweight(
@@ -1138,8 +1235,11 @@ class LiquidRepository(
         val existingState = _liquidState.value
         val shouldPreserveDerivedState = existingState.walletId == walletId
         val derivedCurrentAddress = try {
-            val addrResult = wollet.address(null)
-            addrResult.index() to addrResult.address().toString()
+            val addrResult = resolveEarliestUnusedLiquidExternalAddress(
+                wollet = wollet,
+                walletId = walletId,
+            )
+            addrResult.index to addrResult.address
         } catch (_: Exception) {
             null
         }
@@ -1183,6 +1283,7 @@ class LiquidRepository(
                     transactions = builtTransactions,
                     isTransactionHistoryLoading = false,
                 )
+                scheduleLiquidTransactionSearchIndexRefresh(currentWalletId, builtTransactions)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1358,8 +1459,51 @@ class LiquidRepository(
     ) {
         val walletId = currentWalletId ?: return
         secureStorage.saveLiquidTransactionLabel(walletId, txid, label)
+        electrumCache.updateTransactionSearchLabel(
+            walletId = walletId,
+            layer = TransactionSearchLayer.LIQUID,
+            txid = txid,
+            label = label,
+        )
         invalidateMetadataCache()
         updateTransactionInPlace(txid) { it.copy(memo = label) }
+    }
+
+    fun deleteLiquidTransactionLabel(txid: String) {
+        val walletId = currentWalletId ?: return
+        secureStorage.deleteLiquidTransactionLabel(walletId, txid)
+        electrumCache.updateTransactionSearchLabel(
+            walletId = walletId,
+            layer = TransactionSearchLayer.LIQUID,
+            txid = txid,
+            label = "",
+        )
+        invalidateMetadataCache()
+        updateTransactionInPlace(txid) { it.copy(memo = "") }
+    }
+
+    fun searchLiquidTransactionTxids(
+        query: String,
+        includeSwap: Boolean,
+        includeLightning: Boolean,
+        includeNative: Boolean,
+        includeUsdt: Boolean,
+        limit: Int,
+    ): TransactionSearchResult {
+        val walletId = currentWalletId ?: return TransactionSearchResult(emptyList(), 0)
+        return electrumCache.searchTransactionTxids(
+            walletId = walletId,
+            layer = TransactionSearchLayer.LIQUID,
+            query = query,
+            limit = limit,
+            filters =
+                TransactionSearchFilters(
+                    includeSwap = includeSwap,
+                    includeLightning = includeLightning,
+                    includeNative = includeNative,
+                    includeUsdt = includeUsdt,
+                ),
+        )
     }
 
     fun saveLiquidSwapDetails(
@@ -1433,6 +1577,12 @@ class LiquidRepository(
             ?.let {
                 secureStorage.saveLiquidAddressLabel(walletId, pendingReceive.claimAddress, it)
                 secureStorage.saveLiquidTransactionLabel(walletId, txid, it)
+                electrumCache.updateTransactionSearchLabel(
+                    walletId = walletId,
+                    layer = TransactionSearchLayer.LIQUID,
+                    txid = txid,
+                    label = it,
+                )
             }
         secureStorage.deletePendingLightningReceive(walletId, swapId)
         if (invoiceSession != null) {
@@ -1698,13 +1848,20 @@ class LiquidRepository(
     }
 
     private data class LiquidUsedIndexSummary(
+        val externalUsedIndices: Set<UInt> = emptySet(),
         val highestExternalUsedIndex: Int = -1,
         val highestInternalUsedIndex: Int = -1,
     ) {
         val highestUsedIndex: Int get() = maxOf(highestExternalUsedIndex, highestInternalUsedIndex)
     }
 
+    private data class LiquidExternalAddressSelection(
+        val index: UInt,
+        val address: String,
+    )
+
     private fun collectLiquidUsedIndices(wollet: Wollet): LiquidUsedIndexSummary {
+        val externalUsedIndices = mutableSetOf<UInt>()
         var highestExternalUsedIndex = -1
         var highestInternalUsedIndex = -1
 
@@ -1714,6 +1871,7 @@ class LiquidRepository(
                 if (txo.extInt() == Chain.INTERNAL) {
                     highestInternalUsedIndex = maxOf(highestInternalUsedIndex, index)
                 } else {
+                    externalUsedIndices.add(txo.wildcardIndex())
                     highestExternalUsedIndex = maxOf(highestExternalUsedIndex, index)
                 }
             }
@@ -1723,9 +1881,102 @@ class LiquidRepository(
         }
 
         return LiquidUsedIndexSummary(
+            externalUsedIndices = externalUsedIndices,
             highestExternalUsedIndex = highestExternalUsedIndex,
             highestInternalUsedIndex = highestInternalUsedIndex,
         )
+    }
+
+    private fun collectReservedLiquidExternalAddresses(walletId: String?): Set<String> {
+        if (walletId == null) return emptySet()
+
+        val reservedAddresses = linkedSetOf<String>()
+
+        secureStorage.getAllPendingLightningReceives(walletId).forEach { pendingReceive ->
+            reservedAddresses.add(pendingReceive.claimAddress)
+        }
+
+        secureStorage.getPendingLightningPaymentSession(walletId)
+            ?.refundAddress
+            ?.takeIf { it.isNotBlank() }
+            ?.let(reservedAddresses::add)
+
+        secureStorage.getPendingSwaps(walletId).forEach { pendingSwap ->
+            pendingSwap.receiveAddress
+                ?.takeIf { it.isNotBlank() }
+                ?.let(reservedAddresses::add)
+            pendingSwap.refundAddress
+                ?.takeIf { it.isNotBlank() }
+                ?.let(reservedAddresses::add)
+        }
+
+        synchronized(boltzChainSwapDrafts) {
+            boltzChainSwapDrafts.values.forEach { draft ->
+                draft.liquidAddress
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(reservedAddresses::add)
+                draft.receiveAddress
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(reservedAddresses::add)
+                draft.refundAddress
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let(reservedAddresses::add)
+            }
+        }
+
+        return reservedAddresses
+    }
+
+    private fun resolveEarliestUnusedLiquidExternalAddress(
+        wollet: Wollet,
+        walletId: String? = currentWalletId,
+    ): LiquidExternalAddressSelection {
+        val occupiedIndices = collectLiquidUsedIndices(wollet).externalUsedIndices.toMutableSet()
+        val reservedAddresses = collectReservedLiquidExternalAddresses(walletId)
+
+        repeat(MAX_LIQUID_ADDRESS_SCAN_ATTEMPTS) {
+            val candidateIndex = findEarliestUnusedLiquidExternalIndex(occupiedIndices)
+            val candidateAddress = wollet.address(candidateIndex).address().toString()
+            if (candidateAddress !in reservedAddresses) {
+                return LiquidExternalAddressSelection(
+                    index = candidateIndex,
+                    address = candidateAddress,
+                )
+            }
+            occupiedIndices.add(candidateIndex)
+        }
+
+        throw IllegalStateException("Failed to derive earliest unused Liquid address")
+    }
+
+    private fun resolveFreshLiquidExternalAddress(
+        wollet: Wollet,
+        walletId: String? = currentWalletId,
+        currentIndex: UInt? = _liquidState.value.currentAddressIndex,
+    ): LiquidExternalAddressSelection {
+        if (currentIndex == null) {
+            return resolveEarliestUnusedLiquidExternalAddress(
+                wollet = wollet,
+                walletId = walletId,
+            )
+        }
+
+        val occupiedIndices = collectLiquidUsedIndices(wollet).externalUsedIndices
+        val reservedAddresses = collectReservedLiquidExternalAddresses(walletId)
+        var candidateIndex = currentIndex + 1u
+
+        repeat(MAX_LIQUID_ADDRESS_SCAN_ATTEMPTS) {
+            val candidateAddress = liquidExternalAddressAt(wollet, candidateIndex)
+            if (candidateIndex !in occupiedIndices && candidateAddress !in reservedAddresses) {
+                return LiquidExternalAddressSelection(
+                    index = candidateIndex,
+                    address = candidateAddress,
+                )
+            }
+            candidateIndex++
+        }
+
+        throw IllegalStateException("Failed to derive fresh Liquid address")
     }
 
     private suspend fun runFullScanWithTimeout(
@@ -1875,6 +2126,7 @@ class LiquidRepository(
                     if (currentTipHeight != null) {
                         lastKnownBlockHeight = currentTipHeight
                     }
+                    scheduleLiquidTransactionSearchIndexRefresh(currentWalletId, _liquidState.value.transactions)
                     _liquidState.value = _liquidState.value.copy(
                         isSyncing = false,
                         lastSyncTimestamp = System.currentTimeMillis(),
@@ -2001,6 +2253,15 @@ class LiquidRepository(
         )
     }
 
+    fun patchCurrentAddressLabelIfCurrent(
+        address: String,
+        label: String?,
+    ) {
+        val currentState = _liquidState.value
+        if (currentState.currentAddress != address || currentState.currentAddressLabel == label) return
+        _liquidState.value = currentState.copy(currentAddressLabel = label)
+    }
+
     private fun updateTransactionInPlace(
         txid: String,
         transform: (LiquidTransaction) -> LiquidTransaction,
@@ -2012,6 +2273,7 @@ class LiquidRepository(
         _liquidState.value = currentState.copy(
             transactions = currentState.transactions.map { if (it.txid == txid) updatedTx else it },
         )
+        upsertLiquidTransactionSearchDocument(currentWalletId, updatedTx)
     }
 
     private fun prewarmLiquidTransactionHistoryCache(wollet: Wollet) {
@@ -2181,13 +2443,24 @@ class LiquidRepository(
 
     private fun getAllRevealedLiquidScriptHashes(wollet: Wollet): List<String> {
         val scriptHashes = linkedSetOf<String>()
+        val usedIndices = collectLiquidUsedIndices(wollet)
+        val reservedAddresses = collectReservedLiquidExternalAddresses(currentWalletId)
+        val currentReceive =
+            runCatching {
+                resolveEarliestUnusedLiquidExternalAddress(wollet)
+            }.getOrNull()
 
         runCatching {
-            val currentReceive = wollet.address(null)
-            for (i in 0u..currentReceive.index()) {
-                val address = wollet.address(i).address().toString()
+            val coverageIndex = maxOf(currentReceive?.index?.toInt() ?: -1, usedIndices.highestExternalUsedIndex)
+            if (coverageIndex < 0) return@runCatching
+            for (i in 0..coverageIndex) {
+                val address = wollet.address(i.toUInt()).address().toString()
                 computeLiquidScriptHashForAddress(address)?.let(scriptHashes::add)
             }
+        }
+
+        reservedAddresses.forEach { address ->
+            computeLiquidScriptHashForAddress(address)?.let(scriptHashes::add)
         }
 
         runCatching {
@@ -2215,13 +2488,16 @@ class LiquidRepository(
     // Address Generation
     // ════════════════════════════════════════════
 
-    /** Get the next unused receive address (confidential Liquid address) */
+    /** Get the earliest unused receive address (confidential Liquid address). */
     fun getNewAddress(): String? {
         val wollet = lwkWollet ?: return null
         return try {
-            val addressResult = wollet.address(null) // null = next unused
-            val address = addressResult.address().toString()
-            val addressIndex = addressResult.index()
+            val addressResult = resolveEarliestUnusedLiquidExternalAddress(
+                wollet = wollet,
+                walletId = currentWalletId,
+            )
+            val address = addressResult.address
+            val addressIndex = addressResult.index
             val walletId = currentWalletId
             val label = if (walletId != null) secureStorage.getLiquidAddressLabel(walletId, address) else null
             _liquidState.value = _liquidState.value.copy(
@@ -2239,18 +2515,21 @@ class LiquidRepository(
         }
     }
 
-    /** Force a fresh receive address even if the current unused one has not been used yet. */
+    /** Explicit "New" requests should advance past the currently shown receive address. */
     fun generateFreshAddress(): String? {
         val wollet = lwkWollet ?: return null
         return try {
-            val currentIndex = _liquidState.value.currentAddressIndex ?: wollet.address(null).index()
-            val nextIndex = currentIndex + 1u
-            val address = wollet.address(nextIndex).address().toString()
+            val addressResult = resolveFreshLiquidExternalAddress(
+                wollet = wollet,
+                walletId = currentWalletId,
+            )
+            val address = addressResult.address
+            val addressIndex = addressResult.index
             val walletId = currentWalletId
             val label = if (walletId != null) secureStorage.getLiquidAddressLabel(walletId, address) else null
             _liquidState.value = _liquidState.value.copy(
                 currentAddress = address,
-                currentAddressIndex = nextIndex,
+                currentAddressIndex = addressIndex,
                 currentAddressLabel = label,
             )
             address
@@ -2263,17 +2542,65 @@ class LiquidRepository(
         }
     }
 
+    /**
+     * Memoised external-address derivation. `wollet.address(i)` crosses a JNI boundary and
+     * is called hundreds–thousands of times on large wallets when rebuilding the address book.
+     */
+    private fun liquidExternalAddressAt(wollet: Wollet, index: UInt): String {
+        liquidExternalAddressCache[index]?.let { return it }
+        val address = wollet.address(index).address().toString()
+        liquidExternalAddressCache[index] = address
+        return address
+    }
+
+    /**
+     * Memoised internal (change) address derivation. Each derivation runs SLIP-77 blinding
+     * key derivation + blech32 confidential encoding in Kotlin — cheap per call, but the
+     * peek-ahead range can produce dozens of derivations per [getAllAddresses] invocation.
+     */
+    private fun liquidInternalAddressAt(
+        descriptor: WolletDescriptor,
+        isMainnet: Boolean,
+        index: UInt,
+    ): String? {
+        liquidInternalAddressCache[index]?.let { return it }
+        val script = descriptor.scriptPubkey(Chain.INTERNAL, index)
+        val scriptBytes = script.bytes()
+        if (scriptBytes.size < 2) return null
+        val blindingKey = descriptor.deriveBlindingKey(script) ?: return null
+        val blindingPubKey = ElectrumSeedUtil.publicKeyFromPrivate(blindingKey.bytes())
+        val witnessVersion =
+            if (scriptBytes[0].toInt() == 0x00) 0
+            else (scriptBytes[0].toInt() - 0x50)
+        val programLen = scriptBytes[1].toInt() and 0xFF
+        val witnessProgram = scriptBytes.copyOfRange(2, 2 + programLen)
+        val address =
+            Blech32Util.encodeConfidentialAddress(
+                blindingPubKey = blindingPubKey,
+                witnessProgram = witnessProgram,
+                witnessVersion = witnessVersion,
+                isMainnet = isMainnet,
+            )
+        liquidInternalAddressCache[index] = address
+        return address
+    }
+
     fun getAllAddresses(): Triple<List<WalletAddress>, List<WalletAddress>, List<WalletAddress>> {
         val wollet = lwkWollet ?: return Triple(emptyList(), emptyList(), emptyList())
         val walletId = currentWalletId ?: return Triple(emptyList(), emptyList(), emptyList())
         val network = lwkNetwork ?: return Triple(emptyList(), emptyList(), emptyList())
         val labels = secureStorage.getAllLiquidAddressLabels(walletId)
 
-        val addressBalances = mutableMapOf<String, ULong>()
-        val addressTxCounts = mutableMapOf<String, Int>()
-        val addressesWithUtxos = mutableSetOf<String>()
-        val internalByIndex = linkedMapOf<UInt, WalletAddress>()
+        // Bucket balances/counts by (chain, index) from wallet-owned utxos/txos. For UTXOs
+        // we still need the address string (policy-asset only balances), but for txos we can
+        // aggregate per-index and derive the address lazily through the peek cache, avoiding
+        // thousands of `txo.address()` JNI calls on wallets with deep history.
+        val balanceByAddress = HashMap<String, ULong>()
+        val addressesWithUtxos = HashSet<String>()
+        val externalTxCountByIndex = HashMap<UInt, Int>()
+        val internalTxCountByIndex = HashMap<UInt, Int>()
         var maxInternalIndex = -1
+        var maxExternalIndexFromTxos = -1
 
         try {
             val policyAsset = network.policyAsset()
@@ -2282,7 +2609,7 @@ class LiquidRepository(
                 addressesWithUtxos.add(address)
                 val secrets = utxo.unblinded()
                 if (secrets.asset() == policyAsset) {
-                    addressBalances[address] = (addressBalances[address] ?: 0UL) + secrets.value()
+                    balanceByAddress[address] = (balanceByAddress[address] ?: 0UL) + secrets.value()
                 }
             }
         } catch (e: Exception) {
@@ -2291,111 +2618,96 @@ class LiquidRepository(
 
         try {
             wollet.txos().forEach { txo ->
-                val address = txo.address().toString()
-                addressTxCounts[address] = (addressTxCounts[address] ?: 0) + 1
-
-                if (txo.extInt() == Chain.INTERNAL) {
-                    val idx = txo.wildcardIndex()
-                    if (idx.toInt() > maxInternalIndex) maxInternalIndex = idx.toInt()
-                    internalByIndex[idx] =
-                        WalletAddress(
-                            address = address,
-                            index = idx,
-                            keychain = KeychainType.INTERNAL,
-                            label = labels[address],
-                            balanceSats = addressBalances[address] ?: 0UL,
-                            transactionCount = addressTxCounts[address] ?: 0,
-                            isUsed = true,
-                        )
+                val idx = txo.wildcardIndex()
+                when (txo.extInt()) {
+                    Chain.EXTERNAL -> {
+                        externalTxCountByIndex[idx] = (externalTxCountByIndex[idx] ?: 0) + 1
+                        if (idx.toInt() > maxExternalIndexFromTxos) maxExternalIndexFromTxos = idx.toInt()
+                    }
+                    Chain.INTERNAL -> {
+                        internalTxCountByIndex[idx] = (internalTxCountByIndex[idx] ?: 0) + 1
+                        if (idx.toInt() > maxInternalIndex) maxInternalIndex = idx.toInt()
+                    }
                 }
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Error listing Liquid TXOs", e)
         }
 
+        val receiveAddresses = mutableListOf<WalletAddress>()
+        val changeAddresses = mutableListOf<WalletAddress>()
+        val usedAddresses = mutableListOf<WalletAddress>()
+
+        // ── Change (internal) keychain ─────────────────────────────────
+        val internalByIndex = linkedMapOf<UInt, WalletAddress>()
         try {
             val descriptor = wollet.descriptor()
             val isMainnet = network.isMainnet()
             val peekEnd = maxInternalIndex + ADDRESS_INTERNAL_PEEK_AHEAD
             for (i in 0..peekEnd) {
                 val idx = i.toUInt()
-                if (internalByIndex.containsKey(idx)) continue
-
-                val script = descriptor.scriptPubkey(Chain.INTERNAL, idx)
-                val scriptBytes = script.bytes()
-                if (scriptBytes.size < 2) continue
-
-                val blindingKey = descriptor.deriveBlindingKey(script) ?: continue
-                val blindingPubKey =
-                    ElectrumSeedUtil.publicKeyFromPrivate(blindingKey.bytes())
-                val witnessVersion =
-                    if (scriptBytes[0].toInt() == 0x00) 0
-                    else (scriptBytes[0].toInt() - 0x50)
-                val programLen = scriptBytes[1].toInt() and 0xFF
-                val witnessProgram = scriptBytes.copyOfRange(2, 2 + programLen)
-
-                val address =
-                    Blech32Util.encodeConfidentialAddress(
-                        blindingPubKey = blindingPubKey,
-                        witnessProgram = witnessProgram,
-                        witnessVersion = witnessVersion,
-                        isMainnet = isMainnet,
-                    )
-
+                val txCount = internalTxCountByIndex[idx] ?: 0
+                val address = liquidInternalAddressAt(descriptor, isMainnet, idx) ?: continue
+                val balance = balanceByAddress[address] ?: 0UL
+                val isUsed = txCount > 0 || address in addressesWithUtxos
                 internalByIndex[idx] =
                     WalletAddress(
                         address = address,
                         index = idx,
                         keychain = KeychainType.INTERNAL,
                         label = labels[address],
-                        balanceSats = addressBalances[address] ?: 0UL,
-                        transactionCount = addressTxCounts[address] ?: 0,
-                        isUsed = (addressTxCounts[address] ?: 0) > 0 || address in addressesWithUtxos,
+                        balanceSats = balance,
+                        transactionCount = txCount,
+                        isUsed = isUsed,
                     )
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Error deriving Liquid change addresses", e)
         }
 
-        val receiveAddresses = mutableListOf<WalletAddress>()
-        val changeAddresses = mutableListOf<WalletAddress>()
-        val usedAddresses = mutableListOf<WalletAddress>()
+        // ── Receive (external) keychain ────────────────────────────────
+        val usedSummary = collectLiquidUsedIndices(wollet)
+        val currentReceive =
+            runCatching {
+                resolveEarliestUnusedLiquidExternalAddress(
+                    wollet = wollet,
+                    walletId = walletId,
+                )
+            }.getOrNull()
 
         try {
-            val currentReceive = wollet.address(null)
             val lastExternalIndex = maxOf(
-                currentReceive.index(),
-                _liquidState.value.currentAddressIndex ?: 0u,
+                currentReceive?.index?.toInt() ?: -1,
+                usedSummary.highestExternalUsedIndex,
+                maxExternalIndexFromTxos,
             )
 
-            for (i in 0u..lastExternalIndex) {
-                val address = wollet.address(i).address().toString()
-                val isUsed = (addressTxCounts[address] ?: 0) > 0 || address in addressesWithUtxos
-                val balance = addressBalances[address] ?: 0UL
-
-                val walletAddress =
-                    WalletAddress(
-                        address = address,
-                        index = i,
-                        keychain = KeychainType.EXTERNAL,
-                        label = labels[address],
-                        balanceSats = balance,
-                        transactionCount = addressTxCounts[address] ?: 0,
-                        isUsed = isUsed,
-                    )
-
-                if (isUsed) {
-                    usedAddresses.add(walletAddress)
-                } else {
-                    receiveAddresses.add(walletAddress)
+            if (lastExternalIndex >= 0) {
+                for (i in 0..lastExternalIndex) {
+                    val index = i.toUInt()
+                    val address = liquidExternalAddressAt(wollet, index)
+                    val txCount = externalTxCountByIndex[index] ?: 0
+                    val isUsed = txCount > 0 || address in addressesWithUtxos
+                    val balance = balanceByAddress[address] ?: 0UL
+                    val entry =
+                        WalletAddress(
+                            address = address,
+                            index = index,
+                            keychain = KeychainType.EXTERNAL,
+                            label = labels[address],
+                            balanceSats = balance,
+                            transactionCount = txCount,
+                            isUsed = isUsed,
+                        )
+                    if (isUsed) usedAddresses.add(entry) else receiveAddresses.add(entry)
                 }
             }
 
-            val nextIndex = lastExternalIndex + 1u
+            val nextIndex = (lastExternalIndex + 1).coerceAtLeast(0).toUInt()
             val extraCount = maxOf(1, ADDRESS_PEEK_AHEAD - receiveAddresses.size)
             for (offset in 0 until extraCount) {
                 val index = nextIndex + offset.toUInt()
-                val address = wollet.address(index).address().toString()
+                val address = liquidExternalAddressAt(wollet, index)
                 receiveAddresses.add(
                     WalletAddress(
                         address = address,
@@ -3690,7 +4002,8 @@ class LiquidRepository(
 
     suspend fun createLightningInvoice(
         amountSats: Long,
-        label: String?,
+        localLabel: String?,
+        embeddedLabel: String?,
     ): LightningInvoiceCreation = withContext(Dispatchers.IO) {
         require(amountSats > 0) { "Amount must be greater than zero" }
         val walletId = currentWalletId ?: throw Exception("Wallet not loaded")
@@ -3707,8 +4020,9 @@ class LiquidRepository(
 
         try {
             val claimAddress = generateFreshAddress() ?: throw Exception("No Liquid address available")
-            val trimmedLabel = label?.trim().orEmpty()
-            val response = createBoltzLightningInvoiceResponse(amountSats, claimAddress)
+            val trimmedLocalLabel = localLabel?.trim().orEmpty()
+            val trimmedEmbeddedLabel = embeddedLabel?.trim()?.takeIf { it.isNotEmpty() }
+            val response = createBoltzLightningInvoiceResponse(amountSats, claimAddress, trimmedEmbeddedLabel)
             val swapId = response.swapId()
             val snapshot = response.serialize()
             invoiceResponses[swapId] = response
@@ -3716,7 +4030,7 @@ class LiquidRepository(
                 walletId = walletId,
                 swapId = swapId,
                 claimAddress = claimAddress,
-                label = trimmedLabel,
+                label = trimmedLocalLabel,
             )
             persistLightningInvoiceSession(
                 PendingLightningInvoiceSession(
@@ -3751,6 +4065,7 @@ class LiquidRepository(
     private suspend fun createBoltzLightningInvoiceResponse(
         invoiceAmountSats: Long,
         claimAddress: String,
+        embeddedLabel: String?,
     ): InvoiceResponse {
         val startedAt = System.currentTimeMillis()
         val traceStartedAt = boltzTraceStart()
@@ -3767,9 +4082,7 @@ class LiquidRepository(
             fun createInvoiceWithSession(session: BoltzSession, attempt: Int): InvoiceResponse {
                 return session.invoice(
                     invoiceAmountSats.toULong(),
-                    // Keep labels local so they can be attached to the final L-BTC tx
-                    // without depending on Boltz's optional description handling.
-                    null,
+                    embeddedLabel,
                     address,
                     null,
                 ).also {
@@ -4854,9 +5167,12 @@ class LiquidRepository(
         val mnemonic = secureStorage.getMnemonic(walletId)
             ?: throw Exception("Liquid signer is unavailable for refund key derivation")
         val passphrase = secureStorage.getPassphrase(walletId)
-        val refundAddressResult = wollet.address(null)
-        val refundAddress = refundAddressResult.address().toString()
-        val refundIndex = refundAddressResult.index().toLong()
+        val refundAddressResult = resolveEarliestUnusedLiquidExternalAddress(
+            wollet = wollet,
+            walletId = walletId,
+        )
+        val refundAddress = refundAddressResult.address
+        val refundIndex = refundAddressResult.index.toLong()
         val seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, passphrase)
         val refundPublicKey =
             ElectrumSeedUtil.deriveCompressedPublicKeyHex(
@@ -5054,7 +5370,7 @@ class LiquidRepository(
                     Exception("Timeout preparing chain swap", e),
                 )
                 throw Exception(
-                    "Boltz took too long to prepare the swap review. Ibis retried automatically once. Retry again if needed.",
+                    "Boltz took too long to prepare the swap review. Retry when you're ready.",
                 )
             }
             logWarn(
@@ -5181,54 +5497,37 @@ class LiquidRepository(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    if (!shouldRetryBoltzChainSwapCreation(e)) {
-                        throw e
-                    }
-                    val retryReason =
-                        if (isBoltzNextIndexCollision(e)) {
-                            "next_index_collision"
-                        } else {
-                            "timeout"
-                        }
-                    logBoltzTrace(
-                        "retrying",
-                        trace.copy(attempt = 2),
-                        level = BoltzTraceLevel.WARN,
-                        throwable = e,
-                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                        "direction" to direction.name,
-                        "amountSats" to amountSats,
-                        "reason" to retryReason,
-                    )
-                    if (isBoltzNextIndexCollision(e)) {
-                        clearBoltzSessionNextIndexCache()
-                    }
-                    if (hasActiveBoltzResponses()) {
+                    if (shouldRetryBoltzChainSwapCreation(e)) {
+                        val resetReason =
+                            if (isBoltzNextIndexCollision(e)) {
+                                "next_index_collision"
+                            } else {
+                                "timeout"
+                            }
                         logBoltzTrace(
-                            "retry_skipped",
-                            trace.copy(attempt = 2),
+                            "reset_after_failure",
+                            trace.copy(attempt = 1),
                             level = BoltzTraceLevel.WARN,
                             throwable = e,
                             "elapsedMs" to boltzElapsedMs(traceStartedAt),
                             "direction" to direction.name,
                             "amountSats" to amountSats,
-                            "reason" to "$retryReason.active_responses",
+                            "reason" to resetReason,
                         )
-                        throw e
-                    }
-                    logWarn(
                         if (isBoltzNextIndexCollision(e)) {
-                            "Boltz chain swap creation hit a stale next-index collision, retrying with uncached session state"
-                        } else {
-                            "Boltz chain swap creation timed out, retrying with fresh session"
-                        },
-                        e,
-                    )
-                    destroyBoltzSession(persistNextIndex = !isBoltzNextIndexCollision(e))
-                    val retrySessionStartedAt = System.currentTimeMillis()
-                    val retrySession = ensureBoltzSession()
-                    val retrySessionElapsedMs = System.currentTimeMillis() - retrySessionStartedAt
-                    createOrderWithSession(retrySession, retrySessionElapsedMs, attempt = 2)
+                            clearBoltzSessionNextIndexCache()
+                        }
+                        logWarn(
+                            if (isBoltzNextIndexCollision(e)) {
+                                "Boltz chain swap creation hit a stale next-index collision; waiting for user retry on a fresh session"
+                            } else {
+                                "Boltz chain swap creation timed out; waiting for user retry on a fresh session"
+                            },
+                            e,
+                        )
+                        destroyBoltzSession(persistNextIndex = !isBoltzNextIndexCollision(e))
+                    }
+                    throw e
                 }
 
             val swapId = response.swapId()
@@ -5735,6 +6034,12 @@ class LiquidRepository(
             return
         }
         secureStorage.saveLiquidTransactionLabel(walletId, txid, trimmedLabel)
+        electrumCache.updateTransactionSearchLabel(
+            walletId = walletId,
+            layer = TransactionSearchLayer.LIQUID,
+            txid = txid,
+            label = trimmedLabel,
+        )
         recipientAddress
             ?.takeIf { it.isNotBlank() }
             ?.let { secureStorage.saveLiquidAddressLabel(walletId, it, trimmedLabel) }

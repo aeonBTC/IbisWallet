@@ -81,71 +81,47 @@ class BoltzChainSwapWorkflow(
         )
 
         var lastError: Throwable? = null
-        for (attempt in 1..MAX_CREATE_ATTEMPTS) {
+        val attempt = 1
+        logDebug(
+            "Create attempt=$attempt requestKey=${activeDraft.requestKey} direction=${activeDraft.direction} " +
+                "amount=${activeDraft.sendAmount}",
+        )
+        try {
+            val order = createOrder()
+            requireValidOrder(order)
+            activeDraft =
+                activeDraft.copy(
+                    swapId = order.swapId,
+                    depositAddress = order.lockupAddress,
+                    receiveAddress = order.receiveAddress,
+                    refundAddress = order.refundAddress,
+                    snapshot = order.snapshot,
+                    state = BoltzChainSwapDraftState.CREATED_UNREVIEWED,
+                    updatedAt = nowMs(),
+                    lastError = null,
+                )
+            saveDraft(activeDraft)
             logDebug(
-                "Create attempt=$attempt requestKey=${activeDraft.requestKey} direction=${activeDraft.direction} " +
-                    "amount=${activeDraft.sendAmount}",
+                "Create succeeded attempt=$attempt requestKey=${activeDraft.requestKey} swapId=${activeDraft.swapId} " +
+                    "lockup=${summarizeValue(activeDraft.depositAddress)} state=${activeDraft.state}",
             )
-            try {
-                val order = createOrder()
-                requireValidOrder(order)
-                activeDraft =
-                    activeDraft.copy(
-                        swapId = order.swapId,
-                        depositAddress = order.lockupAddress,
-                        receiveAddress = order.receiveAddress,
-                        refundAddress = order.refundAddress,
-                        snapshot = order.snapshot,
-                        state = BoltzChainSwapDraftState.CREATED_UNREVIEWED,
-                        updatedAt = nowMs(),
-                        lastError = null,
-                    )
-                saveDraft(activeDraft)
+            return CreatedDraftResult(
+                draft = activeDraft,
+                usedExistingDraft = false,
+            )
+        } catch (error: Throwable) {
+            lastError = error
+            val failureKind = classifyFailure(error)
+            logWarn(
+                "Create failed attempt=$attempt requestKey=${activeDraft.requestKey} failureKind=$failureKind " +
+                    "message=${error.message}",
+                error,
+            )
+            if (failureKind == CreateFailureKind.APP_TIMEOUT || failureKind == CreateFailureKind.PROVIDER_TIMEOUT) {
                 logDebug(
-                    "Create succeeded attempt=$attempt requestKey=${activeDraft.requestKey} swapId=${activeDraft.swapId} " +
-                        "lockup=${summarizeValue(activeDraft.depositAddress)} state=${activeDraft.state}",
+                    "Resetting Boltz session after timeout requestKey=${activeDraft.requestKey} attempt=$attempt",
                 )
-                return CreatedDraftResult(
-                    draft = activeDraft,
-                    usedExistingDraft = false,
-                )
-            } catch (error: Throwable) {
-                lastError = error
-                val failureKind = classifyFailure(error)
-                logWarn(
-                    "Create failed attempt=$attempt requestKey=${activeDraft.requestKey} failureKind=$failureKind " +
-                        "message=${error.message}",
-                    error,
-                )
-                if (failureKind == CreateFailureKind.APP_TIMEOUT || failureKind == CreateFailureKind.PROVIDER_TIMEOUT) {
-                    if (attempt < MAX_CREATE_ATTEMPTS) {
-                        activeDraft =
-                            activeDraft.copy(
-                                updatedAt = nowMs(),
-                                lastError = error.message,
-                            )
-                        saveDraft(activeDraft)
-                        logDebug(
-                            "Persisted retryable timeout state requestKey=${activeDraft.requestKey} " +
-                                "lastError=${activeDraft.lastError}",
-                        )
-                        logDebug(
-                            "Resetting Boltz session before retry requestKey=${activeDraft.requestKey} " +
-                                "attempt=${attempt + 1}",
-                        )
-                        resetSession()
-                        logDebug(
-                            "Retrying Boltz create on fresh session requestKey=${activeDraft.requestKey} " +
-                                "attempt=${attempt + 1}",
-                        )
-                        continue
-                    }
-                    logDebug(
-                        "Resetting Boltz session after repeated timeout requestKey=${activeDraft.requestKey} attempt=$attempt",
-                    )
-                    resetSession()
-                }
-                break
+                resetSession()
             }
         }
 
@@ -157,7 +133,7 @@ class BoltzChainSwapWorkflow(
             )
         saveDraft(failedDraft)
         logWarn(
-            "Create exhausted retries requestKey=${failedDraft.requestKey} state=${failedDraft.state} " +
+            "Create failed requestKey=${failedDraft.requestKey} state=${failedDraft.state} " +
                 "lastError=${failedDraft.lastError}",
             lastError,
         )
@@ -327,6 +303,5 @@ class BoltzChainSwapWorkflow(
 
     private companion object {
         private const val TAG = "BoltzDebug"
-        private const val MAX_CREATE_ATTEMPTS = 2
     }
 }

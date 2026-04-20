@@ -128,6 +128,7 @@ data class TransactionDetails(
     val changeAddress: String? = null, // Change address for sent transactions (if applicable)
     val changeAmount: ULong? = null, // Amount returned as change
     val isSelfTransfer: Boolean = false, // True when sending to yourself (all outputs are yours)
+    val swapDetails: LiquidSwapDetails? = null,
 ) {
     /** Ceiled vsize = ceil(weight / 4) matching Bitcoin Core / mempool.space */
     val vsize: Double?
@@ -316,6 +317,7 @@ data class Recipient(
  */
 data class PsbtDetails(
     val psbtBase64: String,
+    val signerExportPsbtBase64: String,
     val feeSats: ULong,
     val recipientAddress: String,
     val recipientAmountSats: ULong,
