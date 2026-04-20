@@ -4,6 +4,7 @@ import android.content.Context
 
 data class ConnectivityKeepAliveSnapshot(
     val foregroundConnectivityEnabled: Boolean = false,
+    val appInForeground: Boolean = true,
     val bitcoinConnected: Boolean = false,
     val bitcoinElectrumUsesTor: Boolean = false,
     val bitcoinExternalTorRequired: Boolean = false,
@@ -25,7 +26,8 @@ data class ConnectivityKeepAliveSnapshot(
 
     val shouldRunForegroundService: Boolean
         get() =
-            foregroundConnectivityEnabled &&
+            !appInForeground &&
+                foregroundConnectivityEnabled &&
                 (
                     hasAnyElectrumConnection ||
                         hasExternalTorRequirement
@@ -36,6 +38,7 @@ object ConnectivityKeepAlivePolicy {
     private val lock = Any()
 
     private var foregroundConnectivityEnabled = false
+    private var appInForeground = true
     private var bitcoinConnected = false
     private var bitcoinElectrumUsesTor = false
     private var bitcoinExternalTorRequired = false
@@ -49,6 +52,16 @@ object ConnectivityKeepAlivePolicy {
     ) {
         synchronized(lock) {
             foregroundConnectivityEnabled = enabled
+            syncForegroundServiceLocked(context)
+        }
+    }
+
+    fun updateAppForegroundState(
+        context: Context,
+        isInForeground: Boolean,
+    ) {
+        synchronized(lock) {
+            appInForeground = isInForeground
             syncForegroundServiceLocked(context)
         }
     }
@@ -86,6 +99,17 @@ object ConnectivityKeepAlivePolicy {
             snapshotLocked()
         }
 
+    /**
+     * Returns true when the user has opted in to the background foreground
+     * service that keeps Electrum sockets alive. ViewModels check this to
+     * decide whether to keep heartbeats / reconnect loops running while the
+     * app is backgrounded.
+     */
+    fun isForegroundConnectivityEnabled(): Boolean =
+        synchronized(lock) {
+            foregroundConnectivityEnabled
+        }
+
     fun hasAnyTorRequirement(): Boolean =
         synchronized(lock) {
             snapshotLocked().hasAnyTorRequirement
@@ -113,6 +137,7 @@ object ConnectivityKeepAlivePolicy {
     private fun snapshotLocked(): ConnectivityKeepAliveSnapshot =
         ConnectivityKeepAliveSnapshot(
             foregroundConnectivityEnabled = foregroundConnectivityEnabled,
+            appInForeground = appInForeground,
             bitcoinConnected = bitcoinConnected,
             bitcoinElectrumUsesTor = bitcoinElectrumUsesTor,
             bitcoinExternalTorRequired = bitcoinExternalTorRequired,

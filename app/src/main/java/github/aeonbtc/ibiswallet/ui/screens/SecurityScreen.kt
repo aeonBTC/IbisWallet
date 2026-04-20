@@ -2428,7 +2428,7 @@ private fun DuressSetupScreen(
                                     enabled = !(seedSource == DuressSeedSource.EXISTING && isExtendedKey),
                                 )
                                 Text(
-                                    text = "Use Passphrase",
+                                    text = "BIP39 Passphrase",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color =
                                         if (seedSource == DuressSeedSource.EXISTING && isExtendedKey) {
@@ -2504,7 +2504,7 @@ private fun DuressSetupScreen(
                                         .fillMaxWidth()
                                         .height(36.dp)
                                         .clip(RoundedCornerShape(8.dp))
-                                        .clickable(enabled = !(seedSource == DuressSeedSource.EXISTING && isExtendedKey)) {
+                                        .clickable {
                                             useCustomPath = !useCustomPath
                                         },
                                 verticalAlignment = Alignment.CenterVertically,
@@ -2517,17 +2517,11 @@ private fun DuressSetupScreen(
                                             checkedColor = BitcoinOrange,
                                             uncheckedColor = TextSecondary,
                                         ),
-                                    enabled = !(seedSource == DuressSeedSource.EXISTING && isExtendedKey),
                                 )
                                 Text(
-                                    text = "Use Custom Derivation Path",
+                                    text = "Custom Derivation Path",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color =
-                                        if (seedSource == DuressSeedSource.EXISTING && isExtendedKey) {
-                                            TextSecondary.copy(alpha = 0.5f)
-                                        } else {
-                                            MaterialTheme.colorScheme.onBackground
-                                        },
+                                    color = MaterialTheme.colorScheme.onBackground,
                                 )
                             }
 
@@ -2550,7 +2544,7 @@ private fun DuressSetupScreen(
                                         ),
                                 )
                                 Text(
-                                    text = "Set Custom Gap Limit",
+                                    text = "Custom Gap Limit",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -2603,7 +2597,7 @@ private fun DuressSetupScreen(
                             }
 
                             AnimatedVisibility(
-                                visible = useCustomPath && !(seedSource == DuressSeedSource.EXISTING && isExtendedKey),
+                                visible = useCustomPath,
                                 enter = expandVertically(),
                                 exit = shrinkVertically(),
                             ) {

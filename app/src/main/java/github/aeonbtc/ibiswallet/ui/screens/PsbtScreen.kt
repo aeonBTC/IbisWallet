@@ -10,12 +10,14 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -59,6 +61,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,7 +76,10 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrCode
+import github.aeonbtc.ibiswallet.ui.components.AnimatedQrCodeBytes
+import github.aeonbtc.ibiswallet.ui.components.AnimatedQrExportProfile
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.rememberAnimatedQrEncodingPlan
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
@@ -81,6 +87,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.Bbqr
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
 import github.aeonbtc.ibiswallet.viewmodel.PsbtState
@@ -94,6 +101,26 @@ import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
  * 2. Scan the signed PSBT/raw transaction back from the hardware wallet
  * 3. Confirm transaction details before broadcasting
  */
+private enum class PsbtQrExportFormat {
+    BC_UR,
+    BBQR,
+}
+
+private data class BbqrVersionRange(
+    val minVersion: Int,
+    val maxVersion: Int,
+)
+
+private val OPTIMAL_BCUR_PLAYBACK_SPEED = SecureStorage.QrPlaybackSpeed.FAST
+private const val OPTIMAL_BBQR_FRAME_DELAY_MS = 220L
+
+private fun resolvePsbtBbqrVersionRange(density: SecureStorage.QrDensity): BbqrVersionRange =
+    when (density) {
+        SecureStorage.QrDensity.LOW -> BbqrVersionRange(minVersion = 8, maxVersion = 12)
+        SecureStorage.QrDensity.MEDIUM -> BbqrVersionRange(minVersion = 8, maxVersion = 14)
+        SecureStorage.QrDensity.HIGH -> BbqrVersionRange(minVersion = 10, maxVersion = 18)
+    }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PsbtScreen(
@@ -101,8 +128,6 @@ fun PsbtScreen(
     uiState: WalletUiState,
     qrDensity: SecureStorage.QrDensity,
     onQrDensityChange: (SecureStorage.QrDensity) -> Unit,
-    qrPlaybackSpeed: SecureStorage.QrPlaybackSpeed,
-    onQrPlaybackSpeedChange: (SecureStorage.QrPlaybackSpeed) -> Unit,
     qrBrightness: Float,
     onQrBrightnessChange: (Float) -> Unit,
     onSignedDataReceived: (String) -> Unit,
@@ -113,19 +138,27 @@ fun PsbtScreen(
     val context = LocalContext.current
     var showScanner by remember { mutableStateOf(false) }
     var showPasteDialog by remember { mutableStateOf(false) }
+    var qrExportFormat by rememberSaveable { mutableStateOf(PsbtQrExportFormat.BC_UR) }
+    val signerExportPsbtBase64 = psbtState.signerExportPsbtBase64 ?: psbtState.unsignedPsbtBase64
+    val signerExportPsbtBytes =
+        remember(signerExportPsbtBase64) {
+            signerExportPsbtBase64?.let {
+                android.util.Base64.decode(it, android.util.Base64.DEFAULT)
+            }
+        }
 
     // File picker for saving unsigned PSBT
     val savePsbtLauncher =
         rememberLauncherForActivityResult(
             contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
         ) { uri: Uri? ->
-            if (uri != null && psbtState.unsignedPsbtBase64 != null) {
+            if (uri != null && signerExportPsbtBase64 != null) {
                 try {
                     context.contentResolver.openOutputStream(uri)?.use { stream ->
                         // Write raw PSBT bytes (base64-decoded) for maximum compatibility
                         val bytes =
                             android.util.Base64.decode(
-                                psbtState.unsignedPsbtBase64,
+                                signerExportPsbtBase64,
                                 android.util.Base64.DEFAULT,
                             )
                         stream.write(bytes)
@@ -258,7 +291,7 @@ fun PsbtScreen(
                 }
 
                 // PSBT ready - show QR and scan button
-                psbtState.unsignedPsbtBase64 != null -> {
+                signerExportPsbtBase64 != null -> {
                     // Step 1 - Export PSBT
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -301,9 +334,9 @@ fun PsbtScreen(
                                     modifier = Modifier.width(156.dp),
                                 )
 
-                                QrPlaybackSpeedDropdown(
-                                    currentSpeed = qrPlaybackSpeed,
-                                    onSpeedSelected = onQrPlaybackSpeedChange,
+                                QrExportFormatDropdown(
+                                    currentFormat = qrExportFormat,
+                                    onFormatSelected = { qrExportFormat = it },
                                     modifier = Modifier.width(156.dp),
                                 )
                             }
@@ -317,14 +350,50 @@ fun PsbtScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Animated QR code
-                            AnimatedQrCode(
-                                dataBase64 = psbtState.unsignedPsbtBase64,
-                                qrSize = 280.dp,
-                                density = qrDensity,
-                                brightness = qrBrightness,
-                                playbackSpeed = qrPlaybackSpeed,
-                            )
+                            BoxWithConstraints(
+                                modifier = Modifier.fillMaxWidth(),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                val bbqrVersionRange = resolvePsbtBbqrVersionRange(qrDensity)
+                                val exportQrSize =
+                                    if (maxWidth > 32.dp) {
+                                        maxWidth - 32.dp
+                                    } else {
+                                        maxWidth
+                                    }
+
+                                when (qrExportFormat) {
+                                    PsbtQrExportFormat.BC_UR -> {
+                                        val qrEncodingPlan =
+                                            rememberAnimatedQrEncodingPlan(
+                                                dataBase64 = signerExportPsbtBase64,
+                                                density = qrDensity,
+                                                exportProfile = AnimatedQrExportProfile.BITCOIN_PSBT,
+                                            )
+
+                                        AnimatedQrCode(
+                                            encodingPlan = qrEncodingPlan,
+                                            qrSize = exportQrSize,
+                                            brightness = qrBrightness,
+                                            playbackSpeed = OPTIMAL_BCUR_PLAYBACK_SPEED,
+                                        )
+                                    }
+
+                                    PsbtQrExportFormat.BBQR -> {
+                                        signerExportPsbtBytes?.let { psbtBytes ->
+                                            AnimatedQrCodeBytes(
+                                                data = psbtBytes,
+                                                qrSize = exportQrSize,
+                                                frameDelayMs = OPTIMAL_BBQR_FRAME_DELAY_MS,
+                                                fileType = Bbqr.FILE_TYPE_PSBT,
+                                                brightness = qrBrightness,
+                                                minVersion = bbqrVersionRange.minVersion,
+                                                maxVersion = bbqrVersionRange.maxVersion,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
 
                             Spacer(modifier = Modifier.height(12.dp))
 
@@ -361,7 +430,7 @@ fun PsbtScreen(
                                         SecureClipboard.copyAndScheduleClear(
                                             context,
                                             "PSBT",
-                                            psbtState.unsignedPsbtBase64,
+                                            signerExportPsbtBase64,
                                         )
                                         Toast.makeText(context, "PSBT copied", Toast.LENGTH_SHORT).show()
                                     },
@@ -952,33 +1021,28 @@ private fun QrDensityDropdown(
 }
 
 @Composable
-private fun QrPlaybackSpeedDropdown(
-    currentSpeed: SecureStorage.QrPlaybackSpeed,
-    onSpeedSelected: (SecureStorage.QrPlaybackSpeed) -> Unit,
+private fun QrExportFormatDropdown(
+    currentFormat: PsbtQrExportFormat,
+    onFormatSelected: (PsbtQrExportFormat) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val options =
         listOf(
             QrDropdownOption(
-                title = "Slow",
-                onClick = { onSpeedSelected(SecureStorage.QrPlaybackSpeed.SLOW) },
-                selected = currentSpeed == SecureStorage.QrPlaybackSpeed.SLOW,
+                title = "BC-UR",
+                onClick = { onFormatSelected(PsbtQrExportFormat.BC_UR) },
+                selected = currentFormat == PsbtQrExportFormat.BC_UR,
             ),
             QrDropdownOption(
-                title = "Medium",
-                onClick = { onSpeedSelected(SecureStorage.QrPlaybackSpeed.MEDIUM) },
-                selected = currentSpeed == SecureStorage.QrPlaybackSpeed.MEDIUM,
-            ),
-            QrDropdownOption(
-                title = "Fast",
-                onClick = { onSpeedSelected(SecureStorage.QrPlaybackSpeed.FAST) },
-                selected = currentSpeed == SecureStorage.QrPlaybackSpeed.FAST,
+                title = "BBQr",
+                onClick = { onFormatSelected(PsbtQrExportFormat.BBQR) },
+                selected = currentFormat == PsbtQrExportFormat.BBQR,
             ),
         )
 
     QrDropdown(
-        currentValue = currentSpeed.displayName(),
-        label = "QR Speed",
+        currentValue = currentFormat.displayName(),
+        label = "QR Format",
         options = options,
         modifier = modifier,
     )
@@ -991,11 +1055,10 @@ private fun SecureStorage.QrDensity.displayName(): String =
         SecureStorage.QrDensity.HIGH -> "High"
     }
 
-private fun SecureStorage.QrPlaybackSpeed.displayName(): String =
+private fun PsbtQrExportFormat.displayName(): String =
     when (this) {
-        SecureStorage.QrPlaybackSpeed.SLOW -> "Slow"
-        SecureStorage.QrPlaybackSpeed.MEDIUM -> "Medium"
-        SecureStorage.QrPlaybackSpeed.FAST -> "Fast"
+        PsbtQrExportFormat.BC_UR -> "BC-UR"
+        PsbtQrExportFormat.BBQR -> "BBQr"
     }
 
 private data class QrDropdownOption(
@@ -1099,7 +1162,7 @@ private fun QrDropdownField(
         modifier =
             modifier
                 .fillMaxWidth()
-                .height(56.dp),
+                .heightIn(min = 60.dp),
     )
 }
 

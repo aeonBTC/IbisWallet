@@ -47,6 +47,8 @@ fun SquareToggle(
     trackHeight: Dp = 24.dp,
     thumbSize: Dp = 18.dp,
     thumbPadding: Dp = 3.dp,
+    trackCornerRadius: Dp = 4.dp,
+    thumbCornerRadius: Dp = 3.dp,
 ) {
     // Animate thumb position
     val thumbOffset by animateDpAsState(
@@ -99,9 +101,9 @@ fun SquareToggle(
             modifier
                 .width(trackWidth)
                 .height(trackHeight)
-                .clip(RoundedCornerShape(4.dp))
+                .clip(RoundedCornerShape(trackCornerRadius))
                 .background(trackColor)
-                .border(1.dp, borderColor, RoundedCornerShape(4.dp))
+                .border(1.dp, borderColor, RoundedCornerShape(trackCornerRadius))
                 .clickable(
                     enabled = enabled,
                     indication = null,
@@ -116,7 +118,7 @@ fun SquareToggle(
                     .padding(thumbPadding)
                     .offset(x = thumbOffset)
                     .size(thumbSize)
-                    .clip(RoundedCornerShape(3.dp))
+                    .clip(RoundedCornerShape(thumbCornerRadius))
                     .background(thumbColor),
         )
     }

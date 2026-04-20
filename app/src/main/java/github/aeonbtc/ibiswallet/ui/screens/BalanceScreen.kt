@@ -4,10 +4,16 @@ package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
 import android.graphics.Bitmap
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -33,12 +39,15 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -46,10 +55,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -75,6 +87,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
@@ -92,8 +106,16 @@ import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
+import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
+import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
+import github.aeonbtc.ibiswallet.data.model.SwapDirection
+import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.WalletState
+import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
+import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
+import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.MAX_FEE_RATE_SAT_VB
@@ -101,6 +123,8 @@ import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.StatusBadge
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
+import github.aeonbtc.ibiswallet.ui.components.shouldShowBoltzRescueKey
+import github.aeonbtc.ibiswallet.ui.theme.AccentBlue
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
@@ -113,15 +137,17 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
-import github.aeonbtc.ibiswallet.util.matchesTimestampSearch
+import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Method for speeding up a transaction
@@ -130,28 +156,6 @@ enum class SpeedUpMethod {
     RBF,
     CPFP,
     REDIRECT,
-}
-
-private fun filterTransactionsForSearch(
-    transactions: List<TransactionDetails>,
-    transactionLabels: Map<String, String>,
-    addressLabels: Map<String, String>,
-    searchQuery: String,
-): List<TransactionDetails> {
-    val trimmedQuery = searchQuery.trim()
-    if (trimmedQuery.isBlank()) return transactions
-
-    return transactions.filter { tx ->
-        val txLabel = transactionLabels[tx.txid]
-        val addressLabel = tx.address?.let { addressLabels[it] }
-        val address = tx.address.orEmpty()
-
-        tx.txid.contains(trimmedQuery, ignoreCase = true) ||
-            txLabel?.contains(trimmedQuery, ignoreCase = true) == true ||
-            addressLabel?.contains(trimmedQuery, ignoreCase = true) == true ||
-            address.contains(trimmedQuery, ignoreCase = true) ||
-            matchesTimestampSearch(tx.timestamp, trimmedQuery)
-    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -173,14 +177,20 @@ fun BalanceScreen(
     canCpfp: (String) -> Boolean = { false },
     onBumpFee: (String, Double) -> Unit = { _, _ -> },
     onCpfp: (String, Double) -> Unit = { _, _ -> },
-    onRedirectTransaction: (String, Double) -> Unit = { _, _ -> },
+    onRedirectTransaction: (String, Double, String?) -> Unit = { _, _, _ -> },
     onSaveTransactionLabel: (String, String) -> Unit = { _, _ -> },
+    onDeleteTransactionLabel: (String) -> Unit = {},
+    onSaveAddressLabelFromTransaction: (String, String) -> Unit = { _, _ -> },
+    onDeleteAddressLabelFromTransaction: (String) -> Unit = {},
+    searchTransactions: suspend (String, Boolean, Int) -> TransactionSearchResult =
+        { _, _, _ -> TransactionSearchResult(emptyList(), 0) },
     onFetchTxVsize: suspend (String) -> Double? = { null },
     onRefreshFees: () -> Unit = {},
     onSync: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
     onManageWallets: () -> Unit = {},
     onScanQrResult: (String) -> Unit = {},
+    boltzRescueMnemonic: String? = null,
     showLayer2RequiredPlaceholder: Boolean = false,
     onOpenSettings: () -> Unit = {},
 ) {
@@ -204,11 +214,13 @@ fun BalanceScreen(
     // Search state
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var showSwapTransactions by remember { mutableStateOf(false) }
 
     // Transaction display limit (progressive loading)
     var displayLimit by remember { mutableIntStateOf(25) }
 
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
+    val hasSwapTransactions = walletState.transactions.any { it.swapDetails != null }
 
     // NFC reader mode: tapping an NFC tag with a bitcoin address or URI
     // routes through pendingSendInput -> Send screen.
@@ -231,10 +243,12 @@ fun BalanceScreen(
     selectedTransaction?.let { tx ->
         val txCanRbf = canBumpFee(tx.txid)
         val txCanCpfp = canCpfp(tx.txid)
-        val txLabel = transactionLabels[tx.txid] ?: tx.address?.let { addressLabels[it] }
+        val explicitTxLabel = transactionLabels[tx.txid]
+        val txLabel = explicitTxLabel ?: tx.address?.let { addressLabels[it] }
 
         TransactionDetailDialog(
             transaction = tx,
+            currentBlockHeight = walletState.blockHeight,
             useSats = useSats,
             mempoolUrl = mempoolUrl,
             mempoolServer = mempoolServer,
@@ -249,14 +263,29 @@ fun BalanceScreen(
             minFeeRate = minFeeRate,
             onFetchVsize = onFetchTxVsize,
             onRefreshFees = onRefreshFees,
-            onSpeedUp = { method, feeRate ->
+            onSpeedUp = { method, feeRate, destinationAddress ->
                 when (method) {
                     SpeedUpMethod.RBF -> onBumpFee(tx.txid, feeRate)
                     SpeedUpMethod.CPFP -> onCpfp(tx.txid, feeRate)
-                    SpeedUpMethod.REDIRECT -> onRedirectTransaction(tx.txid, feeRate)
+                    SpeedUpMethod.REDIRECT -> onRedirectTransaction(tx.txid, feeRate, destinationAddress)
                 }
             },
-            onSaveLabel = { label -> onSaveTransactionLabel(tx.txid, label) },
+            onSaveLabel = { label ->
+                onSaveTransactionLabel(tx.txid, label)
+                tx.address
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { onSaveAddressLabelFromTransaction(it, label) }
+            },
+            onDeleteLabel =
+                explicitTxLabel?.let {
+                    {
+                        onDeleteTransactionLabel(tx.txid)
+                        tx.address
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let(onDeleteAddressLabelFromTransaction)
+                    }
+                },
+            boltzRescueMnemonic = boltzRescueMnemonic,
             onDismiss = { selectedTransaction = null },
         )
     }
@@ -273,37 +302,52 @@ fun BalanceScreen(
         }
     }
 
-    var filteredTransactions by remember { mutableStateOf(walletState.transactions) }
-    var appliedSearchQuery by remember { mutableStateOf("") }
+    LaunchedEffect(hasSwapTransactions) {
+        if (!hasSwapTransactions) {
+            showSwapTransactions = false
+        }
+    }
+
+    val sourceFilteredTransactions =
+        remember(walletState.transactions, showSwapTransactions) {
+            if (showSwapTransactions) {
+                walletState.transactions.filter { it.swapDetails != null }
+            } else {
+                walletState.transactions
+            }
+        }
+    val transactionsById = remember(walletState.transactions) { walletState.transactions.associateBy { it.txid } }
+    var searchResultTxids by remember { mutableStateOf<List<String>>(emptyList()) }
+    var searchTotalCount by remember { mutableIntStateOf(0) }
     var isSearchFiltering by remember { mutableStateOf(false) }
 
-    LaunchedEffect(walletState.transactions, transactionLabels, addressLabels, searchQuery) {
+    LaunchedEffect(isSearchActive, searchQuery.trim(), showSwapTransactions) {
+        displayLimit = 25
+    }
+
+    LaunchedEffect(
+        walletState.transactions,
+        transactionLabels,
+        addressLabels,
+        searchQuery,
+        showSwapTransactions,
+        displayLimit,
+    ) {
         val trimmedQuery = searchQuery.trim()
         if (trimmedQuery.isBlank()) {
-            filteredTransactions = walletState.transactions
-            appliedSearchQuery = ""
+            searchResultTxids = emptyList()
+            searchTotalCount = sourceFilteredTransactions.size
             isSearchFiltering = false
             return@LaunchedEffect
         }
 
         isSearchFiltering = true
+        searchResultTxids = emptyList()
+        searchTotalCount = 0
         kotlinx.coroutines.delay(150)
-
-        val transactions = walletState.transactions.toList()
-        val txLabelMap = transactionLabels.toMap()
-        val addressLabelMap = addressLabels.toMap()
-        val filtered =
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                filterTransactionsForSearch(
-                    transactions = transactions,
-                    transactionLabels = txLabelMap,
-                    addressLabels = addressLabelMap,
-                    searchQuery = trimmedQuery,
-                )
-            }
-
-        filteredTransactions = filtered
-        appliedSearchQuery = trimmedQuery
+        val result = searchTransactions(trimmedQuery, showSwapTransactions, displayLimit)
+        searchResultTxids = result.txids
+        searchTotalCount = result.totalCount
         isSearchFiltering = false
     }
 
@@ -356,7 +400,7 @@ fun BalanceScreen(
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .height(28.dp)
+                                    .height(32.dp)
                                     .padding(bottom = 4.dp)
                                     .align(Alignment.TopCenter),
                         ) {
@@ -365,17 +409,35 @@ fun BalanceScreen(
                                 contentAlignment = Alignment.Center,
                                 modifier =
                                     Modifier
-                                        .size(28.dp)
+                                        .size(32.dp)
                                         .align(Alignment.CenterStart)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(DarkSurfaceVariant)
-                                        .clickable { onTogglePrivacy() },
+                                        .pointerInput(privacyMode) {
+                                            awaitEachGesture {
+                                                awaitFirstDown(requireUnconsumed = false)
+                                                if (privacyMode) {
+                                                    val releasedBeforeReveal =
+                                                        withTimeoutOrNull(350L) {
+                                                            waitForUpOrCancellation()
+                                                        } != null
+                                                    if (!releasedBeforeReveal) {
+                                                        onTogglePrivacy()
+                                                        waitForUpOrCancellation()
+                                                    }
+                                                } else {
+                                                    waitForUpOrCancellation()?.let {
+                                                        onTogglePrivacy()
+                                                    }
+                                                }
+                                            }
+                                        },
                             ) {
                                 Icon(
                                     imageVector = if (privacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                     contentDescription = "Toggle privacy",
                                     tint = TextSecondary,
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(24.dp),
                                 )
                             }
 
@@ -386,7 +448,7 @@ fun BalanceScreen(
                                 contentAlignment = Alignment.Center,
                                 modifier =
                                     Modifier
-                                        .size(28.dp)
+                                        .size(32.dp)
                                         .align(Alignment.CenterEnd)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(DarkSurfaceVariant)
@@ -396,7 +458,7 @@ fun BalanceScreen(
                             ) {
                                 if (isSyncing) {
                                     CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
+                                        modifier = Modifier.size(24.dp),
                                         color = cardAccentColor,
                                         strokeWidth = 2.dp,
                                     )
@@ -464,7 +526,7 @@ fun BalanceScreen(
                             contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
-                                    .size(28.dp)
+                                    .size(32.dp)
                                     .align(Alignment.BottomStart)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurfaceVariant)
@@ -476,7 +538,7 @@ fun BalanceScreen(
                                 imageVector = Icons.Default.QrCode,
                                 contentDescription = "Quick receive",
                                 tint = cardAccentColor,
-                                modifier = Modifier.size(22.dp),
+                                modifier = Modifier.size(24.dp),
                             )
                         }
 
@@ -485,7 +547,7 @@ fun BalanceScreen(
                             contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
-                                    .size(28.dp)
+                                    .size(32.dp)
                                     .align(Alignment.BottomEnd)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurfaceVariant)
@@ -595,28 +657,42 @@ fun BalanceScreen(
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
-                    Box(
-                        contentAlignment = Alignment.Center,
-                        modifier =
-                            Modifier
-                                .size(32.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(DarkSurfaceVariant)
-                                .clickable {
-                                    isSearchActive = !isSearchActive
-                                    if (!isSearchActive) searchQuery = ""
-                                },
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Icon(
-                            imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
-                            contentDescription = if (isSearchActive) "Close search" else "Search",
-                            tint = if (isSearchActive) {
-                                BitcoinOrange
-                            } else {
-                                TextSecondary
-                            },
-                            modifier = Modifier.size(20.dp),
-                        )
+                        if (hasSwapTransactions) {
+                            TransactionFilterButton(
+                                icon = Icons.Default.SwapHoriz,
+                                contentDescription = "Filter swaps",
+                                tint = BitcoinOrange,
+                                isSelected = showSwapTransactions,
+                                onClick = { showSwapTransactions = !showSwapTransactions },
+                            )
+                        }
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier =
+                                Modifier
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(DarkSurfaceVariant)
+                                    .clickable {
+                                        isSearchActive = !isSearchActive
+                                        if (!isSearchActive) searchQuery = ""
+                                    },
+                        ) {
+                            Icon(
+                                imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
+                                contentDescription = if (isSearchActive) "Close search" else "Search",
+                                tint = if (isSearchActive) {
+                                    BitcoinOrange
+                                } else {
+                                    TextSecondary
+                                },
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                 }
 
@@ -658,19 +734,18 @@ fun BalanceScreen(
                 Spacer(modifier = Modifier.height(4.dp))
             }
 
-            // When searching, show all results; otherwise apply display limit
-            val isSearching = appliedSearchQuery.isNotBlank()
+            val isSearching = searchQuery.trim().isNotBlank()
             val visibleTransactions =
                 if (isSearching) {
-                    filteredTransactions
+                    searchResultTxids.mapNotNull(transactionsById::get)
                 } else {
-                    filteredTransactions.take(displayLimit)
+                    sourceFilteredTransactions.take(displayLimit)
                 }
-            val totalCount = filteredTransactions.size
+            val totalCount = if (isSearching) searchTotalCount else sourceFilteredTransactions.size
             val visibleCount = visibleTransactions.size
-            val hasMore = !isSearching && visibleCount < totalCount
+            val hasMore = visibleCount < totalCount
             val showTransactionLoadingState =
-                filteredTransactions.isEmpty() &&
+                totalCount == 0 &&
                     (
                         walletState.isTransactionHistoryLoading ||
                             (walletState.isSyncing && walletState.transactions.isEmpty())
@@ -726,7 +801,7 @@ fun BalanceScreen(
                         }
                     }
                 }
-            } else if (filteredTransactions.isEmpty()) {
+            } else if (totalCount == 0 && !isSearchFiltering) {
                 item {
                     // Empty state for transactions
                     Card(
@@ -786,6 +861,48 @@ fun BalanceScreen(
                         onClick = { selectedTransaction = tx },
                     )
                     Spacer(modifier = Modifier.height(4.dp))
+                }
+
+                if (!isSearching && walletState.isTransactionHistoryLoading) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors =
+                                CardDefaults.cardColors(
+                                    containerColor = DarkCard,
+                                ),
+                        ) {
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    color = BitcoinOrange,
+                                    strokeWidth = 2.dp,
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Loading more transactions...",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Showing the newest activity first while older history finishes loading.",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextSecondary,
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
                 }
 
                 // Progressive "Show More" / "Show All" buttons
@@ -1007,8 +1124,14 @@ private fun TransactionItem(
     privacyMode: Boolean = false,
     onClick: () -> Unit = {},
 ) {
-    val isReceived = transaction.amountSats > 0
-    val absSats = kotlin.math.abs(transaction.amountSats).toULong()
+    val swapDetails = transaction.swapDetails
+    val isReceived =
+        when (swapDetails?.role) {
+            LiquidSwapTxRole.FUNDING -> false
+            LiquidSwapTxRole.SETTLEMENT -> true
+            null -> transaction.amountSats > 0
+        }
+    val absSats = swapDisplayAmountSats(transaction).toULong()
 
     Card(
         modifier =
@@ -1060,11 +1183,30 @@ private fun TransactionItem(
 
             // Details
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = if (isReceived) "Received" else "Sent",
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (isReceived) "Received" else "Sent",
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    if (swapDetails != null) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Box(
+                            modifier =
+                                Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(BitcoinOrange.copy(alpha = 0.16f))
+                                    .padding(horizontal = 5.dp, vertical = 2.dp),
+                        ) {
+                            Text(
+                                text = "Swap",
+                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
+                                color = BitcoinOrange,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                }
                 if (label != null) {
                     Text(
                         text = label,
@@ -1127,6 +1269,299 @@ private fun formatDateTime(timestamp: Long): String {
     return format.format(date)
 }
 
+private fun TransactionDetails.confirmationProgressText(currentBlockHeight: UInt?): String? {
+    if (!isConfirmed) return "0/6"
+    val confirmationHeight = confirmationTime?.height ?: return null
+    val blockHeight = currentBlockHeight ?: return null
+    val confirmations =
+        (blockHeight.toLong() - confirmationHeight.toLong() + 1L)
+            .coerceAtLeast(1L)
+            .coerceAtMost(6L)
+            .toInt()
+    return if (confirmations >= 6) null else "$confirmations/6"
+}
+
+private fun swapFundingAmountSats(
+    transaction: TransactionDetails,
+    details: LiquidSwapDetails,
+): Long? {
+    val netWithoutFee =
+        transaction.fee?.toLong()?.let { fee ->
+            (kotlin.math.abs(transaction.amountSats) - fee).takeIf { it > 0L }
+        }
+    return transaction.addressAmount?.toLong()?.takeIf { it > 0L }
+        ?: netWithoutFee
+        ?: details.sendAmountSats.takeIf { it > 0L }
+}
+
+private fun swapSettlementAmountSats(
+    transaction: TransactionDetails,
+    details: LiquidSwapDetails,
+): Long? {
+    return transaction.addressAmount?.toLong()?.takeIf { it > 0L }
+        ?: kotlin.math.abs(transaction.amountSats).takeIf { it > 0L }
+        ?: details.expectedReceiveAmountSats.takeIf { it > 0L }
+}
+
+private fun swapDisplayAmountSats(transaction: TransactionDetails): Long {
+    val details = transaction.swapDetails ?: return kotlin.math.abs(transaction.amountSats)
+    return when (details.role) {
+        LiquidSwapTxRole.FUNDING ->
+            swapFundingAmountSats(transaction, details) ?: kotlin.math.abs(transaction.amountSats)
+        LiquidSwapTxRole.SETTLEMENT ->
+            swapSettlementAmountSats(transaction, details) ?: kotlin.math.abs(transaction.amountSats)
+    }
+}
+
+private fun swapProviderLabel(service: SwapService): String =
+    when (service) {
+        SwapService.BOLTZ -> "Boltz"
+        SwapService.SIDESWAP -> "SideSwap"
+    }
+
+private fun swapProviderColor(service: SwapService): Color =
+    when (service) {
+        SwapService.BOLTZ -> AccentBlue
+        SwapService.SIDESWAP -> AccentTeal
+    }
+
+private fun swapDepositLabel(details: LiquidSwapDetails): String =
+    when (details.direction) {
+        SwapDirection.BTC_TO_LBTC -> "Bitcoin Deposit Address"
+        SwapDirection.LBTC_TO_BTC -> "Liquid Deposit Address"
+    }
+
+private fun swapReceiveLabel(details: LiquidSwapDetails): String =
+    when (details.direction) {
+        SwapDirection.BTC_TO_LBTC -> "Liquid Destination Address"
+        SwapDirection.LBTC_TO_BTC -> "Bitcoin Destination Address"
+    }
+
+private fun swapPrimaryAmountColor(direction: SwapDirection): Color =
+    when (direction) {
+        SwapDirection.BTC_TO_LBTC -> BitcoinOrange
+        SwapDirection.LBTC_TO_BTC -> AccentTeal
+    }
+
+private fun swapExpectedReceiveColor(direction: SwapDirection): Color =
+    when (direction) {
+        SwapDirection.BTC_TO_LBTC -> AccentTeal
+        SwapDirection.LBTC_TO_BTC -> BitcoinOrange
+    }
+
+private fun swapDetailPrimaryAmountText(
+    transaction: TransactionDetails,
+    details: LiquidSwapDetails,
+    useSats: Boolean,
+    privacyMode: Boolean,
+): String? {
+    val asset = if (details.direction == SwapDirection.BTC_TO_LBTC) "BTC" else "L-BTC"
+    val amountSats =
+        when (details.role) {
+            LiquidSwapTxRole.FUNDING -> swapFundingAmountSats(transaction, details)
+            LiquidSwapTxRole.SETTLEMENT -> details.sendAmountSats.takeIf { it > 0L }
+        } ?: return null
+    return formatSwapAssetAmount(amountSats, asset, useSats, privacyMode)
+}
+
+private fun swapDetailExpectedReceiveText(
+    transaction: TransactionDetails,
+    details: LiquidSwapDetails,
+    useSats: Boolean,
+    privacyMode: Boolean,
+): String? {
+    val asset = if (details.direction == SwapDirection.BTC_TO_LBTC) "L-BTC" else "BTC"
+    val amountSats =
+        when (details.role) {
+            LiquidSwapTxRole.FUNDING -> details.expectedReceiveAmountSats.takeIf { it > 0L }
+            LiquidSwapTxRole.SETTLEMENT -> swapSettlementAmountSats(transaction, details)
+        } ?: return null
+    return formatSwapAssetAmount(amountSats, asset, useSats, privacyMode)
+}
+
+private fun formatSwapAssetAmount(
+    amountSats: Long,
+    asset: String,
+    useSats: Boolean,
+    privacyMode: Boolean,
+): String {
+    if (privacyMode) return HIDDEN_AMOUNT
+    val unit = if (useSats) "sats" else "BTC"
+    return "${formatAmount(amountSats.toULong(), useSats)} $unit $asset"
+}
+
+private fun truncateSwapDetailValue(
+    value: String,
+    leadingChars: Int = 16,
+    trailingChars: Int = 8,
+): String {
+    if (value.length <= leadingChars + trailingChars + 3) return value
+    return "${value.take(leadingChars)}...${value.takeLast(trailingChars)}"
+}
+
+@Composable
+private fun SwapDetailCopyRow(
+    label: String,
+    value: String,
+    copyLabel: String,
+    amountText: String? = null,
+    amountColor: Color = MaterialTheme.colorScheme.onBackground,
+    copied: Boolean,
+    onCopy: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = truncateSwapDetailValue(value),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                amountText?.let {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = amountColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier =
+                    Modifier
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            val liftPx = 4.dp.roundToPx()
+                            layout(placeable.width, (placeable.height - liftPx).coerceAtLeast(0)) {
+                                placeable.placeRelative(0, -liftPx)
+                            }
+                        }
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurfaceVariant)
+                        .clickable(onClick = onCopy),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ContentCopy,
+                    contentDescription = "Copy $copyLabel",
+                    tint = if (copied) BitcoinOrange else TextSecondary,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        if (copied) {
+            Text(
+                text = "Copied to clipboard!",
+                style = MaterialTheme.typography.bodySmall,
+                color = BitcoinOrange,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SwapDetailBadge(
+    text: String,
+    accentColor: Color,
+) {
+    Box(
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(accentColor.copy(alpha = 0.14f))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = accentColor,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun SwapDetailDirectionBadge(
+    direction: SwapDirection,
+) {
+    val fromText = if (direction == SwapDirection.BTC_TO_LBTC) "BTC" else "L-BTC"
+    val toText = if (direction == SwapDirection.BTC_TO_LBTC) "L-BTC" else "BTC"
+    val fromColor = if (direction == SwapDirection.BTC_TO_LBTC) BitcoinOrange else AccentTeal
+    val toColor = if (direction == SwapDirection.BTC_TO_LBTC) AccentTeal else BitcoinOrange
+
+    Row(
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(999.dp))
+                .background(DarkSurfaceVariant)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = fromText,
+            style = MaterialTheme.typography.labelMedium,
+            color = fromColor,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "->",
+            style = MaterialTheme.typography.labelMedium,
+            color = TextSecondary,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = toText,
+            style = MaterialTheme.typography.labelMedium,
+            color = toColor,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+private fun TransactionFilterButton(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier =
+            Modifier
+                .size(28.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(if (isSelected) tint.copy(alpha = 0.16f) else DarkSurfaceVariant)
+                .clickable(onClick = onClick),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = if (isSelected) tint else TextSecondary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
 private const val HIDDEN_AMOUNT = "****"
 
 /**
@@ -1136,6 +1571,7 @@ private const val HIDDEN_AMOUNT = "****"
 @Composable
 fun TransactionDetailDialog(
     transaction: TransactionDetails,
+    currentBlockHeight: UInt? = null,
     useSats: Boolean = false,
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
@@ -1150,18 +1586,30 @@ fun TransactionDetailDialog(
     minFeeRate: Double = 1.0,
     onFetchVsize: suspend (String) -> Double? = { null },
     onRefreshFees: () -> Unit = {},
-    onSpeedUp: ((SpeedUpMethod, Double) -> Unit)? = null,
+    onSpeedUp: ((SpeedUpMethod, Double, String?) -> Unit)? = null,
     onSaveLabel: (String) -> Unit = {},
+    onDeleteLabel: (() -> Unit)? = null,
+    boltzRescueMnemonic: String? = null,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
-    val isReceived = transaction.amountSats > 0
+    val swapDetails = transaction.swapDetails
+    val isReceived =
+        when (swapDetails?.role) {
+            LiquidSwapTxRole.FUNDING -> false
+            LiquidSwapTxRole.SETTLEMENT -> true
+            null -> transaction.amountSats > 0
+        }
+    val amountAbs = swapDisplayAmountSats(transaction).toULong()
     val scrollState = rememberScrollState()
 
     // State for showing copy confirmation
     var showCopiedTxid by remember { mutableStateOf(false) }
     var showCopiedAddress by remember { mutableStateOf(false) }
     var showCopiedChangeAddress by remember { mutableStateOf(false) }
+    var copiedSwapField by remember { mutableStateOf<String?>(null) }
+    var swapDetailsExpanded by remember { mutableStateOf(false) }
+    var showRescueKeyDialog by remember { mutableStateOf(false) }
 
     // Auto-dismiss copy notifications after 3 seconds
     LaunchedEffect(showCopiedTxid) {
@@ -1182,6 +1630,12 @@ fun TransactionDetailDialog(
             showCopiedChangeAddress = false
         }
     }
+    LaunchedEffect(copiedSwapField) {
+        if (copiedSwapField != null) {
+            kotlinx.coroutines.delay(3000)
+            copiedSwapField = null
+        }
+    }
 
     // State for showing Tor Browser error dialog
     var showTorBrowserError by remember { mutableStateOf(false) }
@@ -1195,7 +1649,7 @@ fun TransactionDetailDialog(
 
     // State for label editing
     var isEditingLabel by remember { mutableStateOf(false) }
-    var labelText by remember { mutableStateOf(label ?: "") }
+    var labelText by remember(label) { mutableStateOf(label ?: "") }
 
     // State for fetched vsize from Electrum (fractional: weight/4.0)
     var fetchedVsize by remember { mutableStateOf<Double?>(null) }
@@ -1214,6 +1668,25 @@ fun TransactionDetailDialog(
         } catch (_: Exception) {
             mempoolUrl.endsWith(".onion")
         }
+    val canOpenBlockExplorer = mempoolServer != SecureStorage.MEMPOOL_DISABLED && mempoolUrl.isNotBlank()
+    val openBlockExplorer = {
+        val url = "$mempoolUrl/tx/${transaction.txid}"
+        if (isOnionAddress) {
+            val torBrowserPackage = "org.torproject.torbrowser"
+            val intent =
+                Intent(Intent.ACTION_VIEW, url.toUri()).apply {
+                    setPackage(torBrowserPackage)
+                }
+            try {
+                context.startActivity(intent)
+            } catch (_: Exception) {
+                showTorBrowserError = true
+            }
+        } else {
+            val intent = Intent(Intent.ACTION_VIEW, url.toUri())
+            context.startActivity(intent)
+        }
+    }
 
     // Determine if Speed Up is available
     val canSpeedUp = !transaction.isConfirmed && (canRbf || canCpfp)
@@ -1224,13 +1697,25 @@ fun TransactionDetailDialog(
             else -> null
         }
 
-    val amountAbs = kotlin.math.abs(transaction.amountSats).toULong()
     val denominationLabel = if (useSats) "sats" else "BTC"
+    val confirmationProgressText = transaction.confirmationProgressText(currentBlockHeight)
 
     // Tor Browser error dialog
     if (showTorBrowserError) {
         TorBrowserErrorDialog(
             onDismiss = { showTorBrowserError = false },
+        )
+    }
+
+    if (
+        showRescueKeyDialog &&
+        swapDetails != null &&
+        shouldShowBoltzRescueKey(swapDetails.service, boltzRescueMnemonic)
+    ) {
+        BoltzRescueMnemonicDialog(
+            mnemonic = boltzRescueMnemonic.orEmpty(),
+            accentColor = BitcoinOrange,
+            onDismiss = { showRescueKeyDialog = false },
         )
     }
 
@@ -1257,8 +1742,8 @@ fun TransactionDetailDialog(
             useSats = useSats,
             privacyMode = privacyMode,
             onRefreshFees = onRefreshFees,
-            onConfirm = { feeRate ->
-                onSpeedUp(speedUpMethod, feeRate)
+            onConfirm = { feeRate, _ ->
+                onSpeedUp(speedUpMethod, feeRate, null)
                 showSpeedUpDialog = false
                 onDismiss()
             },
@@ -1280,8 +1765,8 @@ fun TransactionDetailDialog(
             useSats = useSats,
             privacyMode = privacyMode,
             onRefreshFees = onRefreshFees,
-            onConfirm = { feeRate ->
-                onSpeedUp(SpeedUpMethod.REDIRECT, feeRate)
+            onConfirm = { feeRate, destinationAddress ->
+                onSpeedUp(SpeedUpMethod.REDIRECT, feeRate, destinationAddress)
                 showRedirectDialog = false
                 onDismiss()
             },
@@ -1362,6 +1847,7 @@ fun TransactionDetailDialog(
                         Icon(
                             imageVector =
                                 when {
+                                    swapDetails != null -> Icons.Default.SwapHoriz
                                     transaction.isSelfTransfer -> Icons.AutoMirrored.Filled.CallMade
                                     isReceived -> Icons.AutoMirrored.Filled.CallReceived
                                     else -> Icons.AutoMirrored.Filled.CallMade
@@ -1382,6 +1868,7 @@ fun TransactionDetailDialog(
                         Text(
                             text =
                                 when {
+                                    swapDetails != null -> "Swap"
                                     transaction.isSelfTransfer -> "Self-Transfer"
                                     isReceived -> "Received"
                                     else -> "Sent"
@@ -1474,9 +1961,9 @@ fun TransactionDetailDialog(
                         shape = RoundedCornerShape(8.dp),
                         colors =
                             ButtonDefaults.outlinedButtonColors(
-                                contentColor = BitcoinOrange,
+                                contentColor = ErrorRed,
                             ),
-                        border = BorderStroke(1.dp, BitcoinOrange.copy(alpha = 0.5f)),
+                        border = BorderStroke(1.dp, ErrorRed.copy(alpha = 0.5f)),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
                     ) {
                         Icon(
@@ -1488,54 +1975,8 @@ fun TransactionDetailDialog(
                         Text(
                             text = "Cancel Transaction (RBF)",
                             style = MaterialTheme.typography.bodyMedium,
+                            color = ErrorRed,
                         )
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-
-                if (mempoolServer != SecureStorage.MEMPOOL_DISABLED && mempoolUrl.isNotBlank()) {
-                    OutlinedButton(
-                        onClick = {
-                            val url = "$mempoolUrl/tx/${transaction.txid}"
-                            if (isOnionAddress) {
-                                // Try to open Tor Browser automatically for onion addresses
-                                val torBrowserPackage = "org.torproject.torbrowser"
-                                val intent =
-                                    Intent(Intent.ACTION_VIEW, url.toUri()).apply {
-                                        setPackage(torBrowserPackage)
-                                    }
-                                try {
-                                    context.startActivity(intent)
-                                } catch (_: Exception) {
-                                    // Tor Browser not installed, show error
-                                    showTorBrowserError = true
-                                }
-                            } else {
-                                // Open directly for clearnet
-                                val intent = Intent(Intent.ACTION_VIEW, url.toUri())
-                                context.startActivity(intent)
-                            }
-                        },
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(36.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors =
-                            ButtonDefaults.outlinedButtonColors(
-                                contentColor = TextSecondary,
-                            ),
-                        border = BorderStroke(1.dp, Color(0xFF9BA3AC)),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(getMempoolButtonText(mempoolServer), style = MaterialTheme.typography.bodyMedium)
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
@@ -1555,11 +1996,23 @@ fun TransactionDetailDialog(
                     ) {
                         // Status section
                         Column {
-                            Text(
-                                text = "Status",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = TextSecondary,
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "Status",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                )
+                                if (canOpenBlockExplorer) {
+                                    TransactionExplorerBadge(
+                                        tint = BitcoinOrange,
+                                        onClick = openBlockExplorer,
+                                    )
+                                }
+                            }
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1586,6 +2039,14 @@ fun TransactionDetailDialog(
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = if (transaction.isConfirmed) AccentGreen else BitcoinOrange,
                                     )
+                                    confirmationProgressText?.let { progress ->
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = progress,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = if (transaction.isConfirmed) AccentGreen else BitcoinOrange,
+                                        )
+                                    }
                                 }
                                 if (transaction.timestamp != null) {
                                     Text(
@@ -1616,11 +2077,13 @@ fun TransactionDetailDialog(
                                 verticalAlignment = Alignment.Top,
                             ) {
                                 Text(
-                                    text = transaction.txid.take(20) + "..." + transaction.txid.takeLast(8),
+                                    text = transaction.txid,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontFamily = FontFamily.Monospace,
                                     color = MaterialTheme.colorScheme.onBackground,
                                     modifier = Modifier.weight(1f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                                 Box(
                                     contentAlignment = Alignment.Center,
@@ -1695,7 +2158,7 @@ fun TransactionDetailDialog(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = transaction.address.take(14) + "..." + transaction.address.takeLast(8),
+                                            text = truncateSwapDetailValue(transaction.address),
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontFamily = FontFamily.Monospace,
                                             color = MaterialTheme.colorScheme.onBackground,
@@ -1778,7 +2241,7 @@ fun TransactionDetailDialog(
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                text = transaction.changeAddress.take(14) + "..." + transaction.changeAddress.takeLast(8),
+                                                text = truncateSwapDetailValue(transaction.changeAddress),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 fontFamily = FontFamily.Monospace,
                                                 color = MaterialTheme.colorScheme.onBackground,
@@ -1931,49 +2394,143 @@ fun TransactionDetailDialog(
                                     },
                                     modifier = Modifier.fillMaxWidth(),
                                 )
-                            } else if (labelText.isNotEmpty()) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text(
-                                        text = labelText,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = AccentTeal,
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                    Card(
-                                        modifier =
-                                            Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .clickable { isEditingLabel = true },
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                                        border = BorderStroke(1.dp, BorderColor),
+                            } else {
+                                EditableLabelChip(
+                                    label = labelText.takeIf { it.isNotBlank() },
+                                    accentColor = AccentTeal,
+                                    onClick = { isEditingLabel = true },
+                                    onDelete =
+                                        onDeleteLabel?.let {
+                                            {
+                                                labelText = ""
+                                                it()
+                                            }
+                                        },
+                                )
+                            }
+                        }
+                        swapDetails?.let { details ->
+                            HorizontalDivider(
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                color = TextSecondary.copy(alpha = 0.1f),
+                            )
+
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { swapDetailsExpanded = !swapDetailsExpanded },
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "Swap Details",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                SwapDetailBadge(
+                                    text = swapProviderLabel(details.service),
+                                    accentColor = swapProviderColor(details.service),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Icon(
+                                    imageVector = if (swapDetailsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                    contentDescription = if (swapDetailsExpanded) "Collapse swap details" else "Expand swap details",
+                                    tint = BitcoinOrange,
+                                )
+                            }
+
+                            if (swapDetailsExpanded) {
+                                Column {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Text(
-                                            text = "Edit",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = TextSecondary,
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                        SwapDetailDirectionBadge(direction = details.direction)
+                                        if (shouldShowBoltzRescueKey(details.service, boltzRescueMnemonic)) {
+                                            BoltzRescueKeyButton(
+                                                onClick = { showRescueKeyDialog = true },
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    SwapDetailCopyRow(
+                                        label = if (details.service == SwapService.BOLTZ) "Boltz Swap ID" else "SideSwap Order ID",
+                                        value = details.swapId,
+                                        copyLabel = "Swap ID",
+                                        copied = copiedSwapField == "swap_id",
+                                        onCopy = {
+                                            SecureClipboard.copyAndScheduleClear(context, "Swap ID", details.swapId)
+                                            copiedSwapField = "swap_id"
+                                        },
+                                    )
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    SwapDetailCopyRow(
+                                        label = swapDepositLabel(details),
+                                        value = details.depositAddress,
+                                        copyLabel = "Swap Deposit Address",
+                                        amountText =
+                                            swapDetailPrimaryAmountText(
+                                                transaction = transaction,
+                                                details = details,
+                                                useSats = useSats,
+                                                privacyMode = privacyMode,
+                                            ),
+                                        amountColor = swapPrimaryAmountColor(details.direction),
+                                        copied = copiedSwapField == "deposit_address",
+                                        onCopy = {
+                                            SecureClipboard.copyAndScheduleClear(
+                                                context,
+                                                "Swap Deposit Address",
+                                                details.depositAddress,
+                                            )
+                                            copiedSwapField = "deposit_address"
+                                        },
+                                    )
+                                    details.receiveAddress?.let { receiveAddress ->
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        SwapDetailCopyRow(
+                                            label = swapReceiveLabel(details),
+                                            value = receiveAddress,
+                                            copyLabel = "Swap Destination Address",
+                                            amountText =
+                                                swapDetailExpectedReceiveText(
+                                                    transaction = transaction,
+                                                    details = details,
+                                                    useSats = useSats,
+                                                    privacyMode = privacyMode,
+                                                ),
+                                            amountColor = swapExpectedReceiveColor(details.direction),
+                                            copied = copiedSwapField == "receive_address",
+                                            onCopy = {
+                                                SecureClipboard.copyAndScheduleClear(
+                                                    context,
+                                                    "Swap Destination Address",
+                                                    receiveAddress,
+                                                )
+                                                copiedSwapField = "receive_address"
+                                            },
                                         )
                                     }
-                                }
-                            } else {
-                                Card(
-                                    modifier =
-                                        Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { isEditingLabel = true },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                                    border = BorderStroke(1.dp, BorderColor),
-                                ) {
-                                    Text(
-                                        text = "Add",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = TextSecondary,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                    )
+                                    details.refundAddress?.let { refundAddress ->
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        SwapDetailCopyRow(
+                                            label = "Refund Address",
+                                            value = refundAddress,
+                                            copyLabel = "Refund Address",
+                                            copied = copiedSwapField == "refund_address",
+                                            onCopy = {
+                                                SecureClipboard.copyAndScheduleClear(
+                                                    context,
+                                                    "Refund Address",
+                                                    refundAddress,
+                                                )
+                                                copiedSwapField = "refund_address"
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -2067,7 +2624,7 @@ private fun TorBrowserErrorDialog(onDismiss: () -> Unit) {
 
 /**
  * Speed Up Transaction Dialog
- * Allows user to set a new fee rate for RBF or CPFP
+ * Allows user to set a new fee rate for RBF, CPFP, or redirect replacement
  */
 @Composable
 private fun SpeedUpDialog(
@@ -2082,7 +2639,7 @@ private fun SpeedUpDialog(
     useSats: Boolean = true,
     privacyMode: Boolean = false,
     onRefreshFees: () -> Unit = {},
-    onConfirm: (Double) -> Unit,
+    onConfirm: (Double, String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val dialogTitle =
@@ -2095,10 +2652,13 @@ private fun SpeedUpDialog(
         when (method) {
             SpeedUpMethod.RBF -> "Replace this transaction with a higher fee (RBF)"
             SpeedUpMethod.CPFP -> "Create a child transaction with high fee to speed up confirmation (CPFP)"
-            SpeedUpMethod.REDIRECT -> "Redirect all funds back to your wallet. Requires a higher fee than the original."
+            SpeedUpMethod.REDIRECT -> "Redirect all funds back to your wallet or a custom address. Requires a higher fee than the original."
         }
     var appliedFeeRate by remember { mutableDoubleStateOf(0.0) }
     var rawCustomFeeRate by remember { mutableStateOf<Double?>(null) }
+    var useCustomDestinationAddress by remember(method) { mutableStateOf(false) }
+    var customDestinationInput by remember(method) { mutableStateOf("") }
+    var showCustomDestinationQrScanner by remember(method) { mutableStateOf(false) }
     val enteredFeeRate = rawCustomFeeRate ?: appliedFeeRate
     val isBelowMinFeeRate = enteredFeeRate > 0.0 && enteredFeeRate < minFeeRate
     val isBelowCurrentFeeRate =
@@ -2110,6 +2670,34 @@ private fun SpeedUpDialog(
             enteredFeeRate <= MAX_FEE_RATE_SAT_VB &&
             !isBelowMinFeeRate &&
             !isBelowCurrentFeeRate
+    val parsedCustomDestination =
+        remember(useCustomDestinationAddress, customDestinationInput) {
+            if (!useCustomDestinationAddress) {
+                null
+            } else {
+                parseSendRecipient(customDestinationInput)
+            }
+        }
+    val customDestinationHelperText =
+        when {
+            method != SpeedUpMethod.REDIRECT || !useCustomDestinationAddress -> null
+            customDestinationInput.isBlank() -> "Enter a Bitcoin address"
+            else -> null
+        }
+    val customDestinationError =
+        when {
+            method != SpeedUpMethod.REDIRECT || !useCustomDestinationAddress -> null
+            customDestinationInput.isBlank() -> null
+            parsedCustomDestination is ParsedSendRecipient.Bitcoin -> null
+            parsedCustomDestination is ParsedSendRecipient.Unknown -> parsedCustomDestination.errorMessage
+            else -> "Enter a Bitcoin address"
+        }
+    val resolvedCustomDestination =
+        (parsedCustomDestination as? ParsedSendRecipient.Bitcoin)?.address
+    val hasValidCustomDestination =
+        method != SpeedUpMethod.REDIRECT ||
+            !useCustomDestinationAddress ||
+            resolvedCustomDestination != null
 
     // Estimated child tx vsize for CPFP (1 input + 1 output, conservative estimate)
     // P2WPKH: ~110 vB, P2TR: ~111 vB, adding buffer for safety
@@ -2181,6 +2769,20 @@ private fun SpeedUpDialog(
     // Fetch fee estimates when dialog opens
     LaunchedEffect(Unit) {
         onRefreshFees()
+    }
+
+    if (showCustomDestinationQrScanner) {
+        QrScannerDialog(
+            onCodeScanned = { code ->
+                showCustomDestinationQrScanner = false
+                customDestinationInput =
+                    when (val parsed = parseSendRecipient(code.trim())) {
+                        is ParsedSendRecipient.Bitcoin -> parsed.address
+                        else -> code.trim()
+                    }
+            },
+            onDismiss = { showCustomDestinationQrScanner = false },
+        )
     }
 
     Dialog(
@@ -2416,12 +3018,114 @@ private fun SpeedUpDialog(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
+                if (method == SpeedUpMethod.REDIRECT) {
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    useCustomDestinationAddress = !useCustomDestinationAddress
+                                    if (!useCustomDestinationAddress) {
+                                        customDestinationInput = ""
+                                    }
+                                }
+                                .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = useCustomDestinationAddress,
+                            onCheckedChange = {
+                                useCustomDestinationAddress = it
+                                if (!it) {
+                                    customDestinationInput = ""
+                                }
+                            },
+                            colors =
+                                CheckboxDefaults.colors(
+                                    checkedColor = BitcoinOrange,
+                                    uncheckedColor = TextSecondary,
+                                ),
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                text = "Custom destination address",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                    }
+
+                    AnimatedVisibility(
+                        visible = useCustomDestinationAddress,
+                        enter = expandVertically(),
+                        exit = shrinkVertically(),
+                    ) {
+                        Column {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = customDestinationInput,
+                                onValueChange = { customDestinationInput = it.trim() },
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 12.dp),
+                                placeholder = {
+                                    Text(
+                                        text = "Bitcoin address",
+                                        color = TextSecondary.copy(alpha = 0.7f),
+                                    )
+                                },
+                                trailingIcon = {
+                                    IconButton(onClick = { showCustomDestinationQrScanner = true }) {
+                                        Icon(
+                                            imageVector = Icons.Default.QrCodeScanner,
+                                            contentDescription = "Scan QR Code",
+                                            tint = BitcoinOrange,
+                                            modifier = Modifier.size(20.dp),
+                                        )
+                                    }
+                                },
+                                isError = customDestinationError != null,
+                                singleLine = true,
+                                shape = RoundedCornerShape(8.dp),
+                                colors =
+                                    OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = if (customDestinationError != null) ErrorRed else BitcoinOrange,
+                                        unfocusedBorderColor = if (customDestinationError != null) ErrorRed else BorderColor,
+                                        cursorColor = BitcoinOrange,
+                                    ),
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = customDestinationError ?: (customDestinationHelperText ?: "Funds will be redirected to this Bitcoin address."),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (customDestinationError != null) ErrorRed else TextSecondary,
+                                modifier = Modifier.padding(start = 12.dp),
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(24.dp))
 
                 // Confirm button
-                val canConfirm = isValidFeeRate && canAfford
+                val canConfirm = isValidFeeRate && canAfford && customDestinationError == null && hasValidCustomDestination
                 IbisButton(
-                    onClick = { onConfirm(appliedFeeRate) },
+                    onClick = {
+                        onConfirm(
+                            appliedFeeRate,
+                            if (method == SpeedUpMethod.REDIRECT && useCustomDestinationAddress) {
+                                resolvedCustomDestination
+                            } else {
+                                null
+                            },
+                        )
+                    },
                     modifier =
                         Modifier
                             .fillMaxWidth()
@@ -2455,16 +3159,32 @@ private fun SpeedUpDialog(
     }
 }
 
-/**
- * Get the appropriate button text for the block explorer button
- * based on the selected mempool server
- */
-
-private fun getMempoolButtonText(mempoolServer: String): String {
-    return when (mempoolServer) {
-        SecureStorage.MEMPOOL_SPACE -> "View on mempool.space"
-        SecureStorage.MEMPOOL_ONION -> "View on mempool.space (onion)"
-        SecureStorage.MEMPOOL_CUSTOM -> "View on custom block explorer"
-        else -> "View in block explorer"
+@Composable
+private fun TransactionExplorerBadge(
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            Modifier
+                .height(28.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(tint.copy(alpha = 0.16f))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp),
+    ) {
+        Text(
+            text = "Explorer",
+            style = MaterialTheme.typography.labelMedium,
+            color = tint,
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+            contentDescription = "Open in block explorer",
+            tint = tint,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }

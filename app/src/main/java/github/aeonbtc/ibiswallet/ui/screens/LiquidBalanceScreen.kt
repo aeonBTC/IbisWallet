@@ -7,6 +7,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,6 +79,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
@@ -100,12 +104,17 @@ import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentSession
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
 import github.aeonbtc.ibiswallet.data.model.SwapService
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
+import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
+import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
+import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.LiquidTransactionItem
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
+import github.aeonbtc.ibiswallet.ui.components.shouldShowBoltzRescueKey
 import github.aeonbtc.ibiswallet.ui.theme.AccentBlue
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
@@ -122,10 +131,10 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
-import github.aeonbtc.ibiswallet.util.matchesTimestampSearch
 import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import kotlin.math.pow
+import kotlinx.coroutines.withTimeoutOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -140,8 +149,14 @@ fun LiquidBalanceScreen(
     liquidTransactionLabels: Map<String, String> = emptyMap(),
     lookupPendingLightningPayment: (String) -> PendingLightningPaymentSession? = { null },
     onSaveLiquidTransactionLabel: (String, String) -> Unit = { _, _ -> },
+    onDeleteLiquidTransactionLabel: (String) -> Unit = {},
+    onSaveLiquidAddressLabelFromTransaction: (String, String) -> Unit = { _, _ -> },
+    onDeleteLiquidAddressLabelFromTransaction: (String) -> Unit = {},
+    searchTransactions: suspend (String, Boolean, Boolean, Boolean, Boolean, Int) -> TransactionSearchResult =
+        { _, _, _, _, _, _ -> TransactionSearchResult(emptyList(), 0) },
     onToggleDenomination: () -> Unit = {},
     onScanQrResult: (String) -> Unit = {},
+    boltzRescueMnemonic: String? = null,
     liquidState: LiquidWalletState = LiquidWalletState(),
     onSyncLiquid: () -> Unit = {},
 ) {
@@ -183,6 +198,10 @@ fun LiquidBalanceScreen(
     val nfcReaderState by NfcRuntimeStatus.readerState.collectAsState()
 
     selectedLiquidTransaction?.let { tx ->
+        val linkedAddress =
+            tx.walletAddress
+                ?.takeIf { it.isNotBlank() }
+                ?: tx.recipientAddress?.takeIf { it.isNotBlank() }
         LiquidTransactionDetailDialog(
             transaction = tx,
             useSats = useSats,
@@ -193,7 +212,18 @@ fun LiquidBalanceScreen(
             liquidExplorerUrl = liquidExplorerUrl,
             label = liquidTransactionLabels[tx.txid],
             pendingLightningPayment = lookupPendingLightningPayment(tx.txid),
-            onSaveLabel = { label -> onSaveLiquidTransactionLabel(tx.txid, label) },
+            onSaveLabel = { label ->
+                onSaveLiquidTransactionLabel(tx.txid, label)
+                linkedAddress?.let { onSaveLiquidAddressLabelFromTransaction(it, label) }
+            },
+            onDeleteLabel =
+                liquidTransactionLabels[tx.txid]?.let {
+                    {
+                        onDeleteLiquidTransactionLabel(tx.txid)
+                        linkedAddress?.let(onDeleteLiquidAddressLabelFromTransaction)
+                    }
+                },
+            boltzRescueMnemonic = boltzRescueMnemonic,
             onDismiss = { selectedLiquidTransaction = null },
         )
     }
@@ -205,6 +235,85 @@ fun LiquidBalanceScreen(
         if (!liquidState.isSyncing) {
             isPullRefreshing = false
         }
+    }
+
+    val hasSourceFilters =
+        showSwapTransactions || showLightningTransactions || showLiquidTransactions || showUsdtTransactions
+    val sourceFilteredTransactions =
+        remember(
+            liquidState.transactions,
+            showSwapTransactions,
+            showLightningTransactions,
+            showLiquidTransactions,
+            showUsdtTransactions,
+        ) {
+            if (!hasSourceFilters) {
+                liquidState.transactions
+            } else {
+                liquidState.transactions.filter { tx ->
+                    (showSwapTransactions && tx.source == LiquidTxSource.CHAIN_SWAP) ||
+                        (
+                            showLightningTransactions &&
+                                (
+                                    tx.source == LiquidTxSource.LIGHTNING_RECEIVE_SWAP ||
+                                        tx.source == LiquidTxSource.LIGHTNING_SEND_SWAP
+                                )
+                        ) ||
+                        (showLiquidTransactions && tx.source == LiquidTxSource.NATIVE) ||
+                        (showUsdtTransactions && tx.deltaForAsset(LiquidAsset.USDT_ASSET_ID) != 0L)
+                }
+            }
+        }
+    val transactionsById = remember(liquidState.transactions) { liquidState.transactions.associateBy { it.txid } }
+    var searchResultTxids by remember { mutableStateOf<List<String>>(emptyList()) }
+    var searchTotalCount by remember { mutableIntStateOf(0) }
+    var isSearchFiltering by remember { mutableStateOf(false) }
+
+    LaunchedEffect(
+        isSearchActive,
+        searchQuery.trim(),
+        showSwapTransactions,
+        showLightningTransactions,
+        showLiquidTransactions,
+        showUsdtTransactions,
+    ) {
+        displayLimit = 25
+    }
+
+    LaunchedEffect(
+        liquidState.transactions,
+        liquidTransactionLabels,
+        searchQuery,
+        showSwapTransactions,
+        showLightningTransactions,
+        showLiquidTransactions,
+        showUsdtTransactions,
+        displayLimit,
+    ) {
+        val trimmedQuery = searchQuery.trim()
+        if (trimmedQuery.isBlank()) {
+            searchResultTxids = emptyList()
+            searchTotalCount = sourceFilteredTransactions.size
+            isSearchFiltering = false
+            return@LaunchedEffect
+        }
+
+        isSearchFiltering = true
+        searchResultTxids = emptyList()
+        searchTotalCount = 0
+        kotlinx.coroutines.delay(150)
+        val result =
+            searchTransactions(
+                trimmedQuery,
+                showSwapTransactions,
+                showLightningTransactions,
+                showLiquidTransactions,
+                showUsdtTransactions,
+                displayLimit,
+            )
+        searchResultTxids = result.txids
+        searchTotalCount = result.totalCount
+        isSearchFiltering = false
     }
 
     PullToRefreshBox(
@@ -249,7 +358,7 @@ fun LiquidBalanceScreen(
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .height(28.dp)
+                                    .height(32.dp)
                                     .padding(bottom = 4.dp)
                                     .align(Alignment.TopCenter),
                         ) {
@@ -257,17 +366,35 @@ fun LiquidBalanceScreen(
                                 contentAlignment = Alignment.Center,
                                 modifier =
                                     Modifier
-                                        .size(28.dp)
+                                        .size(32.dp)
                                         .align(Alignment.CenterStart)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(DarkSurfaceVariant)
-                                        .clickable { onTogglePrivacy() },
+                                        .pointerInput(privacyMode) {
+                                            awaitEachGesture {
+                                                awaitFirstDown(requireUnconsumed = false)
+                                                if (privacyMode) {
+                                                    val releasedBeforeReveal =
+                                                        withTimeoutOrNull(350L) {
+                                                            waitForUpOrCancellation()
+                                                        } != null
+                                                    if (!releasedBeforeReveal) {
+                                                        onTogglePrivacy()
+                                                        waitForUpOrCancellation()
+                                                    }
+                                                } else {
+                                                    waitForUpOrCancellation()?.let {
+                                                        onTogglePrivacy()
+                                                    }
+                                                }
+                                            }
+                                        },
                             ) {
                                 Icon(
                                     imageVector = if (privacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                     contentDescription = "Toggle privacy",
                                     tint = TextSecondary,
-                                    modifier = Modifier.size(20.dp),
+                                    modifier = Modifier.size(24.dp),
                                 )
                             }
 
@@ -276,7 +403,7 @@ fun LiquidBalanceScreen(
                                 contentAlignment = Alignment.Center,
                                 modifier =
                                     Modifier
-                                        .size(28.dp)
+                                        .size(32.dp)
                                         .align(Alignment.CenterEnd)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(DarkSurfaceVariant)
@@ -284,7 +411,7 @@ fun LiquidBalanceScreen(
                             ) {
                                 if (liquidState.isSyncing) {
                                     CircularProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
+                                        modifier = Modifier.size(24.dp),
                                         color = LiquidTeal,
                                         strokeWidth = 2.dp,
                                     )
@@ -340,7 +467,7 @@ fun LiquidBalanceScreen(
                             contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
-                                    .size(28.dp)
+                                    .size(32.dp)
                                     .align(Alignment.BottomStart)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurfaceVariant)
@@ -352,7 +479,7 @@ fun LiquidBalanceScreen(
                                 imageVector = Icons.Default.QrCode,
                                 contentDescription = "Quick receive",
                                 tint = LiquidTeal,
-                                modifier = Modifier.size(22.dp),
+                                modifier = Modifier.size(24.dp),
                             )
                         }
 
@@ -360,7 +487,7 @@ fun LiquidBalanceScreen(
                             contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
-                                    .size(28.dp)
+                                    .size(32.dp)
                                     .align(Alignment.BottomEnd)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurfaceVariant)
@@ -504,59 +631,32 @@ fun LiquidBalanceScreen(
                                 unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
                                 cursorColor = LiquidTeal,
                             ),
+                        trailingIcon = {
+                            if (isSearchFiltering) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = LiquidTeal,
+                                    strokeWidth = 2.dp,
+                                )
+                            }
+                        },
                     )
                 }
 
                 Spacer(modifier = Modifier.height(4.dp))
             }
 
-            val hasSourceFilters =
-                showSwapTransactions || showLightningTransactions || showLiquidTransactions || showUsdtTransactions
-            val sourceFilteredTransactions =
-                if (!hasSourceFilters) {
-                    liquidState.transactions
-                } else {
-                    liquidState.transactions.filter { tx ->
-                        (showSwapTransactions && tx.source == LiquidTxSource.CHAIN_SWAP) ||
-                            (
-                                showLightningTransactions &&
-                                    (
-                                        tx.source == LiquidTxSource.LIGHTNING_RECEIVE_SWAP ||
-                                            tx.source == LiquidTxSource.LIGHTNING_SEND_SWAP
-                                    )
-                            ) ||
-                            (showLiquidTransactions && tx.source == LiquidTxSource.NATIVE) ||
-                            (showUsdtTransactions && tx.deltaForAsset(LiquidAsset.USDT_ASSET_ID) != 0L)
-                    }
-                }
-            val filteredTransactions = if (searchQuery.isBlank()) {
-                sourceFilteredTransactions
-            } else {
-                val query = searchQuery.lowercase()
-                sourceFilteredTransactions.filter { tx ->
-                    val label = liquidTransactionLabels[tx.txid].orEmpty()
-                    val memo = tx.memo
-                    val walletAddress = tx.walletAddress.orEmpty()
-                    val changeAddress = tx.changeAddress.orEmpty()
-                    tx.txid.lowercase().contains(query) ||
-                        label.lowercase().contains(query) ||
-                        memo.lowercase().contains(query) ||
-                        walletAddress.lowercase().contains(query) ||
-                        changeAddress.lowercase().contains(query) ||
-                        matchesTimestampSearch(tx.timestamp, searchQuery)
-                }
-            }
             val isSearching = searchQuery.isNotBlank()
             val visibleTransactions = if (isSearching) {
-                filteredTransactions
+                searchResultTxids.mapNotNull(transactionsById::get)
             } else {
-                filteredTransactions.take(displayLimit)
+                sourceFilteredTransactions.take(displayLimit)
             }
-            val totalCount = filteredTransactions.size
+            val totalCount = if (isSearching) searchTotalCount else sourceFilteredTransactions.size
             val visibleCount = visibleTransactions.size
-            val hasMore = !isSearching && visibleCount < totalCount
+            val hasMore = visibleCount < totalCount
 
-            if (filteredTransactions.isEmpty()) {
+            if (totalCount == 0 && !isSearchFiltering) {
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -762,6 +862,8 @@ private fun LiquidTransactionDetailDialog(
     label: String? = null,
     pendingLightningPayment: PendingLightningPaymentSession? = null,
     onSaveLabel: (String) -> Unit = {},
+    onDeleteLabel: (() -> Unit)? = null,
+    boltzRescueMnemonic: String? = null,
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -802,6 +904,21 @@ private fun LiquidTransactionDetailDialog(
         } else {
             null
         }
+    val chainSwapFundingAmountSats =
+        if (swapRole == LiquidSwapTxRole.FUNDING) {
+            (kotlin.math.abs(transaction.balanceSatoshi) - transaction.fee).takeIf { it > 0L }
+                ?: chainSwapDetails?.sendAmountSats?.takeIf { it > 0L }
+        } else {
+            null
+        }
+    val chainSwapSettlementAmountSats =
+        if (swapRole == LiquidSwapTxRole.SETTLEMENT) {
+            transaction.walletAddressAmountSats?.takeIf { it > 0L }
+                ?: chainSwapDetails?.expectedReceiveAmountSats?.takeIf { it > 0L }
+                ?: kotlin.math.abs(transaction.balanceSatoshi)
+        } else {
+            null
+        }
     val amountAbs =
         when {
             !isReceive && lightningFundingAmountSats != null ->
@@ -809,8 +926,7 @@ private fun LiquidTransactionDetailDialog(
             swapRole == LiquidSwapTxRole.FUNDING ->
                 (chainSwapDetails.sendAmountSats.takeIf { it > 0L } ?: kotlin.math.abs(transaction.balanceSatoshi)).toULong()
             swapRole == LiquidSwapTxRole.SETTLEMENT ->
-                (chainSwapDetails.expectedReceiveAmountSats.takeIf { it > 0L } ?: kotlin.math.abs(transaction.balanceSatoshi))
-                    .toULong()
+                chainSwapSettlementAmountSats!!.toULong()
             else -> kotlin.math.abs(transaction.balanceSatoshi).toULong()
         }
     val accentColor = if (isReceive) AccentGreen else AccentRed
@@ -888,6 +1004,7 @@ private fun LiquidTransactionDetailDialog(
         } catch (_: Exception) {
             explorerUrl.contains(".onion")
         }
+    val canOpenBlockExplorer = liquidExplorer != SecureStorage.LIQUID_EXPLORER_DISABLED && explorerUrl.isNotBlank()
 
     var showCopiedTxid by remember { mutableStateOf(false) }
     var showCopiedAddress by remember { mutableStateOf(false) }
@@ -898,16 +1015,46 @@ private fun LiquidTransactionDetailDialog(
     var copiedSwapField by remember { mutableStateOf<String?>(null) }
     var swapDetailsExpanded by remember { mutableStateOf(false) }
     var lightningAdvancedExpanded by remember { mutableStateOf(false) }
+    var showRescueKeyDialog by remember { mutableStateOf(false) }
     val swapDetailsBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(swapDetailsExpanded, "liquid_balance_swap_details")
     val lightningAdvancedBringIntoViewRequester =
         rememberBringIntoViewRequesterOnExpand(lightningAdvancedExpanded, "liquid_balance_lightning_advanced")
     var isEditingLabel by remember { mutableStateOf(false) }
     var labelText by remember(effectiveLabel) { mutableStateOf(effectiveLabel.orEmpty()) }
     var showTorBrowserError by remember { mutableStateOf(false) }
+    val openBlockExplorer = {
+        if (isOnionExplorer) {
+            val torBrowserPackage = "org.torproject.torbrowser"
+            val intent =
+                Intent(Intent.ACTION_VIEW, explorerUrl.toUri()).apply {
+                    setPackage(torBrowserPackage)
+                }
+            try {
+                context.startActivity(intent)
+            } catch (_: Exception) {
+                showTorBrowserError = true
+            }
+        } else {
+            val intent = Intent(Intent.ACTION_VIEW, explorerUrl.toUri())
+            context.startActivity(intent)
+        }
+    }
 
     if (showTorBrowserError) {
         LiquidTorBrowserErrorDialog(
             onDismiss = { showTorBrowserError = false },
+        )
+    }
+
+    if (
+        showRescueKeyDialog &&
+        chainSwapDetails != null &&
+        shouldShowBoltzRescueKey(chainSwapDetails.service, boltzRescueMnemonic)
+    ) {
+        BoltzRescueMnemonicDialog(
+            mnemonic = boltzRescueMnemonic.orEmpty(),
+            accentColor = LiquidTeal,
+            onDismiss = { showRescueKeyDialog = false },
         )
     }
 
@@ -1083,46 +1230,6 @@ private fun LiquidTransactionDetailDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                if (liquidExplorer != SecureStorage.LIQUID_EXPLORER_DISABLED && explorerUrl.isNotBlank()) {
-                    OutlinedButton(
-                        onClick = {
-                            if (isOnionExplorer) {
-                                val torBrowserPackage = "org.torproject.torbrowser"
-                                val intent =
-                                    Intent(Intent.ACTION_VIEW, explorerUrl.toUri()).apply {
-                                        setPackage(torBrowserPackage)
-                                    }
-                                try {
-                                    context.startActivity(intent)
-                                } catch (_: Exception) {
-                                    showTorBrowserError = true
-                                }
-                            } else {
-                                val intent = Intent(Intent.ACTION_VIEW, explorerUrl.toUri())
-                                context.startActivity(intent)
-                            }
-                        },
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(36.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
-                        border = BorderStroke(1.dp, Color(0xFF9BA3AC)),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(liquidExplorerButtonText(liquidExplorer), style = MaterialTheme.typography.bodyMedium)
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-                }
-
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
@@ -1135,7 +1242,19 @@ private fun LiquidTransactionDetailDialog(
                                 .padding(12.dp),
                     ) {
                         Column {
-                            Text("Status", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("Status", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                                if (canOpenBlockExplorer) {
+                                    TransactionExplorerBadge(
+                                        tint = LiquidTeal,
+                                        onClick = openBlockExplorer,
+                                    )
+                                }
+                            }
                             Spacer(modifier = Modifier.height(4.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1183,11 +1302,13 @@ private fun LiquidTransactionDetailDialog(
                             verticalAlignment = Alignment.Top,
                         ) {
                             Text(
-                                text = transaction.txid.take(20) + "..." + transaction.txid.takeLast(8),
+                                text = transaction.txid,
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             Box(
                                 contentAlignment = Alignment.Center,
@@ -1314,7 +1435,7 @@ private fun LiquidTransactionDetailDialog(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = transaction.walletAddress.take(14) + "..." + transaction.walletAddress.takeLast(8),
+                                            text = truncateSwapDetailValue(transaction.walletAddress),
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontFamily = FontFamily.Monospace,
                                             color = MaterialTheme.colorScheme.onBackground,
@@ -1564,7 +1685,7 @@ private fun LiquidTransactionDetailDialog(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = transaction.changeAddress.take(14) + "..." + transaction.changeAddress.takeLast(8),
+                                            text = truncateSwapDetailValue(transaction.changeAddress),
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontFamily = FontFamily.Monospace,
                                             color = MaterialTheme.colorScheme.onBackground,
@@ -1870,48 +1991,19 @@ private fun LiquidTransactionDetailDialog(
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             )
-                        } else if (labelText.isNotBlank()) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = labelText,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = AccentTeal,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                Card(
-                                    modifier =
-                                        Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { isEditingLabel = true },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                                    border = BorderStroke(1.dp, BorderColor),
-                                ) {
-                                    Text(
-                                        text = "Edit",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = TextSecondary,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                    )
-                                }
-                            }
                         } else {
-                            Card(
-                                modifier =
-                                    Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { isEditingLabel = true },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                                border = BorderStroke(1.dp, BorderColor),
-                            ) {
-                                Text(
-                                    text = "Add",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = TextSecondary,
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                )
-                            }
+                            EditableLabelChip(
+                                label = labelText.takeIf { it.isNotBlank() },
+                                accentColor = AccentTeal,
+                                onClick = { isEditingLabel = true },
+                                onDelete =
+                                    onDeleteLabel?.let {
+                                        {
+                                            labelText = ""
+                                            it()
+                                        }
+                                    },
+                            )
                         }
 
                         chainSwapDetails?.let { swapDetails ->
@@ -1932,6 +2024,11 @@ private fun LiquidTransactionDetailDialog(
                                     color = TextSecondary,
                                     modifier = Modifier.weight(1f),
                                 )
+                                SwapDetailBadge(
+                                    text = swapProviderLabel(swapDetails.service),
+                                    accentColor = swapProviderColor(swapDetails.service),
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Icon(
                                     imageVector = if (swapDetailsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                                     contentDescription = if (swapDetailsExpanded) "Collapse swap details" else "Expand swap details",
@@ -1942,14 +2039,20 @@ private fun LiquidTransactionDetailDialog(
                             if (swapDetailsExpanded) {
                                 Column(modifier = Modifier.bringIntoViewRequester(swapDetailsBringIntoViewRequester)) {
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    SwapDetailBadge(
-                                        text = swapProviderLabel(swapDetails.service),
-                                        accentColor = swapProviderColor(swapDetails.service),
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    SwapDetailDirectionBadge(
-                                        direction = swapDetails.direction,
-                                    )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        SwapDetailDirectionBadge(
+                                            direction = swapDetails.direction,
+                                        )
+                                        if (shouldShowBoltzRescueKey(swapDetails.service, boltzRescueMnemonic)) {
+                                            BoltzRescueKeyButton(
+                                                onClick = { showRescueKeyDialog = true },
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.height(8.dp))
                                     SwapDetailCopyRow(
                                         label = if (swapDetails.service == SwapService.BOLTZ) "Boltz Swap ID" else "SideSwap Order ID",
@@ -1966,7 +2069,13 @@ private fun LiquidTransactionDetailDialog(
                                         label = swapDepositLabel(swapDetails),
                                         value = swapDetails.depositAddress,
                                         copyLabel = "Swap Deposit Address",
-                                        amountText = swapPrimaryAmountText(swapDetails, useSats, privacyMode),
+                                        amountText =
+                                            swapPrimaryAmountText(
+                                                details = swapDetails,
+                                                useSats = useSats,
+                                                privacyMode = privacyMode,
+                                                actualAmountSats = chainSwapFundingAmountSats,
+                                            ),
                                         amountColor = swapPrimaryAmountColor(swapDetails.direction),
                                         copied = copiedSwapField == "deposit_address",
                                         onCopy = {
@@ -1984,7 +2093,12 @@ private fun LiquidTransactionDetailDialog(
                                             label = swapReceiveLabel(swapDetails),
                                             value = receiveAddress,
                                             copyLabel = "Swap Destination Address",
-                                            amountText = swapExpectedReceiveText(swapDetails, useSats, privacyMode),
+                                            amountText = swapExpectedReceiveText(
+                                                details = swapDetails,
+                                                useSats = useSats,
+                                                privacyMode = privacyMode,
+                                                actualAmountSats = chainSwapSettlementAmountSats,
+                                            ),
                                             amountColor = swapExpectedReceiveColor(swapDetails.direction),
                                             copied = copiedSwapField == "receive_address",
                                             onCopy = {
@@ -2030,16 +2144,6 @@ private fun LiquidTransactionDetailDialog(
                 }
             }
         }
-    }
-}
-
-private fun liquidExplorerButtonText(explorer: String): String {
-    return when (explorer) {
-        SecureStorage.LIQUID_EXPLORER_LIQUID_NETWORK -> "View on liquid.network"
-        SecureStorage.LIQUID_EXPLORER_LIQUID_NETWORK_ONION -> "View on liquid.network (onion)"
-        SecureStorage.LIQUID_EXPLORER_BLOCKSTREAM -> "View on Blockstream"
-        SecureStorage.LIQUID_EXPLORER_CUSTOM -> "View on custom Liquid explorer"
-        else -> "View on Liquid Explorer"
     }
 }
 
@@ -2167,7 +2271,7 @@ private fun SwapDetailCopyRow(
         Spacer(modifier = Modifier.height(6.dp))
         Row(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -2193,6 +2297,13 @@ private fun SwapDetailCopyRow(
                 contentAlignment = Alignment.Center,
                 modifier =
                     Modifier
+                        .layout { measurable, constraints ->
+                            val placeable = measurable.measure(constraints)
+                            val liftPx = 4.dp.roundToPx()
+                            layout(placeable.width, (placeable.height - liftPx).coerceAtLeast(0)) {
+                                placeable.placeRelative(0, -liftPx)
+                            }
+                        }
                         .size(32.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .background(DarkSurfaceVariant)
@@ -2294,7 +2405,7 @@ private fun swapDepositLabel(details: LiquidSwapDetails): String =
 
 private fun swapReceiveLabel(details: LiquidSwapDetails): String =
     when (details.direction) {
-        SwapDirection.BTC_TO_LBTC -> "Liquid Payout Address"
+        SwapDirection.BTC_TO_LBTC -> "Liquid Destination Address"
         SwapDirection.LBTC_TO_BTC -> "Bitcoin Destination Address"
     }
 
@@ -2314,24 +2425,28 @@ private fun swapPrimaryAmountText(
     details: LiquidSwapDetails,
     useSats: Boolean,
     privacyMode: Boolean,
+    actualAmountSats: Long? = null,
 ): String {
     val asset = when (details.direction) {
         SwapDirection.BTC_TO_LBTC -> "BTC"
         SwapDirection.LBTC_TO_BTC -> "L-BTC"
     }
-    return formatSwapAssetAmount(details.sendAmountSats, asset, useSats, privacyMode)
+    val displayAmountSats = actualAmountSats ?: details.sendAmountSats
+    return formatSwapAssetAmount(displayAmountSats, asset, useSats, privacyMode)
 }
 
 private fun swapExpectedReceiveText(
     details: LiquidSwapDetails,
     useSats: Boolean,
     privacyMode: Boolean,
+    actualAmountSats: Long? = null,
 ): String {
     val asset = when (details.direction) {
         SwapDirection.BTC_TO_LBTC -> "L-BTC"
         SwapDirection.LBTC_TO_BTC -> "BTC"
     }
-    return formatSwapAssetAmount(details.expectedReceiveAmountSats, asset, useSats, privacyMode)
+    val displayAmountSats = actualAmountSats ?: details.expectedReceiveAmountSats
+    return formatSwapAssetAmount(displayAmountSats, asset, useSats, privacyMode)
 }
 
 private fun formatSwapAssetAmount(
@@ -2412,6 +2527,36 @@ private fun LiquidTransactionTextFilterButton(
             style = MaterialTheme.typography.titleMedium,
             color = if (isSelected) tint else TextSecondary,
             fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+@Composable
+private fun TransactionExplorerBadge(
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            Modifier
+                .height(28.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(tint.copy(alpha = 0.16f))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp),
+    ) {
+        Text(
+            text = "Explorer",
+            style = MaterialTheme.typography.labelMedium,
+            color = tint,
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+            contentDescription = "Open in block explorer",
+            tint = tint,
+            modifier = Modifier.size(16.dp),
         )
     }
 }

@@ -49,6 +49,7 @@ import github.aeonbtc.ibiswallet.data.model.SwapQuote
 import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.SwapState
 import github.aeonbtc.ibiswallet.data.model.SyncProgress
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.WalletAddress
 import github.aeonbtc.ibiswallet.data.model.WalletLayer
@@ -120,8 +121,12 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         private const val MONITOR_MAX_RETRIES = 3
         private const val MONITOR_RETRY_BASE_MS = 5_000L
         private const val HEARTBEAT_INTERVAL_MS = 60_000L
+        private const val HEARTBEAT_RETRY_INTERVAL_MS = 15_000L
         private const val HEARTBEAT_PING_TIMEOUT_MS = 10_000L
         private const val HEARTBEAT_MAX_FAILURES = 3
+        private const val RECONNECT_BASE_DELAY_MS = 5_000L
+        private const val RECONNECT_MAX_DELAY_MS = 60_000L
+        private const val RECONNECT_MAX_ATTEMPTS = 10
     }
 
     private val secureStorage = SecureStorage.getInstance(application)
@@ -258,6 +263,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     private var liquidFullSyncJob: Job? = null
     private var backgroundSyncJob: Job? = null
     private var heartbeatJob: Job? = null
+    private var reconnectRetryJob: Job? = null
     private var lightningInvoiceMonitorJob: Job? = null
     private var lightningPaymentMonitorJob: Job? = null
     private var activeLayerPersistJob: Job? = null
@@ -279,11 +285,19 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         AppLifecycleCoordinator(
             scope = viewModelScope,
             onBackgrounded = {
+                ConnectivityKeepAlivePolicy.updateAppForegroundState(
+                    context = appContext,
+                    isInForeground = false,
+                )
                 val wasConnected = isLiquidConnected.value
                 wipePreparedSwapReviewOnBackground()
                 wasConnected
             },
             onForegrounded = { wasConnectedBeforeBackground, _ ->
+                ConnectivityKeepAlivePolicy.updateAppForegroundState(
+                    context = appContext,
+                    isInForeground = true,
+                )
                 if (wasConnectedBeforeBackground && !isLiquidConnected.value) {
                     reconnectOnForeground()
                 }
@@ -449,6 +463,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         lifecycleCoordinator.dispose()
         cancelActiveLayerPersistence()
         stopHeartbeat()
+        stopReconnectRetry()
         cancelManagedJobs()
         sideSwapMonitorJob?.cancel()
         synchronized(swapMonitorJobs) {
@@ -675,13 +690,21 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             if (pendingSwap.direction == SwapDirection.BTC_TO_LBTC) {
                 secureStorage.saveTransactionLabel(walletId, txid, label)
             } else {
-                secureStorage.saveLiquidTransactionLabel(walletId, txid, label)
+                if (walletId == loadedWalletId.value) {
+                    repository.saveLiquidTransactionLabel(txid, label)
+                } else {
+                    secureStorage.saveLiquidTransactionLabel(walletId, txid, label)
+                }
             }
         }
 
         pendingSwap.settlementTxid?.takeIf { it.isNotBlank() }?.let { txid ->
             if (pendingSwap.direction == SwapDirection.BTC_TO_LBTC) {
-                secureStorage.saveLiquidTransactionLabel(walletId, txid, label)
+                if (walletId == loadedWalletId.value) {
+                    repository.saveLiquidTransactionLabel(txid, label)
+                } else {
+                    secureStorage.saveLiquidTransactionLabel(walletId, txid, label)
+                }
             } else {
                 secureStorage.saveTransactionLabel(walletId, txid, label)
             }
@@ -1089,6 +1112,30 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
+    private fun saveChainSwapBitcoinTxDetails(
+        txid: String,
+        pendingSwap: PendingSwapSession,
+        role: LiquidSwapTxRole,
+    ) {
+        val walletId = loadedWalletId.value ?: return
+        secureStorage.saveTransactionSwapDetails(
+            walletId = walletId,
+            txid = txid,
+            details =
+                repository.buildLiquidSwapDetails(
+                    service = pendingSwap.service,
+                    direction = pendingSwap.direction,
+                    swapId = pendingSwap.swapId,
+                    role = role,
+                    depositAddress = pendingSwap.depositAddress,
+                    receiveAddress = pendingSwap.receiveAddress,
+                    refundAddress = pendingSwap.refundAddress,
+                    sendAmountSats = pendingSwap.sendAmount,
+                    expectedReceiveAmountSats = pendingSwap.estimatedTerms.receiveAmount,
+                ),
+        )
+    }
+
     private fun detectChainSwapSettlementTxid(pendingSwap: PendingSwapSession): String? {
         if (pendingSwap.direction != SwapDirection.BTC_TO_LBTC) return null
         val receiveAddress = pendingSwap.receiveAddress?.takeIf { it.isNotBlank() } ?: return null
@@ -1410,13 +1457,27 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         backgroundSyncJob = null
     }
 
+    /**
+     * Lightweight ping loop against the Liquid Electrum server.
+     *
+     * Adaptive cadence: 60s while pings succeed, dropping to 15s after the
+     * first failed ping so we confirm a drop within ~90s of the first failure
+     * instead of ~3min, while still requiring [HEARTBEAT_MAX_FAILURES]
+     * consecutive failures to absorb transient Tor/cellular blips.
+     */
     private fun startHeartbeat() {
         if (heartbeatJob?.isActive == true) return
         heartbeatJob?.cancel()
         var consecutiveFailures = 0
         heartbeatJob = launchLiquidJob {
             while (isActive) {
-                delay(HEARTBEAT_INTERVAL_MS)
+                val interval =
+                    if (consecutiveFailures == 0) {
+                        HEARTBEAT_INTERVAL_MS
+                    } else {
+                        HEARTBEAT_RETRY_INTERVAL_MS
+                    }
+                delay(interval)
                 if (!_isLayer2Enabled.value || !liquidContextActive || !isLiquidConnected.value) {
                     break
                 }
@@ -1454,12 +1515,54 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         heartbeatJob = null
     }
 
+    private fun stopReconnectRetry() {
+        reconnectRetryJob?.cancel()
+        reconnectRetryJob = null
+    }
+
+    private fun startReconnectRetry() {
+        if (reconnectRetryJob?.isActive == true) return
+        if (repository.isUserDisconnected()) return
+        if (!_isLayer2Enabled.value || !liquidContextActive) return
+        if (!secureStorage.hasUserSelectedLiquidServer()) return
+
+        reconnectRetryJob =
+            launchLiquidJob retry@{
+                var attempt = 0
+                while (isActive && attempt < RECONNECT_MAX_ATTEMPTS) {
+                    val delayMs =
+                        (RECONNECT_BASE_DELAY_MS shl attempt)
+                            .coerceAtMost(RECONNECT_MAX_DELAY_MS)
+                    delay(delayMs)
+
+                    if (isLiquidConnected.value) return@retry
+                    if (repository.isUserDisconnected()) return@retry
+                    if (!_isLayer2Enabled.value || !liquidContextActive) return@retry
+                    if (_isLiquidConnecting.value || connectionJob?.isActive == true) continue
+
+                    attempt++
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "Liquid reconnect retry $attempt/$RECONNECT_MAX_ATTEMPTS")
+                    }
+
+                    runCatching {
+                        connectToActiveServer()
+                    }.onFailure { error ->
+                        Log.w(TAG, "Liquid reconnect retry $attempt failed: ${error.message}")
+                    }
+
+                    if (isLiquidConnected.value) return@retry
+                }
+            }
+    }
+
     /**
      * Silent reconnect after returning from background with a dead Liquid connection.
      */
     private suspend fun reconnectOnForeground() {
         if (!_isLayer2Enabled.value || !liquidContextActive) return
         if (connectionJob?.isActive == true) return
+        stopReconnectRetry()
         try {
             connectToActiveServer()
         } catch (e: Exception) {
@@ -1514,12 +1617,16 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         }
         stopHeartbeat()
         stopBackgroundSync()
+        stopReconnectRetry()
         _initialLiquidSyncComplete.value = false
         _liquidBlockHeight.value = null
         repository.disconnect()
         _liquidConnectionError.value = message
         _events.emit(LiquidEvent.Error(message))
         failedServerId?.let(::tryAutoSwitchFrom)
+        connectionJob?.join()
+        if (isLiquidConnected.value) return
+        startReconnectRetry()
     }
 
     private fun requireLiquidAvailable() {
@@ -1571,6 +1678,10 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     if (isBoltzEnabled()) {
                         scheduleAutomaticBoltzPrewarm("context_active")
                     }
+                } else if (!repository.isUserDisconnected() && !_isLiquidConnecting.value) {
+                    launchLiquidJob {
+                        reconnectOnForeground()
+                    }
                 }
             }
             return
@@ -1582,6 +1693,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         cancelManagedJobs()
         resetLiquidUiState()
         stopHeartbeat()
+        stopReconnectRetry()
         stopBackgroundSync()
         stopSideSwapMonitor()
         stopAllSwapMonitors()
@@ -1933,6 +2045,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         if (!isAutoSwitch) autoSwitchVisited.clear()
         stopBackgroundSync()
         stopHeartbeat()
+        stopReconnectRetry()
         val config =
             secureStorage.getLiquidServer(serverId)
                 ?: run {
@@ -1993,6 +2106,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         stopHeartbeat()
+        stopReconnectRetry()
         stopBackgroundSync()
         _liquidConnectionError.value = null
         _liquidBlockHeight.value = null
@@ -2005,6 +2119,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     /** Cancel an in-progress connection attempt */
     fun cancelLiquidConnection() {
         stopHeartbeat()
+        stopReconnectRetry()
         stopBackgroundSync()
         val jobToCancel = connectionJob
         connectionJob = null
@@ -2504,7 +2619,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
 
     fun createLightningInvoice(
         amountSats: Long,
-        label: String? = null,
+        localLabel: String? = null,
+        embedLabelInInvoice: Boolean = false,
     ) {
         requireLiquidAvailable()
         if (!isBoltzEnabled()) {
@@ -2525,7 +2641,12 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             logBoltzTrace("start", trace, "amountSats" to amountSats)
             try {
                 clearActiveLightningInvoice(clearPendingMetadata = true)
-                val created = repository.createLightningInvoice(amountSats, label)
+                val created =
+                    repository.createLightningInvoice(
+                        amountSats = amountSats,
+                        localLabel = localLabel,
+                        embeddedLabel = localLabel?.takeIf { embedLabelInInvoice },
+                    )
                 activeLightningInvoiceSwapId = created.swapId
                 logBoltzTrace(
                     "ready",
@@ -2813,8 +2934,13 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         label: String,
     ) {
         secureStorage.saveLiquidAddressLabel(walletId, address, label)
-        repository.refreshCachedWalletState()
-        refreshLiquidSnapshotsIfNeeded(walletId)
+        val normalizedLabel = label.ifBlank { null }
+        patchCurrentLiquidAddressLabelIfActive(walletId, address, normalizedLabel)
+        patchLiquidAddressLabelInPlaceIfActive(walletId, address, normalizedLabel)
+        if (walletId == loadedWalletId.value) {
+            refreshLiquidUtxos()
+            refreshLiquidTransactionLabelSnapshots(walletId)
+        }
     }
 
     fun deleteLiquidAddressLabel(
@@ -2822,8 +2948,53 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         address: String,
     ) {
         secureStorage.deleteLiquidAddressLabel(walletId, address)
-        repository.refreshCachedWalletState()
-        refreshLiquidSnapshotsIfNeeded(walletId)
+        patchCurrentLiquidAddressLabelIfActive(walletId, address, null)
+        patchLiquidAddressLabelInPlaceIfActive(walletId, address, null)
+        if (walletId == loadedWalletId.value) {
+            refreshLiquidUtxos()
+            refreshLiquidTransactionLabelSnapshots(walletId)
+        }
+    }
+
+    private fun patchCurrentLiquidAddressLabelIfActive(
+        walletId: String,
+        address: String,
+        label: String?,
+    ) {
+        if (walletId != loadedWalletId.value) return
+        repository.patchCurrentAddressLabelIfCurrent(address, label)
+    }
+
+    /**
+     * Patch the in-memory Liquid address book with a changed label without re-deriving
+     * every revealed change address (blech32 + SLIP-77 per index is expensive on big wallets).
+     */
+    private fun patchLiquidAddressLabelInPlaceIfActive(
+        walletId: String,
+        address: String,
+        label: String?,
+    ) {
+        if (walletId != loadedWalletId.value) return
+        val (receive, change, used) = _allLiquidAddresses.value
+
+        fun List<WalletAddress>.patched(): List<WalletAddress> {
+            var changed = false
+            val result =
+                map { entry ->
+                    if (entry.address == address && entry.label != label) {
+                        changed = true
+                        entry.copy(label = label)
+                    } else {
+                        entry
+                    }
+                }
+            return if (changed) result else this
+        }
+
+        val patched = Triple(receive.patched(), change.patched(), used.patched())
+        if (patched !== _allLiquidAddresses.value) {
+            _allLiquidAddresses.value = patched
+        }
     }
 
     fun saveLiquidTransactionLabel(
@@ -2831,10 +3002,46 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         txid: String,
         label: String,
     ) {
-        secureStorage.saveLiquidTransactionLabel(walletId, txid, label)
+        if (walletId == loadedWalletId.value) {
+            repository.saveLiquidTransactionLabel(txid, label)
+        } else {
+            secureStorage.saveLiquidTransactionLabel(walletId, txid, label)
+        }
         repository.refreshCachedWalletState()
         refreshLiquidSnapshotsIfNeeded(walletId)
     }
+
+    fun deleteLiquidTransactionLabel(
+        walletId: String,
+        txid: String,
+    ) {
+        if (walletId == loadedWalletId.value) {
+            repository.deleteLiquidTransactionLabel(txid)
+        } else {
+            secureStorage.deleteLiquidTransactionLabel(walletId, txid)
+        }
+        repository.refreshCachedWalletState()
+        refreshLiquidSnapshotsIfNeeded(walletId)
+    }
+
+    suspend fun searchTransactions(
+        query: String,
+        includeSwap: Boolean,
+        includeLightning: Boolean,
+        includeNative: Boolean,
+        includeUsdt: Boolean,
+        limit: Int,
+    ): TransactionSearchResult =
+        withContext(Dispatchers.IO) {
+            repository.searchLiquidTransactionTxids(
+                query = query,
+                includeSwap = includeSwap,
+                includeLightning = includeLightning,
+                includeNative = includeNative,
+                includeUsdt = includeUsdt,
+                limit = limit,
+            )
+        }
 
     fun setLiquidUtxoFrozen(
         outpoint: String,
@@ -5014,12 +5221,19 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 selectedUtxos,
                 fundingRequest.isMaxSend,
             )
-            fundingState.copy(
-                fundingTxid = fundingTxid,
-                sendAmount = actualSendAmount,
-                phase = PendingSwapPhase.IN_PROGRESS,
-                status = "Broadcasted peg-in funding transaction, waiting for SideSwap payout...",
-            ).also(::applySwapTransactionLabels)
+            val active =
+                fundingState.copy(
+                    fundingTxid = fundingTxid,
+                    sendAmount = actualSendAmount,
+                    phase = PendingSwapPhase.IN_PROGRESS,
+                    status = "Broadcasted peg-in funding transaction, waiting for SideSwap payout...",
+                )
+            saveChainSwapBitcoinTxDetails(
+                txid = fundingTxid,
+                pendingSwap = active,
+                role = LiquidSwapTxRole.FUNDING,
+            )
+            active.also(::applySwapTransactionLabels)
         } else {
             val fundingState =
                 pendingSwap.copy(
@@ -5099,6 +5313,11 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     phase = PendingSwapPhase.IN_PROGRESS,
                     status = "Broadcasted chain swap funding transaction, waiting for payout...",
                 )
+            saveChainSwapBitcoinTxDetails(
+                txid = fundingTxid,
+                pendingSwap = active,
+                role = LiquidSwapTxRole.FUNDING,
+            )
             applySwapTransactionLabels(active)
             logDebug(
                 "executeBoltzChainSwap BTC funding broadcast swapId=${active.swapId} fundingTxid=${summarizeValue(fundingTxid)} " +
@@ -5240,16 +5459,24 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     val settlementTxid = completedTx.payoutTxid?.takeIf { it.isNotBlank() }
                     applySwapTransactionLabels(active.copy(settlementTxid = settlementTxid))
                     removeTrackedPendingSwap(active.swapId)
-                    if (settlementTxid != null && active.direction == SwapDirection.BTC_TO_LBTC) {
-                        repository.saveLiquidTransactionSource(
-                            txid = settlementTxid,
-                            source = LiquidTxSource.CHAIN_SWAP,
-                        )
-                        saveChainSwapLiquidTxDetails(
-                            txid = settlementTxid,
-                            pendingSwap = active,
-                            role = LiquidSwapTxRole.SETTLEMENT,
-                        )
+                    if (settlementTxid != null) {
+                        if (active.direction == SwapDirection.BTC_TO_LBTC) {
+                            repository.saveLiquidTransactionSource(
+                                txid = settlementTxid,
+                                source = LiquidTxSource.CHAIN_SWAP,
+                            )
+                            saveChainSwapLiquidTxDetails(
+                                txid = settlementTxid,
+                                pendingSwap = active,
+                                role = LiquidSwapTxRole.SETTLEMENT,
+                            )
+                        } else {
+                            saveChainSwapBitcoinTxDetails(
+                                txid = settlementTxid,
+                                pendingSwap = active,
+                                role = LiquidSwapTxRole.SETTLEMENT,
+                            )
+                        }
                     }
                     _events.emit(
                         LiquidEvent.SwapCompleted(
@@ -5545,6 +5772,12 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     source = LiquidTxSource.CHAIN_SWAP,
                 )
                 saveChainSwapLiquidTxDetails(
+                    txid = txid,
+                    pendingSwap = completedSwap,
+                    role = LiquidSwapTxRole.SETTLEMENT,
+                )
+            } else {
+                saveChainSwapBitcoinTxDetails(
                     txid = txid,
                     pendingSwap = completedSwap,
                     role = LiquidSwapTxRole.SETTLEMENT,

@@ -118,7 +118,7 @@ fun LiquidReceiveScreen(
     onSaveLiquidAddressLabel: (String, String) -> Unit = { _, _ -> },
     onShowAllAddresses: () -> Unit = {},
     onShowAllUtxos: () -> Unit = {},
-    onCreateLightningInvoice: (Long, String?) -> Unit = { _, _ -> },
+    onCreateLightningInvoice: (Long, String?, Boolean) -> Unit = { _, _, _ -> },
     onWarmLightningInvoice: () -> Unit = {},
     onFetchLightningLimits: () -> Unit = {},
     onResetLightningInvoice: () -> Unit = {},
@@ -133,12 +133,14 @@ fun LiquidReceiveScreen(
     var isUsdMode by remember { mutableStateOf(false) }
     var showAmountField by remember { mutableStateOf(false) }
     var showEnlargedQr by remember { mutableStateOf(false) }
-    var showLabelField by remember(currentAddressLabel) { mutableStateOf(!currentAddressLabel.isNullOrBlank()) }
-    var labelText by remember(currentAddressLabel) { mutableStateOf(currentAddressLabel.orEmpty()) }
+    var showLabelField by remember { mutableStateOf(false) }
+    var labelText by remember { mutableStateOf("") }
+    var embedLabelInQr by remember(liquidAddress) { mutableStateOf(false) }
     var lightningAmountText by remember { mutableStateOf("") }
     var lightningIsUsdMode by remember { mutableStateOf(false) }
     var lightningShowLabelField by remember { mutableStateOf(false) }
     var lightningLabelText by remember { mutableStateOf("") }
+    var lightningEmbedLabelInQr by remember { mutableStateOf(false) }
     var liquidQrBitmap by remember { mutableStateOf<Bitmap?>(null) }
     val amountBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showAmountField, "liquid_receive_amount")
     val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "liquid_receive_label")
@@ -199,10 +201,10 @@ fun LiquidReceiveScreen(
         selectedAssetId != LiquidAsset.LBTC_ASSET_ID
 
     val liquidRequestContent =
-        remember(liquidAddress, amountInSats, showAmountField, labelText, showLabelField, selectedAssetId) {
+        remember(liquidAddress, amountInSats, showAmountField, labelText, showLabelField, embedLabelInQr, selectedAssetId) {
             liquidAddress?.let { address ->
                 val liquidAmountSats = amountInSats?.takeIf { showAmountField && it > 0 }
-                val label = labelText.trim().takeIf { showLabelField && it.isNotBlank() }
+                val label = labelText.trim().takeIf { showLabelField && embedLabelInQr && it.isNotBlank() }
                 if (liquidAmountSats != null || label != null || isNonLbtcAsset) {
                     val params = mutableListOf<String>()
                     liquidAmountSats?.let {
@@ -248,6 +250,14 @@ fun LiquidReceiveScreen(
     LaunchedEffect(liquidAddress) {
         if (liquidAddress == null) {
             onEnsureLiquidAddress()
+        }
+    }
+
+    LaunchedEffect(liquidAddress, currentAddressLabel) {
+        val savedAddressLabel = currentAddressLabel.orEmpty()
+        labelText = savedAddressLabel
+        if (savedAddressLabel.isNotBlank()) {
+            showLabelField = true
         }
     }
 
@@ -539,6 +549,7 @@ fun LiquidReceiveScreen(
                             SquareToggle(
                                 checked = showAmountField,
                                 onCheckedChange = { showAmountField = it },
+                                checkedColor = LiquidTeal,
                             )
                         }
 
@@ -683,6 +694,7 @@ fun LiquidReceiveScreen(
                             SquareToggle(
                                 checked = showLabelField,
                                 onCheckedChange = { showLabelField = it },
+                                checkedColor = LiquidTeal,
                             )
                         }
 
@@ -714,6 +726,32 @@ fun LiquidReceiveScreen(
                                         }
                                     },
                                 )
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = "Embed in QR",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = TextSecondary,
+                                        modifier = Modifier.padding(end = 8.dp),
+                                    )
+                                    SquareToggle(
+                                        checked = embedLabelInQr,
+                                        onCheckedChange = { embedLabelInQr = it },
+                                        enabled = liquidAddress != null,
+                                        checkedColor = LiquidTeal,
+                                        trackWidth = 36.dp,
+                                        trackHeight = 20.dp,
+                                        thumbSize = 14.dp,
+                                        thumbPadding = 2.dp,
+                                        trackCornerRadius = 3.dp,
+                                        thumbCornerRadius = 2.dp,
+                                    )
+                                }
                             }
                         }
                     }
@@ -880,6 +918,7 @@ fun LiquidReceiveScreen(
                                     lightningAmountText = ""
                                     lightningLabelText = ""
                                     lightningShowLabelField = false
+                                    lightningEmbedLabelInQr = false
                                     onResetLightningInvoice()
                                 },
                                 modifier = Modifier
@@ -931,6 +970,8 @@ fun LiquidReceiveScreen(
                                     },
                                     onShowLabelFieldChange = { lightningShowLabelField = it },
                                     onLabelTextChange = { lightningLabelText = it },
+                                    embedLabelInQr = lightningEmbedLabelInQr,
+                                    onEmbedLabelInQrChange = { lightningEmbedLabelInQr = it },
                                     onToggleDenomination = onToggleDenomination,
                                 )
                             }
@@ -959,6 +1000,8 @@ fun LiquidReceiveScreen(
                                 },
                                 onShowLabelFieldChange = { lightningShowLabelField = it },
                                 onLabelTextChange = { lightningLabelText = it },
+                                embedLabelInQr = lightningEmbedLabelInQr,
+                                onEmbedLabelInQrChange = { lightningEmbedLabelInQr = it },
                                 onToggleDenomination = onToggleDenomination,
                             )
                         }
@@ -976,6 +1019,7 @@ fun LiquidReceiveScreen(
                     lightningAmountText = ""
                     lightningLabelText = ""
                     lightningShowLabelField = false
+                    lightningEmbedLabelInQr = false
                     onResetLightningInvoice()
                 },
                 modifier = Modifier
@@ -1006,6 +1050,7 @@ fun LiquidReceiveScreen(
                         onCreateLightningInvoice(
                             amount,
                             lightningLabelText.trim().takeIf { it.isNotEmpty() },
+                            lightningEmbedLabelInQr,
                         )
                     }
                 },
@@ -1082,12 +1127,15 @@ private fun LightningInvoiceForm(
     lightningInvoiceLimits: LightningInvoiceLimits?,
     labelText: String,
     showLabelField: Boolean,
+    embedLabelInQr: Boolean,
     onAmountTextChange: (String) -> Unit,
     onUsdModeChange: (Boolean) -> Unit,
     onShowLabelFieldChange: (Boolean) -> Unit,
     onLabelTextChange: (String) -> Unit,
+    onEmbedLabelInQrChange: (Boolean) -> Unit,
     onToggleDenomination: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "lightning_invoice_label")
 
     Card(
@@ -1270,6 +1318,7 @@ private fun LightningInvoiceForm(
                 SquareToggle(
                     checked = showLabelField,
                     onCheckedChange = { onShowLabelFieldChange(it) },
+                    checkedColor = LightningYellow,
                 )
             }
 
@@ -1283,11 +1332,48 @@ private fun LightningInvoiceForm(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
                         colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = LiquidTeal,
+                            focusedBorderColor = LightningYellow,
                             unfocusedBorderColor = BorderColor,
-                            cursorColor = LiquidTeal,
+                            cursorColor = LightningYellow,
                         ),
+                        trailingIcon = {
+                            if (labelText.isNotBlank()) {
+                                TextButton(
+                                    onClick = {
+                                        onLabelTextChange(labelText.trim())
+                                        Toast.makeText(context, "Label will be saved with invoice", Toast.LENGTH_SHORT).show()
+                                    },
+                                ) {
+                                    Text("Save", color = LightningYellow)
+                                }
+                            }
+                        },
                     )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "Embed in invoice",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = TextSecondary,
+                            modifier = Modifier.padding(end = 8.dp),
+                        )
+                        SquareToggle(
+                            checked = embedLabelInQr,
+                            onCheckedChange = onEmbedLabelInQrChange,
+                            checkedColor = LightningYellow,
+                            trackWidth = 36.dp,
+                            trackHeight = 20.dp,
+                            thumbSize = 14.dp,
+                            thumbPadding = 2.dp,
+                            trackCornerRadius = 3.dp,
+                            thumbCornerRadius = 2.dp,
+                        )
+                    }
                 }
             }
         }

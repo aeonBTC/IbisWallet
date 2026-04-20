@@ -95,6 +95,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
+import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
@@ -124,6 +125,7 @@ data class WalletInfo(
     val type: String,
     val typeDescription: String,
     val derivationPath: String,
+    val seedFormat: SeedFormat = SeedFormat.BIP39,
     val isActive: Boolean = false,
     val isWatchOnly: Boolean = false,
     val isLocked: Boolean = false,
@@ -1267,7 +1269,7 @@ private fun ExportWalletDialog(
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                         Text(
-                            text = "Electrum servers and custom URLs",
+                            text = "Electrum servers and external services",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -2431,7 +2433,11 @@ private fun WalletCard(
             BorderColor
         }
 
-    val isBip39Wallet = !wallet.isWatchOnly && !wallet.isWatchAddress && !wallet.isPrivateKey
+    val isBip39Wallet =
+        !wallet.isWatchOnly &&
+            !wallet.isWatchAddress &&
+            !wallet.isPrivateKey &&
+            wallet.seedFormat == SeedFormat.BIP39
     val showLiquidToggle = wallet.isLiquidWatchOnly || (layer2Enabled && isBip39Wallet)
     val managementActionsEnabled = !wallet.isLocked
     val liquidToggleEnabled = !wallet.isLocked && !wallet.isLiquidWatchOnly

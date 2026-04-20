@@ -3331,14 +3331,6 @@ private fun LiquidMultiRecipientDialog(
                     )
                 }
 
-                if (selectedUtxoCount > 0) {
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "$selectedUtxoCount selected UTXO${if (selectedUtxoCount > 1) "s" else ""}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                    )
-                }
             }
         }
     }

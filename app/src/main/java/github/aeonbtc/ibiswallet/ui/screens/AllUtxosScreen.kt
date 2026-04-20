@@ -27,7 +27,6 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AcUnit
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -65,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
+import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.theme.AccentBlue
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
@@ -74,7 +74,6 @@ import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
-import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
@@ -573,8 +572,8 @@ private fun UtxoCard(
                                 contentAlignment = Alignment.Center,
                                 modifier = Modifier
                                     .padding(start = 4.dp)
-                                    .size(28.dp)
-                                    .clip(RoundedCornerShape(6.dp))
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable {
                                         val trimmed = labelDraft.trim()
                                         if (trimmed.isNotEmpty()) onSaveLabel(trimmed)
@@ -585,56 +584,22 @@ private fun UtxoCard(
                                     imageVector = Icons.Default.Check,
                                     contentDescription = "Save",
                                     tint = SuccessGreen,
-                                    modifier = Modifier.size(16.dp),
+                                    modifier = Modifier.size(20.dp),
                                 )
                             }
                         }
                     } else {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            val hasLabel = !utxo.label.isNullOrEmpty()
-                            Card(
-                                modifier = Modifier
-                                    .widthIn(max = 200.dp)
-                                    .clickable {
-                                        labelDraft = utxo.label ?: ""
-                                        isEditingLabel = true
-                                    },
-                                shape = RoundedCornerShape(8.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = if (hasLabel) AccentTeal.copy(alpha = 0.15f) else DarkSurface,
-                                ),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (hasLabel) AccentTeal else BorderColor,
-                                ),
-                            ) {
-                                Text(
-                                    text = utxo.label ?: "+ Label",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = if (hasLabel) AccentTeal else TextSecondary,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                )
-                            }
-                            if (hasLabel) {
-                                Box(
-                                    contentAlignment = Alignment.Center,
-                                    modifier = Modifier
-                                        .padding(start = 4.dp)
-                                        .size(28.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable { onDeleteLabel() },
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "Remove label",
-                                        tint = ErrorRed,
-                                        modifier = Modifier.size(15.dp),
-                                    )
-                                }
-                            }
-                        }
+                        EditableLabelChip(
+                            label = utxo.label,
+                            accentColor = AccentTeal,
+                            onClick = {
+                                labelDraft = utxo.label ?: ""
+                                isEditingLabel = true
+                            },
+                            onDelete = onDeleteLabel,
+                            maxWidth = 200.dp,
+                            verticalPadding = 5.dp,
+                        )
                     }
                 }
 

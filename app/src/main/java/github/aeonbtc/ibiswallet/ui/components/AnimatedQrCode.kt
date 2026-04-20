@@ -39,7 +39,9 @@ import com.sparrowwallet.hummingbird.UREncoder
 import com.sparrowwallet.hummingbird.registry.CryptoPSBT
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.Bbqr
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
+import github.aeonbtc.ibiswallet.util.resolveQrVersion
 import kotlinx.coroutines.delay
 
 /**
@@ -62,41 +64,56 @@ import kotlinx.coroutines.delay
  * - Screen brightness boost and keep-screen-on
  * - Tap to enlarge for full-screen display
  */
+enum class AnimatedQrExportProfile {
+    BITCOIN_PSBT,
+    LIQUID_PSET,
+}
+
+data class AnimatedQrEncodingDiagnostics(
+    val payloadSizeBytes: Int,
+    val fragmentSize: Int,
+    val totalParts: Int,
+    val density: SecureStorage.QrDensity,
+    val exportProfile: AnimatedQrExportProfile,
+)
+
+data class AnimatedQrEncodingPlan(
+    val qrParts: List<String>,
+    val diagnostics: AnimatedQrEncodingDiagnostics,
+)
+
+@Composable
+fun rememberAnimatedQrEncodingPlan(
+    dataBase64: String,
+    density: SecureStorage.QrDensity,
+    exportProfile: AnimatedQrExportProfile = AnimatedQrExportProfile.BITCOIN_PSBT,
+): AnimatedQrEncodingPlan {
+    return remember(dataBase64, density, exportProfile) {
+        val dataBytes = android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
+        buildAnimatedQrEncodingPlan(
+            dataBytes = dataBytes,
+            density = density,
+            exportProfile = exportProfile,
+        )
+    }
+}
+
 @Composable
 fun AnimatedQrCode(
-    dataBase64: String,
+    encodingPlan: AnimatedQrEncodingPlan,
     modifier: Modifier = Modifier,
     qrSize: Dp = 280.dp,
-    density: SecureStorage.QrDensity = SecureStorage.QrDensity.MEDIUM,
     brightness: Float? = null,
     playbackSpeed: SecureStorage.QrPlaybackSpeed = SecureStorage.QrPlaybackSpeed.MEDIUM,
 ) {
     val context = LocalContext.current
     var showEnlarged by remember { mutableStateOf(false) }
-
-    val dataBytes =
-        remember(dataBase64) {
-            android.util.Base64.decode(dataBase64, android.util.Base64.DEFAULT)
+    val qrParts = encodingPlan.qrParts
+    val totalParts = encodingPlan.diagnostics.totalParts
+    val forcedQrVersion =
+        remember(qrParts) {
+            qrParts.maxOfOrNull { part -> resolveQrVersion(part.uppercase()) ?: 1 }
         }
-
-    val fragmentSize =
-        remember(dataBytes, density) {
-            resolveUrFragmentSize(
-                payloadSize = dataBytes.size,
-                density = density,
-            )
-        }
-
-    // CryptoPSBT wraps arbitrary bytes as ur:crypto-psbt — works for both PSBT and PSET.
-    // Use denser fragments for large payloads to avoid impractical 100+ part animations.
-    val qrParts =
-        remember(dataBytes, fragmentSize) {
-            val cryptoPsbt = CryptoPSBT(dataBytes)
-            val ur = cryptoPsbt.toUR()
-            val encoder = UREncoder(ur, fragmentSize, 10, 0)
-            List(encoder.seqLen) { encoder.nextPart() }
-        }
-    val totalParts = qrParts.size
     val effectiveFrameDelayMs =
         remember(totalParts, playbackSpeed) {
             resolveUrFrameDelay(
@@ -105,13 +122,15 @@ fun AnimatedQrCode(
             )
         }
     var partIndex by remember(qrParts) { mutableIntStateOf(0) }
+    val currentPartIndex = clampAnimatedPartIndex(partIndex, totalParts)
 
     // Only animate if there are multiple parts
     val isAnimated = totalParts > 1
-    val currentPart = qrParts[partIndex]
+    val currentPart = qrParts[currentPartIndex]
 
     if (isAnimated) {
         LaunchedEffect(qrParts, effectiveFrameDelayMs) {
+            partIndex = clampAnimatedPartIndex(partIndex, totalParts)
             while (true) {
                 delay(effectiveFrameDelayMs)
                 partIndex = (partIndex + 1) % totalParts
@@ -120,8 +139,12 @@ fun AnimatedQrCode(
     }
 
     val qrBitmap =
-        remember(currentPart) {
-            generateQrBitmap(currentPart.uppercase())
+        remember(currentPart, forcedQrVersion) {
+            generateQrBitmap(
+                content = currentPart.uppercase(),
+                forcedVersion = forcedQrVersion,
+                cropToContent = true,
+            )
         }
 
     // Keep the screen on while QR is displayed and apply the user-selected brightness if provided.
@@ -167,6 +190,15 @@ fun AnimatedQrCode(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    if (isAnimated) {
+                        Text(
+                            text = "Part ${currentPartIndex + 1} of $totalParts",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
                     Box(
                         modifier =
                             Modifier
@@ -186,15 +218,6 @@ fun AnimatedQrCode(
                         }
                     }
 
-                    if (isAnimated) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Part ${partIndex + 1} of $totalParts",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary,
-                        )
-                    }
-
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
@@ -211,6 +234,15 @@ fun AnimatedQrCode(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (isAnimated) {
+            Text(
+                text = "Part ${currentPartIndex + 1} of $totalParts",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         // White background box with padding for contrast against dark card
         Box(
             modifier =
@@ -232,15 +264,6 @@ fun AnimatedQrCode(
             }
         }
 
-        if (isAnimated) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Part ${partIndex + 1} of $totalParts",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-            )
-        }
-
         Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = "Tap QR to enlarge",
@@ -250,7 +273,81 @@ fun AnimatedQrCode(
     }
 }
 
-private fun resolveUrFragmentSize(
+internal fun buildAnimatedQrEncodingPlan(
+    dataBytes: ByteArray,
+    density: SecureStorage.QrDensity,
+    exportProfile: AnimatedQrExportProfile = AnimatedQrExportProfile.BITCOIN_PSBT,
+): AnimatedQrEncodingPlan {
+    val fragmentSize =
+        resolveUrFragmentSize(
+            payloadSize = dataBytes.size,
+            density = density,
+            exportProfile = exportProfile,
+        )
+
+    // CryptoPSBT wraps arbitrary bytes as ur:crypto-psbt — works for both PSBT and PSET.
+    // Keep the UR encoder shared, but separate the sizing policy per export profile.
+    val cryptoPsbt = CryptoPSBT(dataBytes)
+    val ur = cryptoPsbt.toUR()
+    val encoder = UREncoder(ur, fragmentSize, 10, 0)
+    val qrParts = List(encoder.seqLen) { encoder.nextPart() }
+
+    return AnimatedQrEncodingPlan(
+        qrParts = qrParts,
+        diagnostics =
+            AnimatedQrEncodingDiagnostics(
+                payloadSizeBytes = dataBytes.size,
+                fragmentSize = fragmentSize,
+                totalParts = qrParts.size,
+                density = density,
+                exportProfile = exportProfile,
+            ),
+    )
+}
+
+internal fun resolveUrFragmentSize(
+    payloadSize: Int,
+    density: SecureStorage.QrDensity,
+    exportProfile: AnimatedQrExportProfile = AnimatedQrExportProfile.BITCOIN_PSBT,
+): Int {
+    return when (exportProfile) {
+        AnimatedQrExportProfile.BITCOIN_PSBT -> resolveBitcoinPsbtFragmentSize(payloadSize, density)
+        AnimatedQrExportProfile.LIQUID_PSET -> resolveLiquidPsetFragmentSize(payloadSize, density)
+    }
+}
+
+private fun resolveBitcoinPsbtFragmentSize(
+    payloadSize: Int,
+    density: SecureStorage.QrDensity,
+): Int {
+    return when (density) {
+        SecureStorage.QrDensity.LOW ->
+            when {
+                payloadSize >= 12_000 -> 280
+                payloadSize >= 6_000 -> 240
+                payloadSize >= 2_000 -> 220
+                else -> 180
+            }
+
+        SecureStorage.QrDensity.MEDIUM ->
+            when {
+                payloadSize >= 12_000 -> 360
+                payloadSize >= 6_000 -> 320
+                payloadSize >= 2_000 -> 280
+                else -> 220
+            }
+
+        SecureStorage.QrDensity.HIGH ->
+            when {
+                payloadSize >= 12_000 -> 440
+                payloadSize >= 6_000 -> 400
+                payloadSize >= 2_000 -> 340
+                else -> 280
+            }
+    }
+}
+
+private fun resolveLiquidPsetFragmentSize(
     payloadSize: Int,
     density: SecureStorage.QrDensity,
 ): Int {
@@ -295,13 +392,13 @@ private fun resolveUrFrameDelay(
     return when (playbackSpeed) {
         SecureStorage.QrPlaybackSpeed.SLOW -> (baseDelay * 1.25f).toLong()
         SecureStorage.QrPlaybackSpeed.MEDIUM -> baseDelay
-        SecureStorage.QrPlaybackSpeed.FAST -> (baseDelay * 0.75f).toLong()
-    }.coerceAtLeast(350L)
+        SecureStorage.QrPlaybackSpeed.FAST -> (baseDelay * 0.65f).toLong()
+    }.coerceAtLeast(300L)
 }
 
 /**
  * Animated QR code component for generic byte data, encoded as BBQr.
- * Used for exporting BIP 329 labels via animated QR codes.
+ * Used for exporting labels, PSBTs, and other byte payloads via animated QR codes.
  *
  * For small data that fits in a single QR frame, displays a static QR code.
  * For larger data, splits into deterministic BBQr parts and cycles through them.
@@ -318,26 +415,36 @@ fun AnimatedQrCodeBytes(
     modifier: Modifier = Modifier,
     qrSize: Dp = 280.dp,
     frameDelayMs: Long = 250L,
+    fileType: Char = Bbqr.FILE_TYPE_JSON,
+    brightness: Float? = null,
+    minVersion: Int = 5,
+    maxVersion: Int = 40,
 ) {
     val context = LocalContext.current
     var showEnlarged by remember { mutableStateOf(false) }
 
     // Split data into BBQr parts with Zlib compression
-    val bbqrParts =
-        remember(data) {
-            github.aeonbtc.ibiswallet.util.Bbqr.split(
+    val bbqrSplit =
+        remember(data, fileType, minVersion, maxVersion) {
+            Bbqr.split(
                 data = data,
-                fileType = github.aeonbtc.ibiswallet.util.Bbqr.FILE_TYPE_JSON,
-            ).parts
+                fileType = fileType,
+                minVersion = minVersion,
+                maxVersion = maxVersion,
+            )
         }
+    val bbqrParts = bbqrSplit.parts
+    val forcedQrVersion = bbqrSplit.version
 
     val totalParts = bbqrParts.size
-    var partIndex by remember { mutableIntStateOf(0) }
+    var partIndex by remember(bbqrParts) { mutableIntStateOf(0) }
+    val currentPartIndex = clampAnimatedPartIndex(partIndex, totalParts)
 
     val isAnimated = totalParts > 1
 
     if (isAnimated) {
-        LaunchedEffect(bbqrParts) {
+        LaunchedEffect(bbqrParts, frameDelayMs) {
+            partIndex = clampAnimatedPartIndex(partIndex, totalParts)
             while (true) {
                 delay(frameDelayMs)
                 partIndex = (partIndex + 1) % totalParts
@@ -345,22 +452,39 @@ fun AnimatedQrCodeBytes(
         }
     }
 
-    val currentPart = bbqrParts[partIndex]
+    val currentPart = bbqrParts[currentPartIndex]
 
     val qrBitmap =
-        remember(currentPart) {
-            generateQrBitmap(currentPart)
+        remember(currentPart, forcedQrVersion) {
+            generateQrBitmap(
+                content = currentPart,
+                forcedVersion = forcedQrVersion,
+                cropToContent = true,
+            )
         }
 
-    // Keep the screen on while QR is displayed. Labels do not override brightness.
-    DisposableEffect(Unit) {
+    // Keep the screen on while QR is displayed and apply user-selected brightness if provided.
+    DisposableEffect(brightness) {
         val activity = context as? ComponentActivity
         val window = activity?.window
+        val originalBrightness = window?.attributes?.screenBrightness ?: -1f
 
-        window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window?.let {
+            val params = it.attributes
+            brightness?.let { selectedBrightness ->
+                params.screenBrightness = selectedBrightness.coerceIn(0f, 1f)
+            }
+            it.attributes = params
+            it.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
 
         onDispose {
-            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            window?.let {
+                val params = it.attributes
+                params.screenBrightness = originalBrightness
+                it.attributes = params
+                it.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
         }
     }
 
@@ -382,6 +506,15 @@ fun AnimatedQrCodeBytes(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    if (isAnimated) {
+                        Text(
+                            text = "Part ${currentPartIndex + 1} of $totalParts",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
                     Box(
                         modifier =
                             Modifier
@@ -394,20 +527,11 @@ fun AnimatedQrCodeBytes(
                         qrBitmap?.let { bitmap ->
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Enlarged Labels QR Code",
+                                contentDescription = "Enlarged QR Code",
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Fit,
                             )
                         }
-                    }
-
-                    if (isAnimated) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = "Part ${partIndex + 1} of $totalParts",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary,
-                        )
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
@@ -426,6 +550,15 @@ fun AnimatedQrCodeBytes(
         modifier = modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (isAnimated) {
+            Text(
+                text = "Part ${currentPartIndex + 1} of $totalParts",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         Box(
             modifier =
                 Modifier
@@ -439,20 +572,11 @@ fun AnimatedQrCodeBytes(
             qrBitmap?.let { bitmap ->
                 Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "Labels QR Code - Tap to enlarge",
+                    contentDescription = "QR Code - Tap to enlarge",
                     modifier = Modifier.size(qrSize),
                     contentScale = ContentScale.Fit,
                 )
             }
-        }
-
-        if (isAnimated) {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Part ${partIndex + 1} of $totalParts",
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-            )
         }
 
         Spacer(modifier = Modifier.height(4.dp))
@@ -462,5 +586,13 @@ fun AnimatedQrCodeBytes(
             color = TextSecondary,
         )
     }
+}
+
+internal fun clampAnimatedPartIndex(
+    partIndex: Int,
+    totalParts: Int,
+): Int {
+    if (totalParts <= 0) return 0
+    return partIndex.coerceIn(0, totalParts - 1)
 }
 

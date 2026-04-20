@@ -120,7 +120,7 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
         }
         PaymentKind.BIP21 -> {
             val bip21 = payment.bip21()
-                ?: return ParsedSendRecipient.Unknown(trimmed, "Unsupported payment format")
+                ?: return ParsedSendRecipient.Unknown(trimmed, "Invalid Bitcoin address")
             val bip21Address = bip21.address().toString()
             BitcoinUtils.unsupportedNonMainnetReason(bip21Address)?.let {
                 return ParsedSendRecipient.Unknown(
@@ -167,7 +167,7 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
         }
         PaymentKind.LIQUID_BIP21 -> {
             val liquidBip21 = payment.liquidBip21()
-                ?: return ParsedSendRecipient.Unknown(trimmed, "Unsupported payment format")
+                ?: return ParsedSendRecipient.Unknown(trimmed, "Invalid Liquid address")
             ParsedSendRecipient.Liquid(
                 rawInput = trimmed,
                 address = liquidBip21.address.toString(),

@@ -6,9 +6,12 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,8 +27,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -40,12 +43,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,14 +62,14 @@ import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
+import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
+import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
-import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
-import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 
 /**
  * Wallet name + chevron that sits inside the TopAppBar title slot.
@@ -133,20 +140,47 @@ fun WalletSelectorPanel(
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (String, Boolean) -> Unit = { _, _ -> },
 ) {
-    // Scrim + panel
-    if (expanded) {
+    val dismissThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
+    var accumulatedSwipeUpPx by remember(expanded) { mutableFloatStateOf(0f) }
+
+    AnimatedVisibility(
+        visible = expanded,
+        enter = fadeIn(animationSpec = tween(220)),
+        exit = fadeOut(animationSpec = tween(180)),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .zIndex(10f),
+    ) {
         Box(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .zIndex(10f),
+            modifier = Modifier.fillMaxSize(),
         ) {
-            // Tap-to-dismiss scrim
             Box(
                 modifier =
                     Modifier
                         .fillMaxSize()
                         .background(Color.Black.copy(alpha = 0.5f))
+                        .pointerInput(expanded, dismissThresholdPx) {
+                            detectVerticalDragGestures(
+                                onVerticalDrag = { _, dragAmount ->
+                                    accumulatedSwipeUpPx =
+                                        if (dragAmount < 0f) {
+                                            accumulatedSwipeUpPx + -dragAmount
+                                        } else {
+                                            0f
+                                        }
+                                },
+                                onDragEnd = {
+                                    if (accumulatedSwipeUpPx >= dismissThresholdPx) {
+                                        onDismiss()
+                                    }
+                                    accumulatedSwipeUpPx = 0f
+                                },
+                                onDragCancel = {
+                                    accumulatedSwipeUpPx = 0f
+                                },
+                            )
+                        }
                         .clickable(
                             indication = null,
                             interactionSource = remember { MutableInteractionSource() },
@@ -154,19 +188,28 @@ fun WalletSelectorPanel(
                         ),
             )
 
-            // Panel at the top
             AnimatedVisibility(
-                visible = true,
+                visible = expanded,
                 enter =
-                    expandVertically(
-                        expandFrom = Alignment.Top,
-                        animationSpec = tween(200),
-                    ) + fadeIn(animationSpec = tween(200)),
+                    slideInVertically(
+                        initialOffsetY = { -it / 3 },
+                        animationSpec = tween(240),
+                    ) +
+                        expandVertically(
+                            expandFrom = Alignment.Top,
+                            animationSpec = tween(240),
+                        ) +
+                        fadeIn(animationSpec = tween(220)),
                 exit =
-                    shrinkVertically(
-                        shrinkTowards = Alignment.Top,
-                        animationSpec = tween(150),
-                    ) + fadeOut(animationSpec = tween(150)),
+                    slideOutVertically(
+                        targetOffsetY = { -it / 4 },
+                        animationSpec = tween(180),
+                    ) +
+                        shrinkVertically(
+                            shrinkTowards = Alignment.Top,
+                            animationSpec = tween(180),
+                        ) +
+                        fadeOut(animationSpec = tween(160)),
             ) {
                 Column(
                     modifier =
@@ -180,9 +223,10 @@ fun WalletSelectorPanel(
                             ),
                 ) {
                     LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 500.dp),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 500.dp),
                     ) {
                         items(wallets, key = { it.id }) { wallet ->
                             val isActive = wallet.id == activeWallet?.id
@@ -217,7 +261,6 @@ fun WalletSelectorPanel(
                         }
                     }
 
-                    // Manage Wallets option
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.End,
@@ -473,15 +516,22 @@ private fun WalletPanelItem(
         Spacer(modifier = Modifier.width(8.dp))
 
         // Full sync button
-        Box(
-            contentAlignment = Alignment.Center,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier =
                 Modifier
-                    .size(40.dp)
+                    .height(40.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(DarkBackground.copy(alpha = 0.6f))
-                    .clickable(enabled = !isSyncing) { onSync() },
+                    .clickable(enabled = !isSyncing) { onSync() }
+                    .padding(horizontal = 10.dp),
         ) {
+            Text(
+                text = "Full Sync",
+                style = MaterialTheme.typography.labelMedium,
+                color = if (isSyncing) TextSecondary.copy(alpha = 0.7f) else TextSecondary,
+            )
+            Spacer(modifier = Modifier.width(6.dp))
             if (isSyncing) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(14.dp),

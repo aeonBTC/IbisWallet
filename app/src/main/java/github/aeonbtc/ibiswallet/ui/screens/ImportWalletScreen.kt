@@ -1135,7 +1135,7 @@ fun ImportWalletScreen(
                                 enabled = !isExtendedKey,
                             )
                             Text(
-                                text = "Use Passphrase",
+                                text = "BIP39 Passphrase",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color =
                                     if (isExtendedKey) {
@@ -1213,7 +1213,7 @@ fun ImportWalletScreen(
                                     .fillMaxWidth()
                                     .heightIn(min = 40.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable(enabled = !isExtendedKey) { useCustomPath = !useCustomPath },
+                                    .clickable { useCustomPath = !useCustomPath },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Checkbox(
@@ -1224,23 +1224,17 @@ fun ImportWalletScreen(
                                         checkedColor = BitcoinOrange,
                                         uncheckedColor = TextSecondary,
                                     ),
-                                enabled = !isExtendedKey,
                             )
                             Text(
-                                text = "Use Custom Derivation Path",
+                                text = "Custom Derivation Path",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color =
-                                    if (isExtendedKey) {
-                                        TextSecondary.copy(alpha = 0.5f)
-                                    } else {
-                                        MaterialTheme.colorScheme.onBackground
-                                    },
+                                color = MaterialTheme.colorScheme.onBackground,
                             )
                         }
 
                         // Custom path field
                         AnimatedVisibility(
-                            visible = useCustomPath && !isExtendedKey,
+                            visible = useCustomPath,
                             enter = expandVertically(),
                             exit = shrinkVertically(),
                         ) {
@@ -1300,7 +1294,7 @@ fun ImportWalletScreen(
                                     ),
                             )
                             Text(
-                                text = "Set Custom Gap Limit",
+                                text = "Custom Gap Limit",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
@@ -1791,19 +1785,36 @@ private fun BackupRestoreDialog(
 
                                 serverSettingsObj?.let {
                                     val serverCount = it.optJSONArray("electrumServers")?.length() ?: 0
-                                    val explorerType =
-                                        it.optJSONObject("blockExplorer")?.optString("type", "") ?: ""
-                                    val feeType =
-                                        it.optJSONObject("feeSource")?.optString("type", "") ?: ""
+                                    val liquidServerCount = it.optJSONArray("liquidServers")?.length() ?: 0
+                                    val hasExplorerUrl =
+                                        !it.optJSONObject("blockExplorer")?.optString("customUrl", "").isNullOrBlank()
+                                    val hasFeeUrl =
+                                        !it.optJSONObject("feeSource")?.optString("customUrl", "").isNullOrBlank()
+                                    val hasLiquidExplorer =
+                                        it.optString("liquidExplorer", "").isNotBlank() ||
+                                            !it.optString("liquidExplorerCustomUrl", "").isNullOrBlank()
+                                    val hasLiquidConnectivity =
+                                        it.has("liquidTorEnabled") ||
+                                            it.has("liquidAutoSwitch") ||
+                                            it.has("liquidServerSelectedByUser")
                                     val parts = mutableListOf<String>()
                                     if (serverCount > 0) {
                                         parts.add("$serverCount Electrum server${if (serverCount != 1) "s" else ""}")
                                     }
-                                    if (explorerType.isNotBlank()) {
+                                    if (liquidServerCount > 0) {
+                                        parts.add("$liquidServerCount Liquid server${if (liquidServerCount != 1) "s" else ""}")
+                                    }
+                                    if (hasExplorerUrl) {
                                         parts.add("block explorer")
                                     }
-                                    if (feeType.isNotBlank()) {
+                                    if (hasFeeUrl) {
                                         parts.add("fee source")
+                                    }
+                                    if (hasLiquidExplorer) {
+                                        parts.add("Liquid explorer")
+                                    }
+                                    if (hasLiquidConnectivity) {
+                                        parts.add("Liquid connectivity")
                                     }
                                     Text(
                                         text = "Server settings: ${parts.joinToString(", ")}",
@@ -1833,7 +1844,7 @@ private fun BackupRestoreDialog(
                                         color = MaterialTheme.colorScheme.onBackground,
                                     )
                                     Text(
-                                        text = "Electrum servers and custom URLs",
+                                        text = "Electrum servers and external services",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TextSecondary,
                                     )

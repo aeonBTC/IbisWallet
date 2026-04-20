@@ -63,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
@@ -316,18 +317,12 @@ fun GenerateWalletScreen(
                 }
                 if (generatedMnemonic == null) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    Button(
+                    IbisButton(
                         onClick = { generateMnemonic() },
                         modifier =
                             Modifier
                                 .fillMaxWidth()
                                 .height(48.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors =
-                            ButtonDefaults.buttonColors(
-                                containerColor = BitcoinOrange,
-                                disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
-                            ),
                     ) {
                         Text(
                             text = "Generate Seed Phrase",
@@ -532,7 +527,7 @@ fun GenerateWalletScreen(
                                         ),
                                 )
                                 Text(
-                                    text = "Use BIP39 Passphrase",
+                                    text = "BIP39 Passphrase",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -617,7 +612,7 @@ fun GenerateWalletScreen(
                                         ),
                                 )
                                 Text(
-                                    text = "Use Custom Derivation Path",
+                                    text = "Custom Derivation Path",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -668,7 +663,7 @@ fun GenerateWalletScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Create Wallet button
             Button(

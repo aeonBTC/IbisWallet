@@ -1,6 +1,5 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
@@ -29,11 +28,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -48,7 +47,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -81,11 +79,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
-import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.PendingSwapPhase
 import github.aeonbtc.ibiswallet.data.model.PendingSwapSession
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
@@ -93,14 +89,17 @@ import github.aeonbtc.ibiswallet.data.model.SwapLimits
 import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.SwapState
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
-import github.aeonbtc.ibiswallet.data.model.TransactionDetails
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
+import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
 import github.aeonbtc.ibiswallet.ui.components.FeeRateOption
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
+import github.aeonbtc.ibiswallet.ui.components.shouldShowBoltzRescueKey
 import github.aeonbtc.ibiswallet.ui.theme.AccentBlue
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -124,9 +123,6 @@ import java.util.Locale
 
 private const val MIN_LIQUID_SWAP_FEE_RATE = 0.1
 private const val ESTIMATED_LIQUID_SWAP_TX_VSIZE = 200
-private const val BOLTZ_RESCUE_URL = "https://boltz.exchange/rescue/external"
-private const val BOLTZ_SWAP_CONFIRMATION_TARGET = 2
-
 /**
  * Swap screen for BTC <-> L-BTC peg-in / peg-out.
  *
@@ -143,10 +139,6 @@ fun SwapScreen(
     sideSwapEnabled: Boolean = true,
     btcBalanceSats: Long = 0,
     lbtcBalanceSats: Long = 0,
-    btcTransactions: List<TransactionDetails> = emptyList(),
-    btcBlockHeight: UInt? = null,
-    liquidTransactions: List<LiquidTransaction> = emptyList(),
-    liquidBlockHeight: UInt? = null,
     btcUtxos: List<UtxoInfo> = emptyList(),
     liquidUtxos: List<UtxoInfo> = emptyList(),
     spendUnconfirmed: Boolean = false,
@@ -186,6 +178,7 @@ fun SwapScreen(
     var showLabelField by rememberSaveable { mutableStateOf(false) }
     var labelText by rememberSaveable { mutableStateOf("") }
     var showAdvancedOptions by rememberSaveable { mutableStateOf(false) }
+    var showCustomDestinationQrScanner by rememberSaveable { mutableStateOf(false) }
     val customBitcoinDestinationState = rememberSaveable { mutableStateOf("") }
     val customLiquidDestinationState = rememberSaveable { mutableStateOf("") }
     val useCustomBitcoinDestinationState = rememberSaveable { mutableStateOf(false) }
@@ -363,6 +356,7 @@ fun SwapScreen(
             runCatching { FeeRateOption.valueOf(customBitcoinFeeOptionName) }.getOrDefault(FeeRateOption.HALF_HOUR)
         }
     val destinationPlaceholder = if (isPegIn) "Liquid address" else "Bitcoin address"
+    val destinationEmptyPrompt = if (isPegIn) "Swap will go to this Liquid address." else "Swap will go to this Bitcoin address."
     val destinationHelperText =
         if (isPegIn) {
             "Swap will go to this Liquid address."
@@ -380,16 +374,16 @@ fun SwapScreen(
                         if (isPegIn) {
                             null
                         } else {
-                            "Enter a Bitcoin address"
+                            "Invalid Bitcoin address"
                         }
                     is ParsedSendRecipient.Bitcoin ->
                         if (isPegIn) {
-                            "Enter a Liquid address"
+                            "Invalid Liquid address"
                         } else {
                             null
                         }
                     is ParsedSendRecipient.Unknown -> parsed.errorMessage
-                    else -> if (isPegIn) "Enter a Liquid address" else "Enter a Bitcoin address"
+                    else -> if (isPegIn) "Invalid Liquid address" else "Invalid Bitcoin address"
                 }
             }
         }
@@ -636,6 +630,27 @@ fun SwapScreen(
         )
     }
 
+    if (showCustomDestinationQrScanner) {
+        QrScannerDialog(
+            onCodeScanned = { code ->
+                showCustomDestinationQrScanner = false
+                val normalizedInput =
+                    when (val parsed = parseSendRecipient(code.trim())) {
+                        is ParsedSendRecipient.Liquid -> if (isPegIn) parsed.address else code.trim()
+                        is ParsedSendRecipient.Bitcoin -> if (isPegIn) code.trim() else parsed.address
+                        else -> code.trim()
+                    }
+                if (isPegIn) {
+                    customLiquidDestinationState.value = normalizedInput
+                } else {
+                    customBitcoinDestinationState.value = normalizedInput
+                }
+                onResetSwap()
+            },
+            onDismiss = { showCustomDestinationQrScanner = false },
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -648,10 +663,6 @@ fun SwapScreen(
                 boltzRescueMnemonic = boltzRescueMnemonic,
                 expanded = pendingSwapsExpanded,
                 onExpandedChange = { pendingSwapsExpanded = it },
-                btcTransactions = btcTransactions,
-                btcBlockHeight = btcBlockHeight,
-                liquidTransactions = liquidTransactions,
-                liquidBlockHeight = liquidBlockHeight,
                 useSats = useSats,
                 unit = unit,
                 privacyMode = privacyMode,
@@ -1216,7 +1227,7 @@ fun SwapScreen(
                         HorizontalDivider(color = BorderColor)
                         Spacer(modifier = Modifier.height(8.dp))
                         SwapAdvancedToggleRow(
-                            label = "Set custom payout address",
+                            label = "Custom destination address",
                             checked = destinationOptionEnabled,
                             enabled = !isSwapLocked,
                             accentColor = destinationOptionAccentColor,
@@ -1263,6 +1274,19 @@ fun SwapScreen(
                                             color = TextTertiary,
                                         )
                                     },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = { showCustomDestinationQrScanner = true },
+                                            enabled = !isSwapLocked,
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.QrCodeScanner,
+                                                contentDescription = "Scan QR Code",
+                                                tint = destinationOptionAccentColor,
+                                                modifier = Modifier.size(20.dp),
+                                            )
+                                        }
+                                    },
                                     isError = destinationValidationError != null,
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
@@ -1275,7 +1299,12 @@ fun SwapScreen(
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = destinationValidationError ?: destinationHelperText,
+                                    text =
+                                        when {
+                                            destinationValidationError != null -> destinationValidationError
+                                            currentCustomDestination.isBlank() -> destinationEmptyPrompt
+                                            else -> destinationHelperText
+                                        },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (destinationValidationError != null) ErrorRed else TextSecondary,
                                     modifier = Modifier.padding(start = 12.dp),
@@ -1284,7 +1313,7 @@ fun SwapScreen(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         SwapAdvancedToggleRow(
-                            label = "Set custom funding fee rate",
+                            label = "Custom funding fee rate",
                             checked = fundingFeeOptionEnabled,
                             enabled = !isSwapLocked,
                             accentColor = fundingFeeAccentColor,
@@ -1603,7 +1632,7 @@ fun SwapScreen(
                                         CopyableDetailRow("Refund Address", it, context)
                                     }
                                     failedSwap.receiveAddress?.let {
-                                        CopyableDetailRow("Receive Address", it, context)
+                                        CopyableDetailRow("Destination Address", it, context)
                                     }
                                     failedSwap.fundingTxid?.let {
                                         CopyableDetailRow("Funding Txid", it, context)
@@ -1757,10 +1786,6 @@ private fun PendingSwapsCard(
     boltzRescueMnemonic: String?,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
-    btcTransactions: List<TransactionDetails>,
-    btcBlockHeight: UInt?,
-    liquidTransactions: List<LiquidTransaction>,
-    liquidBlockHeight: UInt?,
     useSats: Boolean,
     unit: String,
     privacyMode: Boolean,
@@ -1823,10 +1848,6 @@ private fun PendingSwapsCard(
                         PendingSwapRow(
                             pendingSwap = pendingSwap,
                             boltzRescueMnemonic = boltzRescueMnemonic,
-                            btcTransactions = btcTransactions,
-                            btcBlockHeight = btcBlockHeight,
-                            liquidTransactions = liquidTransactions,
-                            liquidBlockHeight = liquidBlockHeight,
                             useSats = useSats,
                             unit = unit,
                             privacyMode = privacyMode,
@@ -1846,17 +1867,13 @@ private fun PendingSwapsCard(
 private fun PendingSwapRow(
     pendingSwap: PendingSwapSession,
     boltzRescueMnemonic: String?,
-    btcTransactions: List<TransactionDetails>,
-    btcBlockHeight: UInt?,
-    liquidTransactions: List<LiquidTransaction>,
-    liquidBlockHeight: UInt?,
     useSats: Boolean,
     unit: String,
     privacyMode: Boolean,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
 ) {
-    val providerLabel = if (pendingSwap.service == SwapService.BOLTZ) "Boltz" else "SideSwap"
+    val providerLabel = pendingSwapProviderLabel(pendingSwap)
     val providerAccent = if (pendingSwap.service == SwapService.BOLTZ) AccentBlue else LiquidTeal
     val isPegIn = pendingSwap.direction == SwapDirection.BTC_TO_LBTC
     val sendAsset = if (pendingSwap.direction == SwapDirection.BTC_TO_LBTC) "BTC" else "L-BTC"
@@ -1886,10 +1903,26 @@ private fun PendingSwapRow(
                     .clickable { onExpandedChange(!expanded) },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(
+                Row(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    PendingSwapDirectionBadge(
+                        fromLabel = if (isPegIn) "L1" else "L2",
+                        toLabel = if (isPegIn) "L2" else "L1",
+                        fromColor = sendAccent,
+                        toColor = receiveAccent,
+                    )
+                    Text(
+                        text = sendAmountText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
                     RouteBadge(
                         text = providerLabel,
                         accentColor = providerAccent,
@@ -1900,12 +1933,6 @@ private fun PendingSwapRow(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    PendingSwapDirectionBadge(
-                        fromLabel = if (isPegIn) "Layer 1" else "Layer 2",
-                        toLabel = if (isPegIn) "Layer 2" else "Layer 1",
-                        fromColor = sendAccent,
-                        toColor = receiveAccent,
-                    )
                     Icon(
                         imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                         contentDescription = if (expanded) "Collapse pending swap" else "Expand pending swap",
@@ -1949,40 +1976,23 @@ private fun PendingSwapRow(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
+                    val progressValue = pendingSwapProgressValue(pendingSwap = pendingSwap)
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Bottom,
                     ) {
                         Text(
-                            text =
-                                "Confirmations: ${
-                                    pendingSwapConfirmationStatus(
-                                        pendingSwap = pendingSwap,
-                                        btcTransactions = btcTransactions,
-                                        btcBlockHeight = btcBlockHeight,
-                                        liquidTransactions = liquidTransactions,
-                                        liquidBlockHeight = liquidBlockHeight,
-                                    )
-                                }",
+                            text = "Status: $progressValue",
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary,
                             modifier = Modifier.weight(1f),
                         )
                         if (shouldShowBoltzRescueMnemonic(pendingSwap, boltzRescueMnemonic)) {
                             Spacer(modifier = Modifier.width(8.dp))
-                            OutlinedButton(
+                            BoltzRescueKeyButton(
                                 onClick = { showRescueKeyDialogState.value = true },
-                                modifier = Modifier.height(32.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, BorderColor),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                            ) {
-                                Text(
-                                    text = "Rescue Key",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = TextPrimary,
-                                )
-                            }
+                            )
                         }
                     }
 
@@ -1995,7 +2005,7 @@ private fun PendingSwapRow(
                         PendingSwapDetailRow("Label", it)
                     }
                     PendingSwapDetailRow("Deposit Address", pendingSwap.depositAddress)
-                    pendingSwap.receiveAddress?.let { PendingSwapDetailRow("Receive Address", it) }
+                    pendingSwap.receiveAddress?.let { PendingSwapDetailRow("Destination Address", it) }
                     pendingSwap.refundAddress?.let { PendingSwapDetailRow("Refund Address", it) }
                     pendingSwap.fundingTxid?.let { PendingSwapDetailRow("Funding Txid", it) }
                     pendingSwap.settlementTxid?.let { PendingSwapDetailRow("Settlement Txid", it) }
@@ -2007,48 +2017,31 @@ private fun PendingSwapRow(
     if (showRescueKeyDialog && shouldShowBoltzRescueMnemonic(pendingSwap, boltzRescueMnemonic)) {
         BoltzRescueMnemonicDialog(
             mnemonic = boltzRescueMnemonic.orEmpty(),
+            accentColor = LiquidTeal,
             onDismiss = { showRescueKeyDialogState.value = false },
         )
     }
 }
 
-private fun pendingSwapConfirmationStatus(
-    pendingSwap: PendingSwapSession,
-    btcTransactions: List<TransactionDetails>,
-    btcBlockHeight: UInt?,
-    liquidTransactions: List<LiquidTransaction>,
-    liquidBlockHeight: UInt?,
-): String {
-    if (pendingSwap.service != SwapService.BOLTZ) {
-        return pendingSwap.status
+private fun pendingSwapProgressValue(pendingSwap: PendingSwapSession): String {
+    return pendingSwap.status.ifBlank { fallbackPendingSwapStatus(pendingSwap) }
+}
+
+private fun pendingSwapProviderLabel(pendingSwap: PendingSwapSession): String {
+    return if (pendingSwap.service == SwapService.BOLTZ) "Boltz" else "SideSwap"
+}
+
+private fun fallbackPendingSwapStatus(pendingSwap: PendingSwapSession): String {
+    val providerLabel = pendingSwapProviderLabel(pendingSwap)
+    return when {
+        pendingSwap.phase == PendingSwapPhase.REVIEW -> "Exact $providerLabel order prepared. Funding not started yet."
+        pendingSwap.phase == PendingSwapPhase.FUNDING ->
+            "Funding may already be in flight. Verifying $providerLabel status."
+        pendingSwap.fundingTxid != null -> "Funding broadcast. Waiting for $providerLabel payout..."
+        pendingSwap.direction == SwapDirection.BTC_TO_LBTC ->
+            "Waiting for BTC deposit to ${pendingSwap.depositAddress}"
+        else -> "Waiting for L-BTC deposit to ${pendingSwap.depositAddress}"
     }
-
-    val fundingTxid = pendingSwap.fundingTxid?.takeIf { it.isNotBlank() } ?: return pendingSwap.status
-    val confirmations =
-        when (pendingSwap.direction) {
-            SwapDirection.BTC_TO_LBTC ->
-                btcTransactions.firstOrNull { it.txid.equals(fundingTxid, ignoreCase = true) }?.let { tx ->
-                    tx.confirmationTime?.let { confirmation ->
-                        btcBlockHeight?.let { tip ->
-                            (tip.toLong() - confirmation.height.toLong() + 1L).coerceAtLeast(1L).toInt()
-                        } ?: 1
-                    } ?: 0
-                }
-            SwapDirection.LBTC_TO_BTC ->
-                liquidTransactions.firstOrNull { it.txid.equals(fundingTxid, ignoreCase = true) }?.let { tx ->
-                    tx.height?.let { height ->
-                        liquidBlockHeight?.let { tip ->
-                            (tip.toLong() - height.toLong() + 1L).coerceAtLeast(1L).toInt()
-                        } ?: 1
-                    } ?: 0
-                }
-        }
-
-    if (confirmations != null) {
-        return "${confirmations.coerceIn(0, BOLTZ_SWAP_CONFIRMATION_TARGET)}/$BOLTZ_SWAP_CONFIRMATION_TARGET"
-    }
-
-    return "0/$BOLTZ_SWAP_CONFIRMATION_TARGET"
 }
 
 @Composable
@@ -2178,132 +2171,6 @@ private fun PendingSwapDetailRow(
                 style = MaterialTheme.typography.bodySmall,
                 color = LiquidTeal,
             )
-        }
-    }
-}
-
-@Composable
-private fun BoltzRescueMnemonicDialog(
-    mnemonic: String,
-    onDismiss: () -> Unit,
-) {
-    val context = LocalContext.current
-    var showCopied by remember { mutableStateOf(false) }
-    LaunchedEffect(showCopied, mnemonic) {
-        if (!showCopied) return@LaunchedEffect
-        delay(1_500)
-        showCopied = false
-    }
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = DarkSurface,
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Emergency Rescue Key",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "If swap fails, open Boltz rescue link and paste this 12-word seed.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    IconButton(
-                        onClick = {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(
-                                        Intent.ACTION_VIEW,
-                                        BOLTZ_RESCUE_URL.toUri(),
-                                    ),
-                                )
-                            }
-                        },
-                        modifier = Modifier.size(30.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                            contentDescription = "Open Boltz rescue page",
-                            tint = LiquidTeal,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Boltz Rescue Key",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextSecondary,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Text(
-                        text = mnemonic,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextPrimary,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    IconButton(
-                        onClick = {
-                            SecureClipboard.copyAndScheduleClear(context, "Boltz Rescue Key", mnemonic)
-                            showCopied = true
-                        },
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy Boltz rescue key",
-                            tint = LiquidTeal,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    }
-                }
-                if (showCopied) {
-                    Text(
-                        text = "Copied to clipboard!",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = LiquidTeal,
-                    )
-                }
-                Spacer(modifier = Modifier.height(12.dp))
-                IbisButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                ) {
-                    Text("Close", style = MaterialTheme.typography.titleMedium)
-                }
-            }
         }
     }
 }
@@ -3167,7 +3034,7 @@ private fun SwapReviewDialog(
                                 color = BorderColor.copy(alpha = 0.3f),
                             )
                             Text(
-                                text = "to",
+                                text = "to (est.)",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = TextTertiary,
                                 modifier = Modifier
@@ -3321,7 +3188,7 @@ private fun SwapReviewDialog(
                                 pendingSwap.receiveAddress?.takeIf { it.isNotBlank() }?.let { receiveAddress ->
                                     Spacer(modifier = Modifier.height(10.dp))
                                     AddressRow(
-                                        label = "Receive address",
+                                        label = "Destination address",
                                         value = receiveAddress,
                                         context = context,
                                     )
@@ -3454,9 +3321,8 @@ internal fun shouldShowBoltzRescueMnemonic(
     pendingSwap: PendingSwapSession,
     boltzRescueMnemonic: String?,
 ): Boolean {
-    return pendingSwap.service == SwapService.BOLTZ &&
-        pendingSwap.phase == PendingSwapPhase.IN_PROGRESS &&
-        !boltzRescueMnemonic.isNullOrBlank()
+    return pendingSwap.phase == PendingSwapPhase.IN_PROGRESS &&
+        shouldShowBoltzRescueKey(pendingSwap.service, boltzRescueMnemonic)
 }
 
 @Composable

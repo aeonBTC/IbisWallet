@@ -37,18 +37,17 @@ class ConnectivityForegroundService : Service() {
         startId: Int,
     ): Int {
         val snapshot = ConnectivityKeepAlivePolicy.currentSnapshot()
+        // A queued startForegroundService() call can arrive after the policy has already
+        // flipped back to "stop". Promote first, then stop if the latest snapshot no longer
+        // requires the service, so Android never sees a foreground-start request without a
+        // matching startForeground() call.
+        startForegroundWithSnapshot(snapshot)
+
         if (intent?.action != ACTION_REFRESH || !snapshot.shouldRunForegroundService) {
             stopForegroundCompat()
             stopSelf()
             return START_NOT_STICKY
         }
-
-        val notification =
-            WalletNotificationHelper.buildConnectivityForegroundNotification(
-                context = this,
-                snapshot = snapshot,
-            )
-        startForeground(WalletNotificationHelper.CONNECTIVITY_NOTIFICATION_ID, notification)
         return START_NOT_STICKY
     }
 
@@ -59,5 +58,14 @@ class ConnectivityForegroundService : Service() {
 
     private fun stopForegroundCompat() {
         stopForeground(STOP_FOREGROUND_REMOVE)
+    }
+
+    private fun startForegroundWithSnapshot(snapshot: ConnectivityKeepAliveSnapshot) {
+        val notification =
+            WalletNotificationHelper.buildConnectivityForegroundNotification(
+                context = this,
+                snapshot = snapshot,
+            )
+        startForeground(WalletNotificationHelper.CONNECTIVITY_NOTIFICATION_ID, notification)
     }
 }

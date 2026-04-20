@@ -29,7 +29,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Search
@@ -57,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -626,67 +626,39 @@ private fun AddressCard(
                                     .focusRequester(focusRequester),
                         )
 
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "Save",
-                            tint = SuccessGreen,
+                        Box(
+                            contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
                                     .padding(start = 4.dp)
-                                    .size(18.dp)
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable {
                                         val trimmed = labelDraft.trim()
                                         if (trimmed.isNotEmpty()) onSaveLabel(trimmed)
                                         isEditingLabel = false
                                     },
-                        )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = "Save",
+                                tint = SuccessGreen,
+                                modifier = Modifier.size(20.dp),
+                            )
+                        }
                     }
                 } else {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        val hasLabel = !address.label.isNullOrEmpty()
-
-                        // Label button: matches SendScreen Card style
-                        Card(
-                            modifier =
-                                Modifier
-                                    .widthIn(max = 160.dp)
-                                    .clickable {
-                                        labelDraft = address.label ?: ""
-                                        isEditingLabel = true
-                                    },
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                CardDefaults.cardColors(
-                                    containerColor = if (hasLabel) labelAccentColor.copy(alpha = 0.15f) else DarkSurface,
-                                ),
-                            border = BorderStroke(1.dp, if (hasLabel) labelAccentColor else BorderColor),
-                        ) {
-                            Text(
-                                text = address.label ?: "+ Label",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (hasLabel) labelAccentColor else TextSecondary,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            )
-                        }
-
-                        // Red X to delete (only when label exists)
-                        if (hasLabel) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Remove label",
-                                tint = ErrorRed,
-                                modifier =
-                                    Modifier
-                                        .padding(start = 4.dp)
-                                        .size(16.dp)
-                                        .clickable { onDeleteLabel() },
-                            )
-                        }
-                    }
+                    EditableLabelChip(
+                        label = address.label,
+                        accentColor = labelAccentColor,
+                        onClick = {
+                            labelDraft = address.label ?: ""
+                            isEditingLabel = true
+                        },
+                        onDelete = onDeleteLabel,
+                        maxWidth = 160.dp,
+                        verticalPadding = 6.dp,
+                    )
                 }
             }
 

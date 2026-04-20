@@ -100,16 +100,16 @@ fun ReceiveScreen(
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
 
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var labelText by remember(walletState.currentAddressInfo?.label) {
-        mutableStateOf(walletState.currentAddressInfo?.label ?: "")
-    }
+    var labelText by remember { mutableStateOf("") }
     var showAmountField by remember { mutableStateOf(false) }
     var amountText by remember { mutableStateOf("") }
     var isUsdMode by remember { mutableStateOf(false) }
     var showEnlargedQr by remember { mutableStateOf(false) }
     var showLabelField by remember { mutableStateOf(false) }
+    var embedLabelInQr by remember(walletState.currentAddress) { mutableStateOf(false) }
     val amountBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showAmountField, "receive_amount")
     val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "receive_label")
+    val savedAddressLabel = walletState.currentAddressInfo?.label.orEmpty()
 
     // Convert amount to sats for URI (handles BTC, sats, and USD input)
     val amountInSats =
@@ -133,10 +133,10 @@ fun ReceiveScreen(
 
     // Build the URI/content for QR code
     val qrContent =
-        remember(walletState.currentAddress, amountInSats, showAmountField, labelText, showLabelField) {
+        remember(walletState.currentAddress, amountInSats, showAmountField, labelText, showLabelField, embedLabelInQr) {
             walletState.currentAddress?.let { address ->
                 val bitcoinAmountSats = amountInSats?.takeIf { showAmountField && it > 0 }
-                val label = labelText.trim().takeIf { showLabelField && it.isNotBlank() }
+                val label = labelText.trim().takeIf { showLabelField && embedLabelInQr && it.isNotBlank() }
                 if (bitcoinAmountSats != null || label != null) {
                     val params = mutableListOf<String>()
                     bitcoinAmountSats?.let {
@@ -160,6 +160,13 @@ fun ReceiveScreen(
                 withContext(Dispatchers.Default) {
                     generateQrBitmap(content)
                 }
+        }
+    }
+
+    LaunchedEffect(walletState.currentAddress, savedAddressLabel) {
+        labelText = savedAddressLabel
+        if (savedAddressLabel.isNotBlank()) {
+            showLabelField = true
         }
     }
 
@@ -605,6 +612,32 @@ fun ReceiveScreen(
                                     }
                                 },
                             )
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                horizontalArrangement = Arrangement.End,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "Embed in QR",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = TextSecondary,
+                                    modifier = Modifier.padding(end = 8.dp),
+                                )
+                                SquareToggle(
+                                    checked = embedLabelInQr,
+                                    onCheckedChange = { embedLabelInQr = it },
+                                    enabled = walletState.currentAddress != null,
+                                    trackWidth = 36.dp,
+                                    trackHeight = 20.dp,
+                                    thumbSize = 14.dp,
+                                    thumbPadding = 2.dp,
+                                    trackCornerRadius = 3.dp,
+                                    thumbCornerRadius = 2.dp,
+                                )
+                            }
                         }
                     }
                 }
