@@ -38,7 +38,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Built on** [LWK](https://github.com/Blockstream/lwk)
 
 ### Privacy & Security
-- **Offline by Default** - App launches with zero external connections
+- **Default Offline** - App launches with zero external connections
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
 - **PIN & Biometrics** - With configurable lock timing
 - **Privacy Toggle** - Hide all wallet amounts and balances
