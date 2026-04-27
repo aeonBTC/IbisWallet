@@ -1,6 +1,6 @@
 # Ibis Wallet
 
-A self-custody Bitcoin wallet for Android, inspired by [Sparrow Wallet](https://sparrowwallet.com/) but built for mobile. 
+A self-custodial Bitcoin wallet with a focus on intutive design, privacy, and modular customizability.
 
 Designed for experienced users - no hand-holding, no training wheels.
 
@@ -23,7 +23,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Batch Sending** - Send to multiple recipients in a single transaction
 - **BIP329 Labels** - Industry-standard wallet labels for transactions and addresses
 - **Transaction Search** - Search transaction history by date, amount, address, or label
-- **Built with** [BDK](https://bitcoindevkit.org/)
+- **Built on** [BDK](https://github.com/bitcoindevkit/)
 
 ### Layer 2 — Liquid Network (Ark coming soon)
 - **Modular Integration** - Enable or disable Liquid for each wallet
@@ -35,9 +35,10 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Chain Swaps** - BTC ↔ L-BTC atomic swaps via Boltz or SideSwap
 - **Coin Control** - Select specific UTXOs for swaps and Lightning payments
 - **BIP329 Labels** - Label support for Liquid transactions
-- **Built with** [LWK](https://github.com/Blockstream/lwk)
+- **Built on** [LWK](https://github.com/Blockstream/lwk)
 
 ### Privacy & Security
+- **Offline by Default** - App launches with zero external connections
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
 - **PIN & Biometrics** - With configurable lock timing
 - **Privacy Toggle** - Hide all wallet amounts and balances
@@ -74,4 +75,4 @@ Open source. See [LICENSE](LICENSE) for details.
 
 ## Disclaimer
 
-Ibis is vibecoded and audited by the most current frontier AI models.
+Ibis is laregely vibecoded and audited by the most current frontier AI models.
