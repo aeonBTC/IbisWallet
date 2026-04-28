@@ -69,10 +69,11 @@ Requires Android Studio with JDK 17.
 
 **Min SDK:** 26 (Android 8.0) | **Target SDK:** 35 | **ARM only** (armeabi-v7a, arm64-v8a)
 
-## License
-
-Open source. See [LICENSE](LICENSE) for details.
+## Bug Bounty
+Offering $1000 paid in BTC for any major bugs found in app
 
 ## Disclaimer
+Ibis is laregely vibecoded and is audited by the most current frontier AI models.
 
-Ibis is laregely vibecoded and audited by the most current frontier AI models.
+## License
+Open source. See [LICENSE](LICENSE) for details.
