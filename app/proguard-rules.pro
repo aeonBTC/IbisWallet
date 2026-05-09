@@ -44,35 +44,15 @@
 
 # ==================== LWK (Liquid Wallet Kit) ====================
 # LWK's generated Android bindings live in the `lwk` package, not
-# `com.blockstream.lwk`. Keep the UniFFI/JNA bridge names used reflectively.
--keep class lwk.UniffiLib { *; }
--keep class lwk.RustBuffer* { public *; }
--keep class lwk.UniffiRust* { public *; }
--keep class lwk.UniffiForeignFuture* { public *; }
--keep class lwk.UniffiVTable* { public *; }
--keep class lwk.UniffiCallback* { *; }
--keep class lwk.uniffiCallback* { *; }
--keep class lwk.* implements com.sun.jna.Library { *; }
--keep interface lwk.* extends com.sun.jna.Library { *; }
--keep class lwk.* implements com.sun.jna.Callback { *; }
--keep interface lwk.* extends com.sun.jna.Callback { *; }
+# `com.blockstream.lwk`. Keep the full binding package intact.
+-keep class lwk.** { *; }
+-keep interface lwk.** { *; }
 
 # ==================== Spark SDK ====================
 # Breez Spark's generated Android bindings live in the `breez_sdk_spark`
-# package and use UniFFI/JNA. Preserve bridge names without freezing every
-# generated data/API class.
--keep class breez_sdk_spark.UniffiLib { *; }
--keep class breez_sdk_spark.IntegrityCheckingUniffiLib { *; }
--keep class breez_sdk_spark.bindings.UniffiLib { *; }
--keep class breez_sdk_spark.bindings.IntegrityCheckingUniffiLib { *; }
--keep class breez_sdk_spark.**.UniffiLib { *; }
--keep class breez_sdk_spark.**.IntegrityCheckingUniffiLib { *; }
--keep class breez_sdk_spark.**.RustBuffer* { public *; }
--keep class breez_sdk_spark.**.UniffiRust* { public *; }
--keep class breez_sdk_spark.**.UniffiForeignFuture* { public *; }
--keep class breez_sdk_spark.**.UniffiVTable* { public *; }
--keep class breez_sdk_spark.**.UniffiCallback* { *; }
--keep class breez_sdk_spark.**.uniffiCallback* { *; }
+# package and uses generated UniFFI/JNA bindings. Keep it intact.
+-keep class breez_sdk_spark.** { *; }
+-keep interface breez_sdk_spark.** { *; }
 
 # ==================== Layer 2 enums persisted via .name/valueOf() ====================
 -keepclassmembers enum github.aeonbtc.ibiswallet.data.model.WalletLayer { *; }
@@ -82,13 +62,11 @@
 # ==================== JNA (used by BDK via UniFFI) ====================
 # BDK's native code accesses JNA fields/classes via JNI reflection (e.g.
 # Pointer.peer). R8 must not rename or strip them.
--keep class com.sun.jna.* { *; }
--keepclassmembers class com.sun.jna.* { *; }
+-keep class com.sun.jna.** { *; }
+-keepclassmembers class com.sun.jna.** { *; }
 -keep class * extends com.sun.jna.Structure { *; }
 -keep class * implements com.sun.jna.Structure$ByValue { *; }
 -keep class * implements com.sun.jna.Structure$ByReference { *; }
--keep class * implements com.sun.jna.NativeMapped { *; }
--keep interface * extends com.sun.jna.Callback { *; }
 -keep @com.sun.jna.Structure$FieldOrder class * { *; }
 -keepclassmembers class * extends com.sun.jna.Structure {
     public *;
