@@ -2,33 +2,42 @@
 <resources>
     <plurals name="import_backup_label_address_count">
         <item quantity="one">%d endereço</item>
+        <item quantity="many">%d endereços</item>
         <item quantity="other">%d endereços</item>
     </plurals>
     <plurals name="import_backup_label_transaction_count">
         <item quantity="one">%d transação</item>
+        <item quantity="many">%d transações</item>
         <item quantity="other">%d transações</item>
     </plurals>
     <plurals name="import_backup_electrum_servers">
         <item quantity="one">%d servidor Electrum</item>
+        <item quantity="many">%d servidores Electrum</item>
         <item quantity="other">%d servidores Electrum</item>
     </plurals>
     <plurals name="import_backup_liquid_servers">
         <item quantity="one">%d servidor Liquid</item>
+        <item quantity="many">%d servidores Liquid</item>
         <item quantity="other">%d servidores Liquid</item>
     </plurals>
     <plurals name="import_seed_invalid_title">
-        <item quantity="one">Palavra inválida</item>
-        <item quantity="other">Palavras inválidas</item>
+        <item quantity="one">%d palavra inválida</item>
+        <item quantity="many">%d palavras inválidas</item>
+        <item quantity="other">%d palavras inválidas</item>
     </plurals>
     <plurals name="import_seed_invalid_more">
+        <item quantity="one"> +%d mais</item>
+        <item quantity="many"> +%d mais</item>
         <item quantity="other"> +%d mais</item>
     </plurals>
     <plurals name="import_seed_words_entered">
         <item quantity="one">%d palavra inserida</item>
+        <item quantity="many">%d palavras inseridas</item>
         <item quantity="other">%d palavras inseridas</item>
     </plurals>
     <plurals name="fee_estimate_approx_blocks">
         <item quantity="one">~%d bloco</item>
+        <item quantity="many">~%d blocos</item>
         <item quantity="other">~%d blocos</item>
     </plurals>
 </resources>
