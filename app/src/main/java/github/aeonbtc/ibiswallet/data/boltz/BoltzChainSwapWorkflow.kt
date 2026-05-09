@@ -80,10 +80,9 @@ class BoltzChainSwapWorkflow(
                 "state=${activeDraft.state}",
         )
 
-        var lastError: Throwable? = null
-        val attempt = 1
+        lateinit var createFailure: Throwable
         logDebug(
-            "Create attempt=$attempt requestKey=${activeDraft.requestKey} direction=${activeDraft.direction} " +
+            "Create attempt=1 requestKey=${activeDraft.requestKey} direction=${activeDraft.direction} " +
                 "amount=${activeDraft.sendAmount}",
         )
         try {
@@ -102,7 +101,7 @@ class BoltzChainSwapWorkflow(
                 )
             saveDraft(activeDraft)
             logDebug(
-                "Create succeeded attempt=$attempt requestKey=${activeDraft.requestKey} swapId=${activeDraft.swapId} " +
+                "Create succeeded attempt=1 requestKey=${activeDraft.requestKey} swapId=${activeDraft.swapId} " +
                     "lockup=${summarizeValue(activeDraft.depositAddress)} state=${activeDraft.state}",
             )
             return CreatedDraftResult(
@@ -110,16 +109,16 @@ class BoltzChainSwapWorkflow(
                 usedExistingDraft = false,
             )
         } catch (error: Throwable) {
-            lastError = error
+            createFailure = error
             val failureKind = classifyFailure(error)
             logWarn(
-                "Create failed attempt=$attempt requestKey=${activeDraft.requestKey} failureKind=$failureKind " +
+                "Create failed attempt=1 requestKey=${activeDraft.requestKey} failureKind=$failureKind " +
                     "message=${error.message}",
                 error,
             )
             if (failureKind == CreateFailureKind.APP_TIMEOUT || failureKind == CreateFailureKind.PROVIDER_TIMEOUT) {
                 logDebug(
-                    "Resetting Boltz session after timeout requestKey=${activeDraft.requestKey} attempt=$attempt",
+                    "Resetting Boltz session after timeout requestKey=${activeDraft.requestKey} attempt=1",
                 )
                 resetSession()
             }
@@ -129,15 +128,15 @@ class BoltzChainSwapWorkflow(
             activeDraft.copy(
                 state = BoltzChainSwapDraftState.FAILED,
                 updatedAt = nowMs(),
-                lastError = lastError?.message,
+                lastError = createFailure.message,
             )
         saveDraft(failedDraft)
         logWarn(
             "Create failed requestKey=${failedDraft.requestKey} state=${failedDraft.state} " +
                 "lastError=${failedDraft.lastError}",
-            lastError,
+            createFailure,
         )
-        throw (lastError ?: IllegalStateException("Boltz chain swap creation failed"))
+        throw createFailure
     }
 
     fun classifyCreateFailure(error: Throwable): CreateFailureKind {
@@ -296,8 +295,6 @@ class BoltzChainSwapWorkflow(
     private fun logWarn(message: String, error: Throwable?) {
         if (BuildConfig.DEBUG) {
             runCatching { Log.w(TAG, message, error) }
-        } else {
-            runCatching { Log.w(TAG, message) }
         }
     }
 

@@ -7,12 +7,14 @@ import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
 import androidx.core.database.sqlite.transaction
 import github.aeonbtc.ibiswallet.BuildConfig
+import github.aeonbtc.ibiswallet.data.local.ElectrumCache.Companion.UNCONFIRMED_TTL_MS
 import github.aeonbtc.ibiswallet.data.model.ConfirmationTime
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchDocument
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchFilters
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchLayer
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
+import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.buildTransactionSearchMatchQuery
 import github.aeonbtc.ibiswallet.util.buildTransactionSearchableText
 import java.io.File
@@ -572,6 +574,26 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    /**
+     * Clear cache rows that can link wallet activity across deleted wallets.
+     * Used on single-wallet delete where global tx/script-hash attribution is ambiguous.
+     */
+    fun clearAllWalletActivityData() {
+        try {
+            writableDatabase.transaction {
+                delete(TABLE_TX_RAW, null, null)
+                delete(TABLE_TX_VERBOSE, null, null)
+                delete(TABLE_SCRIPT_HASH_STATUSES, null, null)
+                delete(TABLE_SCRIPT_HASH_HISTORY, null, null)
+                delete(TABLE_WALLET_TX_DETAILS, null, null)
+                delete(TABLE_TX_SEARCH_DOCS, null, null)
+                delete(TABLE_TX_SEARCH_FTS, null, null)
+            }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "Failed to clear wallet activity cache: ${e.message}")
+        }
+    }
+
     // ==================== Confirmed Transaction Details ====================
 
     fun loadConfirmedTransactionDetails(
@@ -695,20 +717,6 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun clearConfirmedTransactionDetails(walletId: String) {
-        try {
-            writableDatabase.delete(
-                TABLE_WALLET_TX_DETAILS,
-                "$COL_WALLET_ID = ?",
-                arrayOf(walletId),
-            )
-        } catch (e: Exception) {
-            if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to clear cached transaction details for $walletId: ${e.message}")
-            }
-        }
-    }
-
     fun replaceTransactionSearchDocuments(
         walletId: String,
         layer: TransactionSearchLayer,
@@ -806,6 +814,30 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         )
     }
 
+    fun updateTransactionSearchLabels(
+        walletId: String,
+        layer: TransactionSearchLayer,
+        labels: Map<String, String>,
+    ) {
+        val cleanLabels = labels.filterKeys { it.isNotBlank() }
+        if (walletId.isBlank() || cleanLabels.isEmpty()) return
+
+        val updatedDocuments = mutableListOf<TransactionSearchDocument>()
+        cleanLabels.keys.chunked(SQLITE_IN_CHUNK_SIZE).forEach { txidChunk ->
+            val placeholders = List(txidChunk.size) { "?" }.joinToString(",")
+            val documents =
+                readTransactionSearchDocuments(
+                    selection = "$COL_WALLET_ID = ? AND $COL_LAYER = ? AND $COL_TXID IN ($placeholders)",
+                    selectionArgs = arrayOf(walletId, layer.dbValue, *txidChunk.toTypedArray()),
+                )
+            updatedDocuments += documents.mapNotNull { document ->
+                cleanLabels[document.txid]?.let { label -> document.copy(label = label.trim()) }
+            }
+        }
+
+        upsertTransactionSearchDocuments(updatedDocuments)
+    }
+
     fun updateTransactionSearchAddressLabel(
         walletId: String,
         layer: TransactionSearchLayer,
@@ -824,6 +856,30 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         upsertTransactionSearchDocuments(
             documents.map { it.copy(addressLabel = label.trim()) },
         )
+    }
+
+    fun updateTransactionSearchAddressLabels(
+        walletId: String,
+        layer: TransactionSearchLayer,
+        labels: Map<String, String>,
+    ) {
+        val cleanLabels = labels.filterKeys { it.isNotBlank() }
+        if (walletId.isBlank() || cleanLabels.isEmpty()) return
+
+        val updatedDocuments = mutableListOf<TransactionSearchDocument>()
+        cleanLabels.keys.chunked(SQLITE_IN_CHUNK_SIZE).forEach { addressChunk ->
+            val placeholders = List(addressChunk.size) { "?" }.joinToString(",")
+            val documents =
+                readTransactionSearchDocuments(
+                    selection = "$COL_WALLET_ID = ? AND $COL_LAYER = ? AND $COL_ADDRESS IN ($placeholders)",
+                    selectionArgs = arrayOf(walletId, layer.dbValue, *addressChunk.toTypedArray()),
+                )
+            updatedDocuments += documents.mapNotNull { document ->
+                cleanLabels[document.address]?.let { label -> document.copy(addressLabel = label.trim()) }
+            }
+        }
+
+        upsertTransactionSearchDocuments(updatedDocuments)
     }
 
     fun searchTransactionTxids(
@@ -852,7 +908,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             val totalCount =
                 readableDatabase.rawQuery(
                     "SELECT COUNT(*) FROM ${queryParts.fromClause} WHERE ${queryParts.whereClause}",
-                    queryParts.whereArgs,
+                    queryParts.whereArgs.toTypedArray(),
                 ).use { cursor ->
                     if (cursor.moveToFirst()) cursor.getInt(0) else 0
                 }
@@ -863,7 +919,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                     "FROM ${queryParts.fromClause} " +
                     "WHERE ${queryParts.whereClause} " +
                     "$orderByClause LIMIT ?",
-                queryParts.whereArgs + cappedLimit.toString(),
+                (queryParts.whereArgs + cappedLimit.toString()).toTypedArray(),
             ).use { cursor ->
                 while (cursor.moveToNext()) {
                     txids += cursor.getString(0)
@@ -881,7 +937,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
     private data class TransactionSearchQueryParts(
         val fromClause: String,
         val whereClause: String,
-        val whereArgs: Array<String>,
+        val whereArgs: List<String>,
     )
 
     private fun buildTransactionSearchQueryParts(
@@ -943,7 +999,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         return TransactionSearchQueryParts(
             fromClause = fromClause,
             whereClause = whereClauses.joinToString(separator = " AND "),
-            whereArgs = whereArgs.toTypedArray(),
+            whereArgs = whereArgs,
         )
     }
 
@@ -1147,15 +1203,23 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             val success = sqliteFiles.none { it.exists() }
 
             if (!success) {
-                Log.e(TAG, "Failed to delete Electrum cache database file")
+                SecureLog.e(
+                    TAG,
+                    "Failed to delete Electrum cache database file",
+                    releaseMessage = "Electrum cache cleanup failed",
+                )
             } else if (BuildConfig.DEBUG) {
                 Log.d(TAG, "Deleted Electrum cache database file")
             }
 
             success
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to delete Electrum cache database file")
-            if (BuildConfig.DEBUG) Log.e(TAG, "Electrum cache delete exception", e)
+            SecureLog.e(
+                TAG,
+                "Failed to delete Electrum cache database file",
+                e,
+                releaseMessage = "Electrum cache cleanup failed",
+            )
             false
         }
     }

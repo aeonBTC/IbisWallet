@@ -25,6 +25,38 @@ class FeeEstimationService {
         private const val TOR_PROXY_PORT = 9050
         private const val TIMEOUT_SECONDS = 30L
         private const val TOR_TIMEOUT_SECONDS = 30L
+
+        private val clearnetClient: OkHttpClient by lazy {
+            buildClient(useTorProxy = false)
+        }
+
+        private val torClient: OkHttpClient by lazy {
+            buildClient(useTorProxy = true)
+        }
+
+        private fun buildClient(useTorProxy: Boolean): OkHttpClient {
+            val builder =
+                OkHttpClient.Builder()
+                    .connectTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .readTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .writeTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
+
+            if (useTorProxy) {
+                val proxy =
+                    Proxy(
+                        Proxy.Type.SOCKS,
+                        InetSocketAddress(TOR_PROXY_HOST, TOR_PROXY_PORT),
+                    )
+                builder.proxy(proxy)
+                // Prevent local DNS resolution — send hostname through SOCKS5 proxy
+                // so Tor resolves it at the exit node, avoiding DNS leaks.
+                builder.dns { hostname ->
+                    listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
+                }
+            }
+
+            return builder.build()
+        }
     }
 
     /**
@@ -43,10 +75,16 @@ class FeeEstimationService {
     ): Result<FeeEstimates> =
         withContext(Dispatchers.IO) {
             try {
-                val client = buildClient(useTorProxy)
+                val client = if (useTorProxy) torClient else clearnetClient
 
                 if (usePrecise) {
-                    return@withContext tryFetchFromEndpoint(client, baseUrl, PRECISE_ENDPOINT)
+                    val preciseResult = tryFetchFromEndpoint(client, baseUrl, PRECISE_ENDPOINT)
+                    if (preciseResult.isSuccess) {
+                        return@withContext preciseResult
+                    }
+                    if (BuildConfig.DEBUG) {
+                        Log.w(TAG, "Precise fee endpoint failed, falling back to recommended")
+                    }
                 }
 
                 tryFetchFromEndpoint(client, baseUrl, RECOMMENDED_ENDPOINT)
@@ -55,30 +93,6 @@ class FeeEstimationService {
                 Result.failure(e)
             }
         }
-
-    private fun buildClient(useTorProxy: Boolean): OkHttpClient {
-        val builder =
-            OkHttpClient.Builder()
-                .connectTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .readTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
-                .writeTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
-
-        if (useTorProxy) {
-            val proxy =
-                Proxy(
-                    Proxy.Type.SOCKS,
-                    InetSocketAddress(TOR_PROXY_HOST, TOR_PROXY_PORT),
-                )
-            builder.proxy(proxy)
-            // Prevent local DNS resolution — send hostname through SOCKS5 proxy
-            // so Tor resolves it at the exit node, avoiding DNS leaks.
-            builder.dns { hostname ->
-                listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
-            }
-        }
-
-        return builder.build()
-    }
 
     private fun tryFetchFromEndpoint(
         client: OkHttpClient,

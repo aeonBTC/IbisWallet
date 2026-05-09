@@ -46,6 +46,7 @@ import github.aeonbtc.ibiswallet.data.model.TransactionSearchFilters
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchLayer
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
+import github.aeonbtc.ibiswallet.data.model.PendingLightningInvoice
 import github.aeonbtc.ibiswallet.data.model.PendingLightningInvoiceSession
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentPhase
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentSession
@@ -73,9 +74,11 @@ import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.Blech32Util
 import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
 import github.aeonbtc.ibiswallet.util.ElementsPsetSigner
+import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.TofuTrustManager
 import github.aeonbtc.ibiswallet.util.buildLiquidTransactionSearchDocument
 import github.aeonbtc.ibiswallet.util.findMaxExactSendAmount
+import github.aeonbtc.ibiswallet.util.isTransactionInsufficientFundsError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -506,7 +509,7 @@ class LiquidRepository(
         preserveVisibleState: Boolean = false,
     ) {
         try {
-            Log.d(TAG, "Initializing Liquid wallet for $walletId")
+            SecureLog.d(TAG, "Initializing Liquid wallet for $walletId")
             if (!preserveVisibleState) {
                 _liquidState.value = LiquidWalletState(walletId = walletId)
             }
@@ -552,7 +555,7 @@ class LiquidRepository(
                 )
             }
 
-            Log.d(TAG, "Liquid wallet initialized successfully")
+            SecureLog.d(TAG, "Liquid wallet initialized successfully")
         } catch (e: LwkException) {
             logError("LWK error initializing Liquid wallet", e)
             _liquidState.value = _liquidState.value.copy(error = "Failed to init Liquid wallet: ${e.message}")
@@ -582,7 +585,7 @@ class LiquidRepository(
                     val correctDescriptor = ElectrumSeedUtil.buildLiquidCtDescriptor(seed)
                     val storedCore = descriptorStr.substringBefore("#")
                     if (storedCore != correctDescriptor) {
-                        Log.i(TAG, "Liquid descriptor mismatch (passphrase) — re-deriving")
+                        SecureLog.i(TAG, "Liquid descriptor mismatch (passphrase) - re-deriving")
                         deleteWalletDatabaseFiles(walletId)
                         secureStorage.removeLiquidDescriptor(walletId)
                         descriptorStr = null
@@ -628,7 +631,7 @@ class LiquidRepository(
                 )
             }
 
-            Log.d(TAG, "Liquid wallet loaded from descriptor")
+            SecureLog.d(TAG, "Liquid wallet loaded from descriptor")
         } catch (e: LwkException) {
             logError("LWK error loading Liquid wallet", e)
             _liquidState.value = _liquidState.value.copy(error = "Failed to load: ${e.message}")
@@ -647,6 +650,7 @@ class LiquidRepository(
         scriptHashStatusCache.clear()
         liquidExternalAddressCache.clear()
         liquidInternalAddressCache.clear()
+        liquidUsedIndexSummaryCache = LiquidUsedIndexSummary()
         _loadedWalletId.value = null
         _liquidState.value = LiquidWalletState()
     }
@@ -663,6 +667,7 @@ class LiquidRepository(
         scriptHashStatusCache.clear()
         liquidExternalAddressCache.clear()
         liquidInternalAddressCache.clear()
+        liquidUsedIndexSummaryCache = LiquidUsedIndexSummary()
         withBoltzOperationLock(operation = "unloadWallet") {
             resetBoltzSessionStateLocked()
         }
@@ -695,7 +700,7 @@ class LiquidRepository(
             lwkClient = null
             _isConnected.value = false
         }
-        Log.d(TAG, "Liquid wallet unloaded (preserveConnection=$preserveConnection)")
+        SecureLog.d(TAG, "Liquid wallet unloaded (preserveConnection=$preserveConnection)")
     }
 
     suspend fun deleteWalletDatabase(walletId: String) =
@@ -705,7 +710,11 @@ class LiquidRepository(
             }
             electrumCache.clearTransactionSearchDocuments(walletId)
             if (!deleteWalletDatabaseFiles(walletId)) {
-                Log.e(TAG, "Failed to delete Liquid wallet database for $walletId")
+                SecureLog.e(
+                    TAG,
+                    "Failed to delete Liquid wallet database for $walletId",
+                    releaseMessage = "Liquid wallet database cleanup failed",
+                )
             }
         }
 
@@ -861,15 +870,45 @@ class LiquidRepository(
         return secureStorage.getPendingLightningInvoiceSession(walletId)
     }
 
-    suspend fun restorePendingLightningInvoice(): LightningInvoiceCreation? = withContext(Dispatchers.IO) {
+    fun getPendingLightningInvoiceSession(swapId: String): PendingLightningInvoiceSession? {
+        val walletId = currentWalletId ?: return null
+        return secureStorage.getPendingLightningInvoiceSession(walletId, swapId)
+    }
+
+    fun getPendingLightningInvoiceSessions(): List<PendingLightningInvoiceSession> {
+        val walletId = currentWalletId ?: return emptyList()
+        return secureStorage.getPendingLightningInvoiceSessions(walletId)
+    }
+
+    fun getPendingLightningInvoices(): List<PendingLightningInvoice> {
+        val walletId = currentWalletId ?: return emptyList()
+        return secureStorage.getPendingLightningInvoiceSessions(walletId).map { session ->
+            val pendingReceive = secureStorage.getPendingLightningReceive(walletId, session.swapId)
+            PendingLightningInvoice(
+                swapId = session.swapId,
+                invoice = session.invoice,
+                amountSats = session.amountSats,
+                createdAt = session.createdAt,
+                claimAddress = pendingReceive?.claimAddress.orEmpty(),
+                label = pendingReceive?.label.orEmpty(),
+            )
+        }
+    }
+
+    suspend fun restorePendingLightningInvoice(swapId: String? = null): LightningInvoiceCreation? = withContext(Dispatchers.IO) {
         val walletId = currentWalletId ?: return@withContext null
-        val session = getPendingLightningInvoiceSession() ?: return@withContext null
-        val pendingReceive = secureStorage.getPendingLightningReceive(walletId, session.swapId) ?: return@withContext null
+        val session =
+            if (swapId != null) {
+                secureStorage.getPendingLightningInvoiceSession(walletId, swapId)
+            } else {
+                getPendingLightningInvoiceSession()
+            } ?: return@withContext null
+        val pendingReceive = secureStorage.getPendingLightningReceive(walletId, session.swapId)
         val response = ensureLightningInvoiceResponse(session.swapId)
         LightningInvoiceCreation(
             swapId = session.swapId,
             invoice = session.invoice.ifBlank { response.bolt11Invoice().toString() },
-            claimAddress = pendingReceive.claimAddress,
+            claimAddress = pendingReceive?.claimAddress.orEmpty(),
             amountSats = session.amountSats,
         )
     }
@@ -938,7 +977,7 @@ class LiquidRepository(
     suspend fun connectToElectrum(config: LiquidElectrumConfig) = withContext(Dispatchers.IO) {
         connectionMutex.withLock {
             try {
-                Log.d(TAG, "Connecting to Liquid Electrum: ${config.displayName()}")
+                SecureLog.d(TAG, "Connecting to Liquid Electrum: ${config.displayName()}")
                 stopNotificationCollector()
                 subscribedScriptHashes.clear()
                 scriptHashStatusCache.clear()
@@ -1014,7 +1053,7 @@ class LiquidRepository(
                         lwkClient = client
                         _isConnected.value = true
 
-                        Log.d(TAG, "Connected to Liquid Electrum server")
+                        SecureLog.d(TAG, "Connected to Liquid Electrum server")
                         repositoryScope.launch {
                             electrumCache.pruneStaleUnconfirmed()
                         }
@@ -1051,7 +1090,7 @@ class LiquidRepository(
             } catch (e: LwkException) {
                 logError("LWK error connecting to Liquid Electrum", e)
                 _isConnected.value = false
-                throw Exception("Connection failed: ${e.message}")
+                throw Exception("Connection failed", e)
             } catch (e: Exception) {
                 logError("Failed to connect to Liquid Electrum", e)
                 _isConnected.value = false
@@ -1148,7 +1187,7 @@ class LiquidRepository(
             try {
                 client.tip().height()
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to query Liquid tip height: ${e.message}")
+                SecureLog.w(TAG, "Failed to query Liquid tip height: ${e.message}", e)
                 null
             }
         }
@@ -1375,9 +1414,13 @@ class LiquidRepository(
                     val existingSource = txSources[txid]
                     val pendingLightningReceive = addressSummary?.walletAddress?.let { pendingLightningReceivesByAddress[it] }
 
-                    if (walletId != null && existingSource == null && pendingLightningReceive != null) {
-                        secureStorage.saveLiquidTransactionSource(walletId, txid, LiquidTxSource.LIGHTNING_RECEIVE_SWAP)
-                        txSources[txid] = LiquidTxSource.LIGHTNING_RECEIVE_SWAP
+                    if (walletId != null && pendingLightningReceive != null) {
+                        if (existingSource == null) {
+                            secureStorage.saveLiquidTransactionSource(walletId, txid, LiquidTxSource.LIGHTNING_RECEIVE_SWAP)
+                            txSources[txid] = LiquidTxSource.LIGHTNING_RECEIVE_SWAP
+                        }
+                        secureStorage.getPendingLightningInvoiceSession(walletId, pendingLightningReceive.swapId)
+                            ?.let { secureStorage.deletePendingLightningInvoiceSession(walletId, pendingLightningReceive.swapId) }
                         pendingLightningReceive.label
                             .takeIf { it.isNotBlank() }
                             ?.let { label ->
@@ -1564,7 +1607,7 @@ class LiquidRepository(
     ) {
         val walletId = currentWalletId ?: return
         val pendingReceive = secureStorage.getPendingLightningReceive(walletId, swapId)
-        val invoiceSession = secureStorage.getPendingLightningInvoiceSession(walletId)?.takeIf { it.swapId == swapId }
+        val invoiceSession = secureStorage.getPendingLightningInvoiceSession(walletId, swapId)
         secureStorage.saveLiquidTransactionSource(walletId, txid, LiquidTxSource.LIGHTNING_RECEIVE_SWAP)
         pendingReceive?.let { receive ->
             saveLiquidSwapDetails(
@@ -1586,7 +1629,7 @@ class LiquidRepository(
             }
         secureStorage.deletePendingLightningReceive(walletId, swapId)
         if (invoiceSession != null) {
-            secureStorage.deletePendingLightningInvoiceSession(walletId)
+            secureStorage.deletePendingLightningInvoiceSession(walletId, swapId)
         }
         invalidateMetadataCache()
     }
@@ -1718,7 +1761,7 @@ class LiquidRepository(
                     "timeoutSeconds" to sessionTimeoutSecs,
                     "nextIndex" to secureStorage.getBoltzSessionNextIndex(walletId),
                 )
-                Log.d(
+                SecureLog.d(
                     TAG,
                     "BoltzSession initialized timeoutSeconds=$sessionTimeoutSecs usesTor=$usesTor " +
                         "elapsedMs=${System.currentTimeMillis() - startedAt}",
@@ -1860,6 +1903,8 @@ class LiquidRepository(
         val address: String,
     )
 
+    private var liquidUsedIndexSummaryCache = LiquidUsedIndexSummary()
+
     private fun collectLiquidUsedIndices(wollet: Wollet): LiquidUsedIndexSummary {
         val externalUsedIndices = mutableSetOf<UInt>()
         var highestExternalUsedIndex = -1
@@ -1884,7 +1929,7 @@ class LiquidRepository(
             externalUsedIndices = externalUsedIndices,
             highestExternalUsedIndex = highestExternalUsedIndex,
             highestInternalUsedIndex = highestInternalUsedIndex,
-        )
+        ).also { liquidUsedIndexSummaryCache = it }
     }
 
     private fun collectReservedLiquidExternalAddresses(walletId: String?): Set<String> {
@@ -1961,7 +2006,7 @@ class LiquidRepository(
             )
         }
 
-        val occupiedIndices = collectLiquidUsedIndices(wollet).externalUsedIndices
+        val occupiedIndices = liquidUsedIndexSummaryCache.externalUsedIndices
         val reservedAddresses = collectReservedLiquidExternalAddresses(walletId)
         var candidateIndex = currentIndex + 1u
 
@@ -2090,11 +2135,11 @@ class LiquidRepository(
     ): Boolean {
         val syncGeneration = walletSwitchGeneration
         val wollet = lwkWollet ?: run {
-            Log.w(TAG, "Cannot sync: wallet not loaded")
+            SecureLog.w(TAG, "Cannot sync: wallet not loaded")
             return false
         }
         val client = lwkClient ?: run {
-            Log.w(TAG, "Cannot sync: not connected")
+            SecureLog.w(TAG, "Cannot sync: not connected")
             return false
         }
 
@@ -2206,7 +2251,7 @@ class LiquidRepository(
                 }
             }
 
-            Log.d(
+            SecureLog.d(
                 TAG,
                 "Liquid sync complete: balance=${_liquidState.value.balanceSats} sats, ${_liquidState.value.transactions.size} txs",
             )
@@ -2319,7 +2364,7 @@ class LiquidRepository(
 
             val currentStatuses = proxy.startSubscriptions(allScriptHashes)
             if (currentStatuses.isEmpty()) {
-                Log.w(TAG, "Failed to start Liquid subscriptions: proxy returned empty status set")
+                SecureLog.w(TAG, "Failed to start Liquid subscriptions: proxy returned empty status set")
                 return@withContext SubscriptionResult.FAILED
             }
 
@@ -2373,7 +2418,7 @@ class LiquidRepository(
                 proxy.notifications.collect { notification ->
                     if (!isActive || collectorGeneration != walletSwitchGeneration) return@collect
                     if (notification is ElectrumNotification.ConnectionLost) {
-                        Log.w(TAG, "Liquid subscription socket reported connection lost")
+                        SecureLog.w(TAG, "Liquid subscription socket reported connection lost")
                         _connectionEvents.tryEmit(ConnectionEvent.ConnectionLost)
                         return@collect
                     }
@@ -2583,6 +2628,126 @@ class LiquidRepository(
             )
         liquidInternalAddressCache[index] = address
         return address
+    }
+
+    fun getAddressPreview(limitPerSection: Int): Triple<List<WalletAddress>, List<WalletAddress>, List<WalletAddress>> {
+        val wollet = lwkWollet ?: return Triple(emptyList(), emptyList(), emptyList())
+        val walletId = currentWalletId ?: return Triple(emptyList(), emptyList(), emptyList())
+        val network = lwkNetwork ?: return Triple(emptyList(), emptyList(), emptyList())
+        val labels = secureStorage.getAllLiquidAddressLabels(walletId)
+        val balanceByAddress = HashMap<String, ULong>()
+        val addressesWithUtxos = HashSet<String>()
+        val externalTxCountByIndex = HashMap<UInt, Int>()
+        val internalTxCountByIndex = HashMap<UInt, Int>()
+
+        try {
+            val policyAsset = network.policyAsset()
+            wollet.utxos().forEach { utxo ->
+                val address = utxo.address().toString()
+                addressesWithUtxos.add(address)
+                val secrets = utxo.unblinded()
+                if (secrets.asset() == policyAsset) {
+                    balanceByAddress[address] = (balanceByAddress[address] ?: 0UL) + secrets.value()
+                }
+            }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error listing Liquid UTXOs for address preview", e)
+        }
+
+        val usedSummary = collectLiquidUsedIndices(wollet)
+        try {
+            wollet.txos().forEach { txo ->
+                val idx = txo.wildcardIndex()
+                when (txo.extInt()) {
+                    Chain.EXTERNAL -> externalTxCountByIndex[idx] = (externalTxCountByIndex[idx] ?: 0) + 1
+                    Chain.INTERNAL -> internalTxCountByIndex[idx] = (internalTxCountByIndex[idx] ?: 0) + 1
+                }
+            }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error listing Liquid TXOs for address preview", e)
+        }
+
+        val usedAddresses = mutableListOf<WalletAddress>()
+
+        usedSummary.externalUsedIndices.sorted().take(limitPerSection).forEach { index ->
+            val address = liquidExternalAddressAt(wollet, index)
+            usedAddresses.add(
+                WalletAddress(
+                    address = address,
+                    index = index,
+                    keychain = KeychainType.EXTERNAL,
+                    label = labels[address],
+                    balanceSats = balanceByAddress[address] ?: 0UL,
+                    transactionCount = externalTxCountByIndex[index] ?: 0,
+                    isUsed = true,
+                ),
+            )
+        }
+
+        val receiveAddresses = mutableListOf<WalletAddress>()
+        var externalIndex = 0u
+        while (receiveAddresses.size < limitPerSection) {
+            if (externalIndex !in usedSummary.externalUsedIndices) {
+                val address = liquidExternalAddressAt(wollet, externalIndex)
+                receiveAddresses.add(
+                    WalletAddress(
+                        address = address,
+                        index = externalIndex,
+                        keychain = KeychainType.EXTERNAL,
+                        label = labels[address],
+                        balanceSats = 0UL,
+                        transactionCount = 0,
+                        isUsed = false,
+                    ),
+                )
+            }
+            externalIndex++
+        }
+
+        val changeAddresses = mutableListOf<WalletAddress>()
+        try {
+            val descriptor = wollet.descriptor()
+            val isMainnet = network.isMainnet()
+            internalTxCountByIndex.keys.sorted().take(limitPerSection).forEach { index ->
+                val address = liquidInternalAddressAt(descriptor, isMainnet, index) ?: return@forEach
+                usedAddresses.add(
+                    WalletAddress(
+                        address = address,
+                        index = index,
+                        keychain = KeychainType.INTERNAL,
+                        label = labels[address],
+                        balanceSats = balanceByAddress[address] ?: 0UL,
+                        transactionCount = internalTxCountByIndex[index] ?: 0,
+                        isUsed = true,
+                    ),
+                )
+            }
+
+            var internalIndex = 0u
+            while (changeAddresses.size < limitPerSection) {
+                if (internalIndex !in internalTxCountByIndex) {
+                    val address = liquidInternalAddressAt(descriptor, isMainnet, internalIndex)
+                    if (address != null) {
+                        changeAddresses.add(
+                            WalletAddress(
+                                address = address,
+                                index = internalIndex,
+                                keychain = KeychainType.INTERNAL,
+                                label = labels[address],
+                                balanceSats = 0UL,
+                                transactionCount = 0,
+                                isUsed = false,
+                            ),
+                        )
+                    }
+                }
+                internalIndex++
+            }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.e(TAG, "Error deriving Liquid address preview", e)
+        }
+
+        return Triple(receiveAddresses, changeAddresses, usedAddresses)
     }
 
     fun getAllAddresses(): Triple<List<WalletAddress>, List<WalletAddress>, List<WalletAddress>> {
@@ -3411,7 +3576,7 @@ class LiquidRepository(
                 estimatedTime = estimatedTime,
             )
         } catch (e: Exception) {
-            Log.w(TAG, "LWK BoltzSession quote failed, falling back to REST: ${e.message}")
+            SecureLog.w(TAG, "LWK BoltzSession quote failed, falling back to REST: ${e.message}", e)
             null
         }
     }
@@ -3963,15 +4128,14 @@ class LiquidRepository(
         secureStorage.savePendingLightningInvoiceSession(walletId, session)
     }
 
-    private fun clearPendingLightningInvoiceSession() {
+    private fun clearPendingLightningInvoiceSession(swapId: String? = null) {
         val walletId = currentWalletId ?: return
-        secureStorage.deletePendingLightningInvoiceSession(walletId)
+        secureStorage.deletePendingLightningInvoiceSession(walletId, swapId)
     }
 
     private suspend fun ensureLightningInvoiceResponse(swapId: String): InvoiceResponse {
         invoiceResponses[swapId]?.let { return it }
-        val session = getPendingLightningInvoiceSession()
-            ?.takeIf { it.swapId == swapId }
+        val session = getPendingLightningInvoiceSession(swapId)
             ?: throw Exception("Invoice swap not found")
         return ensureBoltzSession().restoreInvoice(session.snapshot).also {
             invoiceResponses[swapId] = it
@@ -4161,13 +4325,23 @@ class LiquidRepository(
     suspend fun advanceLightningInvoice(swapId: String): PaymentState = withContext(Dispatchers.IO) {
         val (state, snapshot) =
             withBoltzOperationLock(operation = "advanceLightningInvoice", swapId = swapId) {
-                val response = ensureLightningInvoiceResponse(swapId)
-                advanceBoltzPaymentState("advanceLightningInvoice") {
-                    response.advance()
-                } to response.serialize()
+                var response = ensureLightningInvoiceResponse(swapId)
+                val state =
+                    try {
+                        advanceBoltzPaymentState("advanceLightningInvoice") {
+                            response.advance()
+                        }
+                    } catch (error: Exception) {
+                        if (!isBoltzObjectConsumed(error)) throw error
+                        logDebug("advanceLightningInvoice restoring consumed response swapId=$swapId")
+                        response = restoreConsumedInvoiceResponse(swapId)
+                        advanceBoltzPaymentState("advanceLightningInvoiceRestored") {
+                            response.advance()
+                        }
+                    }
+                state to response.serialize()
             }
-        getPendingLightningInvoiceSession()
-            ?.takeIf { it.swapId == swapId }
+        getPendingLightningInvoiceSession(swapId)
             ?.let { persistLightningInvoiceSession(it.copy(snapshot = snapshot)) }
         state
     }
@@ -4175,28 +4349,95 @@ class LiquidRepository(
     suspend fun finishLightningInvoice(swapId: String): String? = withContext(Dispatchers.IO) {
         val result =
             withBoltzOperationLock(operation = "finishLightningInvoice", swapId = swapId) {
-                val response = ensureLightningInvoiceResponse(swapId)
-                val snapshot = response.serialize()
+                var response = ensureLightningInvoiceResponse(swapId)
+                val snapshot =
+                    runCatching { response.serialize() }.getOrElse { error ->
+                        if (!isBoltzObjectConsumed(error)) throw error
+                        logDebug("finishLightningInvoice restoring consumed response before serialize swapId=$swapId")
+                        response = restoreConsumedInvoiceResponse(swapId)
+                        response.serialize()
+                    }
                 try {
-                    response.completePay()
-                    response.claimTxid().orEmpty()
-                } catch (error: LwkException) {
+                    completeLightningInvoiceResponse(swapId, response, snapshot)
+                } catch (error: Exception) {
+                    if (isBoltzObjectConsumed(error)) {
+                        logDebug("finishLightningInvoice restoring consumed response before complete swapId=$swapId")
+                        response = restoreConsumedInvoiceResponse(swapId)
+                        return@withBoltzOperationLock runCatching {
+                            completeLightningInvoiceResponse(swapId, response, snapshot)
+                        }.getOrElse { retryError ->
+                            if (isBoltzObjectConsumed(retryError)) {
+                                logDebug("finishLightningInvoice restored response was consumed again swapId=$swapId")
+                                cleanupInvoiceResponse(swapId)
+                                invoiceResponses[swapId] = ensureBoltzSession().restoreInvoice(snapshot)
+                                return@withBoltzOperationLock null
+                            }
+                            if (retryError is LwkException && isBoltzTransientProgressError(retryError)) {
+                                if (BuildConfig.DEBUG) {
+                                    Log.d(TAG, "finishLightningInvoice: waiting for more Boltz activity after restore")
+                                }
+                                val latestSnapshot = runCatching { response.serialize() }.getOrDefault(snapshot)
+                                getPendingLightningInvoiceSession(swapId)
+                                    ?.let { persistLightningInvoiceSession(it.copy(snapshot = latestSnapshot)) }
+                                runCatching { response.destroy() }
+                                invoiceResponses[swapId] = ensureBoltzSession().restoreInvoice(latestSnapshot)
+                                return@withBoltzOperationLock null
+                            }
+                            throw retryError
+                        }
+                    }
+                    if (error !is LwkException) throw error
                     if (!isBoltzTransientProgressError(error)) {
                         throw error
                     }
                     if (BuildConfig.DEBUG) Log.d(TAG, "finishLightningInvoice: waiting for more Boltz activity")
+                    val latestSnapshot = runCatching { response.serialize() }.getOrDefault(snapshot)
+                    getPendingLightningInvoiceSession(swapId)
+                        ?.let { persistLightningInvoiceSession(it.copy(snapshot = latestSnapshot)) }
                     runCatching { response.destroy() }
-                    invoiceResponses[swapId] = ensureBoltzSession().restoreInvoice(snapshot)
+                    invoiceResponses[swapId] = ensureBoltzSession().restoreInvoice(latestSnapshot)
                     null
                 }
             }
         if (result == null) {
             return@withContext null
         }
+        finalizeLightningReceiveTransaction(swapId, result)
         cleanupInvoiceResponse(swapId)
-        clearPendingLightningInvoiceSession()
+        clearPendingLightningInvoiceSession(swapId)
         destroyBoltzSessionIfIdle("lightning_invoice_completed")
         result
+    }
+
+    private fun completeLightningInvoiceResponse(
+        swapId: String,
+        response: InvoiceResponse,
+        fallbackSnapshot: String,
+    ): String? {
+        val completed = response.completePay()
+        if (!completed) {
+            persistUpdatedLightningInvoiceSnapshot(swapId, response, fallbackSnapshot)
+            return null
+        }
+        return response.claimTxid()
+            .orEmpty()
+            .takeIf { it.isNotBlank() }
+            ?: run {
+                persistUpdatedLightningInvoiceSnapshot(swapId, response, fallbackSnapshot)
+                null
+            }
+    }
+
+    private fun persistUpdatedLightningInvoiceSnapshot(
+        swapId: String,
+        response: InvoiceResponse,
+        fallbackSnapshot: String,
+    ) {
+        getPendingLightningInvoiceSession(swapId)
+            ?.let {
+                val latestSnapshot = runCatching { response.serialize() }.getOrDefault(fallbackSnapshot)
+                persistLightningInvoiceSession(it.copy(snapshot = latestSnapshot))
+            }
     }
 
     suspend fun finalizeLightningInvoiceClaimed(
@@ -4207,7 +4448,6 @@ class LiquidRepository(
         txid
             ?.takeIf { it.isNotBlank() }
             ?.let { finalizeLightningReceiveTransaction(swapId, it) }
-            ?: clearPendingLightningInvoiceSession()
         destroyBoltzSessionIfIdle("lightning_invoice_claimed_shortcut")
     }
 
@@ -4217,7 +4457,7 @@ class LiquidRepository(
     ) = withContext(Dispatchers.IO) {
         cleanupInvoiceResponse(swapId)
         if (clearPendingMetadata) {
-            clearPendingLightningInvoiceSession()
+            clearPendingLightningInvoiceSession(swapId)
             currentWalletId?.let { walletId ->
                 secureStorage.deletePendingLightningReceive(walletId, swapId)
             }
@@ -4229,6 +4469,16 @@ class LiquidRepository(
                 "lightning_invoice_failed"
             },
         )
+    }
+
+    suspend fun deletePendingLightningInvoice(swapId: String) = withContext(Dispatchers.IO) {
+        cleanupInvoiceResponse(swapId)
+        clearPendingLightningInvoiceSession(swapId)
+        currentWalletId?.let { walletId ->
+            secureStorage.deletePendingLightningReceive(walletId, swapId)
+        }
+        invalidateMetadataCache()
+        destroyBoltzSessionIfIdle("lightning_invoice_deleted")
     }
 
     suspend fun awaitBoltzSwapActivity(
@@ -4393,14 +4643,16 @@ class LiquidRepository(
                 amountSats = invoiceAmountSats,
             )
         } catch (e: Exception) {
-            if (resolvedPayment.fetchedInvoice != null) {
+            if (canUseRestSubmarineFallback(resolvedPayment)) {
                 logBoltzTrace(
                     "lwk_failed_falling_back_to_rest",
                     trace,
                     level = BoltzTraceLevel.WARN,
                     throwable = e,
                     "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                    "reason" to lightningPaymentFallbackReason(e),
                 )
+                destroyBoltzSessionAfterPreparePayFailure()
                 return@withContext prepareRestSubmarineSwapFallback(
                     executionPlan = executionPlan,
                     resolvedPayment = resolvedPayment,
@@ -4422,6 +4674,30 @@ class LiquidRepository(
         }
     }
 
+    private fun canUseRestSubmarineFallback(resolvedPayment: ResolvedLightningPaymentInput): Boolean {
+        val invoice = resolvedPayment.fetchedInvoice ?: resolvedPayment.paymentInput
+        val payment = runCatching { Payment(invoice) }.getOrNull()
+        return payment?.kind() == PaymentKind.LIGHTNING_INVOICE
+    }
+
+    private fun lightningPaymentFallbackReason(error: Exception): String {
+        val message = error.message.orEmpty()
+        return when {
+            message.contains("BoltzApi(HTTP", ignoreCase = true) -> "lwk_http"
+            message.contains("timeout", ignoreCase = true) -> "timeout"
+            message.contains("connection", ignoreCase = true) -> "connection"
+            else -> "lwk_prepare_pay"
+        }
+    }
+
+    private suspend fun destroyBoltzSessionAfterPreparePayFailure() {
+        if (hasActiveBoltzResponses()) {
+            logDebug("preparePay failed; keeping shared Boltz session because active responses exist")
+            return
+        }
+        destroyBoltzSession(persistNextIndex = true)
+    }
+
     private suspend fun prepareRestSubmarineSwapFallback(
         executionPlan: LightningPaymentExecutionPlan.BoltzQuote,
         resolvedPayment: ResolvedLightningPaymentInput,
@@ -4429,7 +4705,7 @@ class LiquidRepository(
         trace: BoltzTraceContext,
         traceStartedAt: Long,
     ): LightningPaymentExecutionPlan.BoltzSwap {
-        val fetchedInvoice = resolvedPayment.fetchedInvoice ?: executionPlan.resolvedPaymentInput
+        val fetchedInvoice = resolvedPayment.fetchedInvoice ?: resolvedPayment.paymentInput
         val refundDetails = allocateBoltzSubmarineRefundDetails()
         logBoltzTrace(
             "prepare_rest_submarine_fallback",
@@ -5839,7 +6115,7 @@ class LiquidRepository(
                 )
                 true
             } catch (e: LwkException) {
-                if (isInsufficientFundsError(e.message)) {
+                if (e.isTransactionInsufficientFundsError()) {
                     false
                 } else {
                     throw e
@@ -6081,10 +6357,6 @@ class LiquidRepository(
         return match.groupValues.getOrNull(1)?.toLongOrNull()
     }
 
-    private fun isInsufficientFundsError(message: String?): Boolean {
-        return message?.contains("InsufficientFunds") == true
-    }
-
     private fun cleanupInvoiceResponse(swapId: String) {
         val response = invoiceResponses.remove(swapId) ?: return
         try {
@@ -6125,6 +6397,17 @@ class LiquidRepository(
                 ?: throw Exception("Boltz chain swap snapshot unavailable")
         return ensureBoltzSession().restoreLockup(snapshot).also {
             lockupResponses[swapId] = it
+        }
+    }
+
+    private suspend fun restoreConsumedInvoiceResponse(swapId: String): InvoiceResponse {
+        cleanupInvoiceResponse(swapId)
+        val snapshot =
+            getPendingLightningInvoiceSession(swapId)
+                ?.snapshot
+                ?: throw Exception("Lightning invoice snapshot unavailable")
+        return ensureBoltzSession().restoreInvoice(snapshot).also {
+            invoiceResponses[swapId] = it
         }
     }
 
@@ -6199,19 +6482,11 @@ class LiquidRepository(
     }
 
     private fun logError(message: String, error: Exception) {
-        if (BuildConfig.DEBUG) {
-            Log.e(BOLTZ_LOG_TAG, message, error)
-        } else {
-            Log.e(BOLTZ_LOG_TAG, message)
-        }
+        SecureLog.e(BOLTZ_LOG_TAG, message, error)
     }
 
     private fun logWarn(message: String, error: Exception) {
-        if (BuildConfig.DEBUG) {
-            Log.w(BOLTZ_LOG_TAG, message, error)
-        } else {
-            Log.w(BOLTZ_LOG_TAG, message)
-        }
+        SecureLog.w(BOLTZ_LOG_TAG, message, error)
     }
 
     private fun logDebug(message: String) {

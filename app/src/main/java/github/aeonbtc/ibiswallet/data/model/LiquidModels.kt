@@ -64,6 +64,13 @@ data class LiquidAssetBalance(
 /** Which layer the user is currently viewing */
 enum class WalletLayer { LAYER1, LAYER2 }
 
+/** Which Layer 2 backend is enabled for a wallet. */
+enum class Layer2Provider {
+    NONE,
+    LIQUID,
+    SPARK,
+}
+
 /** Liquid wallet state — parallel to WalletState for Bitcoin */
 data class LiquidWalletState(
     val walletId: String? = null,
@@ -348,6 +355,17 @@ data class PendingLightningReceive(
     val swapId: String,
     val claimAddress: String,
     val label: String,
+)
+
+data class PendingLightningInvoice(
+    val swapId: String,
+    val invoice: String,
+    val amountSats: Long,
+    val createdAt: Long,
+    val claimAddress: String = "",
+    val label: String = "",
+    val lastClaimAttemptAt: Long? = null,
+    val isClaiming: Boolean = false,
 )
 
 data class LightningInvoiceLimits(

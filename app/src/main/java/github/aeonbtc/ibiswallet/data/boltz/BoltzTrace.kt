@@ -64,8 +64,9 @@ internal fun logBoltzTrace(
     throwable: Throwable? = null,
     vararg extras: Pair<String, Any?>,
 ) {
+    if (!BuildConfig.DEBUG) return
     if (level == BoltzTraceLevel.DEBUG || level == BoltzTraceLevel.INFO) {
-        if (!BuildConfig.DEBUG || !isVerboseBoltzTracingEnabled()) return
+        if (!isVerboseBoltzTracingEnabled()) return
     }
 
     val fields =
@@ -114,10 +115,8 @@ internal fun logBoltzTrace(
                 }
         }
     }.getOrElse {
-        if (BuildConfig.DEBUG) {
-            println("$BOLTZ_LOG_TAG $fields")
-            throwable?.printStackTrace()
-        }
+        println("$BOLTZ_LOG_TAG $fields")
+        throwable?.printStackTrace()
     }
 }
 

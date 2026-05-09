@@ -8,6 +8,7 @@ import androidx.compose.material.icons.automirrored.outlined.CallReceived
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.ui.graphics.vector.ImageVector
+import github.aeonbtc.ibiswallet.R
 
 sealed class Screen(val route: String) {
     // Main screens (bottom navigation)
@@ -57,11 +58,13 @@ sealed class Screen(val route: String) {
     data object LiquidServerConfig : Screen("liquid_server_config")
 
     data object Swap : Screen("swap")
+
+    data object SparkTransfer : Screen("spark_transfer")
 }
 
 data class BottomNavItem(
     val screen: Screen,
-    val title: String,
+    val titleRes: Int,
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
 )
@@ -71,19 +74,19 @@ val bottomNavItems =
     listOf(
         BottomNavItem(
             screen = Screen.Receive,
-            title = "Receive",
+            titleRes = R.string.loc_a0ce08ad,
             selectedIcon = Icons.AutoMirrored.Filled.CallReceived,
             unselectedIcon = Icons.AutoMirrored.Outlined.CallReceived,
         ),
         BottomNavItem(
             screen = Screen.Balance,
-            title = "Balance",
+            titleRes = R.string.loc_63492662,
             selectedIcon = Icons.Filled.AccountBalanceWallet,
             unselectedIcon = Icons.Outlined.AccountBalanceWallet,
         ),
         BottomNavItem(
             screen = Screen.Send,
-            title = "Send",
+            titleRes = R.string.loc_074195f3,
             selectedIcon = Icons.AutoMirrored.Filled.CallMade,
             unselectedIcon = Icons.AutoMirrored.Outlined.CallMade,
         ),

@@ -42,6 +42,61 @@ enum class AddressType(
     ),
 }
 
+enum class WalletPolicyType {
+    SINGLE_SIG,
+    MULTISIG,
+}
+
+enum class MultisigScriptType(
+    val displayName: String,
+) {
+    P2WSH("P2WSH"),
+    P2SH_P2WSH("P2SH-P2WSH"),
+}
+
+data class MultisigCosigner(
+    val fingerprint: String,
+    val derivationPath: String,
+    val xpub: String,
+    val label: String? = null,
+)
+
+data class MultisigWalletConfig(
+    val name: String? = null,
+    val threshold: Int,
+    val totalCosigners: Int,
+    val scriptType: MultisigScriptType = MultisigScriptType.P2WSH,
+    val isSorted: Boolean = true,
+    val externalDescriptor: String,
+    val internalDescriptor: String,
+    val cosigners: List<MultisigCosigner> = emptyList(),
+    val sourceFormat: String? = null,
+) {
+    val policyLabel: String
+        get() = "$threshold-of-$totalCosigners ${scriptType.displayName}"
+}
+
+enum class PsbtSessionStatus {
+    IN_PROGRESS,
+    READY_TO_BROADCAST,
+    BROADCAST,
+}
+
+data class PsbtSigningSession(
+    val id: String,
+    val walletId: String,
+    val originalPsbtBase64: String,
+    val workingPsbtBase64: String,
+    val signerExportPsbtBase64: String,
+    val requiredSignatures: Int,
+    val presentSignatures: Int = 0,
+    val importedPartials: List<String> = emptyList(),
+    val pendingLabel: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    val status: PsbtSessionStatus = PsbtSessionStatus.IN_PROGRESS,
+)
+
 /**
  * Stored wallet metadata
  */
@@ -57,6 +112,11 @@ data class StoredWallet(
     val masterFingerprint: String? = null, // Master key fingerprint (8 hex chars) for watch-only wallets
     val seedFormat: SeedFormat = SeedFormat.BIP39,
     val gapLimit: Int = DEFAULT_GAP_LIMIT,
+    val policyType: WalletPolicyType = WalletPolicyType.SINGLE_SIG,
+    val multisigThreshold: Int? = null,
+    val multisigTotalCosigners: Int? = null,
+    val multisigScriptType: MultisigScriptType? = null,
+    val localCosignerFingerprint: String? = null,
 ) {
     companion object {
         const val DEFAULT_GAP_LIMIT = 20
@@ -219,11 +279,13 @@ data class WalletImportConfig(
     val masterFingerprint: String? = null, // Master key fingerprint (8 hex chars) for hardware wallet PSBT signing
     val seedFormat: SeedFormat = SeedFormat.BIP39,
     val gapLimit: Int = StoredWallet.DEFAULT_GAP_LIMIT,
+    val multisigConfig: MultisigWalletConfig? = null,
+    val localCosignerKeyMaterial: String? = null,
 ) {
     /** Redact sensitive fields to prevent accidental logging of key material. */
     override fun toString(): String =
         "WalletImportConfig(name=$name, addressType=$addressType, network=$network, " +
-            "isWatchOnly=$isWatchOnly, hasPassphrase=${passphrase != null}, " +
+            "isWatchOnly=$isWatchOnly, hasPassphrase=${passphrase != null}, hasMultisig=${multisigConfig != null}, " +
             "seedFormat=$seedFormat, keyMaterial=[REDACTED ${keyMaterial.length} chars])"
 }
 
@@ -323,6 +385,9 @@ data class PsbtDetails(
     val recipientAmountSats: ULong,
     val changeAmountSats: ULong?,
     val totalInputSats: ULong,
+    val psbtId: String? = null,
+    val presentSignatures: Int = 0,
+    val requiredSignatures: Int? = null,
 )
 
 /**

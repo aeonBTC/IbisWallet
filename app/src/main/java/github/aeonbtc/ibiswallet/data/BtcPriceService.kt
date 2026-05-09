@@ -19,6 +19,11 @@ import java.util.concurrent.TimeUnit
  * Service for fetching BTC/USD price from various sources
  */
 class BtcPriceService {
+    data class HistoricalPricePoint(
+        val time: Long,
+        val price: Double,
+    )
+
     companion object {
         data class FiatCurrencyOption(
             val code: String,
@@ -27,8 +32,11 @@ class BtcPriceService {
 
         private const val TAG = "BtcPriceService"
         private const val MEMPOOL_PRICE_URL = "https://mempool.space/api/v1/prices"
+        private const val MEMPOOL_HISTORICAL_PRICE_URL = "https://mempool.space/api/v1/historical-price"
         private const val MEMPOOL_ONION_PRICE_URL =
             "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion/api/v1/prices"
+        private const val MEMPOOL_ONION_HISTORICAL_PRICE_URL =
+            "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion/api/v1/historical-price"
         private const val COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies="
         private const val TIMEOUT_SECONDS = 15L
         private const val TOR_TIMEOUT_SECONDS = 30L
@@ -111,6 +119,32 @@ class BtcPriceService {
                 .firstOrNull { it.code == normalized }
                 ?.code
                 ?: SecureStorage.DEFAULT_PRICE_CURRENCY
+        }
+
+        fun resolveHistoricalPrice(
+            prices: List<HistoricalPricePoint>,
+            timestamp: Long,
+        ): Double? {
+            if (prices.isEmpty() || timestamp <= 0L) return null
+
+            var low = 0
+            var high = prices.lastIndex
+            var bestIndex = -1
+
+            while (low <= high) {
+                val mid = (low + high) ushr 1
+                if (prices[mid].time <= timestamp) {
+                    bestIndex = mid
+                    low = mid + 1
+                } else {
+                    high = mid - 1
+                }
+            }
+
+            return when {
+                bestIndex >= 0 -> prices[bestIndex].price
+                else -> prices.firstOrNull()?.price
+            }
         }
     }
 
@@ -225,6 +259,22 @@ class BtcPriceService {
             }
         }
 
+    suspend fun fetchHistoricalSeriesFromMempool(currencyCode: String): List<HistoricalPricePoint> =
+        fetchHistoricalSeries(
+            url = MEMPOOL_HISTORICAL_PRICE_URL,
+            currencyCode = currencyCode,
+            client = client,
+            logLabel = "Mempool historical price",
+        )
+
+    suspend fun fetchHistoricalSeriesFromMempoolOnion(currencyCode: String): List<HistoricalPricePoint> =
+        fetchHistoricalSeries(
+            url = MEMPOOL_ONION_HISTORICAL_PRICE_URL,
+            currencyCode = currencyCode,
+            client = torClient,
+            logLabel = "Mempool onion historical price",
+        )
+
     /**
      * Fetch BTC/USD price from CoinGecko
      * @return Price in USD or null on failure
@@ -271,6 +321,62 @@ class BtcPriceService {
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching from CoinGecko", e)
                 null
+            }
+        }
+
+    private suspend fun fetchHistoricalSeries(
+        url: String,
+        currencyCode: String,
+        client: OkHttpClient,
+        logLabel: String,
+    ): List<HistoricalPricePoint> =
+        withContext(Dispatchers.IO) {
+            try {
+                val normalizedCurrency = currencyCode.uppercase(Locale.US)
+                val request =
+                    Request.Builder()
+                        .url("$url?currency=$normalizedCurrency")
+                        .header("Accept", "application/json")
+                        .build()
+
+                val response = client.newCall(request).execute()
+
+                response.use {
+                    if (!it.isSuccessful) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "$logLabel fetch failed: ${it.code}")
+                        return@withContext emptyList()
+                    }
+
+                    val body = it.body.string()
+                    if (body.isEmpty()) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "$logLabel response empty")
+                        return@withContext emptyList()
+                    }
+
+                    val json = JSONObject(body)
+                    val prices = json.optJSONArray("prices") ?: return@withContext emptyList()
+                    val series =
+                        buildList {
+                            for (index in 0 until prices.length()) {
+                                val entry = prices.optJSONObject(index) ?: continue
+                                val time = entry.optLong("time", 0L)
+                                val price = entry.optDouble(normalizedCurrency, -1.0)
+                                if (time > 0L && price > 0.0) {
+                                    add(HistoricalPricePoint(time = time, price = price))
+                                }
+                            }
+                        }.sortedBy(HistoricalPricePoint::time)
+
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "$logLabel points loaded: ${series.size} $normalizedCurrency")
+                    }
+                    series
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching $logLabel", e)
+                emptyList()
             }
         }
 }

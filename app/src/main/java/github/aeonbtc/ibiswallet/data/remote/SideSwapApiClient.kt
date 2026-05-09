@@ -7,6 +7,7 @@ import github.aeonbtc.ibiswallet.data.model.SideSwapPegStatus
 import github.aeonbtc.ibiswallet.data.model.SideSwapPegTx
 import github.aeonbtc.ibiswallet.data.model.SideSwapServerStatus
 import github.aeonbtc.ibiswallet.data.model.SideSwapWalletInfo
+import github.aeonbtc.ibiswallet.util.SecureLog
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -94,7 +95,7 @@ class SideSwapApiClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket failure", t)
+                SecureLog.e(TAG, "WebSocket failure", t, releaseMessage = "SideSwap WebSocket failure")
                 pendingRequests.values.forEach { it(Result.failure(t)) }
                 pendingRequests.clear()
                 this@SideSwapApiClient.webSocket = null
@@ -140,7 +141,8 @@ class SideSwapApiClient(
                 val error = json.optJSONObject("error")
                 if (error != null) {
                     val message = error.optString("message", "Unknown SideSwap error")
-                    callback(Result.failure(Exception(message)))
+                    SecureLog.w(TAG, "SideSwap request failed: $message")
+                    callback(Result.failure(Exception(SIDESWAP_REQUEST_FAILED_MESSAGE)))
                 } else {
                     callback(Result.success(json.optJSONObject("result") ?: JSONObject()))
                 }
@@ -151,8 +153,12 @@ class SideSwapApiClient(
             if (json.has("error") && json.isNull("id")) {
                 val error = json.getJSONObject("error")
                 val message = error.optString("message", "SideSwap error")
-                Log.e(TAG, "SideSwap error (no id): $message")
-                failAllPending(Exception(message))
+                SecureLog.e(
+                    TAG,
+                    "SideSwap error (no id): $message",
+                    releaseMessage = "SideSwap server returned an error",
+                )
+                failAllPending(Exception(SIDESWAP_REQUEST_FAILED_MESSAGE))
                 return
             }
 
@@ -161,7 +167,7 @@ class SideSwapApiClient(
             if (BuildConfig.DEBUG) {
                 Log.e(TAG, "Failed to parse SideSwap message: ${e.message}\nRaw: ${text.take(300)}")
             }
-            failAllPending(e)
+            failAllPending(Exception(SIDESWAP_RESPONSE_FAILED_MESSAGE, e))
         }
     }
 
@@ -207,7 +213,7 @@ class SideSwapApiClient(
                 if (!sent) {
                     pendingRequests.remove(id)
                     if (cont.isActive) cont.resumeWithException(
-                        Exception("SideSwap WebSocket not connected"),
+                        Exception(SIDESWAP_WEBSOCKET_NOT_CONNECTED_MESSAGE),
                     )
                 }
             }
@@ -337,19 +343,22 @@ class SideSwapApiClient(
                 val params = JSONObject().apply { put("value", value) }
                 rpcCall("subscribe_value", params)
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to subscribe to $value: ${e.message}")
+                SecureLog.e(TAG, "Failed to subscribe to $value: ${e.message}", e)
             }
         }
     }
 
     /** Unsubscribe from all wallet info values */
     suspend fun unsubscribeWalletInfo() {
+        if (!_isConnected.value) return
+
         for (value in SUBSCRIBE_VALUES) {
             try {
                 val params = JSONObject().apply { put("value", value) }
                 rpcCall("unsubscribe_value", params)
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to unsubscribe from $value: ${e.message}")
+                if (e.message == SIDESWAP_WEBSOCKET_NOT_CONNECTED_MESSAGE) return
+                SecureLog.w(TAG, "Failed to unsubscribe from $value: ${e.message}", e)
             }
         }
     }
@@ -384,7 +393,7 @@ class SideSwapApiClient(
                 _walletInfo.value = updated
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse subscribed_value: ${e.message}")
+            SecureLog.e(TAG, "Failed to parse subscribed_value: ${e.message}", e)
         }
     }
 
@@ -395,6 +404,9 @@ class SideSwapApiClient(
     companion object {
         private const val TAG = "SideSwapApiClient"
         private const val WS_URL = "wss://api.sideswap.io/json-rpc-ws"
+        private const val SIDESWAP_REQUEST_FAILED_MESSAGE = "SideSwap request failed"
+        private const val SIDESWAP_RESPONSE_FAILED_MESSAGE = "SideSwap response could not be processed"
+        private const val SIDESWAP_WEBSOCKET_NOT_CONNECTED_MESSAGE = "SideSwap WebSocket not connected"
 
         private val SUBSCRIBE_VALUES = listOf(
             "PegInMinAmount",
