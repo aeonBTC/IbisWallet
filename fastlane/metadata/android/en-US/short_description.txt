@@ -1,1 +1,1 @@
-Self-custody Bitcoin wallet built power users with advanced features.
+Self-custody Bitcoin wallet built for power users with advanced features.
