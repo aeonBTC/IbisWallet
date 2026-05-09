@@ -1,0 +1,8 @@
+- Added in-app update feature
+- Added welcome screen for app launch
+- Privacy mode is now disabled by tap and holding the (eye) icon
+- Optimized search function for wallets with extensive transaction history
+- Various UI tweaks and stability improvements
+- Fixed PSBTs generating too many QR codes for signing
+
+See full changelogs on GitHub.
