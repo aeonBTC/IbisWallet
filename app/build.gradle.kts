@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,20 +7,37 @@ plugins {
     jacoco
 }
 
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use { stream -> load(stream) }
+    }
+}
+
 android {
     namespace = "github.aeonbtc.ibiswallet"
     compileSdk = 36
+    val sparkApiKey = providers
+        .gradleProperty("SPARK_API_KEY")
+        .orElse(providers.environmentVariable("SPARK_API_KEY"))
+        .orElse(localProperties.getProperty("SPARK_API_KEY").orEmpty())
+        .orElse("")
 
     defaultConfig {
         applicationId = "github.aeonbtc.ibiswallet"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "3.2.0-beta"
+        versionCode = 11
+        versionName = "4.0-beta"
 
         vectorDrawables {
             useSupportLibrary = true
         }
+
+        val escapedSparkApiKey = sparkApiKey.get()
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+        buildConfigField("String", "SPARK_API_KEY", "\"$escapedSparkApiKey\"")
 
         // BDK native library only works reliably on ARM architectures
         // x86/x86_64 emulators have compatibility issues
@@ -49,6 +68,7 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "/fr/acinq/secp256k1/jni/native/**"
         }
     }
     testOptions {
@@ -151,6 +171,10 @@ dependencies {
     implementation(libs.lwk)
     implementation(libs.jna) { artifact { type = "aar" } }
     implementation(libs.lightning.kmp.core.jvm)
+    implementation(libs.bitcoinj.core)
+
+    // Spark SDK - Breez Spark Layer 2 Android bindings
+    implementation(libs.spark.sdk.android)
 
     // Testing
     testImplementation(libs.kotest.runner.junit5)
