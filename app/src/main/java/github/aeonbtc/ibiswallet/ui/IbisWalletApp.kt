@@ -394,7 +394,7 @@ fun IbisWalletApp(
     val isLayer2Available = isLiquidAvailable || isSparkAvailable
     val isAnyLayer2Enabled = isLayer2Enabled || isSparkLayer2Enabled
     val layer2Accent = if (activeLayer2Provider == Layer2Provider.SPARK) SparkPurple else LiquidTeal
-    val layer2Label = context.getString(R.string.loc_2f73501f)
+    val layer2Label = stringResource(R.string.loc_2f73501f)
     val openLayer2Transfer: () -> Unit = {
         if (activeLayer2Provider == Layer2Provider.SPARK) {
             navController.navigate(Screen.SparkTransfer.route)
@@ -607,12 +607,18 @@ fun IbisWalletApp(
             )
 
     // Get title for sub-screens
+    val allAddressesTitle = stringResource(R.string.loc_ed3bf7b5)
+    val allUtxosTitle = stringResource(R.string.loc_aefc2317)
     val subScreenTitle =
         when (currentDestination?.route) {
-            Screen.AllAddresses.route -> context.getString(R.string.loc_ed3bf7b5)
-            Screen.AllUtxos.route -> context.getString(R.string.loc_aefc2317)
+            Screen.AllAddresses.route -> allAddressesTitle
+            Screen.AllUtxos.route -> allUtxosTitle
             else -> ""
         }
+
+    val walletUnlockSecurityRequiredMessage = stringResource(R.string.loc_7378b4ca)
+    val walletLockEnableSecurityMessage = stringResource(R.string.loc_e440bb19)
+    val biometricUnavailableMessage = stringResource(R.string.loc_0039435a)
 
     // Security state - tracks whether app lock is enabled for the lock icon
     var isSecurityEnabled by remember { mutableStateOf(viewModel.isSecurityEnabled()) }
@@ -857,7 +863,7 @@ fun IbisWalletApp(
 
         if (request.securityMethod == SecureStorage.SecurityMethod.NONE) {
             scope.launch {
-                snackbarHostState.showSnackbar(context.getString(R.string.loc_7378b4ca))
+                snackbarHostState.showSnackbar(walletUnlockSecurityRequiredMessage)
             }
             return
         }
@@ -892,7 +898,7 @@ fun IbisWalletApp(
     fun enableWalletLock(walletId: String) {
         if (!isSecurityEnabled) {
             scope.launch {
-                snackbarHostState.showSnackbar(context.getString(R.string.loc_e440bb19))
+                snackbarHostState.showSnackbar(walletLockEnableSecurityMessage)
             }
             return
         }
@@ -991,7 +997,7 @@ fun IbisWalletApp(
         if (request.securityMethod != SecureStorage.SecurityMethod.BIOMETRIC) return@LaunchedEffect
         if (activity == null) {
             pendingWalletUnlock = null
-            snackbarHostState.showSnackbar(context.getString(R.string.loc_0039435a))
+            snackbarHostState.showSnackbar(biometricUnavailableMessage)
             return@LaunchedEffect
         }
         val promptTitle =
@@ -1036,6 +1042,24 @@ fun IbisWalletApp(
 
     // Get string resources for use in event handling
     val walletAddedMessage = stringResource(R.string.wallet_added)
+    val walletOperationFailedMessage = stringResource(R.string.wallet_operation_failed)
+    val transactionSentMessage = stringResource(R.string.loc_54947bc7)
+    val walletExportedMessage = stringResource(R.string.loc_a10f1671)
+    val bip329ExportedMessage = stringResource(R.string.loc_c5473c1d)
+    val bip329ImportedMessage = stringResource(R.string.loc_a70e9a3b)
+    val feeBumpedMessage = stringResource(R.string.loc_a0665acf)
+    val cpfpCreatedMessage = stringResource(R.string.loc_84d585b7)
+    val transactionRedirectedMessage = stringResource(R.string.loc_331c24c8)
+    val liquidOperationFailedMessage = stringResource(R.string.liquid_operation_failed)
+    val liquidTransactionSentMessage = stringResource(R.string.loc_38a633d4)
+    val lightningReceivedTitle = stringResource(R.string.loc_4defd854)
+    val lightningReceivedBody = stringResource(R.string.loc_e3dea6d5)
+    val lightningSentMessage = stringResource(R.string.loc_dc9ca216)
+    val swapCompletedTitle = stringResource(R.string.loc_932fd4d9)
+    val swapCompletedBody = stringResource(R.string.loc_1b2f100c)
+    val layer1ReceiveNotificationTitle = stringResource(R.string.loc_a11d4b84)
+    val receiveNotificationBody = stringResource(R.string.loc_0ab66fae)
+    val layer2ReceiveNotificationTitle = stringResource(R.string.loc_7cf79a48)
     val suppressWalletServerSnackbar: (String) -> Boolean = { message ->
         message == "Failed to connect to server" ||
             message == "Not connected to Electrum server" ||
@@ -1063,7 +1087,7 @@ fun IbisWalletApp(
                     if (!suppressWalletServerSnackbar(event.message)) {
                         snackbarHostState.showSnackbar(
                             event.message.ifBlank {
-                                context.getString(R.string.wallet_operation_failed)
+                                walletOperationFailedMessage
                             },
                         )
                     }
@@ -1081,7 +1105,7 @@ fun IbisWalletApp(
                 is WalletEvent.TransactionSent -> {
                     Toast.makeText(
                         context,
-                        context.getString(R.string.loc_54947bc7),
+                        transactionSentMessage,
                         Toast.LENGTH_SHORT,
                     ).show()
                     navController.navigate(Screen.Balance.route) {
@@ -1095,22 +1119,22 @@ fun IbisWalletApp(
                     navController.navigate(Screen.PsbtExport.route)
                 }
                 is WalletEvent.WalletExported -> {
-                    Toast.makeText(context, context.getString(R.string.loc_a10f1671), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, walletExportedMessage, Toast.LENGTH_SHORT).show()
                 }
                 is WalletEvent.Bip329LabelsExported -> {
-                    Toast.makeText(context, context.getString(R.string.loc_c5473c1d), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, bip329ExportedMessage, Toast.LENGTH_SHORT).show()
                 }
                 is WalletEvent.Bip329LabelsImported -> {
-                    Toast.makeText(context, context.getString(R.string.loc_a70e9a3b), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, bip329ImportedMessage, Toast.LENGTH_SHORT).show()
                 }
                 is WalletEvent.FeeBumped -> {
-                    Toast.makeText(context, context.getString(R.string.loc_a0665acf), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, feeBumpedMessage, Toast.LENGTH_SHORT).show()
                 }
                 is WalletEvent.CpfpCreated -> {
-                    Toast.makeText(context, context.getString(R.string.loc_84d585b7), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, cpfpCreatedMessage, Toast.LENGTH_SHORT).show()
                 }
                 is WalletEvent.TransactionRedirected -> {
-                    Toast.makeText(context, context.getString(R.string.loc_331c24c8), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, transactionRedirectedMessage, Toast.LENGTH_SHORT).show()
                 }
                 is WalletEvent.SyncCompleted,
                 is WalletEvent.WalletSwitched,
@@ -1140,7 +1164,7 @@ fun IbisWalletApp(
             when (event) {
                 is LiquidEvent.Error -> {
                     if (!suppressLiquidServerSnackbar(event.message)) {
-                        snackbarHostState.showSnackbar(context.getString(R.string.liquid_operation_failed))
+                        snackbarHostState.showSnackbar(liquidOperationFailedMessage)
                     }
                 }
                 is LiquidEvent.TransactionSent -> {
@@ -1149,28 +1173,28 @@ fun IbisWalletApp(
                     if (navController.currentDestination?.route == Screen.LiquidPsetExport.route) {
                         navController.popBackStack()
                     }
-                    Toast.makeText(context, context.getString(R.string.loc_38a633d4), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, liquidTransactionSentMessage, Toast.LENGTH_SHORT).show()
                 }
                 is LiquidEvent.LightningReceived -> {
                     postWalletNotification(
                         key = "lightning-received-${event.txid}",
-                        title = context.getString(R.string.loc_4defd854),
-                        body = context.getString(R.string.loc_e3dea6d5),
+                        title = lightningReceivedTitle,
+                        body = lightningReceivedBody,
                     )
-                    Toast.makeText(context, context.getString(R.string.loc_4defd854), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, lightningReceivedTitle, Toast.LENGTH_SHORT).show()
                 }
                 is LiquidEvent.LightningSent -> {
                     liquidViewModel.clearSendDraft()
-                    Toast.makeText(context, context.getString(R.string.loc_dc9ca216), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, lightningSentMessage, Toast.LENGTH_SHORT).show()
                 }
                 is LiquidEvent.SwapCompleted -> {
                     viewModel.sync()
                     postWalletNotification(
                         key = "swap-completed-${event.swapId}",
-                        title = context.getString(R.string.loc_932fd4d9),
-                        body = context.getString(R.string.loc_1b2f100c),
+                        title = swapCompletedTitle,
+                        body = swapCompletedBody,
                     )
-                    Toast.makeText(context, context.getString(R.string.loc_932fd4d9), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, swapCompletedTitle, Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -1217,8 +1241,8 @@ fun IbisWalletApp(
         newIncomingTransactions.forEach { tx ->
             postWalletNotification(
                 key = "l1-receive-${walletId}-${tx.txid}",
-                title = context.getString(R.string.loc_a11d4b84),
-                body = context.getString(R.string.loc_0ab66fae),
+                title = layer1ReceiveNotificationTitle,
+                body = receiveNotificationBody,
             )
         }
     }
@@ -1261,8 +1285,8 @@ fun IbisWalletApp(
         newIncomingTransactions.forEach { tx ->
             postWalletNotification(
                 key = "l2-receive-${walletId}-${tx.txid}",
-                title = context.getString(R.string.loc_7cf79a48),
-                body = context.getString(R.string.loc_0ab66fae),
+                title = layer2ReceiveNotificationTitle,
+                body = receiveNotificationBody,
             )
         }
     }
@@ -3206,12 +3230,8 @@ fun IbisWalletApp(
                                     liquidViewModel.setLiquidEnabledForWallet(walletId, false)
                                 }
                                 if (walletId == walletState.activeWallet?.id && enabled) {
-                                    if (enabled) {
-                                        liquidViewModel.unloadLiquidWallet()
-                                        sparkViewModel.loadSparkWallet(walletId)
-                                    } else {
-                                        sparkViewModel.unloadSparkWallet()
-                                    }
+                                    liquidViewModel.unloadLiquidWallet()
+                                    sparkViewModel.loadSparkWallet(walletId)
                                 }
                             },
                             onEditLiquidGapLimit = { walletId, gap ->
