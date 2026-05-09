@@ -1,0 +1,1426 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Carteira Íbis</string>
+    <string name="wallet_added">Carteira adicionada</string>
+    <string name="cloak_calculator_label">Calculadora</string>
+    <string name="nfc_service_description">Endereço de pagamento Bitcoin</string>
+    <string name="startup_loading_artwork">Arte inicial do Ibis</string>
+    <string name="version_format">Versão: %1$s</string>
+    <string name="drawer_version_short_format">v%1$s</string>
+    <string name="drawer_update_available">Atualização disponível: %1$s</string>
+    <string name="update_popup_title">Nova atualização disponível</string>
+    <string name="update_popup_message">A Carteira Ibis %1$s está disponível.</string>
+    <string name="update_popup_view">Ver</string>
+    <string name="update_popup_close">Fechar</string>
+    <string name="app_update_opt_in_title">Verifique se há atualizações de aplicativos no GitHub?</string>
+    <string name="app_update_opt_in_message">Esta opção pode ser ativada ou desativada em Sobre.</string>
+    <string name="app_update_opt_in_enable">Ativar</string>
+    <string name="app_update_opt_in_not_now">Agora não</string>
+    <string name="common_selected">Selecionado</string>
+    <string name="settings_language_title">Linguagem</string>
+    <string name="settings_language_english">Inglês</string>
+    <string name="settings_language_english_description">Usar inglês</string>
+    <string name="settings_language_spanish">Espanhol</string>
+    <string name="settings_language_spanish_description">Usar espanhol</string>
+    <string name="settings_language_brazilian_portuguese">Português (Brasil)</string>
+    <string name="settings_language_brazilian_portuguese_description">Usar português do Brasil</string>
+    <string name="settings_language_russian">russo</string>
+    <string name="settings_language_russian_description">Usar russo</string>
+    <string name="wallet_delete_watch_only_message">Remover "%1$s"? Você pode reimportá-lo posteriormente com o mesmo xpub.</string>
+    <string name="wallet_delete_irreversible_message">Tem certeza de que deseja remover "%1$s"? Esta ação não pode ser desfeita. Certifique-se de ter feito backup de sua frase de recuperação.</string>
+    <string name="wallet_delete_confirm_removal_label">Confirmar exclusão</string>
+    <string name="wallet_delete_irreversible_ack_label">Eu entendo que isso não pode ser desfeito</string>
+    <string name="wallet_view_sensitive_info_message">Você verá informações confidenciais de "%1$s".</string>
+    <string name="key_material_scan_qr_format">Digitalize este QR para importar %1$s</string>
+    <string name="multisig_manual_option">Escrever</string>
+    <string name="multisig_config_file_option">Arquivo</string>
+    <string name="wallet_last_full_sync_format">Ultimamente. sincronização: %1$s</string>
+    <string name="wallet_full_sync_count_format">%1$s / %2$s dir.</string>
+    <string name="wallet_full_sync_scanned_format">%1$s dir. revisado</string>
+    <string name="wallet_notifications_title">Notificações</string>
+    <string name="wallet_notifications_subtitle_default">Alertas recebidos</string>
+    <string name="wallet_notifications_subtitle_permission_required">Permitir notificações</string>
+    <string name="wallet_notifications_subtitle_android_blocked">Notificações bloqueadas</string>
+    <string name="wallet_notifications_permission_denied">permissão negada</string>
+    <string name="wallet_notifications_android_blocked">Notificações desativadas</string>
+    <string name="foreground_connectivity_title">Fundo</string>
+    <string name="foreground_connectivity_subtitle">Mantenha Electrum e Tor ativos</string>
+    <string name="foreground_connectivity_channel_name">Conectividade em segundo plano</string>
+    <string name="foreground_connectivity_channel_description">Conectividade persistente para serviços Electrum e Tor</string>
+    <string name="foreground_connectivity_notification_title">Conectividade do servidor em segundo plano</string>
+    <string name="foreground_connectivity_status_bitcoin">Bitcoin</string>
+    <string name="foreground_connectivity_status_liquid">Líquido</string>
+    <string name="foreground_connectivity_status_tor">Tor</string>
+    <string name="nfc_status_ready">NFC</string>
+    <string name="nfc_status_receive_ready">Receber NFC</string>
+    <string name="nfc_status_detecting">Lendo NFC</string>
+    <string name="nfc_status_received">NFC recebido</string>
+    <string name="nfc_status_share_ready">Compartilhar NFC</string>
+    <string name="nfc_status_sharing">Compartilhando NFC</string>
+    <string name="welcome_logo_content_description">Logotipo da carteira Ibis</string>
+    <string name="welcome_title">Bem-vindo à carteira Ibis</string>
+    <string name="welcome_intro">Ibis é uma carteira de autocustódia desenvolvida para usuários avançados, com foco em privacidade e personalização. Todos os serviços de rede e conexões externas estão desabilitados por padrão.</string>
+    <string name="welcome_menu_prompt">Abra o menu de opções para configurar o Ibis ao seu gosto.</string>
+    <string name="welcome_continue">Continuar</string>
+    <string name="welcome_language_hint">Escolha um idioma</string>
+    <string name="app_update_check_title">Verifique se há atualizações de aplicativos no GitHub</string>
+    <string name="liquid_enable_info_title">A camada 2 é modular</string>
+    <string name="liquid_enable_info_message">Abra a tela de gerenciamento de carteira para ativar o Liquid nas carteiras desejadas.\n\n*O Liquid só pode ser ativado em carteiras BIP39.</string>
+    <string name="liquid_enable_info_confirm">Entendido</string>
+    <string name="common_copy_with_label">Copiar %1$s</string>
+    <string name="common_show_all_remaining_format">Mostrar tudo (%1$d à esquerda)</string>
+    <string name="editable_label_chip_add" formatted="false">+ Etiqueta</string>
+    <string name="spark_search_history_placeholder">Pesquise tags, ID de pagamento, método ou data...</string>
+    <string name="spark_loading_wallet_message">O Spark está carregando para esta carteira</string>
+    <string name="spark_deposit_title_received_bitcoin">Bitcoin recebido</string>
+    <string name="spark_deposit_status_ready_to_claim">Pronto para reivindicar</string>
+    <string name="spark_deposit_status_confirmations_format">Confirmações %1$s</string>
+    <string name="spark_deposit_status_awaiting_claim">Aguardando reclamação</string>
+    <string name="spark_deposit_status_awaiting_confirmations">Aguardando 3 confirmações</string>
+    <string name="spark_deposit_note_title">Observação</string>
+    <string name="spark_deposit_note_message">Os depósitos na rede Spark exigem 3 confirmações antes de serem reivindicados em seu saldo Spark.</string>
+    <string name="spark_deposit_claim_title">Alegar</string>
+    <string name="spark_deposit_claim_manual_needed">Pode ser necessário reivindicar manualmente</string>
+    <string name="spark_payment_id_title">ID de pagamento</string>
+    <string name="spark_payment_id_copy_label">ID de pagamento Spark</string>
+    <string name="spark_deposit_txid_copy_label">ID da transação do intervalo Spark</string>
+    <string name="spark_deposit_address_copy_label">Endereço do balde Spark</string>
+    <string name="spark_received_at_copy_label">Endereço recebido do Spark</string>
+    <string name="spark_recipient_copy_label">Destinatário do Spark</string>
+    <string name="spark_preparing_address">Preparando endereço...</string>
+    <string name="spark_payment_direction_with_rail_format">%1$s %2$s</string>
+    <string name="common_fingerprint_format">Pegada: %1$s</string>
+    <string name="common_derivation_path_format">Caminho de desvio: %1$s</string>
+    <string name="common_electrum_seed_format">Semente Electrum %1$s (%2$d palavras)</string>
+    <string name="common_default_format">Padrão: %1$s</string>
+    <string name="receive_share_request_title">Compartilhar solicitação de recebimento</string>
+    <string name="receive_no_share_app">Não há nenhum aplicativo disponível para compartilhar</string>
+    <string name="wallet_all_layers">Todas as camadas</string>
+    <string name="send_total_recipients_format">Total (%1$d destinatários)</string>
+    <string name="send_recipients_title_format">Destinatários (%1$d)</string>
+    <string name="send_recipient_number_format">#%1$d</string>
+    <string name="send_sending_recipients_format">Enviando (%1$d destinatários)</string>
+    <string name="send_sending_to_recipients_format">Enviando para (%1$d destinatários)</string>
+    <string name="send_estimated_vbytes_format">(%1$s vB)</string>
+    <string name="coin_control_selected_summary_format">%1$d selecionado • %2$s</string>
+    <string name="swap_coin_control_utxo_badge_format">UTXOs (%1$d)</string>
+    <string name="all_addresses_keychain_index_format">%1$s # %2$d</string>
+    <string name="utxo_list_summary_with_frozen">%1$d UTXO (%2$d congelado)</string>
+    <string name="utxo_list_search_matches">%1$d partidas / %2$d total</string>
+    <string name="import_multisig_policy_line">%1$s assinatura múltipla</string>
+    <string name="import_wallet_cosigners_line">Fiadores: %1$d</string>
+    <string name="import_backup_labels_line">Etiquetas: %1$s · %2$s</string>
+    <string name="import_backup_server_settings_line">Configurações do servidor: %1$s</string>
+    <string name="import_wallet_address_line_watch">%1$s (%2$s)</string>
+    <string name="wallet_address_type_legacy_title">Legado</string>
+    <string name="wallet_address_type_segwit_title">Seg Wit</string>
+    <string name="wallet_address_type_taproot_title">raiz principal</string>
+    <string name="wallet_address_type_legacy_description">P2PKH – endereços legados começam com 1</string>
+    <string name="wallet_address_type_segwit_description">P2WPKH — SegWit nativo começa com bc1q</string>
+    <string name="wallet_address_type_taproot_description">P2TR — Taproot começa com bc1p</string>
+    <string name="wallet_auto_name_watch_format">Assistir %1$s</string>
+    <string name="wallet_auto_name_key_format">Chave %1$s</string>
+    <string name="wallet_electrum_seed_variant_standard">padrão</string>
+    <string name="wallet_electrum_seed_variant_segwit">segwit</string>
+    <string name="import_seed_invalid_line">%1$s: %2$s%3$s</string>
+    <string name="import_seed_wrong_word_count">0 palavras: 12, 15, 18, 21 ou 24 necessárias</string>
+    <string name="loc_ed3bf7b5" formatted="false">Instruções</string>
+    <string name="loc_aefc2317" formatted="false">UTXO</string>
+    <string name="loc_7378b4ca" formatted="false">Defina PIN ou biometria para abrir carteiras bloqueadas</string>
+    <string name="loc_0039435a" formatted="false">O desbloqueio biométrico não está disponível aqui</string>
+    <string name="loc_5a6ca12a" formatted="false">Desativar bloqueio de carteira</string>
+    <string name="loc_4d44286e" formatted="false">Desbloquear carteira</string>
+    <string name="loc_b1d09d26" formatted="false">Autenticar para desativar o bloqueio</string>
+    <string name="loc_b543e2d2" formatted="false">Autenticar para abrir esta carteira</string>
+    <string name="loc_51bac044" formatted="false">Cancelar</string>
+    <string name="loc_1a2d015d" formatted="false">Não foi possível conectar ao servidor</string>
+    <string name="loc_40c6f7fc" formatted="false">Sem conexão com o servidor Electrum</string>
+    <string name="loc_56ef812b" formatted="false">A conexão expirou</string>
+    <string name="loc_7512ca10" formatted="false">Conexão perdida</string>
+    <string name="loc_727e66ac" formatted="false">Conexão do servidor perdida</string>
+    <string name="loc_f3274267" formatted="false">Conexão Tor esgotada</string>
+    <string name="loc_d51147d8" formatted="false">Tor falhou ao iniciar:</string>
+    <string name="loc_e80ce525" formatted="false">mudança automática para</string>
+    <string name="loc_8306cc63" formatted="false">Falha na troca automática: nenhum servidor acessível</string>
+    <string name="loc_89cd842c" formatted="false">Falha na conexão:</string>
+    <string name="loc_baaad0fc" formatted="false">Sem conexão com Electrum</string>
+    <string name="loc_7b1e36fe" formatted="false">Mudando o servidor Liquid para</string>
+    <string name="loc_51bdc9f0" formatted="false">Falha na operação da carteira</string>
+    <string name="loc_54947bc7" formatted="false">Transação enviada com sucesso</string>
+    <string name="loc_a10f1671" formatted="false">Carteira exportada</string>
+    <string name="loc_c5473c1d" formatted="false">Etiquetas exportadas</string>
+    <string name="loc_a70e9a3b" formatted="false">Etiquetas importadas</string>
+    <string name="loc_a0665acf" formatted="false">Transação de substituição transmitida com sucesso</string>
+    <string name="loc_84d585b7" formatted="false">Transação CPFP transmitida corretamente</string>
+    <string name="loc_331c24c8" formatted="false">Transação redirecionada para sua carteira</string>
+    <string name="loc_aaf585b6" formatted="false">A operação líquida falhou</string>
+    <string name="loc_38a633d4" formatted="false">Transação líquida enviada com sucesso</string>
+    <string name="loc_4defd854" formatted="false">Troca relâmpago recebida</string>
+    <string name="loc_e3dea6d5" formatted="false">Atividade da carteira recebida</string>
+    <string name="loc_dc9ca216" formatted="false">Pagamento relâmpago enviado com sucesso</string>
+    <string name="loc_932fd4d9" formatted="false">Troca concluída</string>
+    <string name="loc_1b2f100c" formatted="false">Atividade de carteira atualizada</string>
+    <string name="loc_a11d4b84" formatted="false">Bitcoin recebido</string>
+    <string name="loc_0ab66fae" formatted="false">Pagamento recebido</string>
+    <string name="loc_7cf79a48" formatted="false">Líquido recebido</string>
+    <string name="loc_c79ab944" formatted="false">Abra as configurações do servidor</string>
+    <string name="loc_197cebf2" formatted="false">Bitcoin</string>
+    <string name="loc_22236665" formatted="false">Líquido</string>
+    <string name="loc_d2c0aec0" formatted="false">Fechar</string>
+    <string name="loc_b137001" formatted="false">Assinar/verificar mensagem</string>
+    <string name="loc_b137002" formatted="false">Sinal</string>
+    <string name="loc_b137003" formatted="false">Verificar</string>
+    <string name="loc_b137005" formatted="false">Mensagem</string>
+    <string name="loc_b137006" formatted="false">Assinatura</string>
+    <string name="loc_b137007" formatted="false">Assinatura Base64</string>
+    <string name="loc_b137008" formatted="false">Assinatura válida</string>
+    <string name="loc_b137009" formatted="false">assinatura inválida</string>
+    <string name="loc_b137010" formatted="false">Insira um endereço</string>
+    <string name="loc_b137011" formatted="false">Digite uma mensagem</string>
+    <string name="loc_b137012" formatted="false">Insira uma assinatura</string>
+    <string name="loc_b137013" formatted="false">Endereço não suportado</string>
+    <string name="loc_b137014" formatted="false">BIP137 não suporta endereços Taproot</string>
+    <string name="loc_b137015" formatted="false">BIP137 não suporta carteiras Taproot</string>
+    <string name="loc_b137016" formatted="false">O tipo de endereço não corresponde a esta carteira</string>
+    <string name="loc_b137017" formatted="false">Nenhuma chave de assinatura disponível</string>
+    <string name="loc_b137018" formatted="false">Endereço não encontrado nesta carteira</string>
+    <string name="loc_b137019" formatted="false">Esta carteira é somente leitura</string>
+    <string name="loc_b137020" formatted="false">A assinatura de mensagens está disponível apenas para carteiras de assinatura única</string>
+    <string name="loc_b137021" formatted="false">Chave privada inválida</string>
+    <string name="loc_9071098c" formatted="false">Bloquear aplicativo</string>
+    <string name="loc_cdfc6e09" formatted="false">Voltar</string>
+    <string name="loc_dd3795ad" formatted="false">Menu</string>
+    <string name="loc_268af6fe" formatted="false">Iniciando Tor</string>
+    <string name="loc_066df953" formatted="false">Conectando</string>
+    <string name="loc_98469a16" formatted="false">Conectado</string>
+    <string name="loc_82e9d0dd" formatted="false">Off-line</string>
+    <string name="loc_ba113750" formatted="false">Nenhuma tag para exportar</string>
+    <string name="loc_c6e12528" formatted="false">Falha ao abrir o fluxo de saída</string>
+    <string name="loc_45e5d14f" formatted="false">Falha na exportação</string>
+    <string name="loc_15286591" formatted="false">Não foi possível ler o arquivo</string>
+    <string name="loc_9efb1540" formatted="false">Nenhuma tag importada</string>
+    <string name="loc_4be4f258" formatted="false">Falha na importação</string>
+    <string name="loc_e440bb19" formatted="false">Configure primeiro o PIN ou a biometria</string>
+    <string name="loc_e95ede4f" formatted="false">Falha na configuração de coação</string>
+    <string name="loc_e5363b11" formatted="false">, 0)} Multisig</string>
+    <string name="loc_629b9e5b" formatted="false">Um estranho</string>
+    <string name="loc_69bd4cde" formatted="false">Sem nome</string>
+    <string name="loc_9f6b4cf6" formatted="false">Falha na restauração</string>
+    <string name="loc_b6df6876" formatted="false">Erro de líquido: PSET está temporariamente indisponível para uso real.</string>
+    <string name="loc_b2ef417b" formatted="false">Verificando novamente...</string>
+    <string name="loc_6e8653e4" formatted="false">Digitalizando</string>
+    <string name="loc_fe7aca52" formatted="false">Descobrindo direções...</string>
+    <string name="loc_a999bfe2" formatted="false">Iniciando nova verificação...</string>
+    <string name="loc_bd3ba3fa" formatted="false">$current / $total dir.</string>
+    <string name="loc_87d3aa11" formatted="false">$current dir. revisado</string>
+    <string name="loc_f1db54b6" formatted="false">Quantidade ($fiatCurrency)</string>
+    <string name="loc_890d7574" formatted="false">Quantia</string>
+    <string name="loc_33b64233" formatted="false">sats</string>
+    <string name="loc_cc86bbff" formatted="false">Código QR PSBT estendido</string>
+    <string name="loc_fb52d8a9" formatted="false">Preparando QR...</string>
+    <string name="loc_e1041b50" formatted="false">Toque em qualquer lugar para fechar</string>
+    <string name="loc_e6f87707" formatted="false">Código QR PSBT – toque para ampliar</string>
+    <string name="loc_df16eb23" formatted="false">Toque no QR para ampliar</string>
+    <string name="loc_ef73e5ab" formatted="false">Código QR estendido</string>
+    <string name="loc_416323aa" formatted="false">Código QR - toque para ampliar</string>
+    <string name="loc_d1f803ab" formatted="false">Digitalizar transação assinada</string>
+    <string name="loc_59b2cdc5" formatted="false">Digitalize o código QR</string>
+    <string name="loc_a1d468be" formatted="false">Este é um QR PSBT, não uma chave de carteira. Use a tela PSBT para verificar transações assinadas.</string>
+    <string name="loc_2ca4d840" formatted="false">Tipo de carteira não compatível</string>
+    <string name="loc_33912581" formatted="false">Não foi possível decodificar o código QR UR</string>
+    <string name="loc_9cd7a398" formatted="false">Digitalize tags QR</string>
+    <string name="loc_7f1b7539" formatted="false">Digitalize um QR de tag BIP 329 exportado de outra carteira</string>
+    <string name="loc_703868af" formatted="false">Digitalizado $received de $total</string>
+    <string name="loc_2f23b11e" formatted="false">$prefix$word</string>
+    <string name="loc_378dc5c9" formatted="false">chave de resgate</string>
+    <string name="loc_54bf6d2a" formatted="false">chave de resgate de emergência</string>
+    <string name="loc_7ea64bdf" formatted="false">Se a troca falhar, abra o link de resgate do Boltz e cole esta semente de 12 palavras.</string>
+    <string name="loc_7666b1a4" formatted="false">Abra a página de resgate do Boltz</string>
+    <string name="loc_13505d59" formatted="false">Chave de resgate Boltz</string>
+    <string name="loc_729dc6f0" formatted="false">Copiar chave de resgate Boltz</string>
+    <string name="loc_e287255d" formatted="false">Copiado para a área de transferência</string>
+    <string name="loc_cc3e4faa" formatted="false">Novo certificado de servidor</string>
+    <string name="loc_6a194291" formatted="false">Certificado alterado</string>
+    <string name="loc_f239b62e" formatted="false">Primeira conexão com este servidor. Verifique se a impressão digital do certificado corresponde à publicada pela operadora.</string>
+    <string name="loc_761f0c63" formatted="false">O certificado deste servidor foi alterado desde a sua última conexão. Isso pode indicar um ataque man-in-the-middle ou rotação de certificado pelo operador.</string>
+    <string name="loc_5dc1d0c0" formatted="false">Servidor</string>
+    <string name="loc_fbb9ff8a" formatted="false">Antigo</string>
+    <string name="loc_7a97fa9d" formatted="false">Impressão digital</string>
+    <string name="loc_36836bfe" formatted="false">Nova pegada</string>
+    <string name="loc_347307e6" formatted="false">Assunto</string>
+    <string name="loc_40c690bf" formatted="false">Válido até</string>
+    <string name="loc_a269638f" formatted="false">Declínio</string>
+    <string name="loc_cbc7c3aa" formatted="false">Confiar</string>
+    <string name="loc_4dff77ec" formatted="false">Aceitar novo certificado</string>
+    <string name="loc_bcb6fe62" formatted="false">Carteiras</string>
+    <string name="loc_dc73d3bf" formatted="false">Servidores Electrum</string>
+    <string name="loc_1c33c293" formatted="false">Configurações</string>
+    <string name="loc_2f73501f" formatted="false">Camada 2</string>
+    <string name="loc_3cedb797" formatted="false">Segurança</string>
+    <string name="loc_db888836" formatted="false">Copiar/Restaurar</string>
+    <string name="loc_74350de7" formatted="false">Sobre</string>
+    <string name="loc_c434ec51" formatted="false">Carteira Íbis</string>
+    <string name="loc_5e3e3fdf" formatted="false">+ Etiqueta</string>
+    <string name="loc_514da0a5" formatted="false">Remover rótulo</string>
+    <string name="loc_943c89b7" formatted="false">Taxa de comissão</string>
+    <string name="loc_69807fc8" formatted="false">Atualizar comissões</string>
+    <string name="loc_b918adb3" formatted="false">Padrão comissão: $hiddenAmount ($vBytesDisplay vB)</string>
+    <string name="loc_9384ed0d" formatted="false">sats</string>
+    <string name="loc_a91255ae" formatted="false">~2 blocos</string>
+    <string name="loc_90799724" formatted="false">~1 bloco</string>
+    <string name="loc_2d585b54" formatted="false">~6 blocos</string>
+    <string name="loc_65b85530" formatted="false">~3 blocos</string>
+    <string name="loc_453a508b" formatted="false">~12 blocos</string>
+    <string name="loc_82c7cb6e" formatted="false">Não foi possível carregar as estimativas</string>
+    <string name="loc_f22813ad" formatted="false">Personalizado</string>
+    <string name="loc_1f86ded3" formatted="false">um</string>
+    <string name="loc_aedd48eb" formatted="false">sáb/vB</string>
+    <string name="loc_b67a01a5" formatted="false">Camada 1</string>
+    <string name="loc_85a12a5f" formatted="false">Intercâmbio</string>
+    <string name="loc_301a5b91" formatted="false">Recebido</string>
+    <string name="loc_1af68597" formatted="false">Enviado</string>
+    <string name="loc_1efdda23" formatted="false">$%.2f</string>
+    <string name="loc_1b684325" formatted="false">Brinco</string>
+    <string name="loc_03b82433" formatted="false">Raio</string>
+    <string name="loc_e2070f58" formatted="false">MMM d, aaaa · HH:mm</string>
+    <string name="loc_2926e5c5" formatted="false">Selecione carteira</string>
+    <string name="loc_d2f6f29f" formatted="false">Carteira bloqueada</string>
+    <string name="loc_fd030147" formatted="false">Endereço somente leitura</string>
+    <string name="loc_25d748f3" formatted="false">Somente leitura</string>
+    <string name="loc_7a74fd5b" formatted="false">chave privada</string>
+    <string name="loc_24d8d452" formatted="false">frase-semente</string>
+    <string name="loc_f9bc2ba5" formatted="false">Nenhuma sincronização total</string>
+    <string name="loc_27bd3430" formatted="false">Bloquear</string>
+    <string name="loc_f08db23b" formatted="false">Sincronizar</string>
+    <string name="loc_d707daeb" formatted="false">Logotipo da carteira Ibis</string>
+    <string name="loc_5c9de83f" formatted="false">GitHub</string>
+    <string name="loc_2bb3e26c" formatted="false">Código fonte</string>
+    <string name="loc_98b3744d" formatted="false">Solicite recursos e relate bugs no GitHub</string>
+    <string name="loc_a0ce08ad" formatted="false">Receber</string>
+    <string name="loc_47fbfb16" formatted="false">Mudar</string>
+    <string name="loc_d975cc26" formatted="false">Usado</string>
+    <string name="loc_c87ab105" formatted="false">Código QR do endereço</string>
+    <string name="loc_6e2afb3f" formatted="false">Código QR</string>
+    <string name="loc_03a0fd9e" formatted="false">Encontrar endereço ou etiqueta</string>
+    <string name="loc_2470de02" formatted="false">Excluir</string>
+    <string name="loc_e3f2267c" formatted="false">Nenhum endereço correspondente</string>
+    <string name="loc_a735a217" formatted="false">Não há endereços</string>
+    <string name="loc_c72e1beb" formatted="false">Mostrar mais 20</string>
+    <string name="loc_822c6f45" formatted="false">Insira a etiqueta</string>
+    <string name="loc_f55495e0" formatted="false">Manter</string>
+    <string name="loc_98f4c3f7" formatted="false">Mostrar QR</string>
+    <string name="loc_c2f3561d" formatted="false">Endereço</string>
+    <string name="loc_ed8814bc" formatted="false">Cópia</string>
+    <string name="loc_63492662" formatted="false">Equilíbrio</string>
+    <string name="loc_f299c1b4" formatted="false">Transações</string>
+    <string name="loc_ba1d1a3c" formatted="false">Disponível</string>
+    <string name="loc_63722213" formatted="false">Congelado</string>
+    <string name="loc_ff1e339d" formatted="false">Pesquise endereço, etiqueta, valor, txid ou saída</string>
+    <string name="loc_4bb9e286" formatted="false">Não há UTXO</string>
+    <string name="loc_3a296c42" formatted="false">Não há UTXOs correspondentes</string>
+    <string name="loc_f1076a8d" formatted="false">UTXO Congelado</string>
+    <string name="loc_e1b46fb6" formatted="false">UTXO descongelado</string>
+    <string name="loc_b6b10bfe" formatted="false">Endereço copiado</string>
+    <string name="loc_0fddb7b5" formatted="false">saída copiada</string>
+    <string name="loc_4ab75d7f" formatted="false">Confirmado</string>
+    <string name="loc_cafbbb4a" formatted="false">Saída</string>
+    <string name="loc_543e40ca" formatted="false">Descongelar</string>
+    <string name="loc_413df12c" formatted="false">Congelar</string>
+    <string name="loc_074195f3" formatted="false">Enviar</string>
+    <string name="loc_dc7801d8" formatted="false">Copiar $label</string>
+    <string name="loc_4fdbbe47" formatted="false">, utxo.amountSats.toDouble() / 100_000_000.0)} btc</string>
+    <string name="loc_c846dfdc" formatted="false">confirmado</string>
+    <string name="loc_d4d57ab9" formatted="false">brinco</string>
+    <string name="loc_64de2725" formatted="false">congelado</string>
+    <string name="loc_38ec989f" formatted="false">disponível</string>
+    <string name="loc_7deb423d" formatted="false">dólar</string>
+    <string name="loc_ab83811b" formatted="false">Criar cópia</string>
+    <string name="loc_d46d2b20" formatted="false">Crie uma cópia completa com carteiras, tags, servidores e configurações gerais. As configurações de segurança são excluídas.</string>
+    <string name="loc_385cd49a" formatted="false">Backup</string>
+    <string name="loc_39bc3b1b" formatted="false">Restaurar cópia</string>
+    <string name="loc_2e285bfe" formatted="false">Restaure uma cópia completa, revise seu conteúdo e escolha o que restaurar. As configurações de segurança são excluídas.</string>
+    <string name="loc_486a1663" formatted="false">Restaurar</string>
+    <string name="loc_4218f43b">ibis-full-backup-%1$s.json</string>
+    <string name="loc_6539ad02" formatted="false">aplicativo/json</string>
+    <string name="loc_3713e18d" formatted="false">Verifique exatamente o que será exportado antes de salvar o arquivo.</string>
+    <string name="loc_59c793f0" formatted="false">Carteiras</string>
+    <string name="loc_7be7ccdc" formatted="false">Nenhuma carteira disponível</string>
+    <string name="loc_8652a19f" formatted="false">(somente leitura)</string>
+    <string name="loc_794971b5" formatted="false">Configurações do servidor</string>
+    <string name="loc_85611d13" formatted="false">Configurações do servidor Electrum e Liquid</string>
+    <string name="loc_19da05f8" formatted="false">Configurações gerais</string>
+    <string name="loc_97b9282b" formatted="false">Notificações, serviços externos, etc...</string>
+    <string name="loc_f8b82c65" formatted="false">Proteção</string>
+    <string name="loc_f6dc0e2f" formatted="false">Criptografar arquivo de cópia</string>
+    <string name="loc_c4d81c53" formatted="false">Proteger com senha</string>
+    <string name="loc_ccb42483" formatted="false">Senha</string>
+    <string name="loc_04ab6415" formatted="false">Disfarce</string>
+    <string name="loc_923c763f" formatted="false">Mostrar</string>
+    <string name="loc_08201b2b" formatted="false">Confirme sua senha</string>
+    <string name="loc_46e1da73" formatted="false">Mínimo 8 caracteres</string>
+    <string name="loc_3df88eb4" formatted="false">As senhas não coincidem</string>
+    <string name="loc_7fdce75b" formatted="false">Escolha o local para salvar</string>
+    <string name="loc_d3414c88" formatted="false">Alterar local de salvamento</string>
+    <string name="loc_3ff4bdf5" formatted="false">Confirmar exportação</string>
+    <string name="loc_628698a5" formatted="false">Revise os detalhes da cópia antes de exportar.</string>
+    <string name="loc_90d7bedf" formatted="false">Salvar localização</string>
+    <string name="loc_aee23349">%1$d selecionado</string>
+    <string name="loc_b27d0727" formatted="false">Etiquetas</string>
+    <string name="loc_32b19599">%1$d incluído</string>
+    <string name="loc_803f13e3" formatted="false">Configurações do servidor</string>
+    <string name="loc_1bb1df5e" formatted="false">Incluindo</string>
+    <string name="loc_481063e5" formatted="false">Excluído</string>
+    <string name="loc_daee1794" formatted="false">Configurações do aplicativo</string>
+    <string name="loc_14e0d86b" formatted="false">Criptografia</string>
+    <string name="loc_9f448218" formatted="false">Ativado</string>
+    <string name="loc_13f11ba3" formatted="false">Desabilitado</string>
+    <string name="loc_452013a2" formatted="false">Exportar</string>
+    <string name="loc_166a5cb9" formatted="false">Não foi possível analisar a cópia</string>
+    <string name="loc_57784073" formatted="false">criptografado</string>
+    <string name="loc_35c246d5" formatted="false">senha</string>
+    <string name="loc_34b569a6" formatted="false">backup.json</string>
+    <string name="loc_6bf29789" formatted="false">Selecione uma cópia completa e revise o que será restaurado. As configurações de segurança são sempre ignoradas.</string>
+    <string name="loc_bf2f67a0" formatted="false">Escolha copiar arquivo</string>
+    <string name="loc_5948f994" formatted="false">Alterar arquivo de cópia</string>
+    <string name="loc_adf2a8dd" formatted="false">Arquivo selecionado</string>
+    <string name="loc_2cad992e" formatted="false">Arquivo</string>
+    <string name="loc_0b03f2c9" formatted="false">Exportado</string>
+    <string name="loc_13027ae4" formatted="false">Lendo o conteúdo da cópia...</string>
+    <string name="loc_81d0b469" formatted="false">Cópia criptografada</string>
+    <string name="loc_0d70bfed" formatted="false">Esta cópia está criptografada. Digite a senha para visualizar seu conteúdo.</string>
+    <string name="loc_1cdedba2" formatted="false">Copiar senha</string>
+    <string name="loc_0edc6bdd" formatted="false">Desbloquear cópia</string>
+    <string name="loc_92a1890d" formatted="false">Não há carteiras nesta cópia</string>
+    <string name="loc_564855d0" formatted="false">Não há rótulos na cópia</string>
+    <string name="loc_3e366498" formatted="false">Não incluído nesta cópia</string>
+    <string name="loc_524d0edf" formatted="false">As carteiras existentes com a mesma semente serão ignoradas. As configurações de segurança não são restauradas.</string>
+    <string name="loc_a0bde62e" formatted="false">Sucesso</string>
+    <string name="loc_f275909f" formatted="false">exportado</string>
+    <string name="loc_b558726e" formatted="false">restaurado</string>
+    <string name="loc_990bb023" formatted="false">Privacidade</string>
+    <string name="loc_8c195a44" formatted="false">Sincronizar</string>
+    <string name="loc_a397da3c" formatted="false">Receba rápido</string>
+    <string name="loc_60129540" formatted="false">Digitalize QR</string>
+    <string name="loc_fc29713a" formatted="false">Sem carteira</string>
+    <string name="loc_2311c49c" formatted="false">Adicione uma carteira para começar</string>
+    <string name="loc_c2677517" formatted="false">Adicionar</string>
+    <string name="loc_f61cc0f6" formatted="false">Transações</string>
+    <string name="loc_ea6a9a53" formatted="false">Trocas de filtros</string>
+    <string name="loc_dda0ea3a" formatted="false">Fechar pesquisa</string>
+    <string name="loc_b35cde91" formatted="false">Procurar</string>
+    <string name="loc_0177e398" formatted="false">Pesquise tags, endereços, txid ou data...</string>
+    <string name="loc_1ed8a5e9" formatted="false">Carregando histórico...</string>
+    <string name="loc_1817b4ae" formatted="false">Sincronizando...</string>
+    <string name="loc_c4bda1e4" formatted="false">O saldo está pronto. As transações aparecerão em breve.</string>
+    <string name="loc_6998e348" formatted="false">A atividade recente aparecerá quando a sincronização terminar.</string>
+    <string name="loc_167ce23f" formatted="false">Nenhuma transação correspondente</string>
+    <string name="loc_a317d3d8" formatted="false">Nenhuma transação ainda</string>
+    <string name="loc_9febfd40" formatted="false">Tente outro termo de pesquisa</string>
+    <string name="loc_2aebf14e" formatted="false">As transações aparecerão aqui após a sincronização</string>
+    <string name="loc_54c6a9a6" formatted="false">Carregando mais transações...</string>
+    <string name="loc_c5f386a2" formatted="false">Mostrando primeiro a atividade mais recente enquanto o histórico anterior termina de carregar.</string>
+    <string name="loc_0ee47e3c" formatted="false">Mostrar mais</string>
+    <string name="loc_e8a4e98f" formatted="false">Mostrar tudo</string>
+    <string name="loc_64a62064" formatted="false">Mostrar tudo ($remaining à esquerda)</string>
+    <string name="loc_8fd877da" formatted="false">Endereço QR</string>
+    <string name="loc_3c19e32e" formatted="false">Copiar endereço</string>
+    <string name="loc_ec64ef5e" formatted="false">Camada 2 necessária</string>
+    <string name="loc_7821917a" formatted="false">Ative a camada 2 para ver esta carteira Liquid somente leitura.</string>
+    <string name="loc_a48e1208" formatted="false">Configurações</string>
+    <string name="loc_ba86d0ac" formatted="false">$sign$amount sábados</string>
+    <string name="loc_d322af2a" formatted="false">$sign$amount</string>
+    <string name="loc_81dbfdd9" formatted="false">$confirmations/6</string>
+    <string name="loc_3d1a0df5" formatted="false">Boltz</string>
+    <string name="loc_c6f76248" formatted="false">Troca lateral</string>
+    <string name="loc_37a5c459" formatted="false">Endereço de depósito Bitcoin</string>
+    <string name="loc_53204016" formatted="false">Endereço de depósito líquido</string>
+    <string name="loc_8f9ee8e6" formatted="false">Endereço de destino líquido</string>
+    <string name="loc_a6feda9e" formatted="false">Endereço de destino Bitcoin</string>
+    <string name="loc_b005c905" formatted="false">Copiar $copyLabel</string>
+    <string name="loc_5f4a458c" formatted="false">org.torproject.torbrowser</string>
+    <string name="loc_98c5fbdc" formatted="false">Detalhes da transação</string>
+    <string name="loc_222c0de6" formatted="false">Autotransferência</string>
+    <string name="loc_e31f7d30" formatted="false">outro</string>
+    <string name="loc_3dae8142" formatted="false">Aumentar comissão (RBF)</string>
+    <string name="loc_51321a45" formatted="false">Aumentar comissão (CPFP)</string>
+    <string name="loc_7f958245" formatted="false">Cancelar transação (RBF)</string>
+    <string name="loc_7cac602a" formatted="false">Estado</string>
+    <string name="loc_13e398d0" formatted="false">ID da transação</string>
+    <string name="loc_ad35e265" formatted="false">Copiado</string>
+    <string name="loc_b47edf23" formatted="false">Recebido em</string>
+    <string name="loc_eaf579ea" formatted="false">Destinatário</string>
+    <string name="loc_1a2e163b" formatted="false">(Autotransferência)</string>
+    <string name="loc_f3a4dab2" formatted="false">Copiar endereço</string>
+    <string name="loc_a28f34b2" formatted="false">Alteração retornada para</string>
+    <string name="loc_8ae00f50" formatted="false">mudar de direção</string>
+    <string name="loc_90d5f46b" formatted="false">Copiar endereço de alteração</string>
+    <string name="loc_f72cc482" formatted="false">Comissão de rede</string>
+    <string name="loc_cf667fec" formatted="false">Rótulo</string>
+    <string name="loc_f02e2a46" formatted="false">Detalhes da troca</string>
+    <string name="loc_36648ad9" formatted="false">Recolher detalhes da troca</string>
+    <string name="loc_511b58c0" formatted="false">Expanda os detalhes da troca</string>
+    <string name="loc_12c49c0c" formatted="false">ID de troca Boltz</string>
+    <string name="loc_1598922a" formatted="false">ID do pedido SideSwap</string>
+    <string name="loc_3e5cd869" formatted="false">Código de troca</string>
+    <string name="loc_00a6caf2" formatted="false">swap_id</string>
+    <string name="loc_d5ff2eb5" formatted="false">Endereço de depósito de câmbio</string>
+    <string name="loc_0c8495da" formatted="false">endereço_depósito</string>
+    <string name="loc_907247e2" formatted="false">Endereço de destino do Exchange</string>
+    <string name="loc_a8a1ec0a" formatted="false">endereço_de_recebimento</string>
+    <string name="loc_245027bd" formatted="false">Endereço de reembolso</string>
+    <string name="loc_53f9e5c5" formatted="false">endereço_reembolso</string>
+    <string name="loc_9c1c9375" formatted="false">Erro</string>
+    <string name="loc_3a15e5cd" formatted="false">Navegador Tor necessário</string>
+    <string name="loc_71c1fcab" formatted="false">O navegador Tor é necessário para visualizar links cebola. Instale-o na Play Store ou F-Droid.</string>
+    <string name="loc_92f9c847" formatted="false">Cancelar transação</string>
+    <string name="loc_f5040eb4" formatted="false">Substitua esta transação por uma comissão mais alta (RBF)</string>
+    <string name="loc_987ca029" formatted="false">Crie uma transação secundária de alta taxa para acelerar a confirmação (CPFP)</string>
+    <string name="loc_a3190b21" formatted="false">Redirecione todos os fundos para sua carteira ou para um endereço personalizado. Requer uma comissão maior que a original.</string>
+    <string name="loc_9f80cab8" formatted="false">Insira um endereço Bitcoin</string>
+    <string name="loc_85507fe1" formatted="false">Transação atual:</string>
+    <string name="loc_de90114d" formatted="false">Comissão: $HIDDEN_AMOUNT</string>
+    <string name="loc_ca3e4dcf" formatted="false">Transação de substituição:</string>
+    <string name="loc_e5455471" formatted="false">Transação de redirecionamento:</string>
+    <string name="loc_42ccefb2" formatted="false">Transação filha (CPFP):</string>
+    <string name="loc_4aade885" formatted="false">comissão tx filha</string>
+    <string name="loc_c5f55bb2" formatted="false">Custo adicional</string>
+    <string name="loc_eb289adf" formatted="false">$costLabel: $HIDDEN_AMOUNT</string>
+    <string name="loc_9081b0e6" formatted="false">Consolidará todos os UTXOs na carteira</string>
+    <string name="loc_534e1eb2" formatted="false">Fundos insuficientes</string>
+    <string name="loc_35652873" formatted="false">Você precisa de: $HIDDEN_AMOUNT (comissão + poeira)</string>
+    <string name="loc_760081de" formatted="false">Possui: $HIDDEN_AMOUNT (saída + carteira)</string>
+    <string name="loc_ee7df965" formatted="false">Endereço de destino personalizado</string>
+    <string name="loc_a18fd453" formatted="false">Endereço Bitcoin</string>
+    <string name="loc_30261319" formatted="false">Os fundos serão redirecionados para este endereço Bitcoin.</string>
+    <string name="loc_0c054d47" formatted="false">Aumentar comissão</string>
+    <string name="loc_1e89ceb8" formatted="false">Explorador</string>
+    <string name="loc_f07d5799" formatted="false">Abrir no explorador de blocos</string>
+    <string name="loc_89bab973" formatted="false">Transmissão manual</string>
+    <string name="loc_7177b2f3" formatted="false">Cole o hexadecimal bruto da transação ou um PSBT completo e assinado</string>
+    <string name="loc_e1614c61" formatted="false">Nota: PSBTs assinados cortados de carteiras de hardware podem falhar aqui.</string>
+    <string name="loc_d7364781" formatted="false">Use o stream PSBT original quando disponível.</string>
+    <string name="loc_007c8b5b" formatted="false">Transação hexadecimal bruta detectada</string>
+    <string name="loc_28a2dce9" formatted="false">PSBT assinado detectado</string>
+    <string name="loc_a4350df8" formatted="false">Formato não reconhecido</string>
+    <string name="loc_a5e83581" formatted="false">Carregar arquivo</string>
+    <string name="loc_d893f956" formatted="false">Conecte-se a um servidor Electrum para transmitir</string>
+    <string name="loc_1900fe56" formatted="false">Comunicar</string>
+    <string name="loc_caad9ed8" formatted="false">Transmissão de transação</string>
+    <string name="loc_611ba490" formatted="false">txid</string>
+    <string name="loc_e934eeef" formatted="false">Copiar txid</string>
+    <string name="loc_b22993f6" formatted="false">%,d</string>
+    <string name="loc_a6d7c2cb" formatted="false">%.10g</string>
+    <string name="loc_703955d0" formatted="false">-$plain</string>
+    <string name="loc_476e7c91" formatted="false">A.C.</string>
+    <string name="loc_a33318f4" formatted="false">serverSelectorBackground</string>
+    <string name="loc_46b773e7" formatted="false">serverSelectorContent</string>
+    <string name="loc_b94b1995" formatted="false">Excluir servidor</string>
+    <string name="loc_3dbe79b1" formatted="false">Eliminar</string>
+    <string name="loc_aab4007b" formatted="false">Servidor Electrum</string>
+    <string name="loc_cc38cb35" formatted="false">Salvo</string>
+    <string name="loc_98016440" formatted="false">Comutação automática quando desconectado</string>
+    <string name="loc_e43bcbe8" formatted="false">Tente o próximo servidor se a conexão cair</string>
+    <string name="loc_e46232fe" formatted="false">Adicionar servidor</string>
+    <string name="loc_7f474ad7" formatted="false">SSL</string>
+    <string name="loc_24cb124c" formatted="false">TCP</string>
+    <string name="loc_c89a3806" formatted="false">Tor</string>
+    <string name="loc_8d4cd2b4" formatted="false">Atual</string>
+    <string name="loc_bb72c083" formatted="false">Conectar</string>
+    <string name="loc_4f674841" formatted="false">Desconectar</string>
+    <string name="loc_3cf29f70" formatted="false">Nome:</string>
+    <string name="loc_e85c4517" formatted="false">Editar servidor</string>
+    <string name="loc_77caa9b0" formatted="false">Endereço:</string>
+    <string name="loc_475e06fd" formatted="false">Porta:</string>
+    <string name="loc_9d53bbd5" formatted="false">Programas:</string>
+    <string name="loc_c641697a" formatted="false">Bloquear:</string>
+    <string name="loc_11c5bc85" formatted="false">Falha na conexão</string>
+    <string name="loc_aad3c3b2" formatted="false">Configurar servidor</string>
+    <string name="loc_00ad5135" formatted="false">Arraste para reordenar</string>
+    <string name="loc_4cb2f934" formatted="false">Ativo</string>
+    <string name="loc_61dfddd0" formatted="false">Selecionado</string>
+    <string name="loc_21077124" formatted="false">Editar</string>
+    <string name="loc_10c5a9ae" formatted="false">Inicializando</string>
+    <string name="loc_51851e0f" formatted="false">esperando</string>
+    <string name="loc_d2f190c7" formatted="false">Gerenciado automaticamente</string>
+    <string name="loc_eff04021" formatted="false">Editar servidor</string>
+    <string name="loc_fe11d138" formatted="false">Nome</string>
+    <string name="loc_597532ba" formatted="false">meu servidor</string>
+    <string name="loc_0899b645" formatted="false">Endereço do servidor</string>
+    <string name="loc_0db390f1" formatted="false">electrum.exemplo.com</string>
+    <string name="loc_e3a3f2f2" formatted="false">Porta</string>
+    <string name="loc_d83b7198" formatted="false">A porta deve estar entre 1 e 65535</string>
+    <string name="loc_a8fc5dd4" formatted="false">Utilizar SSL/TLS</string>
+    <string name="loc_209e3dd7" formatted="false">Criptografar conexão</string>
+    <string name="loc_9f89304e" formatted="false">Atualizar</string>
+    <string name="loc_1a9e08e9" formatted="false">gerar_avançado</string>
+    <string name="loc_4627a439" formatted="false">gerar_senha</string>
+    <string name="loc_eb30de38" formatted="false">gerar_caminho</string>
+    <string name="loc_6227ec5e" formatted="false">Criar chaves</string>
+    <string name="loc_748eece4" formatted="false">Detalhes da carteira</string>
+    <string name="loc_6e9ddcf4" formatted="false">Nome da carteira</string>
+    <string name="loc_3213841a" formatted="false">Tipo de endereço</string>
+    <string name="loc_e3b008f1" formatted="false">Gerar frase-semente</string>
+    <string name="loc_0c25a130" formatted="false">Sua frase-semente</string>
+    <string name="loc_3ca6814e" formatted="false">Pegada: $fp</string>
+    <string name="loc_7420f38b" formatted="false">Mnemônico</string>
+    <string name="loc_5d00536d" formatted="false">Copiado</string>
+    <string name="loc_fceb7ead" formatted="false">Copiar frase-semente</string>
+    <string name="loc_7c63b77c" formatted="false">Regenerar frase-semente</string>
+    <string name="loc_77aacbaf" formatted="false">Eu fiz backup da minha frase-semente</string>
+    <string name="loc_20a1d916" formatted="false">Opções avançadas</string>
+    <string name="loc_729b34d2" formatted="false">Contrato</string>
+    <string name="loc_b47e7391" formatted="false">Expandir</string>
+    <string name="loc_75923525" formatted="false">Senha BIP39</string>
+    <string name="loc_e8a4f395" formatted="false">Digite a senha</string>
+    <string name="loc_01fca34c" formatted="false">Rota de desvio personalizada</string>
+    <string name="loc_e81bc2a8" formatted="false">Criar</string>
+    <string name="loc_6e0fc2e1" formatted="false">$index.</string>
+    <string name="loc_a34ad456" formatted="false">12 palavras</string>
+    <string name="loc_4e15e68f" formatted="false">24 palavras</string>
+    <string name="loc_53017e88" formatted="false">Não foi possível ler o arquivo de cópia</string>
+    <string name="loc_e61e3fea" formatted="false">Não foi possível ler o arquivo</string>
+    <string name="loc_1521d68b" formatted="false">importação_avançado</string>
+    <string name="loc_7877beaa" formatted="false">importação_impressão digital</string>
+    <string name="loc_70875d70" formatted="false">frase_senha de importação</string>
+    <string name="loc_e678658f" formatted="false">caminho_importação</string>
+    <string name="loc_378f992e" formatted="false">import_gap_limit</string>
+    <string name="loc_2acab2f8" formatted="false">xpub</string>
+    <string name="loc_9276d59d" formatted="false">ypub</string>
+    <string name="loc_80c37a73" formatted="false">zpub</string>
+    <string name="loc_d8a06a25" formatted="false">upub</string>
+    <string name="loc_7f51f042" formatted="false">xprv</string>
+    <string name="loc_c7ed9727" formatted="false">ano</string>
+    <string name="loc_d55838c9" formatted="false">zprv</string>
+    <string name="loc_96681214" formatted="false">pkh(</string>
+    <string name="loc_3afc06ca" formatted="false">wpkh(</string>
+    <string name="loc_8405aa10" formatted="false">tr(</string>
+    <string name="loc_198ad865" formatted="false">wsh(</string>
+    <string name="loc_6d34fb43" formatted="false">sh(wsh(</string>
+    <string name="loc_cb36b863" formatted="false">ct(</string>
+    <string name="loc_74b37443" formatted="false">Par de descritores Liquid inválido. Cola um descritor ct(...) combinado ou um par /0/* e /1/* correspondente.</string>
+    <string name="loc_a8d202fe" formatted="false">Descritor líquido inválido.</string>
+    <string name="loc_b78d19ad" formatted="false">wpkh($t)</string>
+    <string name="loc_1ba5d3f5" formatted="false">bc1q</string>
+    <string name="loc_6ca2e363" formatted="false">bc1p</string>
+    <string name="loc_49a30fd5" formatted="false">}: $badWords$suffix</string>
+    <string name="loc_7d88619a" formatted="false">$wordCountpalavras inseridas</string>
+    <string name="loc_f06998b1" formatted="false">} inserido</string>
+    <string name="loc_b196ae6e" formatted="false">0 palavras: 12, 15, 18, 21 ou 24 necessárias</string>
+    <string name="loc_964abaa1" formatted="false">Soma de verificação inválida</string>
+    <string name="loc_6dfe3462" formatted="false">Multisig</string>
+    <string name="loc_c821b501" formatted="false">Liquid_WatchOnly</string>
+    <string name="loc_1713eb65" formatted="false">Mac</string>
+    <string name="loc_0389b783" formatted="false">marcação</string>
+    <string name="loc_05f29bcb" formatted="false">AEADBadTagException</string>
+    <string name="loc_94b6dca8" formatted="false">Senha incorreta</string>
+    <string name="loc_20968582" formatted="false">Falha na descriptografia</string>
+    <string name="loc_aeabc606" formatted="false">Restaurar</string>
+    <string name="loc_7c2117d5" formatted="false">Importação manual</string>
+    <string name="loc_9ae2cb2b" formatted="false">Restaurar</string>
+    <string name="loc_3167464e" formatted="false">eh(</string>
+    <string name="loc_ab1cfe02" formatted="false">bc1</string>
+    <string name="loc_f986ec47" formatted="false">Semente BIP39, semente Electrum, chave WIF, xpub/zpub, descritor ou endereço</string>
+    <string name="loc_d5fabbff" formatted="false">Exportação JSON da carteira detectada</string>
+    <string name="loc_c43dbb42" formatted="false">Descritor de CT líquido detectado</string>
+    <string name="loc_26b5e032" formatted="false">Descritor de saída com fonte de chave</string>
+    <string name="loc_c329d1ef" formatted="false">Descritor de saída detectado</string>
+    <string name="loc_c8579cd6" formatted="false">Somente leitura com origem da chave</string>
+    <string name="loc_9dec0f67" formatted="false">Carteira somente leitura</string>
+    <string name="loc_3c22bb6f" formatted="false">Algumas carteiras de hardware não suportam assinatura PSBT sem uma impressão digital mestre; sua carteira de hardware deve fornecê-lo junto com xpub/zpub.</string>
+    <string name="loc_517ece75" formatted="false">Chave WIF detectada</string>
+    <string name="loc_85e5fba3" formatted="false">Chave privada estendida</string>
+    <string name="loc_e7f0104f" formatted="false">Frase inicial BIP39 válida</string>
+    <string name="loc_9589b41e" formatted="false">Fiador local</string>
+    <string name="loc_b848af0e" formatted="false">Signatário opcional para esta carteira multisig</string>
+    <string name="loc_7a4499bf" formatted="false">Semente ou xprv</string>
+    <string name="loc_796b4a85" formatted="false">Semente BIP39 ou [pegada/rota]xprv...</string>
+    <string name="loc_0fdf7e3f" formatted="false">prv</string>
+    <string name="loc_c6354927" formatted="false">A impressão digital deve corresponder a um fiador.</string>
+    <string name="loc_cc38eb35" formatted="false">Signatário local anexado.</string>
+    <string name="loc_711aadc6" formatted="false">Deixe-o vazio para multisig somente leitura.</string>
+    <string name="loc_d271ea89" formatted="false">Senha BIP39 (opcional)</string>
+    <string name="loc_a7557fbf" formatted="false">Definir impressão digital mestre</string>
+    <string name="loc_161165a5" formatted="false">Deve ter exatamente 8 caracteres hexadecimais</string>
+    <string name="loc_894dedef" formatted="false">Limite de intervalo personalizado</string>
+    <string name="loc_638eb802" formatted="false">Importar multisig</string>
+    <string name="loc_a016ef65" formatted="false">Importar líquido somente leitura</string>
+    <string name="loc_5ab1fed3" formatted="false">Chave de importação</string>
+    <string name="loc_255d09fd" formatted="false">Carteira multisig</string>
+    <string name="loc_7999830a" formatted="false">Importe um arquivo de configuração ou insira os fiadores manualmente</string>
+    <string name="loc_1777bbf2" formatted="false">Manual</string>
+    <string name="loc_4477af0d" formatted="false">texto/*</string>
+    <string name="loc_41133d17" formatted="false">Arquivo de configuração</string>
+    <string name="loc_1db77587" formatted="false">qualquer</string>
+    <string name="loc_0e42bd4f" formatted="false">Restaurar arquivo de carteira</string>
+    <string name="loc_0eeb7864" formatted="false">Importe um arquivo de cópia da Ibis Wallet</string>
+    <string name="loc_e4783294" formatted="false">Selecione copiar arquivo</string>
+    <string name="loc_5bc64b9b" formatted="false">Lendo arquivo de cópia...</string>
+    <string name="loc_ab6580da" formatted="false">Revise a cópia selecionada</string>
+    <string name="loc_380cec3b" formatted="false">Varrer chave privada</string>
+    <string name="loc_ba4c3466" formatted="false">Insira a chave WIF</string>
+    <string name="loc_3de64ebf" formatted="false">Cópia pronta para restaurar</string>
+    <string name="loc_6fca7516" formatted="false">endereços</string>
+    <string name="loc_eaa81a4c" formatted="false">transações</string>
+    <string name="loc_10e2db3b" formatted="false">blocoExplorador</string>
+    <string name="loc_cb30a644" formatted="false">URL personalizado</string>
+    <string name="loc_6111fafb" formatted="false">fonte de taxa</string>
+    <string name="loc_99b96a9c" formatted="false">explorador líquido</string>
+    <string name="loc_abcf6446" formatted="false">liquidExplorerCustomUrl</string>
+    <string name="loc_1ca1cadd" formatted="false">liquidTorEnabled</string>
+    <string name="loc_84f6cffe" formatted="false">líquidoAutoSwitch</string>
+    <string name="loc_7c5949d4" formatted="false">liquidServerSelectedByUser</string>
+    <string name="loc_929a5c05" formatted="false">explorador de blocos</string>
+    <string name="loc_90799139" formatted="false">fonte de taxa</string>
+    <string name="loc_52640f61" formatted="false">explorador de líquidos</string>
+    <string name="loc_b61cfdd3" formatted="false">Conectividade líquida</string>
+    <string name="loc_82807e0f" formatted="false">Importar configurações do servidor</string>
+    <string name="loc_997e26df" formatted="false">Servidores Electrum e serviços externos</string>
+    <string name="loc_867cb15f" formatted="false">Cópia criptografada</string>
+    <string name="loc_bf01e3a2" formatted="false">Digite a senha para descriptografar e revisar esta cópia.</string>
+    <string name="loc_7a2478a8" formatted="false">Restaurar carteira</string>
+    <string name="loc_f73683e2" formatted="false">Descriptografar cópia</string>
+    <string name="loc_e18f112a" formatted="false">Escolha outro arquivo</string>
+    <string name="loc_955fc6c6" formatted="false">m/48\'/0\'/0\'/2\'</string>
+    <string name="loc_68a4806d" formatted="false">multisig manual</string>
+    <string name="loc_698ba835" formatted="false">Limite</string>
+    <string name="loc_ab662431" formatted="false">Rota</string>
+    <string name="loc_9054140b" formatted="false">Fiadores</string>
+    <string name="loc_2a428c88" formatted="false">impressão digital: xpub</string>
+    <string name="loc_810fe008" formatted="false">Um por linha: pegada: xpub</string>
+    <string name="loc_7db8bd23" formatted="false">Fiador local (opcional)</string>
+    <string name="loc_d44eca4c" formatted="false">Frase-semente ou [pegada/rota]xprv...</string>
+    <string name="loc_5237cff5" formatted="false">Use uma semente BIP39 ou um xprv com origem que corresponda à impressão digital do fiador.</string>
+    <string name="loc_2471f7fc" formatted="false">P2WSH</string>
+    <string name="loc_acfc8aab" formatted="false">Usar</string>
+    <string name="loc_78975c63" formatted="false">BMS 1.0</string>
+    <string name="loc_a422f393">Nome: %1$s</string>
+    <string name="loc_3abd8e83" formatted="false">Derivação: $derivationPath</string>
+    <string name="loc_f1d5b96d" formatted="false">Formato: $format</string>
+    <string name="loc_3a5b3a4c" formatted="false">m/</string>
+    <string name="loc_5a29fbef" formatted="false">.removePrefix(</string>
+    <string name="loc_6b4510f0" formatted="false">)}]$xpub/$branch/*</string>
+    <string name="loc_f3bbdb9b" formatted="false">wsh(classificadomulti($threshold,$keys))</string>
+    <string name="loc_9fa6986f" formatted="false">m/$path</string>
+    <string name="loc_93bc34cc" formatted="false">classificado multi</string>
+    <string name="loc_c5914305" formatted="false">multi</string>
+    <string name="loc_949d128a" formatted="false">wsh($inner)</string>
+    <string name="loc_7097fc17" formatted="false">sh(wsh($inner))</string>
+    <string name="loc_1bdca9b7" formatted="false">Filtrar transações líquidas</string>
+    <string name="loc_ce31119b" formatted="false">Filtrar transações Lightning</string>
+    <string name="loc_2fd2faaa" formatted="false">O líquido está sendo carregado para esta carteira</string>
+    <string name="loc_899fe8a0" formatted="false">Endereço Líquido</string>
+    <string name="loc_ac616807" formatted="false">Recebido via</string>
+    <string name="loc_c6da6e5f" formatted="false">/tx/</string>
+    <string name="loc_854689fd" formatted="false">liquid_balance_swap_details</string>
+    <string name="loc_8967f122" formatted="false">liquid_balance_lightning_advanced</string>
+    <string name="loc_625681c5" formatted="false">ID da transação líquida</string>
+    <string name="loc_09d663eb" formatted="false">Copiar ID da transação</string>
+    <string name="loc_8c5f0b00" formatted="false">Referência relâmpago</string>
+    <string name="loc_1bb54c32" formatted="false">Copiar referência do Lightning</string>
+    <string name="loc_c8093bf9" formatted="false">Destinatário relâmpago</string>
+    <string name="loc_8f10cfd9" formatted="false">Endereço do destinatário</string>
+    <string name="loc_dd12fe68" formatted="false">Copiar destinatário do Lightning</string>
+    <string name="loc_06d539e7" formatted="false">Copiar endereço do destinatário</string>
+    <string name="loc_61bda033" formatted="false">Comissão de Troca Boltz</string>
+    <string name="loc_0f0b54c6" formatted="false">Copiar ID do Exchange</string>
+    <string name="loc_45f80a27" formatted="false">Avançado</string>
+    <string name="loc_2254b16b" formatted="false">Recolher detalhes avançados do Lightning</string>
+    <string name="loc_0c3d4854" formatted="false">Expanda os detalhes avançados do Lightning</string>
+    <string name="loc_950671ea" formatted="false">Endereço de coleta</string>
+    <string name="loc_f967d9c8" formatted="false">Bloquear endereço</string>
+    <string name="loc_bd2e4fa8" formatted="false">endereço_depósito_relâmpago</string>
+    <string name="loc_f2cab3fe" formatted="false">endereço_de_reembolso_relâmpago</string>
+    <string name="loc_5fd82ed8" formatted="false">Conta</string>
+    <string name="loc_4b07661a" formatted="false">fatura_relâmpago</string>
+    <string name="loc_35e0bd00" formatted="false">Entrada de pagamento resolvida</string>
+    <string name="loc_b4efe7c3" formatted="false">relâmpago_resolved_input</string>
+    <string name="loc_8236c6fa" formatted="false">Reembolsar chave pública</string>
+    <string name="loc_e49a8137" formatted="false">relâmpago_refund_pubkey</string>
+    <string name="loc_852cf06d" formatted="false">Chave de cobrança pública</string>
+    <string name="loc_8d909269" formatted="false">relâmpago_claim_pubkey</string>
+    <string name="loc_da29bafe" formatted="false">árvore de troca</string>
+    <string name="loc_80520a6f" formatted="false">relâmpago_swap_tree</string>
+    <string name="loc_fadd6716" formatted="false">Chave cegante</string>
+    <string name="loc_94c2ff0d" formatted="false">relâmpago_cegueira_key</string>
+    <string name="loc_58267a45" formatted="false">Origem</string>
+    <string name="loc_b2a432e9" formatted="false">Limitar a altura do bloco</string>
+    <string name="loc_fd2abe42" formatted="false">Endereço de financiamento Bitcoin</string>
+    <string name="loc_948bf4a1" formatted="false">Endereço de depósito de câmbio líquido</string>
+    <string name="loc_ce4ef127" formatted="false">Relâmpago recebido</string>
+    <string name="loc_15e084c6" formatted="false">Relâmpago enviado</string>
+    <string name="loc_8215f8b9" formatted="false">Troca de cadeia BTC/L-BTC</string>
+    <string name="loc_71ede617" formatted="false">Comércio relâmpago de entrada de Boltz</string>
+    <string name="loc_78f3c020" formatted="false">Comércio relâmpago de saída de Boltz</string>
+    <string name="loc_0c0664c9" formatted="false">Recepção L-BTC nativa</string>
+    <string name="loc_4553b000" formatted="false">Envio L-BTC nativo</string>
+    <string name="loc_e15158bb" formatted="false">%.2f %s</string>
+    <string name="loc_df3eb599" formatted="false">valor_recebido_líquido</string>
+    <string name="loc_4f62b1d9" formatted="false">rótulo_de_recebimento_líquido</string>
+    <string name="loc_c2ff3044" formatted="false">, valor líquido)}</string>
+    <string name="loc_2c39b4f1" formatted="false">ID do ativo=$selectedAssetId</string>
+    <string name="loc_10515e58" formatted="false">Receber Líquido</string>
+    <string name="loc_869ffe29" formatted="false">Receber LN</string>
+    <string name="loc_25464582" formatted="false">Código QR líquido</string>
+    <string name="loc_da2e3020" formatted="false">Gerando...</string>
+    <string name="loc_fb85740c" formatted="false">Sem carteira</string>
+    <string name="loc_53ae02a5" formatted="false">Novo</string>
+    <string name="loc_2ec7b25e" formatted="false">Compartilhar</string>
+    <string name="loc_44b6d553" formatted="false">texto/simples</string>
+    <string name="loc_ebbd9745" formatted="false">Solicitação de coleta de compartilhamento</string>
+    <string name="loc_f57fc8b3" formatted="false">Não há nenhum aplicativo disponível para compartilhar</string>
+    <string name="loc_02012acf" formatted="false">â****</string>
+    <string name="loc_c5ff4e34" formatted="false">pág. por exemplo Pagamento de Alice</string>
+    <string name="loc_171555e8" formatted="false">Etiqueta salva</string>
+    <string name="loc_2b196e9d" formatted="false">Incorporar em QR</string>
+    <string name="loc_de610209" formatted="false">Criando fatura...</string>
+    <string name="loc_2834b290" formatted="false">Recepção relâmpago via Boltz</string>
+    <string name="loc_65c049be" formatted="false">QR da fatura relâmpago</string>
+    <string name="loc_a1329beb" formatted="false">Copiar fatura</string>
+    <string name="loc_df69ee40" formatted="false">Fatura relâmpago</string>
+    <string name="loc_36de1312" formatted="false">Fatura copiada</string>
+    <string name="loc_739b859d" formatted="false">Pagamento recebido</string>
+    <string name="loc_777771dd" formatted="false">Nova fatura</string>
+    <string name="loc_91a0293c" formatted="false">Gerar fatura</string>
+    <string name="pending_lightning_invoices_title" formatted="false">Faturas pendentes</string>
+    <string name="pending_lightning_invoice_delete_title" formatted="false">Excluir fatura pendente?</string>
+    <string name="pending_lightning_invoice_delete_message" formatted="false">Isso remove a fatura pendente da lista. Se ela já foi paga, mas ainda não recebida, você ainda pode precisar reivindicá-la.</string>
+    <string name="pending_lightning_invoice_boltz_id" formatted="false">ID da Boltz</string>
+    <string name="pending_lightning_invoice_last_claim_format">Última reivindicação: %1$s</string>
+    <string name="pending_lightning_invoice_last_claim_never" formatted="false">Nunca</string>
+    <string name="pending_lightning_invoice_claiming" formatted="false">Reivindicando...</string>
+    <string name="loc_5c96cb11" formatted="false">Instruções</string>
+    <string name="loc_8bc041b3" formatted="false">Todos os UTXOs</string>
+    <string name="loc_d1b845fc" formatted="false">relâmpago_invoice_label</string>
+    <string name="loc_c5f4423b" formatted="false">Criar fatura</string>
+    <string name="loc_ed358a19" formatted="false">Carregando limites...</string>
+    <string name="loc_1c8c54ce" formatted="false">pág. por exemplo Venda relâmpago</string>
+    <string name="loc_685c7dc4" formatted="false">A etiqueta será salva com a fatura</string>
+    <string name="loc_982772df" formatted="false">Incorporar na fatura</string>
+    <string name="loc_cddf2d76" formatted="false">Enviar</string>
+    <string name="loc_972e5de0" formatted="false">Enviar L-BTC</string>
+    <string name="loc_002b1ce2" formatted="false">Controle de moedas</string>
+    <string name="loc_fcc11f52" formatted="false">Múltiplo</string>
+    <string name="loc_8a1057a2" formatted="false">Toque para adicionar destinatários de Liquid</string>
+    <string name="loc_d98e9517" formatted="false">Toque para editar destinatários</string>
+    <string name="loc_4622d13c" formatted="false">Endereço Líquido</string>
+    <string name="loc_432999cf" formatted="false">Direção líquida, BOLT 11/12 ou LN</string>
+    <string name="loc_a207ba41" formatted="false">≈ $LIQUID_HIDDEN_AMOUNT</string>
+    <string name="loc_cbc7b353" formatted="false">Insira sats</string>
+    <string name="loc_b8fd5376" formatted="false">Definido por pagamento</string>
+    <string name="loc_277e2626" formatted="false">Disponível</string>
+    <string name="loc_a53b6469" formatted="false">Máx.</string>
+    <string name="loc_642fdbfc" formatted="false">pág. por exemplo pagamento para Alícia</string>
+    <string name="loc_81e9e64d" formatted="false">A carteira líquida ainda não está pronta.</string>
+    <string name="loc_816ff282" formatted="false">Verifique o pagamento</string>
+    <string name="loc_c0a03bef" formatted="false">PSET desativado</string>
+    <string name="loc_81f5c0cf" formatted="false">Revise a transação</string>
+    <string name="loc_ea4b5d54" formatted="false">}.ouEmpty()}</string>
+    <string name="loc_149818bf" formatted="false">Padrão: 0,1 sat/vB</string>
+    <string name="loc_41389778" formatted="false">Estimando comissão...</string>
+    <string name="loc_9a8a0eaf" formatted="false">Pague relâmpago</string>
+    <string name="loc_74445676" formatted="false">Criar PSET não assinado</string>
+    <string name="loc_fb32910c" formatted="false">Feche a qualquer momento. O pagamento permanece em segundo plano.</string>
+    <string name="loc_b86dbd12" formatted="false">Preparando visualização...</string>
+    <string name="loc_ebed1e21" formatted="false">Endereço de reembolso</string>
+    <string name="loc_895ab1d4" formatted="false">Enviando para</string>
+    <string name="loc_d19e8dd8" formatted="false">Expedição:</string>
+    <string name="loc_e09d7895" formatted="false">Mudar:</string>
+    <string name="loc_50f5a971" formatted="false">Comissão de Rede Líquida:</string>
+    <string name="loc_03eece5a" formatted="false">Total</string>
+    <string name="loc_65759a78" formatted="false">Pagando para</string>
+    <string name="loc_a7133d27" formatted="false">Valor do pagamento:</string>
+    <string name="loc_635f0634" formatted="false">Pagamento em $ticker</string>
+    <string name="loc_5919c3ba" formatted="false">)} taxa</string>
+    <string name="loc_d7c667f0" formatted="false">Oferta BOLT12</string>
+    <string name="loc_10d4d7dc" formatted="false">Fatura relâmpago</string>
+    <string name="loc_42429685" formatted="false">Endereço relâmpago</string>
+    <string name="loc_26443ab0" formatted="false">Pagamento Líquido</string>
+    <string name="loc_abbfea89" formatted="false">Comissão de troca Boltz:</string>
+    <string name="loc_dc3dd7c1" formatted="false">Serviço de troca relâmpago</string>
+    <string name="loc_2944f33c" formatted="false">Selecione UTXO para gastar</string>
+    <string name="loc_27833d8a" formatted="false">Selecionar tudo</string>
+    <string name="loc_4340d39b" formatted="false">Limpe tudo</string>
+    <string name="loc_e17307d1" formatted="false">Não selecionado</string>
+    <string name="loc_bdedd2ce" formatted="false">UTXOs não confirmados estão desabilitados nas configurações</string>
+    <string name="loc_b01f4f95" formatted="false">Preparar</string>
+    <string name="loc_6f2c1806" formatted="false">Remover</string>
+    <string name="loc_ba974c5f" formatted="false">Quantidade (sats)</string>
+    <string name="loc_399e8a9a" formatted="false">Quantidade (BTC)</string>
+    <string name="loc_a4657728" formatted="false">+ Adicionar destinatário</string>
+    <string name="loc_742950e0" formatted="false">Enviando ($validRecipientCount destinatários)</string>
+    <string name="loc_fea7157d" formatted="false">Com. Husa.</string>
+    <string name="loc_2b1af52a" formatted="false">Restante</string>
+    <string name="loc_7a11db2b" formatted="false">Revise o PSET</string>
+    <string name="loc_784d1146" formatted="false">Pagar oferta BOLT12?</string>
+    <string name="loc_53e5d68a" formatted="false">Pagar conta relâmpago?</string>
+    <string name="loc_b876cbcd" formatted="false">Pagar endereço Lightning?</string>
+    <string name="loc_57cf7ca4" formatted="false">Enviando...</string>
+    <string name="loc_00188e69" formatted="false">Pagando relâmpago</string>
+    <string name="loc_30e230be" formatted="false">Pagamento relâmpago enviado</string>
+    <string name="loc_9a4d0ff4" formatted="false">Falha no envio</string>
+    <string name="loc_666a54bd" formatted="false">Falha no pagamento relâmpago</string>
+    <string name="loc_9d0cf287" formatted="false">PARAFUSO 12</string>
+    <string name="loc_bd7ab36d" formatted="false">LNURL</string>
+    <string name="loc_0405a33d" formatted="false">PARAFUSO11</string>
+    <string name="loc_dc39fbcf" formatted="false">O Envio Múltiplo suporta apenas destinatários Liquid</string>
+    <string name="loc_aa22b478" formatted="false">Insira um endereço Liquid ou URI de rede líquida</string>
+    <string name="loc_e2cc6c8d" formatted="false">, amountSats / 100_000_000.0).trimEnd(\'0\').trimEnd(\'.\')} BTC</string>
+    <string name="loc_be87cc68" formatted="false">pendente_pagamentos_cartão</string>
+    <string name="loc_23424238" formatted="false">Pagamentos pendentes</string>
+    <string name="loc_935f3cd2" formatted="false">pendente_lightning_$swapKey</string>
+    <string name="loc_d11fdae9" formatted="false">pendente_líquido_$txKey</string>
+    <string name="loc_6e0455fc" formatted="false">$count</string>
+    <string name="loc_bd660b8b" formatted="false">Bloqueio</string>
+    <string name="loc_a295bd91" formatted="false">Pagar</string>
+    <string name="loc_c52f86d9" formatted="false">Txid de financiamento</string>
+    <string name="loc_ae042255" formatted="false">Comissão</string>
+    <string name="loc_c1290bae" formatted="false">Txid</string>
+    <string name="loc_b53207d9" formatted="false">PSET está temporariamente indisponível para uso real.</string>
+    <string name="loc_35ab2ae5" formatted="false">Servidor Líquido</string>
+    <string name="loc_4c1a268a" formatted="false">Meu servidor Liquid</string>
+    <string name="loc_b68a3a98" formatted="false">blockstream.info</string>
+    <string name="loc_364b0d65" formatted="false">Muitas tentativas</string>
+    <string name="loc_0a18f141" formatted="false">PIN incorreto</string>
+    <string name="loc_bf4a5bdb" formatted="false">Digite o PIN para desbloquear</string>
+    <string name="loc_cabf9832" formatted="false">Autenticar para continuar</string>
+    <string name="loc_d00009b0" formatted="false">Use biometria</string>
+    <string name="loc_3dd7ffa7" formatted="false">c</string>
+    <string name="loc_922337f3" formatted="false">Biometria</string>
+    <string name="loc_3d1100cc" formatted="false">Recuo</string>
+    <string name="loc_6d48b5d9" formatted="false">Desbloquear</string>
+    <string name="loc_b6f847eb" formatted="false">Remover carteira somente leitura</string>
+    <string name="loc_9f4e5e7c" formatted="false">Excluir carteira</string>
+    <string name="loc_8bbd00a8" formatted="false">- Você pode reimportá-lo posteriormente com o mesmo xpub.</string>
+    <string name="loc_849681db" formatted="false">- Esta ação não pode ser desfeita. Certifique-se de ter feito backup de sua frase de recuperação.</string>
+    <string name="loc_21aea7b2" formatted="false">Confirmar exclusão</string>
+    <string name="loc_c950e4fe" formatted="false">Eu entendo que isso não pode ser desfeito</string>
+    <string name="loc_4f49447d" formatted="false">Configurações da carteira</string>
+    <string name="loc_3cb75e79" formatted="false">Limite de lacuna do Bitcoin</string>
+    <string name="loc_d30a3f21" formatted="false">Limite de lacuna</string>
+    <string name="loc_7b07ecad" formatted="false">impressão digital mestre</string>
+    <string name="loc_aea21c85" formatted="false">por exemplo 73c5da0a</string>
+    <string name="loc_39921dc5" formatted="false">Deve ter 8 caracteres hexadecimais</string>
+    <string name="loc_37540690" formatted="false">8 caracteres hexadecimais</string>
+    <string name="loc_aeb83a33" formatted="false">Limite de lacuna líquida</string>
+    <string name="loc_80575606" formatted="false">Aviso de segurança</string>
+    <string name="loc_f9a99af0" formatted="false">Sua frase inicial é a ÚNICA maneira de recuperar sua carteira. Qualquer pessoa com acesso a ele pode roubar seus fundos.</string>
+    <string name="loc_79618ad9" formatted="false">Certifique-se de que ninguém veja sua tela e não compartilhe essas informações com ninguém.</string>
+    <string name="loc_f2415d81" formatted="false">Eu entendo</string>
+    <string name="loc_b5f801e0" formatted="false">Isso irá verificar novamente todos os endereços para transações. Use-o se as transações estiverem faltando ou após restaurar uma cópia.</string>
+    <string name="loc_027001ed" formatted="false">Criar chaves</string>
+    <string name="loc_ddfe3fc8" formatted="false">Sem carteiras</string>
+    <string name="loc_7bc49729" formatted="false">Carteira</string>
+    <string name="loc_07533587" formatted="false">A senha deve ter pelo menos 8 caracteres.</string>
+    <string name="loc_c2e56d59" formatted="false">As senhas não coincidem.</string>
+    <string name="loc_1595caf6" formatted="false">Mínimo 8 caracteres</string>
+    <string name="loc_9f3c8f68" formatted="false">As senhas não coincidem</string>
+    <string name="loc_786d9a7f" formatted="false">aplicativo/jsonl</string>
+    <string name="loc_384d3cf0" formatted="false">Etiquetas de importação/exportação</string>
+    <string name="loc_c16e7ad7" formatted="false">Escopo</string>
+    <string name="loc_5be8962f" formatted="false">Ambos</string>
+    <string name="loc_01aca83d" formatted="false">$addrCount</string>
+    <string name="loc_6572542a" formatted="false">$txCount</string>
+    <string name="loc_f4ab8a06" formatted="false">Transação</string>
+    <string name="loc_d96dad4f" formatted="false">$totalCount</string>
+    <string name="loc_be647ac2" formatted="false">Combinado</string>
+    <string name="loc_8ff687ec" formatted="false">BIP 329 (.jsonl) para tags líquidas</string>
+    <string name="loc_47980199" formatted="false">BIP 329 (.jsonl) ou Electrum CSV</string>
+    <string name="loc_7021decf" formatted="false">texto/csv</string>
+    <string name="loc_dfc94b72" formatted="false">aplicação/fluxo de octetos</string>
+    <string name="loc_60c57977" formatted="false">BIP 329 (.jsonl)</string>
+    <string name="loc_d6c1d26e" formatted="false">Bitcoin</string>
+    <string name="loc_258f6353" formatted="false">líquido</string>
+    <string name="loc_47121894" formatted="false">combinado</string>
+    <string name="loc_bbb17663" formatted="false">Ocultar QR</string>
+    <string name="loc_66008e32" formatted="false">Chave pública estendida</string>
+    <string name="loc_8ca7adae" formatted="false">Endereço monitorado</string>
+    <string name="loc_bf0bb69f" formatted="false">Descritor Líquido</string>
+    <string name="loc_3e248346" formatted="false">Descritor multisig</string>
+    <string name="loc_85a65da2" formatted="false">Veja o material principal</string>
+    <string name="loc_f0f54738" formatted="false">O que você quer revelar?</string>
+    <string name="loc_e109877e" formatted="false">Chave privada (WIF)</string>
+    <string name="loc_a5e85eb3" formatted="false">frase-semente</string>
+    <string name="loc_3794bd16" formatted="false">chave pública estendida</string>
+    <string name="loc_f056b54f" formatted="false">Descritor líquido</string>
+    <string name="loc_57fdf682" formatted="false">descritor multisig</string>
+    <string name="loc_a19bae90" formatted="false">fiador local</string>
+    <string name="loc_c4a5346c" formatted="false">chave privada</string>
+    <string name="loc_0d4e6f81" formatted="false">endereço</string>
+    <string name="loc_19af35f7" formatted="false">Digitalize este QR para importar $qrSubtitle</string>
+    <string name="loc_73e00bb0" formatted="false">material chave</string>
+    <string name="loc_ad04894c" formatted="false">Voltar à seleção</string>
+    <string name="loc_795ed2a1" formatted="false">A área de transferência será limpa em 30 segundos.</string>
+    <string name="loc_dba89d87" formatted="false">Ver frase-semente</string>
+    <string name="loc_2282451b" formatted="false">Etiquetas (BIP 329)</string>
+    <string name="loc_950ebab7" formatted="false">salvo PSBT</string>
+    <string name="loc_ba6f9a9b" formatted="false">PSBT não pôde ser salvo</string>
+    <string name="loc_1959e119" formatted="false">Construir PSBT</string>
+    <string name="loc_b6d2470a" formatted="false">Criando PSBT...</string>
+    <string name="loc_e44c4bc5" formatted="false">Combinando PSBT...</string>
+    <string name="loc_b348df37" formatted="false">Transmitindo transação...</string>
+    <string name="loc_ef3545ac" formatted="false">Exportar PSBT parcial</string>
+    <string name="loc_af717776" formatted="false">Etapa 1: exportar PSBT não assinado</string>
+    <string name="loc_f3064a4f" formatted="false">Passe este PSBT para o próximo signatário.</string>
+    <string name="loc_a9286c09" formatted="false">Digitalize ou salve o PSBT para assiná-lo.</string>
+    <string name="loc_4fbfa10f" formatted="false">parcial.psbt</string>
+    <string name="loc_d7ac0651" formatted="false">não assinado.psbt</string>
+    <string name="loc_aa3edbf6" formatted="false">Salvar arquivo</string>
+    <string name="loc_2afaf83d" formatted="false">PSBT</string>
+    <string name="loc_44c1495a" formatted="false">PSBT copiado</string>
+    <string name="loc_02e71d7c" formatted="false">Copiar PSBT</string>
+    <string name="loc_4203f666" formatted="false">Na direção</string>
+    <string name="loc_a413cd58" formatted="false">Etapa 2: importar PSBT assinado</string>
+    <string name="loc_85833e18" formatted="false">Digitalize ou carregue o PSBT assinado para transmiti-lo.</string>
+    <string name="loc_cebebb60" formatted="false">Importação Parcial</string>
+    <string name="loc_b39ab546" formatted="false">Carga parcial</string>
+    <string name="loc_5d97579c" formatted="false">Colar</string>
+    <string name="loc_61673a2c" formatted="false">Conecte-se à Electrum para transmitir</string>
+    <string name="loc_5a0b70fc" formatted="false">Não foi possível criar PSBT</string>
+    <string name="loc_c1c941b3" formatted="false">Confirmar transmissão</string>
+    <string name="loc_3d3785e2" formatted="false">Transação assinada recebida. Revise-o e confirme a transmissão.</string>
+    <string name="loc_f45861d1" formatted="false">Transmitir transação</string>
+    <string name="loc_ea6d758a" formatted="false">Colar transação assinada</string>
+    <string name="loc_07fafe3b" formatted="false">Cole um PSBT assinado em base64 ou no hexadecimal bruto da transação</string>
+    <string name="loc_460573b5" formatted="false">PSBT assinado ou hexadecimal tx bruto</string>
+    <string name="loc_389db675" formatted="false">Enviar</string>
+    <string name="loc_aac53e41" formatted="false">Baixo</string>
+    <string name="loc_c1df4081" formatted="false">Média</string>
+    <string name="loc_51374b6b" formatted="false">Alto</string>
+    <string name="loc_82f702be" formatted="false">Densidade QR</string>
+    <string name="loc_1f8c479d" formatted="false">BC-UR</string>
+    <string name="loc_7eec6a01" formatted="false">Churrasco</string>
+    <string name="loc_334a5af6" formatted="false">Formato QR</string>
+    <string name="loc_f8155e77" formatted="false">Brilho QR</string>
+    <string name="loc_5743885d" formatted="false">%.8fBTC</string>
+    <string name="loc_3ccdb0ea" formatted="false">%,d sábados</string>
+    <string name="loc_6b979065" formatted="false">receber_quantia</string>
+    <string name="loc_edf97a25" formatted="false">receber_rótulo</string>
+    <string name="loc_894037be" formatted="false">, btcValor)}</string>
+    <string name="loc_4126d5db" formatted="false">Receba Bitcoin</string>
+    <string name="loc_09b2e10d" formatted="false">) { it.joinToString(</string>
+    <string name="loc_8af0542b" formatted="false">$amount sábados</string>
+    <string name="loc_a5d25f50" formatted="false">$amountBTC</string>
+    <string name="loc_7511be57" formatted="false">USD</string>
+    <string name="loc_68cf918d" formatted="false">MMM d, aaaa HH:mm</string>
+    <string name="loc_a06704d8" formatted="false">Bloqueio de aplicativo</string>
+    <string name="loc_b2481aa2" formatted="false">Use impressão digital ou rosto</string>
+    <string name="loc_3e2ca137" formatted="false">Não disponível neste dispositivo</string>
+    <string name="loc_4355b799" formatted="false">Código PIN</string>
+    <string name="loc_599c7d5f" formatted="false">Temporizador de bloqueio</string>
+    <string name="security_lock_timing_when_minimized">Ao minimizar</string>
+    <string name="security_lock_timing_after_1_min">Depois de 1 minuto</string>
+    <string name="security_lock_timing_after_5_min">depois de 5 minutos</string>
+    <string name="loc_6e64c96f" formatted="false">Randomizar teclado PIN</string>
+    <string name="loc_94fff941" formatted="false">Misture dígitos ao desbloquear</string>
+    <string name="loc_a0a0bf84" formatted="false">Ative o bloqueio do PIN primeiro</string>
+    <string name="loc_b68140bc" formatted="false">PIN de coação</string>
+    <string name="loc_a1d57483" formatted="false">Defina PIN ou biometria para ativá-lo</string>
+    <string name="loc_96e7526f" formatted="false">Adicione uma carteira primeiro</string>
+    <string name="loc_f6649c50" formatted="false">Desbloqueie o Ibis em uma carteira isca</string>
+    <string name="loc_10bf1589" formatted="false">Apagamento automático</string>
+    <string name="loc_4e19a59a" formatted="false">Apagar após tentativas de desbloqueio</string>
+    <string name="loc_3bbee4d1" formatted="false">Apagar dados após falhas de desbloqueio</string>
+    <string name="loc_560ec39d" formatted="false">Defina um PIN para ativá-lo</string>
+    <string name="loc_bd14b437" formatted="false">modo camuflagem</string>
+    <string name="loc_127261f8" formatted="false">Disfarce-se de calculadora</string>
+    <string name="loc_72808e02" formatted="false">O ícone muda após a reinicialização</string>
+    <string name="loc_5d688c9a" formatted="false">Esconda o Ibis atrás de uma calculadora</string>
+    <string name="loc_714c3012" formatted="false">Desativar capturas</string>
+    <string name="loc_0d6a729c" formatted="false">Bloqueie capturas de tela e visualizações</string>
+    <string name="loc_3139ebdd" formatted="false">Desativar o modo camuflagem?</string>
+    <string name="loc_aa09917b" formatted="false">O ícone retornará ao Ibis Wallet após a reinicialização. Talvez seja necessário adicionar o atalho novamente.</string>
+    <string name="loc_80f874cd" formatted="false">Desativar</string>
+    <string name="loc_2a9da994" formatted="false">Reinicialização necessária</string>
+    <string name="loc_28441b9b" formatted="false">Reinício</string>
+    <string name="loc_2dc29d4d" formatted="false">Mais tarde</string>
+    <string name="loc_4b582481" formatted="false">Desativar PIN de coação?</string>
+    <string name="loc_cd305fb8" formatted="false">A carteira isca será removida.</string>
+    <string name="loc_5e0c0f5b" formatted="false">Ativar o apagamento automático?</string>
+    <string name="loc_f40ccd04" formatted="false">Ativar</string>
+    <string name="loc_f7b9c073" formatted="false">Todos os dados da carteira serão excluídos permanentemente após múltiplas falhas de desbloqueio. Não pode ser desfeito.</string>
+    <string name="loc_5ed5bb5d" formatted="false">Certifique-se de ter backup de suas frases-semente. Sem uma cópia, você perderá os fundos permanentemente.</string>
+    <string name="loc_c47ba42d" formatted="false">Desativar segurança?</string>
+    <string name="loc_38a084fc" formatted="false">Qualquer pessoa com acesso ao seu dispositivo pode abrir o aplicativo.</string>
+    <string name="loc_40a878b7" formatted="false">Criar PIN</string>
+    <string name="loc_c3d36da0" formatted="false">Confirmar PIN</string>
+    <string name="loc_c3c70203" formatted="false">Digite o PIN novamente para confirmar</string>
+    <string name="loc_181911f5" formatted="false">Os PINs não correspondem, tente novamente</string>
+    <string name="loc_a41dbf02" formatted="false">Seguindo</string>
+    <string name="loc_406e9ad8" formatted="false">Confirmar</string>
+    <string name="loc_dfe5efa3" formatted="false">segurança_avançada</string>
+    <string name="loc_dca4222b" formatted="false">segurança_impressão digital</string>
+    <string name="loc_72dfb116" formatted="false">senha_de_segurança</string>
+    <string name="loc_02f0f5ed" formatted="false">security_gap_limit</string>
+    <string name="loc_d44507ce" formatted="false">caminho_de_segurança</string>
+    <string name="loc_330c7795" formatted="false">K</string>
+    <string name="loc_ad68e236" formatted="false">eu</string>
+    <string name="loc_1df18730" formatted="false">Palavras inválidas: $display</string>
+    <string name="loc_54f0c2db" formatted="false">0 palavras: 12, 15, 18, 21 ou 24 necessárias</string>
+    <string name="loc_e6b56697" formatted="false">Criar PIN de coação</string>
+    <string name="loc_66399ff4" formatted="false">Confirmar PIN de coação</string>
+    <string name="loc_e624c41d" formatted="false">Para ativar a biometria, pressione \'C\' no teclado de bloqueio</string>
+    <string name="loc_f7b08d67" formatted="false">Deve ser diferente do PIN de desbloqueio</string>
+    <string name="loc_ad46d69f" formatted="false">Configurar carteira isca</string>
+    <string name="loc_d9194d2d" formatted="false">Origem da semente</string>
+    <string name="loc_47bc3f78" formatted="false">Frase Semente Isca</string>
+    <string name="loc_16bd0da2" formatted="false">Semente BIP39, semente Electrum, chave WIF, xpub/zpub ou endereço</string>
+    <string name="loc_396e66e1" formatted="false">Define uma impressão digital mestre para melhor compatibilidade do PSBT com carteiras de hardware.</string>
+    <string name="loc_189d09c6" formatted="false">Ativar PIN de coação</string>
+    <string name="loc_bbc273c5" formatted="false">Definir PIN de desbloqueio</string>
+    <string name="loc_b02d0f6b" formatted="false">Confirme o PIN de desbloqueio</string>
+    <string name="loc_75f1a5fd" formatted="false">Insira este PIN no aplicativo de calculadora e pressione a tecla = para desbloquear.</string>
+    <string name="loc_f71b82bb" formatted="false">O PIN não corresponde, tente novamente</string>
+    <string name="loc_a274c658" formatted="false">Enviar Bitcoin</string>
+    <string name="loc_2e7d2d6a" formatted="false">Toque para adicionar destinatários</string>
+    <string name="loc_b523ea08" formatted="false">sats</string>
+    <string name="loc_c36aa1f6" formatted="false">Bitcoin</string>
+    <string name="loc_bed2bbb2" formatted="false">Bitcoin:</string>
+    <string name="loc_fbcba3f7" formatted="false">≈ $HIDDEN_AMOUNT</string>
+    <string name="loc_0165575b" formatted="false">Conecte-se a um servidor Electrum para enviar transações</string>
+    <string name="loc_905c0d07" formatted="false">Adicione uma carteira primeiro para enviar Bitcoin</string>
+    <string name="loc_35504dec" formatted="false">Revise o PSBT</string>
+    <string name="loc_b85ab17d" formatted="false">Destino</string>
+    <string name="loc_8ffa41a4" formatted="false">Cálculo de comissão, tickets e câmbio...</string>
+    <string name="loc_350880e1" formatted="false">Não foi possível criar a transação</string>
+    <string name="loc_59a98a53" formatted="false">Mudança de carteira</string>
+    <string name="loc_a870ad41" formatted="false">Comissão de Mineração Bitcoin:</string>
+    <string name="loc_0e813c50" formatted="false">UTF-8</string>
+    <string name="loc_8ea17042" formatted="false">quantia</string>
+    <string name="loc_0ea750e8" formatted="false">rótulos</string>
+    <string name="loc_b6bd307f" formatted="false">mensagens</string>
+    <string name="loc_d71776d7" formatted="false">sp1</string>
+    <string name="loc_59a834aa" formatted="false">Endereço de pagamento silencioso inválido</string>
+    <string name="loc_29c9db85" formatted="false">Formato de endereço inválido</string>
+    <string name="loc_9fe07173" formatted="false">123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz</string>
+    <string name="loc_f60e37e8" formatted="false">Comprimento de endereço inválido</string>
+    <string name="loc_6b92ae67" formatted="false">Caractere inválido: $char</string>
+    <string name="loc_8716a0ae" formatted="false">Codificação de endereço inválida</string>
+    <string name="loc_11f5c49e" formatted="false">SHA-256</string>
+    <string name="loc_47e8978e" formatted="false">qpzry9x8gf2tvdw0s3jn54khce6mua7l</string>
+    <string name="loc_e2303680" formatted="false">Não é permitido misturar letras maiúsculas e minúsculas</string>
+    <string name="loc_5f135dd4" formatted="false">Formato inválido</string>
+    <string name="loc_56459d9d" formatted="false">Criar PSBT</string>
+    <string name="loc_d515634f" formatted="false">Confirmar PSBT</string>
+    <string name="loc_8c7cfb7b" formatted="false">Confirmar transação</string>
+    <string name="loc_01940fd6" formatted="false">Em geral</string>
+    <string name="loc_d654b827" formatted="false">Mostrar em sats</string>
+    <string name="loc_781eebac" formatted="false">Mostrar em BTC</string>
+    <string name="loc_e762ab0b" formatted="false">Ative NFC nas configurações do Android</string>
+    <string name="loc_03cc7c45" formatted="false">Ativar NFC somente leitura</string>
+    <string name="loc_7e8f0b30" formatted="false">Ative a leitura e o compartilhamento via NFC</string>
+    <string name="loc_0708218f" formatted="false">Gaste sem confiança</string>
+    <string name="loc_35cb0c66" formatted="false">Permitir gastar UTXO sem confirmar</string>
+    <string name="loc_ccb38171" formatted="false">NFC</string>
+    <string name="loc_db88d4ce" formatted="false">Navegação por gestos</string>
+    <string name="loc_64f10f32" formatted="false">Serviços externos da Liquid</string>
+    <string name="loc_31ab2a4e" formatted="false">Fonte de comissões</string>
+    <string name="loc_892c0ce5" formatted="false">Tor conectado</string>
+    <string name="loc_1a2bbf31" formatted="false">Conectando...</string>
+    <string name="loc_a4c47a71" formatted="false">Tor começando...</string>
+    <string name="loc_27d8399b" formatted="false">Erro Tor</string>
+    <string name="loc_d6353c61" formatted="false">Tor será iniciado automaticamente</string>
+    <string name="loc_bb27d5c0" formatted="false">Servidor salvo</string>
+    <string name="loc_a688468b" formatted="false">explorador de blocos</string>
+    <string name="loc_00a426f8" formatted="false">Fonte de preço Fiat</string>
+    <string name="historical_tx_fiat_title">Mostrar preços históricos</string>
+    <string name="historical_tx_fiat_subtitle">Mostrar preço fiduciário no momento da transação</string>
+    <string name="tx_history_show_current_prices">Mostrar preços atuais</string>
+    <string name="tx_history_show_historical_prices">Mostrar preços históricos</string>
+    <string name="loc_a39dd5c6" formatted="false">Servidor Bitcoin Electrum</string>
+    <string name="loc_2a54f889" formatted="false">Abra Electrum BTC</string>
+    <string name="loc_56d9acd0" formatted="false">Camada 2</string>
+    <string name="loc_c4d4a9f7" formatted="false">Liquid com trocas relâmpago</string>
+    <string name="loc_f1af1b9c" formatted="false">Sidechain federado confiável</string>
+    <string name="loc_84d348cb" formatted="false">Arca com trocas de relâmpagos</string>
+    <string name="loc_472e6036" formatted="false">Protocolo Trustless L2 (em breve)</string>
+    <string name="loc_eda2a508" formatted="false">Valores da camada 2 em sats</string>
+    <string name="loc_e0230c8c" formatted="false">Valores da camada 2 em bitcoin</string>
+    <string name="loc_14b0f0b9" formatted="false">API Boltz</string>
+    <string name="loc_799c4cd6" formatted="false">API SideSwap</string>
+    <string name="loc_c7185189" formatted="false">Servidor Electrum Líquido</string>
+    <string name="loc_1c1151e0" formatted="false">Abra Electrum Líquido</string>
+    <string name="loc_7d880cb5" formatted="false">Desabilitado</string>
+    <string name="loc_64d3e427" formatted="false">Nenhum link do explorador líquido</string>
+    <string name="loc_8fa2318f" formatted="false">mempool.espaço</string>
+    <string name="loc_bed05818" formatted="false">Rede clara</string>
+    <string name="loc_e70effb6" formatted="false">mempool.space (cebola)</string>
+    <string name="loc_c49a3480" formatted="false">Cebola via navegador Tor</string>
+    <string name="loc_c032eff3" formatted="false">Servidor personalizado</string>
+    <string name="loc_b3694f7f" formatted="false">URL personalizado</string>
+    <string name="loc_1ddabd37" formatted="false">Sem gestos de deslizar</string>
+    <string name="loc_ff9f65eb" formatted="false">Deslize entre carteiras</string>
+    <string name="loc_6ea25f47" formatted="false">Enviar/Receber</string>
+    <string name="loc_6e8be5a6" formatted="false">Deslize entre saldo, envio e recebimento</string>
+    <string name="loc_e124e866" formatted="false">Camadas</string>
+    <string name="loc_62840d26" formatted="false">Deslize entre a camada 1 e a camada 2</string>
+    <string name="loc_ff1867f2" formatted="false">Sem comissões</string>
+    <string name="loc_a1b0d97e" formatted="false">Cebola via Tor</string>
+    <string name="loc_aeca6ac4" formatted="false">Servidor conectado</string>
+    <string name="loc_060e830f" formatted="false">Sem preços fiduciários</string>
+    <string name="loc_d3b3c6d3" formatted="false">CoinGecko</string>
+    <string name="loc_c519cf9f" formatted="false">Sem trocas de Boltz ou funcionalidade Lightning</string>
+    <string name="loc_29c377a4" formatted="false">Boltz (cebola)</string>
+    <string name="loc_e4e0f733" formatted="false">Sem trocas SideSwap</string>
+    <string name="loc_91ea3f60" formatted="false">Troca lateral (Tor)</string>
+    <string name="loc_0d01317f" formatted="false">Clearnet via Tor</string>
+    <string name="loc_bcc5378e" formatted="false">Sem links de navegador</string>
+    <string name="loc_f30653eb" formatted="false">líquido.rede</string>
+    <string name="loc_1129520d" formatted="false">liquid.network (cebola)</string>
+    <string name="loc_3b5c1bb1" formatted="false">Fluxo de bloqueio</string>
+    <string name="loc_3822fc21" formatted="false">Salvo</string>
+    <string name="loc_4bcccb6c" formatted="false">swap_advanced</string>
+    <string name="loc_37c0c1e8" formatted="false">destino_troca</string>
+    <string name="loc_94c57fcd" formatted="false">taxas_swap</string>
+    <string name="loc_bebd07bb" formatted="false">troca atômica</string>
+    <string name="loc_cd053ef4" formatted="false">Provedor desativado</string>
+    <string name="loc_e2c90bcd" formatted="false">Peg confiável</string>
+    <string name="loc_6f9cca87" formatted="false">A troca irá para este endereço Liquid.</string>
+    <string name="loc_955fce50" formatted="false">A troca irá para este endereço Bitcoin.</string>
+    <string name="loc_04536bb4" formatted="false">Endereço Bitcoin inválido</string>
+    <string name="loc_90285d1b" formatted="false">Endereço líquido inválido</string>
+    <string name="loc_a509369c" formatted="false">Taxa de comissão Bitcoin</string>
+    <string name="loc_78e3e750" formatted="false">Taxa de comissão líquida</string>
+    <string name="loc_43525120" formatted="false">Deixe em branco para a estimativa padrão</string>
+    <string name="loc_857c8623" formatted="false">Insira uma taxa válida</string>
+    <string name="loc_f2b5f4d4" formatted="false">Insira uma taxa maior que 0</string>
+    <string name="loc_6ed649de" formatted="false">O valor excede o saldo BTC disponível</string>
+    <string name="loc_a35dd60c" formatted="false">O valor excede o saldo disponível de L-BTC</string>
+    <string name="loc_abb2f6d2" formatted="false">Controle de moedas</string>
+    <string name="loc_47914d64" formatted="false">Controle de moedas</string>
+    <string name="loc_f0100030" formatted="false">Configurar troca</string>
+    <string name="loc_19280e4e" formatted="false">De</string>
+    <string name="loc_979d5904" formatted="false">Sentido de troca</string>
+    <string name="loc_c624cde4" formatted="false">Disponível:</string>
+    <string name="loc_dde5d7d1" formatted="false">pág. por exemplo rebalanceamento de carteira</string>
+    <string name="loc_0094f526" formatted="false">Provedor de troca</string>
+    <string name="loc_dfa2aff1" formatted="false">Nenhum</string>
+    <string name="loc_ef217ee7" formatted="false">Tentar novamente</string>
+    <string name="loc_2d4a03c5" formatted="false">Recolher opções avançadas</string>
+    <string name="loc_f5276b4c" formatted="false">Expanda as opções avançadas</string>
+    <string name="loc_19c27ea6" formatted="false">Taxa de comissão personalizada</string>
+    <string name="loc_52f64443" formatted="false">Transmitindo troca...</string>
+    <string name="loc_9a0b9f8e" formatted="false">Revise a troca</string>
+    <string name="loc_9ff7bb31" formatted="false">Preparando troca...</string>
+    <string name="loc_1b4f82ec" formatted="false">Revise o pedido real</string>
+    <string name="loc_020518a4" formatted="false">Troca em andamento</string>
+    <string name="loc_d0375699" formatted="false">Troca concluída</string>
+    <string name="loc_f3b88bca" formatted="false">Nova troca</string>
+    <string name="loc_4bc43f02" formatted="false">failed_swap_details</string>
+    <string name="loc_9e5eae21" formatted="false">Falha na troca</string>
+    <string name="loc_715a4003" formatted="false">Ocultar detalhes</string>
+    <string name="loc_b7884731" formatted="false">Mostrar detalhes</string>
+    <string name="loc_3e8c11e4" formatted="false">Endereço de depósito</string>
+    <string name="loc_ff3e9c4d" formatted="false">endereço de destino</string>
+    <string name="loc_fff59f5b" formatted="false">Excluir</string>
+    <string name="loc_cddc8112" formatted="false">tente novamente</string>
+    <string name="loc_e09b31fa" formatted="false">pendente_swaps_card</string>
+    <string name="loc_36c054ad" formatted="false">Negociações pendentes</string>
+    <string name="loc_6e01dd8a" formatted="false">Recolher negociações pendentes</string>
+    <string name="loc_0a0d0a98" formatted="false">Expanda negociações pendentes</string>
+    <string name="loc_4ccb12cc" formatted="false">L1</string>
+    <string name="loc_d5c24376" formatted="false">L2</string>
+    <string name="loc_65b11dc2" formatted="false">Recolher troca pendente</string>
+    <string name="loc_02cecfdb" formatted="false">Expandir troca pendente</string>
+    <string name="loc_0a2dc2b7" formatted="false">Eu cobro est.</string>
+    <string name="loc_de6d547d" formatted="false">Status: $progressValue</string>
+    <string name="loc_2ff9404f" formatted="false">txid de liquidação</string>
+    <string name="loc_7e09343e" formatted="false">Ordem exata de $providerLabel preparada. O financiamento ainda não começou.</string>
+    <string name="loc_4993013b" formatted="false">O financiamento pode ser contínuo. Verificando o status em $providerLabel.</string>
+    <string name="loc_2e46f394" formatted="false">Financiamento transmitido. Aguardando pagamento de $providerLabel...</string>
+    <string name="loc_4818a44f" formatted="false">Selecione o provedor de troca</string>
+    <string name="loc_cfe01156" formatted="false">Selecione UTXOs específicos para esta troca</string>
+    <string name="loc_cafd917d" formatted="false">, valor em dólares)}</string>
+    <string name="loc_6ff3adfb" formatted="false">UTXOs L-BTC selecionados financiarão esta troca.</string>
+    <string name="loc_cce909f4" formatted="false">Bitcoin UTXOs selecionados financiarão esta troca.</string>
+    <string name="loc_8a098662" formatted="false">Carregando detalhes da comissão</string>
+    <string name="loc_e8f8806d" formatted="false">Detalhes da comissão não disponíveis</string>
+    <string name="loc_f572fd2a" formatted="false">Negociação sem custódia, taxas mais altas</string>
+    <string name="loc_5675a8d7" formatted="false">Troca de custódia, taxas mais baixas</string>
+    <string name="loc_0e488bc5" formatted="false">, taxa)} sat/vB</string>
+    <string name="loc_20604df1" formatted="false">, estimated.serviceFee * 100.0 / it).trimEnd(\'0\').trimEnd(\'.\') }%</string>
+    <string name="loc_85a9e0cb" formatted="false">Taxa de financiamento Bitcoin</string>
+    <string name="loc_c5e0700a" formatted="false">Taxa de financiamento líquido</string>
+    <string name="loc_d3b3a18f" formatted="false">Taxa de coleta de líquidos</string>
+    <string name="loc_41bcc5c5" formatted="false">Taxa de coleta de Bitcoin</string>
+    <string name="loc_776ee9d4" formatted="false">Comissão de Serviço Boltz</string>
+    <string name="loc_88bc08a6" formatted="false">Taxa de serviço SideSwap</string>
+    <string name="loc_9283713e" formatted="false">Caro Boltz</string>
+    <string name="loc_5154065c" formatted="false">Caro SideSwap</string>
+    <string name="loc_6203b65d" formatted="false">Taxas de transferência de fornecedor</string>
+    <string name="loc_00a16e52" formatted="false">Comissões</string>
+    <string name="loc_7d9effcf" formatted="false">Comissões totais (est.)</string>
+    <string name="swap_review_approx_fee_rate">≈ %1$s %2$s</string>
+    <string name="loc_94bea00f" formatted="false">Enviando troca...</string>
+    <string name="loc_7a4eb12d" formatted="false">Confirmar troca</string>
+    <string name="loc_75935701" formatted="false">Resumo do Exchange</string>
+    <string name="loc_a9af1b38" formatted="false">trocando</string>
+    <string name="loc_54da2c24" formatted="false">para (est.)</string>
+    <string name="loc_c0b66d5a" formatted="false">Copiar ID do Exchange</string>
+    <string name="loc_0430ad11" formatted="false">Recolher endereços</string>
+    <string name="loc_afb3fec8" formatted="false">Expandir endereços</string>
+    <string name="loc_40fb77d1" formatted="false">Endereço de troca</string>
+    <string name="loc_3083a5d1" formatted="false">endereço de destino</string>
+    <string name="loc_e607c9c3" formatted="false">Comissões de contrato</string>
+    <string name="loc_cd1ee95d" formatted="false">Expandir comissões</string>
+    <string name="loc_f71ec2bd" formatted="false">Confirmar varredura</string>
+    <string name="loc_e0f93278" formatted="false">Varredura correta</string>
+    <string name="loc_6c94c593" formatted="false">} transmissão</string>
+    <string name="loc_3a47abe2" formatted="false">Insira a chave WIF (K..., L..., 5...)</string>
+    <string name="loc_565ceb03" formatted="false">Chave WIF válida</string>
+    <string name="loc_c64a5328" formatted="false">Chave WIF inválida</string>
+    <string name="loc_b7fdd705" formatted="false">Endereço Bitcoin para receber fundos</string>
+    <string name="loc_64811c90" formatted="false">Digitalizar</string>
+    <string name="loc_aff19261" formatted="false">Digitalizando...</string>
+    <string name="loc_e35ba02b" formatted="false">Consultar saldo</string>
+    <string name="loc_085b1404" formatted="false">Fundos encontrados</string>
+    <string name="loc_b82175c1" formatted="false">Rever varredura</string>
+    <string name="loc_4ce2351d" formatted="false">Conecte-se a um servidor Electrum para varrer</string>
+    <string name="loc_6f733131" formatted="false">receber</string>
+    <string name="loc_acf41ffe" formatted="false">equilíbrio</string>
+    <string name="loc_a7733acd" formatted="false">enviar</string>
+    <string name="loc_cb1f3c1a" formatted="false">gerenciar_carteiras</string>
+    <string name="loc_00592807" formatted="false">carteira_importada</string>
+    <string name="loc_f76e7734" formatted="false">gerar_carteira</string>
+    <string name="loc_b11a619b" formatted="false">electrum_config</string>
+    <string name="loc_e545a0c5" formatted="false">configurações</string>
+    <string name="loc_0fb29c65" formatted="false">opções_camada2</string>
+    <string name="loc_c59bd5c1" formatted="false">segurança</string>
+    <string name="loc_b5f422e3" formatted="false">sobre</string>
+    <string name="loc_352a02fe" formatted="false">backup_restore</string>
+    <string name="loc_6a5bdc52" formatted="false">todos_endereços</string>
+    <string name="loc_3f7f9e7c" formatted="false">todos_utxos</string>
+    <string name="loc_f487c5a5" formatted="false">psbt_exportação</string>
+    <string name="loc_93e0f737" formatted="false">liquid_pset_export</string>
+    <string name="loc_cdfcb9b9" formatted="false">varredura_chave_privada</string>
+    <string name="loc_b3d2d55b" formatted="false">transmissão_transação</string>
+    <string name="loc_0f6ddd46" formatted="false">liquid_server_config</string>
+    <string name="loc_25938561" formatted="false">intercâmbio</string>
+    <string name="loc_016527b1" formatted="false">Varrer chave privada</string>
+    <string name="loc_054cdf00" formatted="false">Configurar troca</string>
+    <string name="loc_0917a3e1" formatted="false">Aviso de carteira</string>
+    <string name="loc_0dd3b9b2" formatted="false">Detalhes do PSBT</string>
+    <string name="loc_10459bad" formatted="false">Usar PIN</string>
+    <string name="loc_11f7da21" formatted="false">Remover</string>
+    <string name="loc_131fd811" formatted="false">ID da transação copiada</string>
+    <string name="loc_1a81f7a0" formatted="false">Meia hora</string>
+    <string name="loc_1d1e82ec" formatted="false">Desativar apagamento automático</string>
+    <string name="loc_1dcfbd01" formatted="false">Revise a transação</string>
+    <string name="loc_20fccd71" formatted="false">Nenhuma cotação disponível</string>
+    <string name="loc_29a65dbd" formatted="false">mais rápido</string>
+    <string name="loc_2abb5095" formatted="false">serviço de troca</string>
+    <string name="loc_2c2e5efe">Digitalização: %1$d%%</string>
+    <string name="loc_2dd20899" formatted="false">Descritor de saída válido</string>
+    <string name="loc_349f1a7b" formatted="false">Etiquetas incluídas</string>
+    <string name="loc_3a87f690" formatted="false">Destinatário</string>
+    <string name="loc_3b69e632" formatted="false">Fatura relâmpago</string>
+    <string name="loc_3d7a0ed9" formatted="false">Nenhum endereço usado</string>
+    <string name="loc_403b8de6" formatted="false">Sem UTXO congelado</string>
+    <string name="loc_40d36f28" formatted="false">Semente Electrum válida</string>
+    <string name="loc_42405d7b" formatted="false">995</string>
+    <string name="loc_4374aaee" formatted="false">Detalhes da transferência</string>
+    <string name="loc_437dc6a9" formatted="false">Revisão de envio</string>
+    <string name="loc_440af0d9" formatted="false">UTXOs selecionados</string>
+    <string name="loc_485306ed">Gastando de %1$d UTXOs selecionados</string>
+    <string name="loc_541ee340" formatted="false">Endereço Bitcoin válido</string>
+    <string name="loc_546b7cba" formatted="false">Consultar saldo</string>
+    <string name="loc_55290b57" formatted="false">Frase inicial válida</string>
+    <string name="loc_586a54f5" formatted="false">Criar fatura</string>
+    <string name="loc_5bd65c47" formatted="false">valor fiduciário</string>
+    <string name="loc_5cf3713d" formatted="false">Rota de desvio</string>
+    <string name="loc_64f54a67" formatted="false">valor fiduciário</string>
+    <string name="loc_68504b99" formatted="false">Criando visualização...</string>
+    <string name="loc_6b12a175" formatted="false">Recipientes Líquidos</string>
+    <string name="loc_6b76cd27" formatted="false">Transação de financiamento</string>
+    <string name="loc_6b8bdd37" formatted="false" />
+    <string name="loc_6bf5da9c" formatted="false">Opções</string>
+    <string name="loc_6e4eb7ae" formatted="false">Número do destinatário</string>
+    <string name="loc_70352f41" formatted="false">00000000</string>
+    <string name="loc_73991247" formatted="false">Enviando para destinatários</string>
+    <string name="loc_7a2e5c86" formatted="false">Impressão digital</string>
+    <string name="loc_7d06279b" formatted="false">Insira pelo menos o valor mínimo</string>
+    <string name="loc_7f6ea624" formatted="false">Tentativas</string>
+    <string name="loc_85f5955f" formatted="false">Fagulha</string>
+    <string name="loc_87c9f231" formatted="false">Limite de intervalo padrão. Limite para endereços vazios (1-10000)</string>
+    <string name="loc_8ecabd0f" formatted="false">Taxa de comissão</string>
+    <string name="loc_9275d62b" formatted="false">Quantia</string>
+    <string name="loc_92b7b061">O total excede o saldo disponível em %1$s %2$s</string>
+    <string name="loc_9873e592" formatted="false">Nota opcional</string>
+    <string name="loc_98e01899" formatted="false">Não insira mais do que o valor máximo</string>
+    <string name="loc_9c365131" formatted="false">Índice</string>
+    <string name="loc_9d55bb39" formatted="false">Destinatários</string>
+    <string name="loc_abc2639e" formatted="false">Rota padrão</string>
+    <string name="loc_ac178e1a" formatted="false">Nome da carteira</string>
+    <string name="loc_b1b16491" formatted="false">50001</string>
+    <string name="loc_b3b21f82" formatted="false">Quantidade de faísca</string>
+    <string name="loc_b4889170" formatted="false">Total de destinatários</string>
+    <string name="loc_be372fe3" formatted="false">O total excede o saldo disponível</string>
+    <string name="loc_c7246a95">Parte %1$d de %2$d</string>
+    <string name="loc_c7ee4baa">Financiamento de %1$d UTXOs selecionados</string>
+    <string name="loc_cd933569" formatted="false">Transação de liquidação</string>
+    <string name="loc_d1e69cf0" formatted="false">Limite de intervalo padrão</string>
+    <string name="loc_d90f9485" formatted="false">Transação enviada</string>
+    <string name="loc_d91923f1" formatted="false">Enviando pagamento...</string>
+    <string name="loc_d92d2c1f" formatted="false">Código de troca</string>
+    <string name="loc_daea11b1" formatted="false">Algumas carteiras de hardware não suportam assinatura PSBT sem uma impressão digital mestre. Sua carteira de hardware deve fornecer uma junto com o xpub/zpub.</string>
+    <string name="loc_e357eb39" formatted="false">valor fiduciário</string>
+    <string name="loc_ea17f4f9" formatted="false">Tipo de carteira</string>
+    <string name="loc_ea3c0acf" formatted="false">Bitcoin, Spark, BOLT 11/12 ou LNURL</string>
+    <string name="loc_eabd66ce" formatted="false">Taxa mínima de comissão</string>
+    <string name="loc_ee733d42" formatted="false">Impressão digital</string>
+    <string name="loc_ef63d385" formatted="false">Enviando para destinatários</string>
+    <string name="loc_efd8a25a" formatted="false">endereço de destino</string>
+    <string name="loc_f0da4c2f" formatted="false">Assinaturas</string>
+    <string name="loc_f6f2ef2b" formatted="false">Índice de endereço</string>
+    <string name="loc_f78ee27e" formatted="false">Endereço do servidor</string>
+    <string name="loc_f9bcfb07">Gastando de %1$d UTXOs selecionados</string>
+    <string name="loc_fb6eddb2" formatted="false">Mostrar endereços restantes</string>
+    <string name="loc_fe79714b">%1$d transação(ões) transmitida(s)</string>
+    <string name="loc_fe9ebde7" formatted="false">vbytes estimados</string>
+    <string name="balance_fee_rate_format">Taxa de comissão: %1$s sáb/vB</string>
+    <string name="balance_fee_amount_format">Comissão: %1$s %2$s</string>
+    <string name="balance_fee_rate_below_minimum_format">A taxa de comissão está abaixo do mínimo (%1$s sat/vB)</string>
+    <string name="balance_fee_rate_higher_than_current_format">A taxa de comissão deve ser superior à atual (%1$s sat/vB)</string>
+    <string name="balance_target_fee_rate_format">Taxa de comissão desejada: %1$s sat/vB</string>
+    <string name="balance_cost_amount_format">%1$s: %2$s %3$s</string>
+    <string name="balance_cpfp_estimate_format">(%1$s vB × %2$s sat/vB)</string>
+    <string name="balance_need_fee_dust_format">Você precisa de: %1$s %2$s (comissão + poeira)</string>
+    <string name="balance_have_output_wallet_format">Tem: %1$s %2$s (saída + carteira)</string>
+    <string name="balance_insufficient_funds_available_format">Fundos insuficientes (disponível: %1$s %2$s)</string>
+    <string name="liquid_fee_sats_format">Comissão: %1$s sats</string>
+    <string name="liquid_fee_rate_vbytes_format">%1$s sáb/vB • %2$s vB</string>
+    <string name="liquid_source_chain_swap">Troca de cadeia BTC/L-BTC</string>
+    <string name="liquid_source_lightning_receive_swap">Comércio relâmpago de entrada de Boltz</string>
+    <string name="liquid_source_lightning_send_swap">Comércio relâmpago de saída de Boltz</string>
+    <string name="liquid_source_native_receive">Recepção L-BTC nativa</string>
+    <string name="liquid_source_native_send">Envio L-BTC nativo</string>
+    <string name="wallet_operation_failed">Falha na operação da carteira</string>
+    <string name="liquid_operation_failed">A operação líquida falhou</string>
+    <string name="biometric_prompt_authenticate">Autenticar</string>
+    <string name="biometric_prompt_unlock_ibis_wallet">Desbloquear carteira Ibis</string>
+    <string name="biometric_prompt_verify_identity">Verifique sua identidade</string>
+    <string name="biometric_prompt_access_wallet">Autentique para acessar sua carteira</string>
+    <string name="send_utxos_selected_prefix">UTXOs</string>
+    <string name="security_pin_unlock_code_format">%1$d-%2$d código de desbloqueio de dígitos</string>
+    <string name="security_randomize_pin_subtitle">Embaralhe os dígitos do teclado ao desbloquear</string>
+    <string name="security_enter_pin_range_format">Insira um PIN de %1$d-%2$d dígitos</string>
+    <string name="security_cloak_restart_message">Reinicie o aplicativo para ativar o modo camuflagem.
+
+Digite seu PIN disfarçado na calculadora e pressione a tecla = para desbloquear.</string>
+    <string name="server_delete_confirmation_format">Tem certeza de que deseja remover "%1$s"?</string>
+    <string name="settings_spark_subtitle">Statechain com confiança minimizada</string>
+    <string name="settings_custom_server_placeholder">http://192.168... ou http://...cebola</string>
+    <string name="spark_transfer_spark_deposit_address">Endereço do balde Spark</string>
+    <string name="spark_transfer_destination_override_hint">Substitui o destino gerado para esta troca.</string>
+    <string name="swap_unable_to_prepare">Não foi possível preparar a troca</string>
+    <string name="spark_transfer_enter_destination_address">Insira um endereço de destino</string>
+    <string name="spark_transfer_custom_fee_rate">Taxa de comissão personalizada</string>
+    <string name="spark_transfer_enter_fee_rate">Insira uma taxa de comissão</string>
+    <string name="spark_transfer_bitcoin_withdrawal_fee">Taxa de retirada de Bitcoin</string>
+    <string name="spark_connection_backend_label">Backend</string>
+    <string name="spark_connection_backend_value">Sessão gerenciada do Spark SDK</string>
+    <string name="spark_connection_wallet_label">Carteira</string>
+    <string name="spark_connection_wallet_not_loaded">Não carregada</string>
+    <string name="spark_connection_identity_label">Identidade</string>
+    <string name="spark_connection_error_label">Erro</string>
+    <string name="spark_connection_hint">O Spark usa uma sessão gerenciada do SDK, não um servidor selecionável.</string>
+</resources>

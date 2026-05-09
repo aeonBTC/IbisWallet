@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="import_backup_label_address_count">
+        <item quantity="one">%d адрес</item>
+        <item quantity="few">%d адреса</item>
+        <item quantity="many">%d адресов</item>
+        <item quantity="other">%d адресов</item>
+    </plurals>
+    <plurals name="import_backup_label_transaction_count">
+        <item quantity="one">%d транзакция</item>
+        <item quantity="few">%d транзакции</item>
+        <item quantity="many">%d транзакций</item>
+        <item quantity="other">%d транзакций</item>
+    </plurals>
+    <plurals name="import_backup_electrum_servers">
+        <item quantity="one">%d сервер Electrum</item>
+        <item quantity="few">%d сервера Electrum</item>
+        <item quantity="many">%d серверов Electrum</item>
+        <item quantity="other">%d серверов Electrum</item>
+    </plurals>
+    <plurals name="import_backup_liquid_servers">
+        <item quantity="one">%d сервер Liquid</item>
+        <item quantity="few">%d сервера Liquid</item>
+        <item quantity="many">%d серверов Liquid</item>
+        <item quantity="other">%d серверов Liquid</item>
+    </plurals>
+    <plurals name="import_seed_invalid_title">
+        <item quantity="one">Неверное слово</item>
+        <item quantity="few">Неверные слова</item>
+        <item quantity="many">Неверные слова</item>
+        <item quantity="other">Неверные слова</item>
+    </plurals>
+    <plurals name="import_seed_invalid_more">
+        <item quantity="one"> +%d ещё</item>
+        <item quantity="few"> +%d ещё</item>
+        <item quantity="many"> +%d ещё</item>
+        <item quantity="other"> +%d ещё</item>
+    </plurals>
+    <plurals name="import_seed_words_entered">
+        <item quantity="one">%d слово введено</item>
+        <item quantity="few">%d слова введено</item>
+        <item quantity="many">%d слов введено</item>
+        <item quantity="other">%d слов введено</item>
+    </plurals>
+    <plurals name="fee_estimate_approx_blocks">
+        <item quantity="one">~%d блок</item>
+        <item quantity="few">~%d блока</item>
+        <item quantity="many">~%d блоков</item>
+        <item quantity="other">~%d блоков</item>
+    </plurals>
+</resources>

@@ -6,15 +6,36 @@
     <string name="startup_loading_artwork">Ibis launch artwork</string>
     <string name="version_format">Version: %1$s</string>
     <string name="drawer_version_short_format">v%1$s</string>
-    <string name="drawer_update_checking">Checking</string>
-    <string name="drawer_update_up_to_date">No update available</string>
     <string name="drawer_update_available">Update available: %1$s</string>
-    <string name="drawer_update_check_failed">Check failed</string>
-    <string name="download_update">Download update</string>
     <string name="update_popup_title">New update available</string>
     <string name="update_popup_message">Ibis Wallet %1$s is available.</string>
     <string name="update_popup_view">View</string>
     <string name="update_popup_close">Close</string>
+    <string name="app_update_opt_in_title">Check GitHub for app updates?</string>
+    <string name="app_update_opt_in_message">This option can be toggled on the About screen.</string>
+    <string name="app_update_opt_in_enable">Enable</string>
+    <string name="app_update_opt_in_not_now">Not now</string>
+    <string name="common_selected">Selected</string>
+    <string name="settings_language_title">Language</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_english_description">Use English</string>
+    <string name="settings_language_spanish">Español</string>
+    <string name="settings_language_spanish_description">Use Spanish</string>
+    <string name="settings_language_brazilian_portuguese">Português (Brasil)</string>
+    <string name="settings_language_brazilian_portuguese_description">Use Brazilian Portuguese</string>
+    <string name="settings_language_russian">Русский</string>
+    <string name="settings_language_russian_description">Use Russian</string>
+    <string name="wallet_delete_watch_only_message">Remove "%1$s"? You can re-import it later with the same xpub.</string>
+    <string name="wallet_delete_irreversible_message">Are you sure you want to delete "%1$s"? This action cannot be undone. Make sure you have backed up your recovery phrase.</string>
+    <string name="wallet_delete_confirm_removal_label">Confirm removal</string>
+    <string name="wallet_delete_irreversible_ack_label">I understand this cannot be undone</string>
+    <string name="wallet_view_sensitive_info_message">You are about to view sensitive information for "%1$s".</string>
+    <string name="key_material_scan_qr_format">Scan this QR code to import the %1$s</string>
+    <string name="multisig_manual_option">Manual</string>
+    <string name="multisig_config_file_option">Config</string>
+    <string name="wallet_last_full_sync_format">Last full sync: %1$s</string>
+    <string name="wallet_full_sync_count_format">%1$s / %2$s addresses</string>
+    <string name="wallet_full_sync_scanned_format">%1$s addresses scanned</string>
     <string name="wallet_notifications_title">Wallet Notifications</string>
     <string name="wallet_notifications_subtitle_default">Incoming transaction alerts</string>
     <string name="wallet_notifications_subtitle_permission_required">Grant Android notification permission</string>
@@ -36,11 +57,1369 @@
     <string name="nfc_status_share_ready">NFC Share</string>
     <string name="nfc_status_sharing">NFC Sharing</string>
     <string name="welcome_logo_content_description">Ibis Wallet logo</string>
-    <string name="welcome_title">Welcome to Ibis</string>
-    <string name="welcome_intro">Ibis is a self-custody wallet built for power users with a focus on customizability. All network services and external connections are disabled by default.</string>
+    <string name="welcome_title">Welcome to Ibis Wallet</string>
+    <string name="welcome_intro">Ibis is a self-custody wallet built for power users with a focus on privacy and customizability. All network services and external connections are disabled by default.</string>
     <string name="welcome_menu_prompt">Open the options menu to begin configuring Ibis to your liking.</string>
     <string name="welcome_continue">Continue</string>
+    <string name="welcome_language_hint">Choose a language</string>
+    <string name="app_update_check_title">Check GitHub for app updates</string>
     <string name="liquid_enable_info_title">Layer 2 is modular</string>
     <string name="liquid_enable_info_message">Open the Wallet Management screen to enable Liquid support for your desired wallets.\n\n*Liquid can only be enabled on BIP39 wallets.</string>
     <string name="liquid_enable_info_confirm">Got it</string>
+    <string name="common_copy_with_label">Copy %1$s</string>
+    <string name="common_show_all_remaining_format">Show All (%1$d remaining)</string>
+    <string name="editable_label_chip_add" formatted="false">+ Label</string>
+    <string name="spark_search_history_placeholder">Search labels, payment ID, method, or date...</string>
+    <string name="spark_loading_wallet_message">Spark is loading for this wallet</string>
+    <string name="spark_deposit_title_received_bitcoin">Received Bitcoin</string>
+    <string name="spark_deposit_status_ready_to_claim">Ready to claim</string>
+    <string name="spark_deposit_status_confirmations_format">Confirmations %1$s</string>
+    <string name="spark_deposit_status_awaiting_claim">Awaiting claim</string>
+    <string name="spark_deposit_status_awaiting_confirmations">Awaiting 3 confirmations</string>
+    <string name="spark_deposit_note_title">Note</string>
+    <string name="spark_deposit_note_message">On-chain Spark deposits need 3 confirmations before they can be claimed into your Spark balance.</string>
+    <string name="spark_deposit_claim_title">Claim</string>
+    <string name="spark_deposit_claim_manual_needed">Manual claim may be needed</string>
+    <string name="spark_payment_id_title">Payment ID</string>
+    <string name="spark_payment_id_copy_label">Spark Payment ID</string>
+    <string name="spark_deposit_txid_copy_label">Spark Deposit Transaction ID</string>
+    <string name="spark_deposit_address_copy_label">Spark Deposit Address</string>
+    <string name="spark_received_at_copy_label">Spark Received At</string>
+    <string name="spark_recipient_copy_label">Spark Recipient</string>
+    <string name="spark_preparing_address">Preparing address...</string>
+    <string name="spark_payment_direction_with_rail_format">%1$s %2$s</string>
+    <string name="common_fingerprint_format">Fingerprint: %1$s</string>
+    <string name="common_derivation_path_format">Derivation Path: %1$s</string>
+    <string name="common_electrum_seed_format">Electrum %1$s seed (%2$d words)</string>
+    <string name="common_default_format">Default: %1$s</string>
+    <string name="receive_share_request_title">Share receive request</string>
+    <string name="receive_no_share_app">No app available to share</string>
+    <string name="wallet_all_layers">All Layers</string>
+    <string name="send_total_recipients_format">Total (%1$d recipients)</string>
+    <string name="send_recipients_title_format">Recipients (%1$d)</string>
+    <string name="send_recipient_number_format">#%1$d</string>
+    <string name="send_sending_recipients_format">Sending (%1$d recipients)</string>
+    <string name="send_sending_to_recipients_format">Sending To (%1$d recipients)</string>
+    <string name="send_estimated_vbytes_format">(%1$s vB)</string>
+    <string name="coin_control_selected_summary_format">%1$d selected • %2$s</string>
+    <string name="swap_coin_control_utxo_badge_format">UTXOs (%1$d)</string>
+    <string name="all_addresses_keychain_index_format">%1$s #%2$d</string>
+    <string name="utxo_list_summary_with_frozen">%1$d UTXOs (%2$d frozen)</string>
+    <string name="utxo_list_search_matches">%1$d matches / %2$d total</string>
+    <string name="import_multisig_policy_line">%1$s multisig</string>
+    <string name="import_wallet_cosigners_line">Cosigners: %1$d</string>
+    <string name="import_backup_labels_line">Labels: %1$s · %2$s</string>
+    <string name="import_backup_server_settings_line">Server settings: %1$s</string>
+    <string name="import_wallet_address_line_watch">%1$s (%2$s)</string>
+    <string name="wallet_address_type_legacy_title">Legacy</string>
+    <string name="wallet_address_type_segwit_title">SegWit</string>
+    <string name="wallet_address_type_taproot_title">Taproot</string>
+    <string name="wallet_address_type_legacy_description">P2PKH — Legacy addresses start with 1</string>
+    <string name="wallet_address_type_segwit_description">P2WPKH — Native SegWit addresses start with bc1q</string>
+    <string name="wallet_address_type_taproot_description">P2TR — Taproot addresses start with bc1p</string>
+    <string name="wallet_auto_name_watch_format">Watch %1$s</string>
+    <string name="wallet_auto_name_key_format">Key %1$s</string>
+    <string name="wallet_electrum_seed_variant_standard">Standard</string>
+    <string name="wallet_electrum_seed_variant_segwit">Segwit</string>
+    <string name="import_seed_invalid_line">%1$s: %2$s%3$s</string>
+    <string name="import_seed_wrong_word_count">%1$d words — need 12, 15, 18, 21, or 24</string>
+    <!-- Generated UI localization strings. -->
+    <string name="loc_ed3bf7b5" formatted="false">Addresses</string>
+    <string name="loc_aefc2317" formatted="false">UTXOs</string>
+    <string name="loc_7378b4ca" formatted="false">Set up PIN or biometric to open locked wallets</string>
+    <string name="loc_0039435a" formatted="false">Biometric unlock is unavailable here</string>
+    <string name="loc_5a6ca12a" formatted="false">Disable Wallet Lock</string>
+    <string name="loc_4d44286e" formatted="false">Unlock Wallet</string>
+    <string name="loc_b1d09d26" formatted="false">Authenticate to disable wallet lock</string>
+    <string name="loc_b543e2d2" formatted="false">Authenticate to open this wallet</string>
+    <string name="loc_51bac044" formatted="false">Cancel</string>
+    <string name="loc_1a2d015d" formatted="false">Failed to connect to server</string>
+    <string name="loc_40c6f7fc" formatted="false">Not connected to Electrum server</string>
+    <string name="loc_56ef812b" formatted="false">Connection timed out</string>
+    <string name="loc_7512ca10" formatted="false">Connection lost</string>
+    <string name="loc_727e66ac" formatted="false">Server connection lost</string>
+    <string name="loc_f3274267" formatted="false">Tor connection timed out</string>
+    <string name="loc_d51147d8" formatted="false">Tor failed to start:</string>
+    <string name="loc_e80ce525" formatted="false">Auto-switched to </string>
+    <string name="loc_8306cc63" formatted="false">Auto-switch failed: no reachable servers</string>
+    <string name="loc_89cd842c" formatted="false">Connection failed:</string>
+    <string name="loc_baaad0fc" formatted="false">Not connected to Electrum</string>
+    <string name="loc_7b1e36fe" formatted="false">Switching Liquid server to </string>
+    <string name="loc_51bdc9f0" formatted="false">Wallet operation failed</string>
+    <string name="loc_54947bc7" formatted="false">Transaction sent successfully</string>
+    <string name="loc_a10f1671" formatted="false">Wallet exported</string>
+    <string name="loc_c5473c1d" formatted="false">Labels exported</string>
+    <string name="loc_a70e9a3b" formatted="false">Labels imported</string>
+    <string name="loc_a0665acf" formatted="false">Replacement transaction broadcast successfully</string>
+    <string name="loc_84d585b7" formatted="false">CPFP transaction broadcast successfully</string>
+    <string name="loc_331c24c8" formatted="false">Transaction redirected to your wallet</string>
+    <string name="loc_aaf585b6" formatted="false">Liquid operation failed</string>
+    <string name="loc_38a633d4" formatted="false">Liquid transaction sent successfully</string>
+    <string name="loc_4defd854" formatted="false">Lightning swap received</string>
+    <string name="loc_e3dea6d5" formatted="false">Wallet activity received</string>
+    <string name="loc_dc9ca216" formatted="false">Lightning payment sent successfully</string>
+    <string name="loc_932fd4d9" formatted="false">Swap completed</string>
+    <string name="loc_1b2f100c" formatted="false">Wallet activity updated</string>
+    <string name="loc_a11d4b84" formatted="false">Bitcoin received</string>
+    <string name="loc_0ab66fae" formatted="false">Incoming payment</string>
+    <string name="loc_7cf79a48" formatted="false">Liquid received</string>
+    <string name="loc_c79ab944" formatted="false">Open server settings</string>
+    <string name="loc_197cebf2" formatted="false">Bitcoin</string>
+    <string name="loc_22236665" formatted="false">Liquid</string>
+    <string name="loc_d2c0aec0" formatted="false">Close</string>
+    <string name="loc_b137001" formatted="false">Sign / Verify Message</string>
+    <string name="loc_b137002" formatted="false">Sign</string>
+    <string name="loc_b137003" formatted="false">Verify</string>
+    <string name="loc_b137005" formatted="false">Message</string>
+    <string name="loc_b137006" formatted="false">Signature</string>
+    <string name="loc_b137007" formatted="false">Base64 signature</string>
+    <string name="loc_b137008" formatted="false">Valid signature</string>
+    <string name="loc_b137009" formatted="false">Invalid signature</string>
+    <string name="loc_b137010" formatted="false">Enter an address</string>
+    <string name="loc_b137011" formatted="false">Enter a message</string>
+    <string name="loc_b137012" formatted="false">Enter a signature</string>
+    <string name="loc_b137013" formatted="false">Unsupported address</string>
+    <string name="loc_b137014" formatted="false">BIP137 does not support Taproot addresses</string>
+    <string name="loc_b137015" formatted="false">BIP137 does not support Taproot wallets</string>
+    <string name="loc_b137016" formatted="false">Address type does not match this wallet</string>
+    <string name="loc_b137017" formatted="false">No signing key available</string>
+    <string name="loc_b137018" formatted="false">Address not found in this wallet</string>
+    <string name="loc_b137019" formatted="false">This wallet is watch-only</string>
+    <string name="loc_b137020" formatted="false">Message signing is only available for single-sig wallets</string>
+    <string name="loc_b137021" formatted="false">Invalid private key</string>
+    <string name="loc_9071098c" formatted="false">Lock app</string>
+    <string name="loc_cdfc6e09" formatted="false">Back</string>
+    <string name="loc_dd3795ad" formatted="false">Menu</string>
+    <string name="loc_268af6fe" formatted="false">Starting Tor</string>
+    <string name="loc_066df953" formatted="false">Connecting</string>
+    <string name="loc_98469a16" formatted="false">Connected</string>
+    <string name="loc_82e9d0dd" formatted="false">Disconnected</string>
+    <string name="loc_ba113750" formatted="false">No labels to export</string>
+    <string name="loc_c6e12528" formatted="false">Could not open output stream</string>
+    <string name="loc_45e5d14f" formatted="false">Export failed</string>
+    <string name="loc_15286591" formatted="false">Could not read file</string>
+    <string name="loc_9efb1540" formatted="false">No labels imported</string>
+    <string name="loc_4be4f258" formatted="false">Import failed</string>
+    <string name="loc_e440bb19" formatted="false">Set up PIN or biometric first</string>
+    <string name="loc_e95ede4f" formatted="false">Duress setup failed</string>
+    <string name="loc_e5363b11" formatted="false">, 0)} Multisig</string>
+    <string name="loc_629b9e5b" formatted="false">Unknown</string>
+    <string name="loc_69bd4cde" formatted="false">Unnamed</string>
+    <string name="loc_9f6b4cf6" formatted="false">Restore failed</string>
+    <string name="loc_b6df6876" formatted="false">Liquid error: PSET is temporarily unavailable for live use.</string>
+    <string name="loc_b2ef417b" formatted="false">Full sync in progress</string>
+    <string name="loc_6e8653e4" formatted="false">Scanned</string>
+    <string name="loc_fe7aca52" formatted="false">Discovering addresses...</string>
+    <string name="loc_a999bfe2" formatted="false">Starting full sync...</string>
+    <string name="loc_bd3ba3fa" formatted="false">$current / $total addresses</string>
+    <string name="loc_87d3aa11" formatted="false">$current addresses scanned</string>
+    <string name="loc_f1db54b6" formatted="false">Amount ($fiatCurrency)</string>
+    <string name="loc_890d7574" formatted="false">Amount</string>
+    <string name="loc_33b64233" formatted="false">Sats</string>
+    <string name="loc_cc86bbff" formatted="false">Enlarged PSBT QR Code</string>
+    <string name="loc_fb52d8a9" formatted="false">Preparing QR...</string>
+    <string name="loc_e1041b50" formatted="false">Tap anywhere to close</string>
+    <string name="loc_e6f87707" formatted="false">PSBT QR Code - Tap to enlarge</string>
+    <string name="loc_df16eb23" formatted="false">Tap QR to enlarge</string>
+    <string name="loc_ef73e5ab" formatted="false">Enlarged QR Code</string>
+    <string name="loc_416323aa" formatted="false">QR Code - Tap to enlarge</string>
+    <string name="loc_d1f803ab" formatted="false">Scan Signed Transaction</string>
+    <string name="loc_59b2cdc5" formatted="false">Scan QR Code</string>
+    <string name="loc_a1d468be" formatted="false">This is a PSBT QR, not a wallet key. Use the PSBT screen to scan signed transactions.</string>
+    <string name="loc_2ca4d840" formatted="false">Unsupported wallet type</string>
+    <string name="loc_33912581" formatted="false">Failed to decode UR QR code</string>
+    <string name="loc_9cd7a398" formatted="false">Scan Labels QR</string>
+    <string name="loc_7f1b7539" formatted="false">Scan a BIP 329 labels QR code exported from another wallet</string>
+    <string name="loc_703868af" formatted="false">Scanned $received of $total</string>
+    <string name="loc_2f23b11e" formatted="false">$prefix$word </string>
+    <string name="loc_378dc5c9" formatted="false">Rescue Key</string>
+    <string name="loc_54bf6d2a" formatted="false">Emergency Rescue Key</string>
+    <string name="loc_7ea64bdf" formatted="false">If swap fails, open Boltz rescue link and paste this 12-word seed.</string>
+    <string name="loc_7666b1a4" formatted="false">Open Boltz rescue page</string>
+    <string name="loc_13505d59" formatted="false">Boltz Rescue Key</string>
+    <string name="loc_729dc6f0" formatted="false">Copy Boltz rescue key</string>
+    <string name="loc_e287255d" formatted="false">Copied to clipboard!</string>
+    <string name="loc_cc3e4faa" formatted="false">New Server Certificate</string>
+    <string name="loc_6a194291" formatted="false">Certificate Changed</string>
+    <string name="loc_f239b62e" formatted="false">First connection to this server. Verify the certificate fingerprint matches what the server operator publishes.</string>
+    <string name="loc_761f0c63" formatted="false">The certificate for this server has changed since your last connection. This could indicate a man-in-the-middle attack, or the server operator rotated their certificate.</string>
+    <string name="loc_5dc1d0c0" formatted="false">Server</string>
+    <string name="loc_fbb9ff8a" formatted="false">Previous</string>
+    <string name="loc_7a97fa9d" formatted="false">Fingerprint</string>
+    <string name="loc_36836bfe" formatted="false">New Fingerprint</string>
+    <string name="loc_347307e6" formatted="false">Subject</string>
+    <string name="loc_40c690bf" formatted="false">Valid Until</string>
+    <string name="loc_a269638f" formatted="false">Reject</string>
+    <string name="loc_cbc7c3aa" formatted="false">Trust</string>
+    <string name="loc_4dff77ec" formatted="false">Accept New Certificate</string>
+    <string name="loc_bcb6fe62" formatted="false">Manage Wallets</string>
+    <string name="loc_dc73d3bf" formatted="false">Electrum Servers</string>
+    <string name="loc_1c33c293" formatted="false">Settings</string>
+    <string name="loc_2f73501f" formatted="false">Layer 2</string>
+    <string name="loc_3cedb797" formatted="false">Security</string>
+    <string name="loc_db888836" formatted="false">Backup / Restore</string>
+    <string name="loc_74350de7" formatted="false">About</string>
+    <string name="loc_c434ec51" formatted="false">Ibis Wallet</string>
+    <string name="loc_5e3e3fdf" formatted="false">+ Label</string>
+    <string name="loc_514da0a5" formatted="false">Remove label</string>
+    <string name="loc_943c89b7" formatted="false">Fee Rate</string>
+    <string name="loc_69807fc8" formatted="false">Refresh fees</string>
+    <string name="loc_b918adb3" formatted="false">Est. fee: $hiddenAmount ($vBytesDisplay vB)</string>
+    <string name="loc_9384ed0d" formatted="false">sats</string>
+    <string name="loc_a91255ae" formatted="false">~2 blocks</string>
+    <string name="loc_90799724" formatted="false">~1 block</string>
+    <string name="loc_2d585b54" formatted="false">~6 blocks</string>
+    <string name="loc_65b85530" formatted="false">~3 blocks</string>
+    <string name="loc_453a508b" formatted="false">~12 blocks</string>
+    <string name="loc_82c7cb6e" formatted="false">Failed to load fee estimates</string>
+    <string name="loc_f22813ad" formatted="false">Custom</string>
+    <string name="loc_1f86ded3" formatted="false">â</string>
+    <string name="loc_aedd48eb" formatted="false">sat/vB</string>
+    <string name="loc_b67a01a5" formatted="false">Layer 1</string>
+    <string name="loc_85a12a5f" formatted="false">Swap</string>
+    <string name="loc_301a5b91" formatted="false">Received</string>
+    <string name="loc_1af68597" formatted="false">Sent</string>
+    <string name="loc_1efdda23" formatted="false">$%.2f</string>
+    <string name="loc_1b684325" formatted="false">Pending</string>
+    <string name="loc_03b82433" formatted="false">Lightning</string>
+    <string name="loc_e2070f58" formatted="false">MMM d, yyyy Â· HH:mm</string>
+    <string name="loc_2926e5c5" formatted="false">Select wallet</string>
+    <string name="loc_d2f6f29f" formatted="false">Locked wallet</string>
+    <string name="loc_fd030147" formatted="false">Watch Address</string>
+    <string name="loc_25d748f3" formatted="false">Watch Only</string>
+    <string name="loc_7a74fd5b" formatted="false">Private Key</string>
+    <string name="loc_24d8d452" formatted="false">Seed Phrase</string>
+    <string name="loc_f9bc2ba5" formatted="false">Never fully synced</string>
+    <string name="loc_27bd3430" formatted="false">Lock</string>
+    <string name="loc_f08db23b" formatted="false">Sync</string>
+    <string name="loc_d707daeb" formatted="false">Ibis Wallet logo</string>
+    <string name="loc_5c9de83f" formatted="false">GitHub</string>
+    <string name="loc_2bb3e26c" formatted="false">Source Code</string>
+    <string name="loc_98b3744d" formatted="false">Request features and report bugs on GitHub</string>
+    <string name="loc_a0ce08ad" formatted="false">Receive</string>
+    <string name="loc_47fbfb16" formatted="false">Change</string>
+    <string name="loc_d975cc26" formatted="false">Used</string>
+    <string name="loc_c87ab105" formatted="false">Address QR Code</string>
+    <string name="loc_6e2afb3f" formatted="false">QR Code</string>
+    <string name="loc_03a0fd9e" formatted="false">Search address or label</string>
+    <string name="loc_2470de02" formatted="false">Clear</string>
+    <string name="loc_e3f2267c" formatted="false">No matching addresses</string>
+    <string name="loc_a735a217" formatted="false">No addresses</string>
+    <string name="loc_c72e1beb" formatted="false">Show 20 more</string>
+    <string name="loc_822c6f45" formatted="false">Enter label</string>
+    <string name="loc_f55495e0" formatted="false">Save</string>
+    <string name="loc_98f4c3f7" formatted="false">Show QR</string>
+    <string name="loc_c2f3561d" formatted="false">Address</string>
+    <string name="loc_ed8814bc" formatted="false">Copy</string>
+    <string name="loc_63492662" formatted="false">Balance</string>
+    <string name="loc_f299c1b4" formatted="false">Transactions</string>
+    <string name="loc_ba1d1a3c" formatted="false">Spendable</string>
+    <string name="loc_63722213" formatted="false">Frozen</string>
+    <string name="loc_ff1e339d" formatted="false">Search address, label, amount, txid, or outpoint</string>
+    <string name="loc_4bb9e286" formatted="false">No UTXOs</string>
+    <string name="loc_3a296c42" formatted="false">No matching UTXOs</string>
+    <string name="loc_f1076a8d" formatted="false">UTXO frozen</string>
+    <string name="loc_e1b46fb6" formatted="false">UTXO unfrozen</string>
+    <string name="loc_b6b10bfe" formatted="false">Address copied</string>
+    <string name="loc_0fddb7b5" formatted="false">Outpoint copied</string>
+    <string name="loc_4ab75d7f" formatted="false">Confirmed</string>
+    <string name="loc_cafbbb4a" formatted="false">Outpoint</string>
+    <string name="loc_543e40ca" formatted="false">Unfreeze</string>
+    <string name="loc_413df12c" formatted="false">Freeze</string>
+    <string name="loc_074195f3" formatted="false">Send</string>
+    <string name="loc_dc7801d8" formatted="false">Copy $label</string>
+    <string name="loc_4fdbbe47" formatted="false">, utxo.amountSats.toDouble() / 100_000_000.0)} btc</string>
+    <string name="loc_c846dfdc" formatted="false">confirmed</string>
+    <string name="loc_d4d57ab9" formatted="false">pending</string>
+    <string name="loc_64de2725" formatted="false">frozen</string>
+    <string name="loc_38ec989f" formatted="false">spendable</string>
+    <string name="loc_7deb423d" formatted="false">usdt</string>
+    <string name="loc_ab83811b" formatted="false">Create Backup</string>
+    <string name="loc_d46d2b20" formatted="false">Create a full app backup with wallets, labels, server settings, and general app settings. Security settings are excluded.</string>
+    <string name="loc_385cd49a" formatted="false">Backup</string>
+    <string name="loc_39bc3b1b" formatted="false">Restore Backup</string>
+    <string name="loc_2e285bfe" formatted="false">Restore a full app backup, review its contents, and choose what to restore. Security settings are excluded.</string>
+    <string name="loc_486a1663" formatted="false">Restore</string>
+    <string name="loc_4218f43b">ibis-full-backup-%1$s.json</string>
+    <string name="loc_6539ad02" formatted="false">application/json</string>
+    <string name="loc_3713e18d" formatted="false">Review exactly what will be exported before saving the file.</string>
+    <string name="loc_59c793f0" formatted="false">Wallets</string>
+    <string name="loc_7be7ccdc" formatted="false">No wallets available</string>
+    <string name="loc_8652a19f" formatted="false"> (watch-only)</string>
+    <string name="loc_794971b5" formatted="false">Server Settings</string>
+    <string name="loc_85611d13" formatted="false">Electrum and Liquid server settings</string>
+    <string name="loc_19da05f8" formatted="false">General App Settings</string>
+    <string name="loc_97b9282b" formatted="false">Notifications, external services, etc...</string>
+    <string name="loc_f8b82c65" formatted="false">Protection</string>
+    <string name="loc_f6dc0e2f" formatted="false">Encrypt Backup File</string>
+    <string name="loc_c4d81c53" formatted="false">Protect with a password</string>
+    <string name="loc_ccb42483" formatted="false">Password</string>
+    <string name="loc_04ab6415" formatted="false">Hide</string>
+    <string name="loc_923c763f" formatted="false">Show</string>
+    <string name="loc_08201b2b" formatted="false">Confirm Password</string>
+    <string name="loc_46e1da73" formatted="false">Min 8 characters</string>
+    <string name="loc_3df88eb4" formatted="false">Passwords do not match</string>
+    <string name="loc_7fdce75b" formatted="false">Choose Save Location</string>
+    <string name="loc_d3414c88" formatted="false">Change Save Location</string>
+    <string name="loc_3ff4bdf5" formatted="false">Confirm Export</string>
+    <string name="loc_628698a5" formatted="false">Review the full backup details before exporting.</string>
+    <string name="loc_90d7bedf" formatted="false">Save location</string>
+    <string name="loc_aee23349">%1$d selected</string>
+    <string name="loc_b27d0727" formatted="false">Labels</string>
+    <string name="loc_32b19599">%1$d included</string>
+    <string name="loc_803f13e3" formatted="false">Server settings</string>
+    <string name="loc_1bb1df5e" formatted="false">Included</string>
+    <string name="loc_481063e5" formatted="false">Excluded</string>
+    <string name="loc_daee1794" formatted="false">App settings</string>
+    <string name="loc_14e0d86b" formatted="false">Encryption</string>
+    <string name="loc_9f448218" formatted="false">Enabled</string>
+    <string name="loc_13f11ba3" formatted="false">Off</string>
+    <string name="loc_452013a2" formatted="false">Export</string>
+    <string name="loc_166a5cb9" formatted="false">Failed to parse backup</string>
+    <string name="loc_57784073" formatted="false">encrypted</string>
+    <string name="loc_35c246d5" formatted="false">password</string>
+    <string name="loc_34b569a6" formatted="false">backup.json</string>
+    <string name="loc_6bf29789" formatted="false">Select a full backup and review what will be restored. Security settings are always skipped.</string>
+    <string name="loc_bf2f67a0" formatted="false">Choose Backup File</string>
+    <string name="loc_5948f994" formatted="false">Change Backup File</string>
+    <string name="loc_adf2a8dd" formatted="false">Selected File</string>
+    <string name="loc_2cad992e" formatted="false">File</string>
+    <string name="loc_0b03f2c9" formatted="false">Exported</string>
+    <string name="loc_13027ae4" formatted="false">Reading backup contents...</string>
+    <string name="loc_81d0b469" formatted="false">Encrypted Backup</string>
+    <string name="loc_0d70bfed" formatted="false">This backup is encrypted. Enter the password to view its contents.</string>
+    <string name="loc_1cdedba2" formatted="false">Backup Password</string>
+    <string name="loc_0edc6bdd" formatted="false">Unlock Backup</string>
+    <string name="loc_92a1890d" formatted="false">No wallets in this backup</string>
+    <string name="loc_564855d0" formatted="false">No labels in backup</string>
+    <string name="loc_3e366498" formatted="false">Not included in this backup</string>
+    <string name="loc_524d0edf" formatted="false">Existing wallets with the same seed will be skipped. Security settings are not restored.</string>
+    <string name="loc_a0bde62e" formatted="false">Success</string>
+    <string name="loc_f275909f" formatted="false">exported</string>
+    <string name="loc_b558726e" formatted="false">restored</string>
+    <string name="loc_990bb023" formatted="false">Toggle privacy</string>
+    <string name="loc_8c195a44" formatted="false">Sync</string>
+    <string name="loc_a397da3c" formatted="false">Quick receive</string>
+    <string name="loc_60129540" formatted="false">Scan QR</string>
+    <string name="loc_fc29713a" formatted="false">No Wallet</string>
+    <string name="loc_2311c49c" formatted="false">Add a wallet to get started</string>
+    <string name="loc_c2677517" formatted="false">Add Wallet</string>
+    <string name="loc_f61cc0f6" formatted="false">Transactions</string>
+    <string name="loc_ea6a9a53" formatted="false">Filter swaps</string>
+    <string name="loc_dda0ea3a" formatted="false">Close search</string>
+    <string name="loc_b35cde91" formatted="false">Search</string>
+    <string name="loc_0177e398" formatted="false">Search labels, addresses, txid, or date...</string>
+    <string name="loc_1ed8a5e9" formatted="false">Loading transaction history...</string>
+    <string name="loc_1817b4ae" formatted="false">Syncing wallet...</string>
+    <string name="loc_c4bda1e4" formatted="false">Balance is ready. Transactions will appear shortly.</string>
+    <string name="loc_6998e348" formatted="false">Recent activity will appear when sync completes.</string>
+    <string name="loc_167ce23f" formatted="false">No matching transactions</string>
+    <string name="loc_a317d3d8" formatted="false">No transactions yet</string>
+    <string name="loc_9febfd40" formatted="false">Try a different search term</string>
+    <string name="loc_2aebf14e" formatted="false">Transactions will appear here after syncing</string>
+    <string name="loc_54c6a9a6" formatted="false">Loading more transactions...</string>
+    <string name="loc_c5f386a2" formatted="false">Showing the newest activity first while older history finishes loading.</string>
+    <string name="loc_0ee47e3c" formatted="false">Show More</string>
+    <string name="loc_e8a4e98f" formatted="false">Show All</string>
+    <string name="loc_64a62064" formatted="false">Show All ($remaining remaining)</string>
+    <string name="loc_8fd877da" formatted="false">Receive address QR</string>
+    <string name="loc_3c19e32e" formatted="false">Copy address</string>
+    <string name="loc_ec64ef5e" formatted="false">Layer 2 required</string>
+    <string name="loc_7821917a" formatted="false">Enable Layer 2 to view this Liquid watch-only wallet.</string>
+    <string name="loc_a48e1208" formatted="false">Open Settings</string>
+    <string name="loc_ba86d0ac" formatted="false">$sign$amount sats</string>
+    <string name="loc_d322af2a" formatted="false">$sign$amount</string>
+    <string name="loc_81dbfdd9" formatted="false">$confirmations/6</string>
+    <string name="loc_3d1a0df5" formatted="false">Boltz</string>
+    <string name="loc_c6f76248" formatted="false">SideSwap</string>
+    <string name="loc_37a5c459" formatted="false">Bitcoin Deposit Address</string>
+    <string name="loc_53204016" formatted="false">Liquid Deposit Address</string>
+    <string name="loc_8f9ee8e6" formatted="false">Liquid Destination Address</string>
+    <string name="loc_a6feda9e" formatted="false">Bitcoin Destination Address</string>
+    <string name="loc_b005c905" formatted="false">Copy $copyLabel</string>
+    <string name="loc_5f4a458c" formatted="false">org.torproject.torbrowser</string>
+    <string name="loc_98c5fbdc" formatted="false">Transaction Details</string>
+    <string name="loc_222c0de6" formatted="false">Self-Transfer</string>
+    <string name="loc_e31f7d30" formatted="false"> else </string>
+    <string name="loc_3dae8142" formatted="false">Bump Fee (RBF)</string>
+    <string name="loc_51321a45" formatted="false">Bump Fee (CPFP)</string>
+    <string name="loc_7f958245" formatted="false">Cancel Transaction (RBF)</string>
+    <string name="loc_7cac602a" formatted="false">Status</string>
+    <string name="loc_13e398d0" formatted="false">Transaction ID</string>
+    <string name="loc_ad35e265" formatted="false">Copied!</string>
+    <string name="loc_b47edf23" formatted="false">Received at</string>
+    <string name="loc_eaf579ea" formatted="false">Recipient</string>
+    <string name="loc_1a2e163b" formatted="false">(Self-transfer)</string>
+    <string name="loc_f3a4dab2" formatted="false">Copy Address</string>
+    <string name="loc_a28f34b2" formatted="false">Change returned to</string>
+    <string name="loc_8ae00f50" formatted="false">Change Address</string>
+    <string name="loc_90d5f46b" formatted="false">Copy Change Address</string>
+    <string name="loc_f72cc482" formatted="false">Network Fee</string>
+    <string name="loc_cf667fec" formatted="false">Label</string>
+    <string name="loc_f02e2a46" formatted="false">Swap Details</string>
+    <string name="loc_36648ad9" formatted="false">Collapse swap details</string>
+    <string name="loc_511b58c0" formatted="false">Expand swap details</string>
+    <string name="loc_12c49c0c" formatted="false">Boltz Swap ID</string>
+    <string name="loc_1598922a" formatted="false">SideSwap Order ID</string>
+    <string name="loc_3e5cd869" formatted="false">Swap ID</string>
+    <string name="loc_00a6caf2" formatted="false">swap_id</string>
+    <string name="loc_d5ff2eb5" formatted="false">Swap Deposit Address</string>
+    <string name="loc_0c8495da" formatted="false">deposit_address</string>
+    <string name="loc_907247e2" formatted="false">Swap Destination Address</string>
+    <string name="loc_a8a1ec0a" formatted="false">receive_address</string>
+    <string name="loc_245027bd" formatted="false">Refund Address</string>
+    <string name="loc_53f9e5c5" formatted="false">refund_address</string>
+    <string name="loc_9c1c9375" formatted="false">Error</string>
+    <string name="loc_3a15e5cd" formatted="false">Tor Browser Required</string>
+    <string name="loc_71c1fcab" formatted="false">Tor Browser is required to view onion links. Please install it from the Play Store or F-Droid.</string>
+    <string name="loc_92f9c847" formatted="false">Cancel Transaction</string>
+    <string name="loc_f5040eb4" formatted="false">Replace this transaction with a higher fee (RBF)</string>
+    <string name="loc_987ca029" formatted="false">Create a child transaction with high fee to speed up confirmation (CPFP)</string>
+    <string name="loc_a3190b21" formatted="false">Redirect all funds back to your wallet or a custom address. Requires a higher fee than the original.</string>
+    <string name="loc_9f80cab8" formatted="false">Enter a Bitcoin address</string>
+    <string name="loc_85507fe1" formatted="false">Current Transaction:</string>
+    <string name="loc_de90114d" formatted="false">Fee: $HIDDEN_AMOUNT</string>
+    <string name="loc_ca3e4dcf" formatted="false">Replacement Transaction:</string>
+    <string name="loc_e5455471" formatted="false">Redirect Transaction:</string>
+    <string name="loc_42ccefb2" formatted="false">Child Transaction (CPFP):</string>
+    <string name="loc_4aade885" formatted="false">Child tx fee</string>
+    <string name="loc_c5f55bb2" formatted="false">Additional cost</string>
+    <string name="loc_eb289adf" formatted="false">$costLabel: $HIDDEN_AMOUNT</string>
+    <string name="loc_9081b0e6" formatted="false">Will consolidate all wallet UTXOs</string>
+    <string name="loc_534e1eb2" formatted="false">Insufficient funds</string>
+    <string name="loc_35652873" formatted="false">Need: $HIDDEN_AMOUNT (fee + dust)</string>
+    <string name="loc_760081de" formatted="false">Have: $HIDDEN_AMOUNT (output + wallet)</string>
+    <string name="loc_ee7df965" formatted="false">Custom destination address</string>
+    <string name="loc_a18fd453" formatted="false">Bitcoin address</string>
+    <string name="loc_30261319" formatted="false">Funds will be redirected to this Bitcoin address.</string>
+    <string name="loc_0c054d47" formatted="false">Bump Fee</string>
+    <string name="loc_1e89ceb8" formatted="false">Explorer</string>
+    <string name="loc_f07d5799" formatted="false">Open in block explorer</string>
+    <string name="loc_89bab973" formatted="false">Manual Broadcast</string>
+    <string name="loc_7177b2f3" formatted="false">Paste raw transaction hex or complete signed PSBT</string>
+    <string name="loc_e1614c61" formatted="false">Note: trimmed signed PSBTs from hardware wallets may fail here. </string>
+    <string name="loc_d7364781" formatted="false">Use the original PSBT flow when available.</string>
+    <string name="loc_007c8b5b" formatted="false">Raw transaction hex detected</string>
+    <string name="loc_28a2dce9" formatted="false">Signed PSBT detected</string>
+    <string name="loc_a4350df8" formatted="false">Unrecognized format</string>
+    <string name="loc_a5e83581" formatted="false">Load File</string>
+    <string name="loc_d893f956" formatted="false">Connect to an Electrum server to broadcast</string>
+    <string name="loc_1900fe56" formatted="false">Broadcast</string>
+    <string name="loc_caad9ed8" formatted="false">Transaction Broadcast</string>
+    <string name="loc_611ba490" formatted="false">txid</string>
+    <string name="loc_e934eeef" formatted="false">Copy Txid</string>
+    <string name="loc_b22993f6" formatted="false">%,d</string>
+    <string name="loc_a6d7c2cb" formatted="false">%.10g</string>
+    <string name="loc_703955d0" formatted="false">-$plain</string>
+    <string name="loc_476e7c91" formatted="false">AC</string>
+    <string name="loc_a33318f4" formatted="false">serverSelectorBackground</string>
+    <string name="loc_46b773e7" formatted="false">serverSelectorContent</string>
+    <string name="loc_b94b1995" formatted="false">Delete Server</string>
+    <string name="loc_3dbe79b1" formatted="false">Delete</string>
+    <string name="loc_aab4007b" formatted="false">Electrum Server</string>
+    <string name="loc_cc38cb35" formatted="false">Saved Servers</string>
+    <string name="loc_98016440" formatted="false">Auto-switch on disconnect</string>
+    <string name="loc_e43bcbe8" formatted="false">Try next server if connection drops</string>
+    <string name="loc_e46232fe" formatted="false">Add Server</string>
+    <string name="loc_7f474ad7" formatted="false">SSL</string>
+    <string name="loc_24cb124c" formatted="false">TCP</string>
+    <string name="loc_c89a3806" formatted="false">Tor</string>
+    <string name="loc_8d4cd2b4" formatted="false">Current Server</string>
+    <string name="loc_bb72c083" formatted="false">Connect</string>
+    <string name="loc_4f674841" formatted="false">Disconnect</string>
+    <string name="loc_3cf29f70" formatted="false">Name:</string>
+    <string name="loc_e85c4517" formatted="false">Edit server</string>
+    <string name="loc_77caa9b0" formatted="false">Address:</string>
+    <string name="loc_475e06fd" formatted="false">Port:</string>
+    <string name="loc_9d53bbd5" formatted="false">Software:</string>
+    <string name="loc_c641697a" formatted="false">Block:</string>
+    <string name="loc_11c5bc85" formatted="false">Connection failed</string>
+    <string name="loc_aad3c3b2" formatted="false">Configure server</string>
+    <string name="loc_00ad5135" formatted="false">Drag to reorder</string>
+    <string name="loc_4cb2f934" formatted="false">Active</string>
+    <string name="loc_61dfddd0" formatted="false">Selected</string>
+    <string name="loc_21077124" formatted="false">Edit</string>
+    <string name="loc_10c5a9ae" formatted="false">Bootstrapping</string>
+    <string name="loc_51851e0f" formatted="false">Standby</string>
+    <string name="loc_d2f190c7" formatted="false">Auto-managed</string>
+    <string name="loc_eff04021" formatted="false">Edit Server</string>
+    <string name="loc_fe11d138" formatted="false">Name</string>
+    <string name="loc_597532ba" formatted="false">My Server</string>
+    <string name="loc_0899b645" formatted="false">Server Address</string>
+    <string name="loc_0db390f1" formatted="false">electrum.example.com</string>
+    <string name="loc_e3a3f2f2" formatted="false">Port</string>
+    <string name="loc_d83b7198" formatted="false">Port must be between 1 and 65535</string>
+    <string name="loc_a8fc5dd4" formatted="false">Use SSL/TLS</string>
+    <string name="loc_209e3dd7" formatted="false">Encrypt connection</string>
+    <string name="loc_9f89304e" formatted="false">Update</string>
+    <string name="loc_1a9e08e9" formatted="false">generate_advanced</string>
+    <string name="loc_4627a439" formatted="false">generate_passphrase</string>
+    <string name="loc_eb30de38" formatted="false">generate_path</string>
+    <string name="loc_6227ec5e" formatted="false">Generate Wallet</string>
+    <string name="loc_748eece4" formatted="false">Wallet Details</string>
+    <string name="loc_6e9ddcf4" formatted="false">Wallet Name</string>
+    <string name="loc_3213841a" formatted="false">Address Type</string>
+    <string name="loc_e3b008f1" formatted="false">Generate Seed Phrase</string>
+    <string name="loc_0c25a130" formatted="false">Your Seed Phrase</string>
+    <string name="loc_3ca6814e" formatted="false">Fingerprint: $fp</string>
+    <string name="loc_7420f38b" formatted="false">Mnemonic</string>
+    <string name="loc_5d00536d" formatted="false">Copied</string>
+    <string name="loc_fceb7ead" formatted="false">Copy seed phrase</string>
+    <string name="loc_7c63b77c" formatted="false">Regenerate seed phrase</string>
+    <string name="loc_77aacbaf" formatted="false">I have backed up my seed phrase</string>
+    <string name="loc_20a1d916" formatted="false">Advanced Options</string>
+    <string name="loc_729b34d2" formatted="false">Collapse</string>
+    <string name="loc_b47e7391" formatted="false">Expand</string>
+    <string name="loc_75923525" formatted="false">BIP39 Passphrase</string>
+    <string name="loc_e8a4f395" formatted="false">Enter passphrase</string>
+    <string name="loc_01fca34c" formatted="false">Custom Derivation Path</string>
+    <string name="loc_e81bc2a8" formatted="false">Create Wallet</string>
+    <string name="loc_6e0fc2e1" formatted="false">$index.</string>
+    <string name="loc_a34ad456" formatted="false">12 words</string>
+    <string name="loc_4e15e68f" formatted="false">24 words</string>
+    <string name="loc_53017e88" formatted="false">Failed to read backup file</string>
+    <string name="loc_e61e3fea" formatted="false">Failed to read file</string>
+    <string name="loc_1521d68b" formatted="false">import_advanced</string>
+    <string name="loc_7877beaa" formatted="false">import_fingerprint</string>
+    <string name="loc_70875d70" formatted="false">import_passphrase</string>
+    <string name="loc_e678658f" formatted="false">import_path</string>
+    <string name="loc_378f992e" formatted="false">import_gap_limit</string>
+    <string name="loc_2acab2f8" formatted="false">xpub</string>
+    <string name="loc_9276d59d" formatted="false">ypub</string>
+    <string name="loc_80c37a73" formatted="false">zpub</string>
+    <string name="loc_d8a06a25" formatted="false">upub</string>
+    <string name="loc_7f51f042" formatted="false">xprv</string>
+    <string name="loc_c7ed9727" formatted="false">yprv</string>
+    <string name="loc_d55838c9" formatted="false">zprv</string>
+    <string name="loc_96681214" formatted="false">pkh(</string>
+    <string name="loc_3afc06ca" formatted="false">wpkh(</string>
+    <string name="loc_8405aa10" formatted="false">tr(</string>
+    <string name="loc_198ad865" formatted="false">wsh(</string>
+    <string name="loc_6d34fb43" formatted="false">sh(wsh(</string>
+    <string name="loc_cb36b863" formatted="false">ct(</string>
+    <string name="loc_74b37443" formatted="false">Invalid Liquid descriptor pair. Paste one combined ct(...) descriptor or a matching /0/* and /1/* pair.</string>
+    <string name="loc_a8d202fe" formatted="false">Invalid Liquid descriptor.</string>
+    <string name="loc_b78d19ad" formatted="false">wpkh($t)</string>
+    <string name="loc_1ba5d3f5" formatted="false">bc1q</string>
+    <string name="loc_6ca2e363" formatted="false">bc1p</string>
+    <string name="loc_49a30fd5" formatted="false">}: $badWords$suffix</string>
+    <string name="loc_7d88619a" formatted="false">$wordCount words entered</string>
+    <string name="loc_f06998b1" formatted="false">} entered</string>
+    <string name="loc_b196ae6e" formatted="false">$wordCount words - need 12, 15, 18, 21, or 24</string>
+    <string name="loc_964abaa1" formatted="false">Invalid checksum</string>
+    <string name="loc_6dfe3462" formatted="false">Multisig</string>
+    <string name="loc_c821b501" formatted="false">Liquid_WatchOnly</string>
+    <string name="loc_1713eb65" formatted="false">mac</string>
+    <string name="loc_0389b783" formatted="false">tag</string>
+    <string name="loc_05f29bcb" formatted="false">AEADBadTagException</string>
+    <string name="loc_94b6dca8" formatted="false">Incorrect password</string>
+    <string name="loc_20968582" formatted="false">Decryption failed</string>
+    <string name="loc_aeabc606" formatted="false">Import Wallet</string>
+    <string name="loc_7c2117d5" formatted="false">Manual Import</string>
+    <string name="loc_9ae2cb2b" formatted="false">Import</string>
+    <string name="loc_3167464e" formatted="false">sh(</string>
+    <string name="loc_ab1cfe02" formatted="false">bc1</string>
+    <string name="loc_f986ec47" formatted="false">BIP39 seed, Electrum seed, WIF private key, xpub/zpub, descriptor, or address</string>
+    <string name="loc_d5fabbff" formatted="false">JSON wallet export detected</string>
+    <string name="loc_c43dbb42" formatted="false">Liquid CT descriptor detected</string>
+    <string name="loc_26b5e032" formatted="false">Output descriptor with key origin</string>
+    <string name="loc_c329d1ef" formatted="false">Output descriptor detected</string>
+    <string name="loc_c8579cd6" formatted="false">Watch-only with key origin</string>
+    <string name="loc_9dec0f67" formatted="false">Watch-only wallet</string>
+    <string name="loc_3c22bb6f" formatted="false">Some hardware wallets do not support PSBT signing without a master fingerprint â your hardware wallet should provide one alongside the xpub/zpub.</string>
+    <string name="loc_517ece75" formatted="false">WIF private key detected</string>
+    <string name="loc_85e5fba3" formatted="false">Extended private key</string>
+    <string name="loc_e7f0104f" formatted="false">Valid BIP39 seed phrase</string>
+    <string name="loc_9589b41e" formatted="false">Local Cosigner</string>
+    <string name="loc_b848af0e" formatted="false">Optional signer for this multisig wallet</string>
+    <string name="loc_7a4499bf" formatted="false">Seed or xprv</string>
+    <string name="loc_796b4a85" formatted="false">BIP39 seed or [fingerprint/path]xprv...</string>
+    <string name="loc_0fdf7e3f" formatted="false">prv</string>
+    <string name="loc_c6354927" formatted="false">Fingerprint must match one cosigner.</string>
+    <string name="loc_cc38eb35" formatted="false">Local signer attached.</string>
+    <string name="loc_711aadc6" formatted="false">Leave blank for watch-only multisig.</string>
+    <string name="loc_d271ea89" formatted="false">BIP39 Passphrase (optional)</string>
+    <string name="loc_a7557fbf" formatted="false">Set Master Fingerprint</string>
+    <string name="loc_161165a5" formatted="false">Must be exactly 8 hex characters</string>
+    <string name="loc_894dedef" formatted="false">Custom Gap Limit</string>
+    <string name="loc_638eb802" formatted="false">Import Multisig</string>
+    <string name="loc_a016ef65" formatted="false">Import Liquid Watch-Only</string>
+    <string name="loc_5ab1fed3" formatted="false">Import Key</string>
+    <string name="loc_255d09fd" formatted="false">Multisig Wallet</string>
+    <string name="loc_7999830a" formatted="false">Import a config file or enter cosigners manually</string>
+    <string name="loc_1777bbf2" formatted="false">Manual</string>
+    <string name="loc_4477af0d" formatted="false">text/*</string>
+    <string name="loc_41133d17" formatted="false">Config File</string>
+    <string name="loc_1db77587" formatted="false">or</string>
+    <string name="loc_0e42bd4f" formatted="false">Restore Wallet File</string>
+    <string name="loc_0eeb7864" formatted="false">Import an Ibis wallet backup file</string>
+    <string name="loc_e4783294" formatted="false">Select backup file</string>
+    <string name="loc_5bc64b9b" formatted="false">Reading backup file...</string>
+    <string name="loc_ab6580da" formatted="false">Review selected backup</string>
+    <string name="loc_380cec3b" formatted="false">Sweep Private Key</string>
+    <string name="loc_ba4c3466" formatted="false">Input WIF Key</string>
+    <string name="loc_3de64ebf" formatted="false">Backup ready to restore</string>
+    <string name="loc_6fca7516" formatted="false">addresses</string>
+    <string name="loc_eaa81a4c" formatted="false">transactions</string>
+    <string name="loc_10e2db3b" formatted="false">blockExplorer</string>
+    <string name="loc_cb30a644" formatted="false">customUrl</string>
+    <string name="loc_6111fafb" formatted="false">feeSource</string>
+    <string name="loc_99b96a9c" formatted="false">liquidExplorer</string>
+    <string name="loc_abcf6446" formatted="false">liquidExplorerCustomUrl</string>
+    <string name="loc_1ca1cadd" formatted="false">liquidTorEnabled</string>
+    <string name="loc_84f6cffe" formatted="false">liquidAutoSwitch</string>
+    <string name="loc_7c5949d4" formatted="false">liquidServerSelectedByUser</string>
+    <string name="loc_929a5c05" formatted="false">block explorer</string>
+    <string name="loc_90799139" formatted="false">fee source</string>
+    <string name="loc_52640f61" formatted="false">Liquid explorer</string>
+    <string name="loc_b61cfdd3" formatted="false">Liquid connectivity</string>
+    <string name="loc_82807e0f" formatted="false">Import Server Settings</string>
+    <string name="loc_997e26df" formatted="false">Electrum servers and external services</string>
+    <string name="loc_867cb15f" formatted="false">Encrypted backup</string>
+    <string name="loc_bf01e3a2" formatted="false">Enter the password to decrypt and review this backup.</string>
+    <string name="loc_7a2478a8" formatted="false">Restore Wallet</string>
+    <string name="loc_f73683e2" formatted="false">Decrypt Backup</string>
+    <string name="loc_e18f112a" formatted="false">Choose Different File</string>
+    <string name="loc_955fc6c6" formatted="false">m/48\'/0\'/0\'/2\'</string>
+    <string name="loc_68a4806d" formatted="false">Manual Multisig</string>
+    <string name="loc_698ba835" formatted="false">Threshold</string>
+    <string name="loc_ab662431" formatted="false">Path</string>
+    <string name="loc_9054140b" formatted="false">Cosigners</string>
+    <string name="loc_2a428c88" formatted="false">fingerprint: xpub</string>
+    <string name="loc_810fe008" formatted="false">One per line: fingerprint: xpub</string>
+    <string name="loc_7db8bd23" formatted="false">Local Cosigner (optional)</string>
+    <string name="loc_d44eca4c" formatted="false">Seed phrase or [fingerprint/path]xprv...</string>
+    <string name="loc_5237cff5" formatted="false">Use a BIP39 seed or origin-prefixed xprv matching one cosigner fingerprint.</string>
+    <string name="loc_2471f7fc" formatted="false">P2WSH</string>
+    <string name="loc_acfc8aab" formatted="false">Use</string>
+    <string name="loc_78975c63" formatted="false">BSMS 1.0</string>
+    <string name="loc_a422f393">Name: %1$s</string>
+    <string name="loc_3abd8e83" formatted="false">Derivation: $derivationPath</string>
+    <string name="loc_f1d5b96d" formatted="false">Format: $format</string>
+    <string name="loc_3a5b3a4c" formatted="false">m/</string>
+    <string name="loc_5a29fbef" formatted="false">).removePrefix(</string>
+    <string name="loc_6b4510f0" formatted="false">)}]$xpub/$branch/*</string>
+    <string name="loc_f3bbdb9b" formatted="false">wsh(sortedmulti($threshold,$keys))</string>
+    <string name="loc_9fa6986f" formatted="false">m/$path</string>
+    <string name="loc_93bc34cc" formatted="false">sortedmulti</string>
+    <string name="loc_c5914305" formatted="false">multi</string>
+    <string name="loc_949d128a" formatted="false">wsh($inner)</string>
+    <string name="loc_7097fc17" formatted="false">sh(wsh($inner))</string>
+    <string name="loc_1bdca9b7" formatted="false">Filter Liquid transactions</string>
+    <string name="loc_ce31119b" formatted="false">Filter Lightning transactions</string>
+    <string name="loc_2fd2faaa" formatted="false">Liquid is loading for this wallet</string>
+    <string name="loc_899fe8a0" formatted="false">Liquid Address</string>
+    <string name="loc_ac616807" formatted="false">Received via</string>
+    <string name="loc_c6da6e5f" formatted="false">/tx/</string>
+    <string name="loc_854689fd" formatted="false">liquid_balance_swap_details</string>
+    <string name="loc_8967f122" formatted="false">liquid_balance_lightning_advanced</string>
+    <string name="loc_625681c5" formatted="false">Liquid Transaction ID</string>
+    <string name="loc_09d663eb" formatted="false">Copy Transaction ID</string>
+    <string name="loc_8c5f0b00" formatted="false">Lightning reference</string>
+    <string name="loc_1bb54c32" formatted="false">Copy Lightning Reference</string>
+    <string name="loc_c8093bf9" formatted="false">Lightning Recipient</string>
+    <string name="loc_8f10cfd9" formatted="false">Recipient Address</string>
+    <string name="loc_dd12fe68" formatted="false">Copy Lightning Recipient</string>
+    <string name="loc_06d539e7" formatted="false">Copy Recipient Address</string>
+    <string name="loc_61bda033" formatted="false">Boltz Swap Fee</string>
+    <string name="loc_0f0b54c6" formatted="false">Copy Swap ID</string>
+    <string name="loc_45f80a27" formatted="false">Advanced</string>
+    <string name="loc_2254b16b" formatted="false">Collapse advanced Lightning details</string>
+    <string name="loc_0c3d4854" formatted="false">Expand advanced Lightning details</string>
+    <string name="loc_950671ea" formatted="false">Claim Address</string>
+    <string name="loc_f967d9c8" formatted="false">Lockup Address</string>
+    <string name="loc_bd2e4fa8" formatted="false">lightning_deposit_address</string>
+    <string name="loc_f2cab3fe" formatted="false">lightning_refund_address</string>
+    <string name="loc_5fd82ed8" formatted="false">Invoice</string>
+    <string name="loc_4b07661a" formatted="false">lightning_invoice</string>
+    <string name="loc_35e0bd00" formatted="false">Resolved Payment Input</string>
+    <string name="loc_b4efe7c3" formatted="false">lightning_resolved_input</string>
+    <string name="loc_8236c6fa" formatted="false">Refund Public Key</string>
+    <string name="loc_e49a8137" formatted="false">lightning_refund_pubkey</string>
+    <string name="loc_852cf06d" formatted="false">Claim Public Key</string>
+    <string name="loc_8d909269" formatted="false">lightning_claim_pubkey</string>
+    <string name="loc_da29bafe" formatted="false">Swap Tree</string>
+    <string name="loc_80520a6f" formatted="false">lightning_swap_tree</string>
+    <string name="loc_fadd6716" formatted="false">Blinding Key</string>
+    <string name="loc_94c2ff0d" formatted="false">lightning_blinding_key</string>
+    <string name="loc_58267a45" formatted="false">Source</string>
+    <string name="loc_b2a432e9" formatted="false">Timeout Block Height</string>
+    <string name="loc_fd2abe42" formatted="false">Bitcoin Funding Address</string>
+    <string name="loc_948bf4a1" formatted="false">Liquid Swap Deposit Address</string>
+    <string name="loc_ce4ef127" formatted="false">Lightning Received</string>
+    <string name="loc_15e084c6" formatted="false">Lightning Sent</string>
+    <string name="loc_8215f8b9" formatted="false">BTC/L-BTC chain swap</string>
+    <string name="loc_71ede617" formatted="false">Boltz Lightning receive swap</string>
+    <string name="loc_78f3c020" formatted="false">Boltz Lightning send swap</string>
+    <string name="loc_0c0664c9" formatted="false">Native L-BTC receive</string>
+    <string name="loc_4553b000" formatted="false">Native L-BTC send</string>
+    <string name="loc_e15158bb" formatted="false">%.2f %s</string>
+    <string name="loc_df3eb599" formatted="false">liquid_receive_amount</string>
+    <string name="loc_4f62b1d9" formatted="false">liquid_receive_label</string>
+    <string name="loc_c2ff3044" formatted="false">, liquidAmount)}</string>
+    <string name="loc_2c39b4f1" formatted="false">assetid=$selectedAssetId</string>
+    <string name="loc_10515e58" formatted="false">Receive Liquid</string>
+    <string name="loc_869ffe29" formatted="false">Receive Lightning</string>
+    <string name="loc_25464582" formatted="false">Liquid QR Code</string>
+    <string name="loc_da2e3020" formatted="false">Generating...</string>
+    <string name="loc_fb85740c" formatted="false">No wallet</string>
+    <string name="loc_53ae02a5" formatted="false">New</string>
+    <string name="loc_2ec7b25e" formatted="false">Share</string>
+    <string name="loc_44b6d553" formatted="false">text/plain</string>
+    <string name="loc_ebbd9745" formatted="false">Share receive request</string>
+    <string name="loc_f57fc8b3" formatted="false">No app available to share</string>
+    <string name="loc_02012acf" formatted="false">â ****</string>
+    <string name="loc_c5ff4e34" formatted="false">e.g. Payment from Alice</string>
+    <string name="loc_171555e8" formatted="false">Label saved</string>
+    <string name="loc_2b196e9d" formatted="false">Embed in QR</string>
+    <string name="loc_de610209" formatted="false">Creating invoice...</string>
+    <string name="loc_2834b290" formatted="false">Lightning receive via Boltz</string>
+    <string name="loc_65c049be" formatted="false">Lightning Invoice QR</string>
+    <string name="loc_a1329beb" formatted="false">Copy invoice</string>
+    <string name="loc_df69ee40" formatted="false">Lightning Invoice</string>
+    <string name="loc_36de1312" formatted="false">Invoice copied</string>
+    <string name="loc_739b859d" formatted="false">Payment Received!</string>
+    <string name="loc_777771dd" formatted="false">New Invoice</string>
+    <string name="loc_91a0293c" formatted="false">Generate Invoice</string>
+    <string name="pending_lightning_invoices_title" formatted="false">Pending invoices</string>
+    <string name="pending_lightning_invoice_delete_title" formatted="false">Delete pending invoice?</string>
+    <string name="pending_lightning_invoice_delete_message" formatted="false">This removes the pending invoice from the list. If it was already paid but not received, you may still need to claim it.</string>
+    <string name="pending_lightning_invoice_boltz_id" formatted="false">Boltz ID</string>
+    <string name="pending_lightning_invoice_last_claim_format">Last claim: %1$s</string>
+    <string name="pending_lightning_invoice_last_claim_never" formatted="false">Never</string>
+    <string name="pending_lightning_invoice_claiming" formatted="false">Claiming...</string>
+    <string name="loc_5c96cb11" formatted="false">All Addresses</string>
+    <string name="loc_8bc041b3" formatted="false">All UTXOs</string>
+    <string name="loc_d1b845fc" formatted="false">lightning_invoice_label</string>
+    <string name="loc_c5f4423b" formatted="false">Create Invoice</string>
+    <string name="loc_ed358a19" formatted="false">Fetching limits...</string>
+    <string name="loc_1c8c54ce" formatted="false">e.g. Lightning sale</string>
+    <string name="loc_685c7dc4" formatted="false">Label will be saved with invoice</string>
+    <string name="loc_982772df" formatted="false">Embed in invoice</string>
+    <string name="loc_cddf2d76" formatted="false">Send </string>
+    <string name="loc_972e5de0" formatted="false">Send L-BTC</string>
+    <string name="loc_002b1ce2" formatted="false">Coin Control</string>
+    <string name="loc_fcc11f52" formatted="false">Multiple</string>
+    <string name="loc_8a1057a2" formatted="false">Tap to add Liquid recipients</string>
+    <string name="loc_d98e9517" formatted="false">Tap to edit recipients</string>
+    <string name="loc_4622d13c" formatted="false">Liquid address</string>
+    <string name="loc_432999cf" formatted="false">Liquid, BOLT 11/12, or LN Address</string>
+    <string name="loc_a207ba41" formatted="false">â $LIQUID_HIDDEN_AMOUNT</string>
+    <string name="loc_cbc7b353" formatted="false">Enter sats</string>
+    <string name="loc_b8fd5376" formatted="false">Set by payment</string>
+    <string name="loc_277e2626" formatted="false">Available</string>
+    <string name="loc_a53b6469" formatted="false">Max</string>
+    <string name="loc_642fdbfc" formatted="false">e.g. Payment to Alice</string>
+    <string name="loc_81e9e64d" formatted="false">Liquid wallet is not ready yet.</string>
+    <string name="loc_816ff282" formatted="false">Review Payment</string>
+    <string name="loc_c0a03bef" formatted="false">PSET Disabled</string>
+    <string name="loc_81f5c0cf" formatted="false">Review Transaction</string>
+    <string name="loc_ea4b5d54" formatted="false"> }.orEmpty()}</string>
+    <string name="loc_149818bf" formatted="false">Default: 0.1 sat/vB</string>
+    <string name="loc_41389778" formatted="false">Estimating Fee...</string>
+    <string name="loc_9a8a0eaf" formatted="false">Pay Lightning</string>
+    <string name="loc_74445676" formatted="false">Create Unsigned PSET</string>
+    <string name="loc_fb32910c" formatted="false">Close anytime. Payment continues in background.</string>
+    <string name="loc_b86dbd12" formatted="false">Building transaction preview...</string>
+    <string name="loc_ebed1e21" formatted="false">Refund address</string>
+    <string name="loc_895ab1d4" formatted="false">Sending To</string>
+    <string name="loc_d19e8dd8" formatted="false">Sending:</string>
+    <string name="loc_e09d7895" formatted="false">Change:</string>
+    <string name="loc_50f5a971" formatted="false">Liquid Network Fee:</string>
+    <string name="loc_03eece5a" formatted="false">Total</string>
+    <string name="loc_65759a78" formatted="false">Paying To</string>
+    <string name="loc_a7133d27" formatted="false">Payment Amount:</string>
+    <string name="loc_635f0634" formatted="false">$ticker payment</string>
+    <string name="loc_5919c3ba" formatted="false">)} fee</string>
+    <string name="loc_d7c667f0" formatted="false">BOLT12 offer</string>
+    <string name="loc_10d4d7dc" formatted="false">Lightning invoice</string>
+    <string name="loc_42429685" formatted="false">Lightning Address</string>
+    <string name="loc_26443ab0" formatted="false">Liquid payment</string>
+    <string name="loc_abbfea89" formatted="false">Boltz Swap Fee:</string>
+    <string name="loc_dc3dd7c1" formatted="false">Lightning swap service</string>
+    <string name="loc_2944f33c" formatted="false">Select UTXOs to spend from</string>
+    <string name="loc_27833d8a" formatted="false">Select All</string>
+    <string name="loc_4340d39b" formatted="false">Clear All</string>
+    <string name="loc_e17307d1" formatted="false">Not selected</string>
+    <string name="loc_bdedd2ce" formatted="false">Unconfirmed UTXOs are disabled in settings</string>
+    <string name="loc_b01f4f95" formatted="false">Done</string>
+    <string name="loc_6f2c1806" formatted="false">Remove</string>
+    <string name="loc_ba974c5f" formatted="false">Amount (sats)</string>
+    <string name="loc_399e8a9a" formatted="false">Amount (BTC)</string>
+    <string name="loc_a4657728" formatted="false">+ Add Recipient</string>
+    <string name="loc_742950e0" formatted="false">Sending ($validRecipientCount recipients)</string>
+    <string name="loc_fea7157d" formatted="false">Est. fee</string>
+    <string name="loc_2b1af52a" formatted="false">Remaining</string>
+    <string name="loc_7a11db2b" formatted="false">Review PSET</string>
+    <string name="loc_784d1146" formatted="false">Pay BOLT12 Offer?</string>
+    <string name="loc_53e5d68a" formatted="false">Pay Lightning Invoice?</string>
+    <string name="loc_b876cbcd" formatted="false">Pay Lightning Address?</string>
+    <string name="loc_57cf7ca4" formatted="false">Sending...</string>
+    <string name="loc_00188e69" formatted="false">Paying Lightning</string>
+    <string name="loc_30e230be" formatted="false">Lightning Payment Sent</string>
+    <string name="loc_9a4d0ff4" formatted="false">Send Failed</string>
+    <string name="loc_666a54bd" formatted="false">Lightning Payment Failed</string>
+    <string name="loc_9d0cf287" formatted="false">BOLT12</string>
+    <string name="loc_bd7ab36d" formatted="false">LNURL</string>
+    <string name="loc_0405a33d" formatted="false">BOLT11</string>
+    <string name="loc_dc39fbcf" formatted="false">Multiple send only supports Liquid recipients</string>
+    <string name="loc_aa22b478" formatted="false">Enter a Liquid address or liquidnetwork URI</string>
+    <string name="loc_e2cc6c8d" formatted="false">, amountSats / 100_000_000.0).trimEnd(\'0\').trimEnd(\'.\')} BTC</string>
+    <string name="loc_be87cc68" formatted="false">pending_payments_card</string>
+    <string name="loc_23424238" formatted="false">Pending Payments</string>
+    <string name="loc_935f3cd2" formatted="false">pending_lightning_$swapKey</string>
+    <string name="loc_d11fdae9" formatted="false">pending_liquid_$txKey</string>
+    <string name="loc_6e0455fc" formatted="false">$count</string>
+    <string name="loc_bd660b8b" formatted="false">Lockup</string>
+    <string name="loc_a295bd91" formatted="false">Payment</string>
+    <string name="loc_c52f86d9" formatted="false">Funding Txid</string>
+    <string name="loc_ae042255" formatted="false">Fee</string>
+    <string name="loc_c1290bae" formatted="false">Txid</string>
+    <string name="loc_b53207d9" formatted="false">PSET is temporarily unavailable for live use.</string>
+    <string name="loc_35ab2ae5" formatted="false">Liquid Server</string>
+    <string name="loc_4c1a268a" formatted="false">My Liquid Server</string>
+    <string name="loc_b68a3a98" formatted="false">blockstream.info</string>
+    <string name="loc_364b0d65" formatted="false">Too many attempts</string>
+    <string name="loc_0a18f141" formatted="false">Incorrect PIN</string>
+    <string name="loc_bf4a5bdb" formatted="false">Enter PIN to unlock</string>
+    <string name="loc_cabf9832" formatted="false">Authenticate to continue</string>
+    <string name="loc_d00009b0" formatted="false">Use biometric</string>
+    <string name="loc_3dd7ffa7" formatted="false">C</string>
+    <string name="loc_922337f3" formatted="false">Biometric</string>
+    <string name="loc_3d1100cc" formatted="false">Backspace</string>
+    <string name="loc_6d48b5d9" formatted="false">Unlock</string>
+    <string name="loc_b6f847eb" formatted="false">Remove Watch-Only Wallet</string>
+    <string name="loc_9f4e5e7c" formatted="false">Delete Wallet</string>
+    <string name="loc_8bbd00a8" formatted="false">- You can re-import it later with the same xpub.</string>
+    <string name="loc_849681db" formatted="false">- This action cannot be undone. Make sure you have backed up your recovery phrase.</string>
+    <string name="loc_21aea7b2" formatted="false">Confirm removal</string>
+    <string name="loc_c950e4fe" formatted="false">I understand this cannot be undone</string>
+    <string name="loc_4f49447d" formatted="false">Wallet Settings</string>
+    <string name="loc_3cb75e79" formatted="false">Bitcoin Gap Limit</string>
+    <string name="loc_d30a3f21" formatted="false">Gap Limit</string>
+    <string name="loc_7b07ecad" formatted="false">Master Fingerprint</string>
+    <string name="loc_aea21c85" formatted="false">e.g. 73c5da0a</string>
+    <string name="loc_39921dc5" formatted="false">Must be 8 hex characters</string>
+    <string name="loc_37540690" formatted="false">8 hex characters</string>
+    <string name="loc_aeb83a33" formatted="false">Liquid Gap Limit</string>
+    <string name="loc_80575606" formatted="false">Security Warning</string>
+    <string name="loc_f9a99af0" formatted="false">Your seed phrase is the ONLY way to recover your wallet. Anyone with access to it can steal your funds.</string>
+    <string name="loc_79618ad9" formatted="false">Make sure no one is watching your screen and never share this information with anyone.</string>
+    <string name="loc_f2415d81" formatted="false">I Understand</string>
+    <string name="loc_b5f801e0" formatted="false">This will rescan all addresses for transactions. Use this if missing transactions or after backup restore.</string>
+    <string name="loc_027001ed" formatted="false">Generate</string>
+    <string name="loc_ddfe3fc8" formatted="false">No Wallets</string>
+    <string name="loc_7bc49729" formatted="false">Wallet</string>
+    <string name="loc_07533587" formatted="false">Password must be at least 8 characters.</string>
+    <string name="loc_c2e56d59" formatted="false">Passwords do not match.</string>
+    <string name="loc_1595caf6" formatted="false">Minimum 8 characters</string>
+    <string name="loc_9f3c8f68" formatted="false">Passwords don\'t match</string>
+    <string name="loc_786d9a7f" formatted="false">application/jsonl</string>
+    <string name="loc_384d3cf0" formatted="false">Label Import/Export</string>
+    <string name="loc_c16e7ad7" formatted="false">Scope</string>
+    <string name="loc_5be8962f" formatted="false">Both</string>
+    <string name="loc_01aca83d" formatted="false">$addrCount</string>
+    <string name="loc_6572542a" formatted="false">$txCount</string>
+    <string name="loc_f4ab8a06" formatted="false">Transaction</string>
+    <string name="loc_d96dad4f" formatted="false">$totalCount</string>
+    <string name="loc_be647ac2" formatted="false">Combined</string>
+    <string name="loc_8ff687ec" formatted="false">BIP 329 (.jsonl) for Liquid labels</string>
+    <string name="loc_47980199" formatted="false">BIP 329 (.jsonl) or Electrum CSV</string>
+    <string name="loc_7021decf" formatted="false">text/csv</string>
+    <string name="loc_dfc94b72" formatted="false">application/octet-stream</string>
+    <string name="loc_60c57977" formatted="false">BIP 329 (.jsonl)</string>
+    <string name="loc_d6c1d26e" formatted="false">bitcoin</string>
+    <string name="loc_258f6353" formatted="false">liquid</string>
+    <string name="loc_47121894" formatted="false">combined</string>
+    <string name="loc_bbb17663" formatted="false">Hide QR</string>
+    <string name="loc_66008e32" formatted="false">Extended Public Key</string>
+    <string name="loc_8ca7adae" formatted="false">Watched Address</string>
+    <string name="loc_bf0bb69f" formatted="false">Liquid Descriptor</string>
+    <string name="loc_3e248346" formatted="false">Multisig Descriptor</string>
+    <string name="loc_85a65da2" formatted="false">View Key Material</string>
+    <string name="loc_f0f54738" formatted="false">What would you like to reveal?</string>
+    <string name="loc_e109877e" formatted="false">Private Key (WIF)</string>
+    <string name="loc_a5e85eb3" formatted="false">seed phrase</string>
+    <string name="loc_3794bd16" formatted="false">extended public key</string>
+    <string name="loc_f056b54f" formatted="false">Liquid descriptor</string>
+    <string name="loc_57fdf682" formatted="false">multisig descriptor</string>
+    <string name="loc_a19bae90" formatted="false">local cosigner</string>
+    <string name="loc_c4a5346c" formatted="false">private key</string>
+    <string name="loc_0d4e6f81" formatted="false">address</string>
+    <string name="loc_19af35f7" formatted="false">Scan this QR code to import the $qrSubtitle</string>
+    <string name="loc_73e00bb0" formatted="false">Key Material</string>
+    <string name="loc_ad04894c" formatted="false">Back to Selection</string>
+    <string name="loc_795ed2a1" formatted="false">Clipboard will auto-clear in 30 seconds.</string>
+    <string name="loc_dba89d87" formatted="false">View Seed Phrase</string>
+    <string name="loc_2282451b" formatted="false">Labels (BIP 329)</string>
+    <string name="loc_950ebab7" formatted="false">PSBT saved</string>
+    <string name="loc_ba6f9a9b" formatted="false">Failed to save PSBT</string>
+    <string name="loc_1959e119" formatted="false">Build PSBT</string>
+    <string name="loc_b6d2470a" formatted="false">Creating PSBT...</string>
+    <string name="loc_e44c4bc5" formatted="false">Combining PSBT...</string>
+    <string name="loc_b348df37" formatted="false">Broadcasting transaction...</string>
+    <string name="loc_ef3545ac" formatted="false">Export Partial PSBT</string>
+    <string name="loc_af717776" formatted="false">Step 1: Export Unsigned PSBT</string>
+    <string name="loc_f3064a4f" formatted="false">Pass this PSBT to the next signer.</string>
+    <string name="loc_a9286c09" formatted="false">Scan or save PSBT for signing.</string>
+    <string name="loc_4fbfa10f" formatted="false">partial.psbt</string>
+    <string name="loc_d7ac0651" formatted="false">unsigned.psbt</string>
+    <string name="loc_aa3edbf6" formatted="false">Save File</string>
+    <string name="loc_2afaf83d" formatted="false">PSBT</string>
+    <string name="loc_44c1495a" formatted="false">PSBT copied</string>
+    <string name="loc_02e71d7c" formatted="false">Copy PSBT</string>
+    <string name="loc_4203f666" formatted="false">To</string>
+    <string name="loc_a413cd58" formatted="false">Step 2: Import Signed PSBT</string>
+    <string name="loc_85833e18" formatted="false">Scan or load signed PSBT for broadcasting.</string>
+    <string name="loc_cebebb60" formatted="false">Import Partial</string>
+    <string name="loc_b39ab546" formatted="false">Load Partial</string>
+    <string name="loc_5d97579c" formatted="false">Paste</string>
+    <string name="loc_61673a2c" formatted="false">Connect to Electrum to broadcast</string>
+    <string name="loc_5a0b70fc" formatted="false">Failed to Create PSBT</string>
+    <string name="loc_c1c941b3" formatted="false">Confirm Broadcast</string>
+    <string name="loc_3d3785e2" formatted="false">Signed transaction received. Review and confirm to broadcast.</string>
+    <string name="loc_f45861d1" formatted="false">Broadcast Transaction</string>
+    <string name="loc_ea6d758a" formatted="false">Paste Signed Transaction</string>
+    <string name="loc_07fafe3b" formatted="false">Paste signed PSBT base64 or raw transaction hex</string>
+    <string name="loc_460573b5" formatted="false">Signed PSBT or raw tx hex</string>
+    <string name="loc_389db675" formatted="false">Submit</string>
+    <string name="loc_aac53e41" formatted="false">Low</string>
+    <string name="loc_c1df4081" formatted="false">Medium</string>
+    <string name="loc_51374b6b" formatted="false">High</string>
+    <string name="loc_82f702be" formatted="false">QR Density</string>
+    <string name="loc_1f8c479d" formatted="false">BC-UR</string>
+    <string name="loc_7eec6a01" formatted="false">BBQr</string>
+    <string name="loc_334a5af6" formatted="false">QR Format</string>
+    <string name="loc_f8155e77" formatted="false">QR Brightness</string>
+    <string name="loc_5743885d" formatted="false">%.8f BTC</string>
+    <string name="loc_3ccdb0ea" formatted="false">%,d sats</string>
+    <string name="loc_6b979065" formatted="false">receive_amount</string>
+    <string name="loc_edf97a25" formatted="false">receive_label</string>
+    <string name="loc_894037be" formatted="false">, btcAmount)}</string>
+    <string name="loc_4126d5db" formatted="false">Receive Bitcoin</string>
+    <string name="loc_09b2e10d" formatted="false">) { it.joinToString(</string>
+    <string name="loc_8af0542b" formatted="false">$amount sats</string>
+    <string name="loc_a5d25f50" formatted="false">$amount BTC</string>
+    <string name="loc_7511be57" formatted="false">USD</string>
+    <string name="loc_68cf918d" formatted="false">MMM d, yyyy HH:mm</string>
+    <string name="loc_a06704d8" formatted="false">App Lock</string>
+    <string name="loc_b2481aa2" formatted="false">Use fingerprint or face</string>
+    <string name="loc_3e2ca137" formatted="false">Not available on this device</string>
+    <string name="loc_4355b799" formatted="false">PIN code</string>
+    <string name="loc_599c7d5f" formatted="false">Lock Timer</string>
+    <string name="security_lock_timing_when_minimized">When minimized</string>
+    <string name="security_lock_timing_after_1_min">After 1 minute</string>
+    <string name="security_lock_timing_after_5_min">After 5 minutes</string>
+    <string name="loc_6e64c96f" formatted="false">Randomize PIN pad</string>
+    <string name="loc_94fff941" formatted="false">Shuffle keypad digits on unlock</string>
+    <string name="loc_a0a0bf84" formatted="false">Enable PIN code lock first</string>
+    <string name="loc_b68140bc" formatted="false">Duress PIN</string>
+    <string name="loc_a1d57483" formatted="false">Set up PIN or biometric to enable</string>
+    <string name="loc_96e7526f" formatted="false">Add a wallet first</string>
+    <string name="loc_f6649c50" formatted="false">Unlock Ibis into a decoy wallet</string>
+    <string name="loc_10bf1589" formatted="false">Auto-Wipe</string>
+    <string name="loc_4e19a59a" formatted="false">Wipe after unlock attempts</string>
+    <string name="loc_3bbee4d1" formatted="false">Erase app data after failed unlock</string>
+    <string name="loc_560ec39d" formatted="false">Set up PIN code to enable</string>
+    <string name="loc_bd14b437" formatted="false">Cloak Mode</string>
+    <string name="loc_127261f8" formatted="false">Disguise as calculator</string>
+    <string name="loc_72808e02" formatted="false">App icon changes after restart</string>
+    <string name="loc_5d688c9a" formatted="false">Hide Ibis behind a calculator app</string>
+    <string name="loc_714c3012" formatted="false">Disable Screenshots</string>
+    <string name="loc_0d6a729c" formatted="false">Blocks screenshots and app previews</string>
+    <string name="loc_3139ebdd" formatted="false">Disable Cloak Mode?</string>
+    <string name="loc_aa09917b" formatted="false">The app icon will revert to Ibis Wallet after restart. You may need to re-add the homescreen shortcut.</string>
+    <string name="loc_80f874cd" formatted="false">Disable</string>
+    <string name="loc_2a9da994" formatted="false">Restart Required</string>
+    <string name="loc_28441b9b" formatted="false">Restart</string>
+    <string name="loc_2dc29d4d" formatted="false">Later</string>
+    <string name="loc_4b582481" formatted="false">Disable Duress PIN?</string>
+    <string name="loc_cd305fb8" formatted="false">The decoy wallet will be removed.</string>
+    <string name="loc_5e0c0f5b" formatted="false">Enable Auto-Wipe?</string>
+    <string name="loc_f40ccd04" formatted="false">Enable</string>
+    <string name="loc_f7b9c073" formatted="false">All wallet data will be permanently erased after repeated failed unlock attempts. This cannot be undone.</string>
+    <string name="loc_5ed5bb5d" formatted="false">Make sure your seed phrases are backed up. Without a backup, your funds will be lost permanently.</string>
+    <string name="loc_c47ba42d" formatted="false">Disable Security?</string>
+    <string name="loc_38a084fc" formatted="false">Anyone with access to your device will be able to open the app.</string>
+    <string name="loc_40a878b7" formatted="false">Create PIN</string>
+    <string name="loc_c3d36da0" formatted="false">Confirm PIN</string>
+    <string name="loc_c3c70203" formatted="false">Enter the PIN again to confirm</string>
+    <string name="loc_181911f5" formatted="false">PINs don\'t match, try again</string>
+    <string name="loc_a41dbf02" formatted="false">Next</string>
+    <string name="loc_406e9ad8" formatted="false">Confirm</string>
+    <string name="loc_dfe5efa3" formatted="false">security_advanced</string>
+    <string name="loc_dca4222b" formatted="false">security_fingerprint</string>
+    <string name="loc_72dfb116" formatted="false">security_passphrase</string>
+    <string name="loc_02f0f5ed" formatted="false">security_gap_limit</string>
+    <string name="loc_d44507ce" formatted="false">security_path</string>
+    <string name="loc_330c7795" formatted="false">K</string>
+    <string name="loc_ad68e236" formatted="false">L</string>
+    <string name="loc_1df18730" formatted="false">Invalid word(s): $display</string>
+    <string name="loc_54f0c2db" formatted="false">$wordCount words â need 12, 15, 18, 21, or 24</string>
+    <string name="loc_e6b56697" formatted="false">Create Duress PIN</string>
+    <string name="loc_66399ff4" formatted="false">Confirm Duress PIN</string>
+    <string name="loc_e624c41d" formatted="false">To trigger biometric unlock, press \'C\' on the lock screen PIN pad</string>
+    <string name="loc_f7b08d67" formatted="false">Must differ from your unlock PIN</string>
+    <string name="loc_ad46d69f" formatted="false">Decoy Wallet Setup</string>
+    <string name="loc_d9194d2d" formatted="false">Seed Source</string>
+    <string name="loc_47bc3f78" formatted="false">Decoy Seed Phrase</string>
+    <string name="loc_16bd0da2" formatted="false">BIP39 seed, Electrum seed, WIF private key, xpub/zpub, or address</string>
+    <string name="loc_396e66e1" formatted="false">Set a master fingerprint for better hardware wallet PSBT compatibility.</string>
+    <string name="loc_189d09c6" formatted="false">Enable Duress PIN</string>
+    <string name="loc_bbc273c5" formatted="false">Set Unlock Pin</string>
+    <string name="loc_b02d0f6b" formatted="false">Confirm Unlock Pin</string>
+    <string name="loc_75f1a5fd" formatted="false">Enter this pin in the calculator app and press the \'=\' key to unlock</string>
+    <string name="loc_f71b82bb" formatted="false">Pin doesn\'t match, try again</string>
+    <string name="loc_a274c658" formatted="false">Send Bitcoin</string>
+    <string name="loc_2e7d2d6a" formatted="false">Tap to add recipients</string>
+    <string name="loc_b523ea08" formatted="false"> sats</string>
+    <string name="loc_c36aa1f6" formatted="false"> BTC</string>
+    <string name="loc_bed2bbb2" formatted="false">bitcoin:</string>
+    <string name="loc_fbcba3f7" formatted="false">â $HIDDEN_AMOUNT</string>
+    <string name="loc_0165575b" formatted="false">Connect to an Electrum server to send transactions</string>
+    <string name="loc_905c0d07" formatted="false">Add a wallet first to send Bitcoin</string>
+    <string name="loc_35504dec" formatted="false">Review PSBT</string>
+    <string name="loc_b85ab17d" formatted="false">Destination</string>
+    <string name="loc_8ffa41a4" formatted="false">Calculating fee, inputs, and change...</string>
+    <string name="loc_350880e1" formatted="false">Transaction build failed</string>
+    <string name="loc_59a98a53" formatted="false">Wallet change</string>
+    <string name="loc_a870ad41" formatted="false">Bitcoin Miner Fee:</string>
+    <string name="loc_0e813c50" formatted="false">UTF-8</string>
+    <string name="loc_8ea17042" formatted="false">amount</string>
+    <string name="loc_0ea750e8" formatted="false">label</string>
+    <string name="loc_b6bd307f" formatted="false">message</string>
+    <string name="loc_d71776d7" formatted="false">sp1</string>
+    <string name="loc_59a834aa" formatted="false">Invalid silent payment address</string>
+    <string name="loc_29c9db85" formatted="false">Invalid address format</string>
+    <string name="loc_9fe07173" formatted="false">123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz</string>
+    <string name="loc_f60e37e8" formatted="false">Invalid address length</string>
+    <string name="loc_6b92ae67" formatted="false">Invalid character: $char</string>
+    <string name="loc_8716a0ae" formatted="false">Invalid address encoding</string>
+    <string name="loc_11f5c49e" formatted="false">SHA-256</string>
+    <string name="loc_47e8978e" formatted="false">qpzry9x8gf2tvdw0s3jn54khce6mua7l</string>
+    <string name="loc_e2303680" formatted="false">Mixed case not allowed</string>
+    <string name="loc_5f135dd4" formatted="false">Invalid format</string>
+    <string name="loc_56459d9d" formatted="false">Create PSBT</string>
+    <string name="loc_d515634f" formatted="false">Confirm PSBT</string>
+    <string name="loc_8c7cfb7b" formatted="false">Confirm Transaction</string>
+    <string name="loc_01940fd6" formatted="false">General</string>
+    <string name="loc_d654b827" formatted="false">Wallet amounts shown in sats</string>
+    <string name="loc_781eebac" formatted="false">Wallet amounts shown in bitcoin</string>
+    <string name="loc_e762ab0b" formatted="false">Turn on NFC in Android settings</string>
+    <string name="loc_03cc7c45" formatted="false">Enable NFC read only</string>
+    <string name="loc_7e8f0b30" formatted="false">Enable NFC read + share</string>
+    <string name="loc_0708218f" formatted="false">Spend Unconfirmed</string>
+    <string name="loc_35cb0c66" formatted="false">Allow spending unconfirmed UTXOs</string>
+    <string name="loc_ccb38171" formatted="false">NFC</string>
+    <string name="loc_db88d4ce" formatted="false">Swipe Navigation</string>
+    <string name="loc_64f10f32" formatted="false">Liquid External Services</string>
+    <string name="loc_31ab2a4e" formatted="false">Fee Rate Source</string>
+    <string name="loc_892c0ce5" formatted="false">Tor connected</string>
+    <string name="loc_1a2bbf31" formatted="false">Tor connecting...</string>
+    <string name="loc_a4c47a71" formatted="false">Tor starting...</string>
+    <string name="loc_27d8399b" formatted="false">Tor error</string>
+    <string name="loc_d6353c61" formatted="false">Tor will start automatically</string>
+    <string name="loc_bb27d5c0" formatted="false">Server saved</string>
+    <string name="loc_a688468b" formatted="false">Block Explorer</string>
+    <string name="loc_00a426f8" formatted="false">Fiat Price Source</string>
+    <string name="historical_tx_fiat_title">Show historical prices</string>
+    <string name="historical_tx_fiat_subtitle">Show fiat price at time of transaction</string>
+    <string name="tx_history_show_current_prices">Show current prices</string>
+    <string name="tx_history_show_historical_prices">Show historical prices</string>
+    <string name="loc_a39dd5c6" formatted="false">Bitcoin Electrum Server</string>
+    <string name="loc_2a54f889" formatted="false">Open Bitcoin Electrum settings</string>
+    <string name="loc_56d9acd0" formatted="false">Layer 2 Options</string>
+    <string name="loc_c4d4a9f7" formatted="false">Liquid w/Lightning swaps</string>
+    <string name="loc_f1af1b9c" formatted="false">Trusted federation sidechain</string>
+    <string name="loc_84d348cb" formatted="false">Ark w/Lightning swaps</string>
+    <string name="loc_472e6036" formatted="false">Trustless L2 protocol (Coming soon)</string>
+    <string name="loc_eda2a508" formatted="false">Layer 2 amounts shown in sats</string>
+    <string name="loc_e0230c8c" formatted="false">Layer 2 amounts shown in bitcoin</string>
+    <string name="loc_14b0f0b9" formatted="false">Boltz API</string>
+    <string name="loc_799c4cd6" formatted="false">SideSwap API</string>
+    <string name="loc_c7185189" formatted="false">Liquid Electrum Server</string>
+    <string name="loc_1c1151e0" formatted="false">Open Liquid Electrum settings</string>
+    <string name="loc_7d880cb5" formatted="false">Disabled</string>
+    <string name="loc_64d3e427" formatted="false">No Liquid explorer links</string>
+    <string name="loc_8fa2318f" formatted="false">mempool.space</string>
+    <string name="loc_bed05818" formatted="false">Clearnet</string>
+    <string name="loc_e70effb6" formatted="false">mempool.space (Onion)</string>
+    <string name="loc_c49a3480" formatted="false">Onion via Tor Browser</string>
+    <string name="loc_c032eff3" formatted="false">Custom Server</string>
+    <string name="loc_b3694f7f" formatted="false">Custom URL</string>
+    <string name="loc_1ddabd37" formatted="false">No swipe gestures</string>
+    <string name="loc_ff9f65eb" formatted="false">Swipe between wallets</string>
+    <string name="loc_6ea25f47" formatted="false">Send / Receive</string>
+    <string name="loc_6e8be5a6" formatted="false">Swipe between balance, send, and receive</string>
+    <string name="loc_e124e866" formatted="false">Layers</string>
+    <string name="loc_62840d26" formatted="false">Swipe between layer 1 and layer 2</string>
+    <string name="loc_ff1867f2" formatted="false">No fee rate fetching</string>
+    <string name="loc_a1b0d97e" formatted="false">Onion via Tor</string>
+    <string name="loc_aeca6ac4" formatted="false">Connected server</string>
+    <string name="loc_060e830f" formatted="false">No fiat prices</string>
+    <string name="loc_d3b3c6d3" formatted="false">CoinGecko</string>
+    <string name="loc_c519cf9f" formatted="false">No Boltz swaps or lightning functionality</string>
+    <string name="loc_29c377a4" formatted="false">Boltz (Onion)</string>
+    <string name="loc_e4e0f733" formatted="false">No SideSwap swaps</string>
+    <string name="loc_91ea3f60" formatted="false">SideSwap (Tor)</string>
+    <string name="loc_0d01317f" formatted="false">Clearnet via Tor</string>
+    <string name="loc_bcc5378e" formatted="false">No block explorer links</string>
+    <string name="loc_f30653eb" formatted="false">liquid.network</string>
+    <string name="loc_1129520d" formatted="false">liquid.network (Onion)</string>
+    <string name="loc_3b5c1bb1" formatted="false">Blockstream</string>
+    <string name="loc_3822fc21" formatted="false">Saved</string>
+    <string name="loc_4bcccb6c" formatted="false">swap_advanced</string>
+    <string name="loc_37c0c1e8" formatted="false">swap_destination</string>
+    <string name="loc_94c57fcd" formatted="false">swap_fees</string>
+    <string name="loc_bebd07bb" formatted="false">Atomic Swap</string>
+    <string name="loc_cd053ef4" formatted="false">Provider disabled</string>
+    <string name="loc_e2c90bcd" formatted="false">Trusted Peg</string>
+    <string name="loc_6f9cca87" formatted="false">Swap will go to this Liquid address.</string>
+    <string name="loc_955fce50" formatted="false">Swap will go to this Bitcoin address.</string>
+    <string name="loc_04536bb4" formatted="false">Invalid Bitcoin address</string>
+    <string name="loc_90285d1b" formatted="false">Invalid Liquid address</string>
+    <string name="loc_a509369c" formatted="false">Bitcoin fee rate</string>
+    <string name="loc_78e3e750" formatted="false">Liquid fee rate</string>
+    <string name="loc_43525120" formatted="false">Leave blank for default estimate</string>
+    <string name="loc_857c8623" formatted="false">Enter a valid fee rate</string>
+    <string name="loc_f2b5f4d4" formatted="false">Enter a fee rate above 0</string>
+    <string name="loc_6ed649de" formatted="false">Amount exceeds available BTC balance</string>
+    <string name="loc_a35dd60c" formatted="false">Amount exceeds available L-BTC balance</string>
+    <string name="loc_abb2f6d2" formatted="false">Coin Control</string>
+    <string name="loc_47914d64" formatted="false">Coin Control</string>
+    <string name="loc_f0100030" formatted="false">Swap Setup</string>
+    <string name="loc_19280e4e" formatted="false">From</string>
+    <string name="loc_979d5904" formatted="false">Swap direction</string>
+    <string name="loc_c624cde4" formatted="false">Available:</string>
+    <string name="loc_dde5d7d1" formatted="false">e.g. Wallet rebalance</string>
+    <string name="loc_0094f526" formatted="false">Swap Provider</string>
+    <string name="loc_dfa2aff1" formatted="false">None</string>
+    <string name="loc_ef217ee7" formatted="false">Retry</string>
+    <string name="loc_2d4a03c5" formatted="false">Collapse advanced options</string>
+    <string name="loc_f5276b4c" formatted="false">Expand advanced options</string>
+    <string name="loc_19c27ea6" formatted="false">Custom funding fee rate</string>
+    <string name="loc_52f64443" formatted="false">Broadcasting swap...</string>
+    <string name="loc_9a0b9f8e" formatted="false">Review Swap</string>
+    <string name="loc_9ff7bb31" formatted="false">Preparing swap...</string>
+    <string name="loc_1b4f82ec" formatted="false">Review Actual Order</string>
+    <string name="loc_020518a4" formatted="false">Swap in progress</string>
+    <string name="loc_d0375699" formatted="false">Swap Complete</string>
+    <string name="loc_f3b88bca" formatted="false">New Swap</string>
+    <string name="loc_4bc43f02" formatted="false">failed_swap_details</string>
+    <string name="loc_9e5eae21" formatted="false">Swap Failed</string>
+    <string name="loc_715a4003" formatted="false">Hide Details</string>
+    <string name="loc_b7884731" formatted="false">Show Details</string>
+    <string name="loc_3e8c11e4" formatted="false">Deposit Address</string>
+    <string name="loc_ff3e9c4d" formatted="false">Destination Address</string>
+    <string name="loc_fff59f5b" formatted="false">Dismiss</string>
+    <string name="loc_cddc8112" formatted="false">Try Again</string>
+    <string name="loc_e09b31fa" formatted="false">pending_swaps_card</string>
+    <string name="loc_36c054ad" formatted="false">Pending Swaps</string>
+    <string name="loc_6e01dd8a" formatted="false">Collapse pending swaps</string>
+    <string name="loc_0a0d0a98" formatted="false">Expand pending swaps</string>
+    <string name="loc_4ccb12cc" formatted="false">L1</string>
+    <string name="loc_d5c24376" formatted="false">L2</string>
+    <string name="loc_65b11dc2" formatted="false">Collapse pending swap</string>
+    <string name="loc_02cecfdb" formatted="false">Expand pending swap</string>
+    <string name="loc_0a2dc2b7" formatted="false">Est. receive</string>
+    <string name="loc_de6d547d" formatted="false">Status: $progressValue</string>
+    <string name="loc_2ff9404f" formatted="false">Settlement Txid</string>
+    <string name="loc_7e09343e" formatted="false">Exact $providerLabel order prepared. Funding not started yet.</string>
+    <string name="loc_4993013b" formatted="false">Funding may already be in flight. Verifying $providerLabel status.</string>
+    <string name="loc_2e46f394" formatted="false">Funding broadcast. Waiting for $providerLabel payout...</string>
+    <string name="loc_4818a44f" formatted="false">Select swap provider</string>
+    <string name="loc_cfe01156" formatted="false">Select specific UTXOs for this swap</string>
+    <string name="loc_cafd917d" formatted="false">, usdValue)}</string>
+    <string name="loc_6ff3adfb" formatted="false">Selected L-BTC UTXOs will fund this swap.</string>
+    <string name="loc_cce909f4" formatted="false">Selected Bitcoin UTXOs will fund this swap.</string>
+    <string name="loc_8a098662" formatted="false">Fee details loading</string>
+    <string name="loc_e8f8806d" formatted="false">Fee details unavailable</string>
+    <string name="loc_f572fd2a" formatted="false">Non-custodial swap, higher fees</string>
+    <string name="loc_5675a8d7" formatted="false">Custodial swap, lower fees</string>
+    <string name="loc_0e488bc5" formatted="false">, rate)} sat/vB</string>
+    <string name="loc_20604df1" formatted="false">, estimated.serviceFee * 100.0 / it).trimEnd(\'0\').trimEnd(\'.\') }%</string>
+    <string name="loc_85a9e0cb" formatted="false">Bitcoin funding fee</string>
+    <string name="loc_c5e0700a" formatted="false">Liquid funding fee</string>
+    <string name="loc_d3b3a18f" formatted="false">Liquid claim fee</string>
+    <string name="loc_41bcc5c5" formatted="false">Bitcoin claim fee</string>
+    <string name="loc_776ee9d4" formatted="false">Boltz service fee</string>
+    <string name="loc_88bc08a6" formatted="false">SideSwap service fee</string>
+    <string name="loc_9283713e" formatted="false">Estimated by Boltz</string>
+    <string name="loc_5154065c" formatted="false">Estimated by SideSwap</string>
+    <string name="loc_6203b65d" formatted="false">Provider transfer fees</string>
+    <string name="loc_00a16e52" formatted="false">Fees</string>
+    <string name="loc_7d9effcf" formatted="false">Total Fees (est.)</string>
+    <string name="swap_review_approx_fee_rate">≈ %1$s %2$s</string>
+    <string name="loc_94bea00f" formatted="false">Sending Swap...</string>
+    <string name="loc_7a4eb12d" formatted="false">Confirm Swap</string>
+    <string name="loc_75935701" formatted="false">Swap Overview</string>
+    <string name="loc_a9af1b38" formatted="false">Swapping</string>
+    <string name="loc_54da2c24" formatted="false">to (est.)</string>
+    <string name="loc_c0b66d5a" formatted="false">Copy swap ID</string>
+    <string name="loc_0430ad11" formatted="false">Collapse addresses</string>
+    <string name="loc_afb3fec8" formatted="false">Expand addresses</string>
+    <string name="loc_40fb77d1" formatted="false">Swap address</string>
+    <string name="loc_3083a5d1" formatted="false">Destination address</string>
+    <string name="loc_e607c9c3" formatted="false">Collapse fees</string>
+    <string name="loc_cd1ee95d" formatted="false">Expand fees</string>
+    <string name="loc_f71ec2bd" formatted="false">Confirm Sweep</string>
+    <string name="loc_e0f93278" formatted="false">Sweep Successful</string>
+    <string name="loc_6c94c593" formatted="false">} broadcast</string>
+    <string name="loc_3a47abe2" formatted="false">Enter WIF key (K..., L..., 5...)</string>
+    <string name="loc_565ceb03" formatted="false">Valid WIF key</string>
+    <string name="loc_c64a5328" formatted="false">Invalid WIF key</string>
+    <string name="loc_b7fdd705" formatted="false">Bitcoin address to receive funds</string>
+    <string name="loc_64811c90" formatted="false">Scan</string>
+    <string name="loc_aff19261" formatted="false">Scanning...</string>
+    <string name="loc_e35ba02b" formatted="false">Check Balance</string>
+    <string name="loc_085b1404" formatted="false">Funds Found</string>
+    <string name="loc_b82175c1" formatted="false">Review Sweep</string>
+    <string name="loc_4ce2351d" formatted="false">Connect to an Electrum server to sweep</string>
+    <string name="loc_6f733131" formatted="false">receive</string>
+    <string name="loc_acf41ffe" formatted="false">balance</string>
+    <string name="loc_a7733acd" formatted="false">send</string>
+    <string name="loc_cb1f3c1a" formatted="false">manage_wallets</string>
+    <string name="loc_00592807" formatted="false">import_wallet</string>
+    <string name="loc_f76e7734" formatted="false">generate_wallet</string>
+    <string name="loc_b11a619b" formatted="false">electrum_config</string>
+    <string name="loc_e545a0c5" formatted="false">settings</string>
+    <string name="loc_0fb29c65" formatted="false">layer2_options</string>
+    <string name="loc_c59bd5c1" formatted="false">security</string>
+    <string name="loc_b5f422e3" formatted="false">about</string>
+    <string name="loc_352a02fe" formatted="false">backup_restore</string>
+    <string name="loc_6a5bdc52" formatted="false">all_addresses</string>
+    <string name="loc_3f7f9e7c" formatted="false">all_utxos</string>
+    <string name="loc_f487c5a5" formatted="false">psbt_export</string>
+    <string name="loc_93e0f737" formatted="false">liquid_pset_export</string>
+    <string name="loc_cdfcb9b9" formatted="false">sweep_private_key</string>
+    <string name="loc_b3d2d55b" formatted="false">broadcast_transaction</string>
+    <string name="loc_0f6ddd46" formatted="false">liquid_server_config</string>
+    <string name="loc_25938561" formatted="false">swap</string>
+    <string name="loc_016527b1" formatted="false">Sweep private key</string>
+    <string name="loc_054cdf00" formatted="false">Swap Setup</string>
+    <string name="loc_0917a3e1" formatted="false">Wallet warning</string>
+    <string name="loc_0dd3b9b2" formatted="false">PSBT details</string>
+    <string name="loc_10459bad" formatted="false">Use PIN</string>
+    <string name="loc_11f7da21" formatted="false">Remove</string>
+    <string name="loc_131fd811" formatted="false">Transaction ID copied</string>
+    <string name="loc_1a81f7a0" formatted="false">Half hour</string>
+    <string name="loc_1d1e82ec" formatted="false">Disable auto-wipe</string>
+    <string name="loc_1dcfbd01" formatted="false">Review transaction</string>
+    <string name="loc_20fccd71" formatted="false">No quote available</string>
+    <string name="loc_29a65dbd" formatted="false">Fastest</string>
+    <string name="loc_2abb5095" formatted="false">Swap service</string>
+    <string name="loc_2c2e5efe">Scanning: %1$d%%</string>
+    <string name="loc_2dd20899" formatted="false">Valid output descriptor</string>
+    <string name="loc_349f1a7b" formatted="false">Labels included</string>
+    <string name="loc_3a87f690" formatted="false">Recipient</string>
+    <string name="loc_3b69e632" formatted="false">Lightning invoice</string>
+    <string name="loc_3d7a0ed9" formatted="false">No used addresses</string>
+    <string name="loc_403b8de6" formatted="false">No frozen UTXOs</string>
+    <string name="loc_40d36f28" formatted="false">Valid Electrum seed</string>
+    <string name="loc_42405d7b" formatted="false">995</string>
+    <string name="loc_4374aaee" formatted="false">Transfer details</string>
+    <string name="loc_437dc6a9" formatted="false">Send review</string>
+    <string name="loc_440af0d9" formatted="false">Selected UTXOs</string>
+    <string name="loc_485306ed">Spending from %1$d selected UTXO%2$s</string>
+    <string name="loc_541ee340" formatted="false">Valid Bitcoin address</string>
+    <string name="loc_546b7cba" formatted="false">Check balance</string>
+    <string name="loc_55290b57" formatted="false">Valid seed phrase</string>
+    <string name="loc_586a54f5" formatted="false">Create invoice</string>
+    <string name="loc_5bd65c47" formatted="false">Fiat value</string>
+    <string name="loc_5cf3713d" formatted="false">Derivation path</string>
+    <string name="loc_64f54a67" formatted="false">Fiat value</string>
+    <string name="loc_68504b99" formatted="false">Building preview...</string>
+    <string name="loc_6b12a175" formatted="false">Liquid recipients</string>
+    <string name="loc_6b76cd27" formatted="false">Funding transaction</string>
+    <string name="loc_6b8bdd37" formatted="false">-&gt;</string>
+    <string name="loc_6bf5da9c" formatted="false">Options</string>
+    <string name="loc_6e4eb7ae" formatted="false">Recipient number</string>
+    <string name="loc_70352f41" formatted="false">00000000</string>
+    <string name="loc_73991247" formatted="false">Sending recipients</string>
+    <string name="loc_7a2e5c86" formatted="false">Fingerprint</string>
+    <string name="loc_7d06279b" formatted="false">Enter at least the minimum amount</string>
+    <string name="loc_7f6ea624" formatted="false">Attempts</string>
+    <string name="loc_85f5955f" formatted="false">Spark</string>
+    <string name="loc_87c9f231" formatted="false">Default gap limit. Scan limit for empty addresses (1-10000)</string>
+    <string name="loc_8ecabd0f" formatted="false">Fee rate</string>
+    <string name="loc_9275d62b" formatted="false">Count</string>
+    <string name="loc_92b7b061">Total exceeds available balance by %1$s %2$s</string>
+    <string name="loc_9873e592" formatted="false">Optional note</string>
+    <string name="loc_98e01899" formatted="false">Enter no more than the maximum amount</string>
+    <string name="loc_9c365131" formatted="false">Index</string>
+    <string name="loc_9d55bb39" formatted="false">Recipients</string>
+    <string name="loc_abc2639e" formatted="false">Default path</string>
+    <string name="loc_ac178e1a" formatted="false">Wallet name</string>
+    <string name="loc_b1b16491" formatted="false">50001</string>
+    <string name="loc_b3b21f82" formatted="false">Spark amount</string>
+    <string name="loc_b4889170" formatted="false">Total recipients</string>
+    <string name="loc_be372fe3" formatted="false">Total exceeds available balance</string>
+    <string name="loc_c7246a95">Part %1$d of %2$d</string>
+    <string name="loc_c7ee4baa">Funding from %1$d selected UTXO%2$s</string>
+    <string name="loc_cd933569" formatted="false">Settlement transaction</string>
+    <string name="loc_d1e69cf0" formatted="false">Default gap limit</string>
+    <string name="loc_d90f9485" formatted="false">Transaction sent</string>
+    <string name="loc_d91923f1" formatted="false">Sending payment...</string>
+    <string name="loc_d92d2c1f" formatted="false">Swap ID</string>
+    <string name="loc_daea11b1" formatted="false">Some hardware wallets do not support PSBT signing without a master fingerprint. Your hardware wallet should provide one alongside the xpub/zpub.</string>
+    <string name="loc_e357eb39" formatted="false">Fiat value</string>
+    <string name="loc_ea17f4f9" formatted="false">Wallet type</string>
+    <string name="loc_ea3c0acf" formatted="false">Bitcoin, Spark, BOLT 11/12, or LNURL</string>
+    <string name="loc_eabd66ce" formatted="false">Minimum fee rate</string>
+    <string name="loc_ee733d42" formatted="false">Fingerprint</string>
+    <string name="loc_ef63d385" formatted="false">Sending to recipients</string>
+    <string name="loc_efd8a25a" formatted="false">Destination address</string>
+    <string name="loc_f0da4c2f" formatted="false">Signatures</string>
+    <string name="loc_f6f2ef2b" formatted="false">Address index</string>
+    <string name="loc_f78ee27e" formatted="false">Server address</string>
+    <string name="loc_f9bcfb07">Spending from %1$d selected UTXO%2$s</string>
+    <string name="loc_fb6eddb2" formatted="false">Show all remaining addresses</string>
+    <string name="loc_fe79714b">%1$d transaction%2$s broadcast</string>
+    <string name="loc_fe9ebde7" formatted="false">Estimated vbytes</string>
+    <string name="balance_fee_rate_format">Fee rate: %1$s sat/vB</string>
+    <string name="balance_fee_amount_format">Fee: %1$s %2$s</string>
+    <string name="balance_fee_rate_below_minimum_format">Fee rate is below the minimum (%1$s sat/vB)</string>
+    <string name="balance_fee_rate_higher_than_current_format">Fee rate must be higher than current (%1$s sat/vB)</string>
+    <string name="balance_target_fee_rate_format">Target fee rate: %1$s sat/vB</string>
+    <string name="balance_cost_amount_format">%1$s: %2$s %3$s</string>
+    <string name="balance_cpfp_estimate_format">(%1$s vB × %2$s sat/vB)</string>
+    <string name="balance_need_fee_dust_format">Need: %1$s %2$s (fee + dust)</string>
+    <string name="balance_have_output_wallet_format">Have: %1$s %2$s (output + wallet)</string>
+    <string name="balance_insufficient_funds_available_format">Insufficient funds (Available: %1$s %2$s)</string>
+    <string name="liquid_fee_sats_format">Fee: %1$s sats</string>
+    <string name="liquid_fee_rate_vbytes_format">%1$s sat/vB • %2$s vB</string>
+    <string name="liquid_source_chain_swap">BTC/L-BTC chain swap</string>
+    <string name="liquid_source_lightning_receive_swap">Boltz Lightning receive swap</string>
+    <string name="liquid_source_lightning_send_swap">Boltz Lightning send swap</string>
+    <string name="liquid_source_native_receive">Native L-BTC receive</string>
+    <string name="liquid_source_native_send">Native L-BTC send</string>
+    <string name="wallet_operation_failed">Wallet operation failed</string>
+    <string name="liquid_operation_failed">Liquid operation failed</string>
+    <string name="biometric_prompt_authenticate">Authenticate</string>
+    <string name="biometric_prompt_unlock_ibis_wallet">Unlock Ibis Wallet</string>
+    <string name="biometric_prompt_verify_identity">Verify your identity</string>
+    <string name="biometric_prompt_access_wallet">Authenticate to access your wallet</string>
+    <string name="send_utxos_selected_prefix">UTXOs</string>
+    <string name="security_pin_unlock_code_format">%1$d-%2$d digit unlock code</string>
+    <string name="security_randomize_pin_subtitle">Shuffle keypad digits on unlock</string>
+    <string name="security_enter_pin_range_format">Enter a %1$d-%2$d digit PIN</string>
+    <string name="security_cloak_restart_message">Restart the app to activate cloak mode.&#10;&#10;Enter your cloak pin in the calculator app and press the = key to unlock.</string>
+    <string name="server_delete_confirmation_format">Are you sure you want to delete "%1$s"?</string>
+    <string name="settings_spark_subtitle">Trust-minimized statechain</string>
+    <string name="settings_custom_server_placeholder">http://192.168... or http://...onion</string>
+    <string name="spark_transfer_spark_deposit_address">Spark deposit address</string>
+    <string name="spark_transfer_destination_override_hint">Override the generated destination for this swap.</string>
+    <string name="spark_transfer_enter_destination_address">Enter a destination address</string>
+    <string name="spark_transfer_custom_fee_rate">Custom fee rate</string>
+    <string name="spark_transfer_enter_fee_rate">Enter a fee rate</string>
+    <string name="spark_transfer_bitcoin_withdrawal_fee">Bitcoin withdrawal fee</string>
+    <string name="swap_unable_to_prepare">Unable to prepare swap</string>
+    <string name="spark_connection_backend_label">Backend</string>
+    <string name="spark_connection_backend_value">Managed Spark SDK session</string>
+    <string name="spark_connection_wallet_label">Wallet</string>
+    <string name="spark_connection_wallet_not_loaded">Not loaded</string>
+    <string name="spark_connection_identity_label">Identity</string>
+    <string name="spark_connection_error_label">Error</string>
+    <string name="spark_connection_hint">Spark uses a managed SDK session, not a selectable server.</string>
+    <!-- End generated UI localization strings. -->
 </resources>

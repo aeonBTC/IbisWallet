@@ -1,0 +1,757 @@
+<resources>
+    <string name="app_name">Ibis Wallet</string>
+    <string name="wallet_added">Кошелек добавлен</string>
+    <string name="cloak_calculator_label">Калькулятор</string>
+    <string name="nfc_service_description">Адрес Bitcoin для платежа</string>
+    <string name="startup_loading_artwork">Заставка Ibis</string>
+    <string name="version_format">Версия: %1$s</string>
+    <string name="drawer_version_short_format">v%1$s</string>
+    <string name="drawer_update_available">Доступно обновление: %1$s</string>
+    <string name="update_popup_title">Доступно новое обновление</string>
+    <string name="update_popup_message">Доступна Ibis Wallet %1$s.</string>
+    <string name="update_popup_view">Открыть</string>
+    <string name="update_popup_close">Закрыть</string>
+    <string name="app_update_opt_in_title">Проверять обновления приложения через GitHub?</string>
+    <string name="app_update_opt_in_message">Эту опцию можно переключать на экране «О приложении».</string>
+    <string name="app_update_opt_in_enable">Включить</string>
+    <string name="app_update_opt_in_not_now">Не сейчас</string>
+    <string name="common_selected">Выбрано</string>
+    <string name="settings_language_title">Язык</string>
+    <string name="settings_language_english">English</string>
+    <string name="settings_language_english_description">Использовать английский</string>
+    <string name="settings_language_spanish">Español</string>
+    <string name="settings_language_spanish_description">Использовать испанский</string>
+    <string name="settings_language_brazilian_portuguese">Português (Brasil)</string>
+    <string name="settings_language_brazilian_portuguese_description">Использовать бразильский португальский</string>
+    <string name="settings_language_russian">Русский</string>
+    <string name="settings_language_russian_description">Использовать русский</string>
+    <string name="wallet_delete_watch_only_message">Удалить "%1$s"? Позже его можно импортировать снова с тем же xpub.</string>
+    <string name="wallet_delete_irreversible_message">Удалить "%1$s"? Это действие необратимо. Убедитесь, что сид-фраза сохранена.</string>
+    <string name="wallet_delete_confirm_removal_label">Подтвердить удаление</string>
+    <string name="wallet_delete_irreversible_ack_label">Понимаю, это необратимо</string>
+    <string name="loc_b6f847eb" formatted="false">Убрать кошелёк только для просмотра</string>
+    <string name="loc_9f4e5e7c" formatted="false">Удалить кошелёк</string>
+    <string name="loc_6f2c1806" formatted="false">Убрать</string>
+    <string name="wallet_view_sensitive_info_message">Вы собираетесь открыть чувствительные данные для "%1$s".</string>
+    <string name="key_material_scan_qr_format">Сканируйте этот QR-код, чтобы импортировать %1$s</string>
+    <string name="multisig_manual_option">Вручную</string>
+    <string name="multisig_config_file_option">Файл</string>
+    <string name="wallet_last_full_sync_format">Последний полный синк: %1$s</string>
+    <string name="wallet_full_sync_count_format">%1$s / %2$s адресов</string>
+    <string name="wallet_full_sync_scanned_format">Просканировано адресов: %1$s</string>
+    <string name="loc_b137001" formatted="false">Подписать / проверить сообщение</string>
+    <string name="loc_b137002" formatted="false">Подписать</string>
+    <string name="loc_b137003" formatted="false">Проверить</string>
+    <string name="loc_b137005" formatted="false">Сообщение</string>
+    <string name="loc_b137006" formatted="false">Подпись</string>
+    <string name="loc_b137007" formatted="false">Подпись Base64</string>
+    <string name="loc_b137008" formatted="false">Подпись верна</string>
+    <string name="loc_b137009" formatted="false">Подпись неверна</string>
+    <string name="loc_b137010" formatted="false">Введите адрес</string>
+    <string name="loc_b137011" formatted="false">Введите сообщение</string>
+    <string name="loc_b137012" formatted="false">Введите подпись</string>
+    <string name="loc_b137013" formatted="false">Неподдерживаемый адрес</string>
+    <string name="loc_b137014" formatted="false">BIP137 не поддерживает адреса Taproot</string>
+    <string name="loc_b137015" formatted="false">BIP137 не поддерживает Taproot-кошельки</string>
+    <string name="loc_b137016" formatted="false">Тип адреса не соответствует этому кошельку</string>
+    <string name="loc_b137017" formatted="false">Ключ подписи недоступен</string>
+    <string name="loc_b137018" formatted="false">Адрес не найден в этом кошельке</string>
+    <string name="loc_b137019" formatted="false">Этот кошелек watch-only</string>
+    <string name="loc_b137020" formatted="false">Подпись сообщений доступна только для single-sig кошельков</string>
+    <string name="loc_b137021" formatted="false">Неверный приватный ключ</string>
+    <string name="loc_fe11d138" formatted="false">Имя</string>
+    <string name="loc_4f49447d" formatted="false">Настройки кошелька</string>
+    <string name="loc_3cb75e79" formatted="false">Bitcoin Gap limit</string>
+    <string name="loc_d30a3f21" formatted="false">Gap limit</string>
+    <string name="loc_7b07ecad" formatted="false">Master fingerprint</string>
+    <string name="loc_aea21c85" formatted="false">напр. 73c5da0a</string>
+    <string name="loc_39921dc5" formatted="false">Должно быть 8 hex-символов</string>
+    <string name="loc_37540690" formatted="false">8 hex-символов</string>
+    <string name="loc_aeb83a33" formatted="false">Liquid Gap limit</string>
+    <string name="loc_2f73501f" formatted="false">Уровень 2</string>
+    <string name="loc_b67a01a5" formatted="false">Уровень 1</string>
+    <string name="loc_a0ce08ad" formatted="false">Получить</string>
+    <string name="loc_63492662" formatted="false">Баланс</string>
+    <string name="loc_074195f3" formatted="false">Отправить</string>
+    <string name="loc_20a1d916" formatted="false">Расширенное меню</string>
+    <string name="loc_2d4a03c5" formatted="false">Свернуть расширенные опции</string>
+    <string name="loc_f5276b4c" formatted="false">Развернуть расширенные опции</string>
+    <string name="loc_56d9acd0" formatted="false">Меню уровня 2</string>
+    <string name="loc_002b1ce2" formatted="false">Контроль монет</string>
+    <string name="wallet_notifications_title">Уведомления кошелька</string>
+    <string name="wallet_notifications_subtitle_default">Оповещения о входящих транзакциях</string>
+    <string name="wallet_notifications_subtitle_permission_required">Разрешите уведомления Android</string>
+    <string name="wallet_notifications_subtitle_android_blocked">Уведомления Android заблокированы</string>
+    <string name="wallet_notifications_permission_denied">Доступ к уведомлениям Android отклонен</string>
+    <string name="wallet_notifications_android_blocked">Уведомления Android отключены для этого приложения</string>
+    <string name="foreground_connectivity_title">Фоновая связность</string>
+    <string name="foreground_connectivity_subtitle">Держать Electrum и Tor подключенными</string>
+    <string name="foreground_connectivity_channel_name">Фоновая связность</string>
+    <string name="foreground_connectivity_channel_description">Постоянные подключения для Electrum и Tor</string>
+    <string name="foreground_connectivity_notification_title">Фоновое подключение к серверам</string>
+    <string name="foreground_connectivity_status_bitcoin">Bitcoin</string>
+    <string name="foreground_connectivity_status_liquid">Liquid</string>
+    <string name="foreground_connectivity_status_tor">Tor</string>
+    <string name="nfc_status_ready">NFC</string>
+    <string name="nfc_status_receive_ready">NFC прием</string>
+    <string name="nfc_status_detecting">Чтение NFC</string>
+    <string name="nfc_status_received">NFC получен</string>
+    <string name="nfc_status_share_ready">NFC передача</string>
+    <string name="nfc_status_sharing">Передача NFC</string>
+    <string name="welcome_logo_content_description">Логотип Ibis Wallet</string>
+    <string name="welcome_title">Добро пожаловать в Ibis Wallet</string>
+    <string name="welcome_intro">Ibis — это self-custody кошелек для опытных пользователей с упором на приватность и гибкую настройку. Все сетевые сервисы и внешние подключения по умолчанию отключены.</string>
+    <string name="welcome_menu_prompt">Откройте меню и настройте Ibis под себя.</string>
+    <string name="welcome_continue">Продолжить</string>
+    <string name="welcome_language_hint">Выберите язык</string>
+    <string name="app_update_check_title">Проверять обновления приложения через GitHub</string>
+    <string name="historical_tx_fiat_title">Показывать исторические цены</string>
+    <string name="historical_tx_fiat_subtitle">Показывать фиатную цену на момент транзакции</string>
+    <string name="tx_history_show_current_prices">Показать текущие цены</string>
+    <string name="tx_history_show_historical_prices">Показать исторические цены</string>
+    <string name="liquid_enable_info_title">Уровень 2 модульный</string>
+    <string name="liquid_enable_info_message">Откройте экран управления кошельками, чтобы включить Liquid для нужных кошельков.\n\n*Liquid доступен только для BIP39-кошельков.</string>
+    <string name="liquid_enable_info_confirm">Понятно</string>
+    <string name="common_copy_with_label">Копировать %1$s</string>
+    <string name="common_show_all_remaining_format">Показать все (осталось %1$d)</string>
+    <string name="editable_label_chip_add" formatted="false">+ Метка</string>
+    <string name="spark_search_history_placeholder">Поиск по меткам, ID платежа, способу или дате...</string>
+    <string name="spark_loading_wallet_message">Spark загружается для этого кошелька</string>
+    <string name="spark_deposit_title_received_bitcoin">Получен Bitcoin</string>
+    <string name="spark_deposit_status_ready_to_claim">Готово к получению</string>
+    <string name="spark_deposit_status_confirmations_format">Подтверждения %1$s</string>
+    <string name="spark_deposit_status_awaiting_claim">Ожидает получения</string>
+    <string name="spark_deposit_status_awaiting_confirmations">Ожидает 3 подтверждения</string>
+    <string name="spark_deposit_note_title">Примечание</string>
+    <string name="spark_deposit_note_message">Ончейн-депозитам Spark нужно 3 подтверждения, прежде чем их можно будет зачислить в ваш баланс Spark.</string>
+    <string name="spark_deposit_claim_title">Получение</string>
+    <string name="spark_deposit_claim_manual_needed">Может потребоваться ручное получение</string>
+    <string name="spark_payment_id_title">ID платежа</string>
+    <string name="spark_payment_id_copy_label">ID платежа Spark</string>
+    <string name="spark_deposit_txid_copy_label">ID транзакции депозита Spark</string>
+    <string name="spark_deposit_address_copy_label">Адрес депозита Spark</string>
+    <string name="spark_received_at_copy_label">Адрес получения Spark</string>
+    <string name="spark_recipient_copy_label">Получатель Spark</string>
+    <string name="spark_preparing_address">Подготовка адреса...</string>
+    <string name="spark_payment_direction_with_rail_format">%1$s %2$s</string>
+    <string name="common_fingerprint_format">Отпечаток: %1$s</string>
+    <string name="common_derivation_path_format">Путь деривации: %1$s</string>
+    <string name="common_electrum_seed_format">Сид Electrum %1$s (%2$d слов)</string>
+    <string name="common_default_format">По умолчанию: %1$s</string>
+    <string name="receive_share_request_title">Поделиться запросом на получение</string>
+    <string name="receive_no_share_app">Нет доступного приложения для отправки</string>
+    <string name="wallet_all_layers">Все уровни</string>
+    <string name="send_total_recipients_format">Итого (%1$d получателей)</string>
+    <string name="send_recipients_title_format">Получатели (%1$d)</string>
+    <string name="send_recipient_number_format">#%1$d</string>
+    <string name="send_sending_recipients_format">Отправка (%1$d получателей)</string>
+    <string name="send_sending_to_recipients_format">Кому (%1$d получателей)</string>
+    <string name="send_estimated_vbytes_format">(%1$s vB)</string>
+    <string name="loc_016527b1" formatted="false">Смести приватный ключ</string>
+    <string name="loc_054cdf00" formatted="false">Настройка обмена</string>
+    <string name="loc_0917a3e1" formatted="false">Предупреждение кошелька</string>
+    <string name="loc_0dd3b9b2" formatted="false">Детали PSBT</string>
+    <string name="loc_10459bad" formatted="false">Использовать PIN</string>
+    <string name="loc_bf4a5bdb" formatted="false">Введите PIN для разблокировки</string>
+    <string name="loc_6d48b5d9" formatted="false">Разблокировать</string>
+    <string name="loc_cabf9832" formatted="false">Аутентификация для продолжения</string>
+    <string name="loc_364b0d65" formatted="false">Слишком много попыток</string>
+    <string name="loc_0a18f141" formatted="false">Неверный PIN</string>
+    <string name="loc_d00009b0" formatted="false">Использовать биометрию</string>
+    <string name="loc_3d1100cc" formatted="false">Стереть</string>
+    <string name="loc_11f7da21" formatted="false">Удалить</string>
+    <string name="loc_131fd811" formatted="false">ID транзакции скопирован</string>
+    <string name="loc_1a81f7a0" formatted="false">Полчаса</string>
+    <string name="loc_1d1e82ec" formatted="false">Отключить автостирание</string>
+    <string name="loc_1dcfbd01" formatted="false">Проверить транзакцию</string>
+    <string name="loc_20fccd71" formatted="false">Котировка недоступна</string>
+    <string name="loc_29a65dbd" formatted="false">Самая быстрая</string>
+    <string name="loc_2abb5095" formatted="false">Сервис обмена</string>
+    <string name="loc_2c2e5efe">Сканирование: %1$d%%</string>
+    <string name="loc_2dd20899" formatted="false">Корректный output descriptor</string>
+    <string name="loc_349f1a7b" formatted="false">Метки включены</string>
+    <string name="loc_3a87f690" formatted="false">Получатель</string>
+    <string name="loc_3b69e632" formatted="false">Lightning-инвойс</string>
+    <string name="loc_3d7a0ed9" formatted="false">Нет использованных адресов</string>
+    <string name="loc_403b8de6" formatted="false">Нет замороженных UTXO</string>
+    <string name="loc_40d36f28" formatted="false">Корректный seed Electrum</string>
+    <string name="loc_42405d7b" formatted="false">995</string>
+    <string name="loc_4374aaee" formatted="false">Детали перевода</string>
+    <string name="loc_437dc6a9" formatted="false">Проверка отправки</string>
+    <string name="loc_440af0d9" formatted="false">Выбранные UTXO</string>
+    <string name="loc_485306ed">Расход из выбранных UTXO: %1$d</string>
+    <string name="loc_541ee340" formatted="false">Корректный Bitcoin-адрес</string>
+    <string name="loc_546b7cba" formatted="false">Проверить баланс</string>
+    <string name="loc_54bf6d2a" formatted="false">Аварийный ключ восстановления</string>
+    <string name="loc_55290b57" formatted="false">Корректная seed-фраза</string>
+    <string name="loc_586a54f5" formatted="false">Создать инвойс</string>
+    <string name="loc_5bd65c47" formatted="false">Фиатная сумма</string>
+    <string name="loc_5cf3713d" formatted="false">Путь деривации</string>
+    <string name="loc_64f54a67" formatted="false">Фиатная сумма</string>
+    <string name="loc_68504b99" formatted="false">Создание предпросмотра...</string>
+    <string name="loc_6b12a175" formatted="false">Получатели Liquid</string>
+    <string name="loc_6b76cd27" formatted="false">Funding-транзакция</string>
+    <string name="loc_6b8bdd37" formatted="false">-&gt;</string>
+    <string name="loc_6bf5da9c" formatted="false">Опции</string>
+    <string name="loc_6e4eb7ae" formatted="false">Номер получателя</string>
+    <string name="loc_70352f41" formatted="false">00000000</string>
+    <string name="loc_73991247" formatted="false">Отправка получателям</string>
+    <string name="loc_7a2e5c86" formatted="false">Fingerprint</string>
+    <string name="loc_7d06279b" formatted="false">Введите минимум допустимую сумму</string>
+    <string name="loc_7f6ea624" formatted="false">Попытки</string>
+    <string name="loc_85f5955f" formatted="false">Spark</string>
+    <string name="loc_87c9f231" formatted="false">Gap limit по умолчанию. Лимит сканирования пустых адресов (1-10000)</string>
+    <string name="loc_8ecabd0f" formatted="false">Ставка комиссии</string>
+    <string name="loc_9275d62b" formatted="false">Количество</string>
+    <string name="loc_92b7b061">Сумма превышает доступный баланс на %1$s %2$s</string>
+    <string name="loc_9873e592" formatted="false">Необязательная заметка</string>
+    <string name="loc_98e01899" formatted="false">Введите не больше максимальной суммы</string>
+    <string name="loc_9c365131" formatted="false">Индекс</string>
+    <string name="loc_9d55bb39" formatted="false">Получатели</string>
+    <string name="loc_abc2639e" formatted="false">Путь по умолчанию</string>
+    <string name="loc_ac178e1a" formatted="false">Имя кошелька</string>
+    <string name="loc_b1b16491" formatted="false">50001</string>
+    <string name="loc_b3b21f82" formatted="false">Сумма Spark</string>
+    <string name="loc_b4889170" formatted="false">Всего получателей</string>
+    <string name="loc_be372fe3" formatted="false">Сумма превышает доступный баланс</string>
+    <string name="loc_c7246a95">Часть %1$d из %2$d</string>
+    <string name="loc_c7ee4baa">Финансирование из выбранных UTXO: %1$d</string>
+    <string name="loc_cd933569" formatted="false">Settlement-транзакция</string>
+    <string name="loc_d1e69cf0" formatted="false">Gap limit по умолчанию</string>
+    <string name="loc_d90f9485" formatted="false">Транзакция отправлена</string>
+    <string name="loc_d91923f1" formatted="false">Отправка платежа...</string>
+    <string name="loc_d92d2c1f" formatted="false">ID обмена</string>
+    <string name="loc_daea11b1" formatted="false">Некоторые hardware wallets не поддерживают подпись PSBT без master fingerprint. Ваш hardware wallet должен предоставить его вместе с xpub/zpub.</string>
+    <string name="loc_e357eb39" formatted="false">Фиатная сумма</string>
+    <string name="loc_ea17f4f9" formatted="false">Тип кошелька</string>
+    <string name="loc_ea3c0acf" formatted="false">Bitcoin, Spark, BOLT 11/12, or LNURL</string>
+    <string name="loc_eabd66ce" formatted="false">Минимальная ставка комиссии</string>
+    <string name="loc_ee733d42" formatted="false">Fingerprint</string>
+    <string name="loc_ef63d385" formatted="false">Отправка получателям</string>
+    <string name="loc_efd8a25a" formatted="false">Адрес назначения</string>
+    <string name="loc_f0da4c2f" formatted="false">Подписи</string>
+    <string name="loc_f6f2ef2b" formatted="false">Индекс адреса</string>
+    <string name="loc_f78ee27e" formatted="false">Адрес сервера</string>
+    <string name="loc_f9bcfb07">Расход из выбранных UTXO: %1$d</string>
+    <string name="loc_fb6eddb2" formatted="false">Показать остальные адреса</string>
+    <string name="loc_fe79714b">Транзакций отправлено: %1$d</string>
+    <string name="loc_fe9ebde7" formatted="false">Оценка vbytes</string>
+    <string name="loc_01940fd6" formatted="false">Общие</string>
+    <string name="loc_06d539e7" formatted="false">Копировать адрес получателя</string>
+    <string name="loc_09d663eb" formatted="false">Копировать ID транзакции</string>
+    <string name="loc_0c054d47" formatted="false">Повысить комиссию</string>
+    <string name="loc_0c3d4854" formatted="false">Развернуть расширенные детали Lightning</string>
+    <string name="loc_0f0b54c6" formatted="false">Копировать ID обмена</string>
+    <string name="loc_00a426f8" formatted="false">Источник фиатной цены</string>
+    <string name="loc_14b0f0b9" formatted="false">API Boltz</string>
+    <string name="loc_15e084c6" formatted="false">Lightning отправлен</string>
+    <string name="loc_1af68597" formatted="false">Отправлено</string>
+    <string name="loc_1bb54c32" formatted="false">Копировать ссылку Lightning</string>
+    <string name="loc_1c1151e0" formatted="false">Открыть настройки Liquid Electrum</string>
+    <string name="loc_1c33c293" formatted="false">Настройки</string>
+    <string name="loc_1e89ceb8" formatted="false">Обозреватель</string>
+    <string name="loc_222c0de6" formatted="false">Перевод себе</string>
+    <string name="loc_2254b16b" formatted="false">Свернуть расширенные детали Lightning</string>
+    <string name="loc_2282451b" formatted="false">Метки (BIP 329)</string>
+    <string name="loc_245027bd" formatted="false">Адрес возврата</string>
+    <string name="loc_2a54f889" formatted="false">Открыть настройки Bitcoin Electrum</string>
+    <string name="loc_2ec7b25e" formatted="false">Поделиться</string>
+    <string name="loc_301a5b91" formatted="false">Получено</string>
+    <string name="loc_30261319" formatted="false">Средства будут перенаправлены на этот Bitcoin-адрес.</string>
+    <string name="loc_31ab2a4e" formatted="false">Источник комиссии</string>
+    <string name="loc_35e0bd00" formatted="false">Разрешенный платежный ввод</string>
+    <string name="loc_35652873" formatted="false">Нужно: $HIDDEN_AMOUNT (комиссия + dust)</string>
+    <string name="loc_36648ad9" formatted="false">Свернуть детали обмена</string>
+    <string name="loc_378dc5c9" formatted="false">Ключ восстановления</string>
+    <string name="loc_37a5c459" formatted="false">Адрес депозита Bitcoin</string>
+    <string name="loc_3c19e32e" formatted="false">Копировать адрес</string>
+    <string name="loc_3d1a0df5" formatted="false">Boltz</string>
+    <string name="loc_3dae8142" formatted="false">Повысить комиссию (RBF)</string>
+    <string name="loc_3e5cd869" formatted="false">ID обмена</string>
+    <string name="loc_4126d5db" formatted="false">Получить Bitcoin</string>
+    <string name="loc_42ccefb2" formatted="false">Дочерняя транзакция (CPFP):</string>
+    <string name="loc_45f80a27" formatted="false">Расширенные</string>
+    <string name="loc_4aade885" formatted="false">Комиссия дочерней транзакции</string>
+    <string name="loc_4ab75d7f" formatted="false">Подтверждено</string>
+    <string name="loc_51321a45" formatted="false">Повысить комиссию (CPFP)</string>
+    <string name="loc_51bac044" formatted="false">Отмена</string>
+    <string name="loc_53204016" formatted="false">Адрес депозита Liquid</string>
+    <string name="loc_53ae02a5" formatted="false">Новый</string>
+    <string name="loc_534e1eb2" formatted="false">Недостаточно средств</string>
+    <string name="loc_56459d9d" formatted="false">Создать PSBT</string>
+    <string name="loc_58267a45" formatted="false">Источник</string>
+    <string name="loc_59b2cdc5" formatted="false">Сканировать QR-код</string>
+    <string name="loc_5fd82ed8" formatted="false">Инвойс</string>
+    <string name="loc_61bda033" formatted="false">Комиссия обмена Boltz</string>
+    <string name="loc_625681c5" formatted="false">ID транзакции Liquid</string>
+    <string name="loc_64f10f32" formatted="false">Внешние сервисы Liquid</string>
+    <string name="loc_799c4cd6" formatted="false">API SideSwap</string>
+    <string name="loc_7cac602a" formatted="false">Статус</string>
+    <string name="loc_7f958245" formatted="false">Отменить транзакцию (RBF)</string>
+    <string name="loc_822c6f45" formatted="false">Введите метку</string>
+    <string name="loc_8236c6fa" formatted="false">Публичный ключ возврата</string>
+    <string name="loc_852cf06d" formatted="false">Публичный ключ получения</string>
+    <string name="loc_85a12a5f" formatted="false">Обмен</string>
+    <string name="loc_85a65da2" formatted="false">Просмотр ключевого материала</string>
+    <string name="loc_899fe8a0" formatted="false">Адрес Liquid</string>
+    <string name="loc_8ae00f50" formatted="false">Адрес сдачи</string>
+    <string name="loc_f08db23b" formatted="false">Синхронизировать</string>
+    <string name="loc_8c195a44" formatted="false">Синхронизировать</string>
+    <string name="loc_8c5f0b00" formatted="false">Ссылка Lightning</string>
+    <string name="loc_8f10cfd9" formatted="false">Адрес получателя</string>
+    <string name="loc_8f9ee8e6" formatted="false">Адрес назначения Liquid</string>
+    <string name="loc_8fd877da" formatted="false">QR адреса получения</string>
+    <string name="loc_9081b0e6" formatted="false">Будут консолидированы все UTXO кошелька</string>
+    <string name="loc_90d5f46b" formatted="false">Копировать адрес сдачи</string>
+    <string name="loc_92f9c847" formatted="false">Отменить транзакцию</string>
+    <string name="loc_987ca029" formatted="false">Создать дочернюю транзакцию с высокой комиссией для ускорения подтверждения (CPFP)</string>
+    <string name="loc_98c5fbdc" formatted="false">Детали транзакции</string>
+    <string name="loc_990bb023" formatted="false">Приватность</string>
+    <string name="loc_9c1c9375" formatted="false">Ошибка</string>
+    <string name="loc_a18fd453" formatted="false">Bitcoin-адрес</string>
+    <string name="loc_a274c658" formatted="false">Отправить Bitcoin</string>
+    <string name="loc_a28f34b2" formatted="false">Сдача возвращена на</string>
+    <string name="loc_a3190b21" formatted="false">Перенаправить все средства обратно в кошелек или на пользовательский адрес. Требуется более высокая комиссия, чем у исходной транзакции.</string>
+    <string name="loc_a397da3c" formatted="false">Быстро получить</string>
+    <string name="loc_a39dd5c6" formatted="false">Bitcoin Electrum сервер</string>
+    <string name="loc_a688468b" formatted="false">Обозреватель блоков</string>
+    <string name="loc_ac616807" formatted="false">Получено через</string>
+    <string name="loc_b27d0727" formatted="false">Метки</string>
+    <string name="loc_b47edf23" formatted="false">Получено на</string>
+    <string name="loc_bcb6fe62" formatted="false">Управление кошельками</string>
+    <string name="loc_c5f55bb2" formatted="false">Дополнительная стоимость</string>
+    <string name="loc_c7185189" formatted="false">Liquid Electrum сервер</string>
+    <string name="loc_c8093bf9" formatted="false">Получатель Lightning</string>
+    <string name="loc_ca3e4dcf" formatted="false">Замещающая транзакция:</string>
+    <string name="loc_cdfc6e09" formatted="false">Назад</string>
+    <string name="loc_ce4ef127" formatted="false">Lightning получен</string>
+    <string name="loc_d2c0aec0" formatted="false">Закрыть</string>
+    <string name="loc_d515634f" formatted="false">Подтвердить PSBT</string>
+    <string name="loc_da29bafe" formatted="false">Дерево обмена</string>
+    <string name="loc_db88d4ce" formatted="false">Навигация свайпом</string>
+    <string name="loc_dd12fe68" formatted="false">Копировать получателя Lightning</string>
+    <string name="loc_de90114d" formatted="false">Комиссия: $HIDDEN_AMOUNT</string>
+    <string name="loc_e287255d" formatted="false">Скопировано в буфер обмена!</string>
+    <string name="loc_e5455471" formatted="false">Транзакция перенаправления:</string>
+    <string name="loc_eaf579ea" formatted="false">Получатель</string>
+    <string name="loc_ed8814bc" formatted="false">Копировать</string>
+    <string name="loc_a1329beb" formatted="false">Копировать инвойс</string>
+    <string name="loc_ebbd9745" formatted="false">Поделиться запросом на получение</string>
+    <string name="loc_ee7df965" formatted="false">Пользовательский адрес назначения</string>
+    <string name="loc_f07d5799" formatted="false">Открыть в обозревателе блоков</string>
+    <string name="loc_f3a4dab2" formatted="false">Копировать адрес</string>
+    <string name="loc_f5040eb4" formatted="false">Заменить эту транзакцию более высокой комиссией (RBF)</string>
+    <string name="loc_f55495e0" formatted="false">Сохранить</string>
+    <string name="loc_f72cc482" formatted="false">Комиссия сети</string>
+    <string name="loc_fd2abe42" formatted="false">Адрес финансирования Bitcoin</string>
+    <string name="loc_fadd6716" formatted="false">Ключ ослепления</string>
+    <string name="loc_f967d9c8" formatted="false">Адрес блокировки</string>
+    <string name="loc_760081de" formatted="false">Есть: $HIDDEN_AMOUNT (выход + кошелек)</string>
+    <string name="loc_13505d59" formatted="false">Ключ восстановления Boltz</string>
+    <string name="loc_729dc6f0" formatted="false">Скопировать ключ восстановления Boltz</string>
+    <string name="loc_7666b1a4" formatted="false">Открыть страницу восстановления Boltz</string>
+    <string name="loc_7ea64bdf" formatted="false">Если обмен не удался, откройте ссылку восстановления Boltz и вставьте эту seed-фразу из 12 слов.</string>
+    <string name="loc_71c1fcab" formatted="false">Tor Browser необходим для просмотра onion-ссылок. Установите его из Play Store или F-Droid.</string>
+    <string name="loc_3a15e5cd" formatted="false">Требуется Tor Browser</string>
+    <string name="loc_1b684325" formatted="false">В ожидании</string>
+    <string name="loc_13e398d0" formatted="false">ID транзакции</string>
+    <string name="loc_5a6ca12a" formatted="false">Отключить блокировку кошелька</string>
+    <string name="loc_4d44286e" formatted="false">Разблокировать кошелек</string>
+    <string name="loc_b1d09d26" formatted="false">Подтвердите, чтобы отключить блокировку кошелька</string>
+    <string name="loc_b543e2d2" formatted="false">Подтвердите, чтобы открыть этот кошелек</string>
+    <string name="loc_54947bc7" formatted="false">Транзакция успешно отправлена</string>
+    <string name="loc_a10f1671" formatted="false">Кошелек экспортирован</string>
+    <string name="loc_c5473c1d" formatted="false">Метки экспортированы</string>
+    <string name="loc_a70e9a3b" formatted="false">Метки импортированы</string>
+    <string name="loc_a0665acf" formatted="false">Замещающая транзакция успешно отправлена</string>
+    <string name="loc_84d585b7" formatted="false">CPFP транзакция успешно отправлена</string>
+    <string name="loc_331c24c8" formatted="false">Транзакция перенаправлена в ваш кошелек</string>
+    <string name="loc_38a633d4" formatted="false">Liquid транзакция успешно отправлена</string>
+    <string name="loc_4defd854" formatted="false">Получен Lightning-обмен</string>
+    <string name="loc_e3dea6d5" formatted="false">Получена активность кошелька</string>
+    <string name="loc_dc9ca216" formatted="false">Платеж Lightning успешно отправлен</string>
+    <string name="loc_932fd4d9" formatted="false">Обмен завершен</string>
+    <string name="loc_1b2f100c" formatted="false">Активность кошелька обновлена</string>
+    <string name="loc_a11d4b84" formatted="false">Bitcoin получен</string>
+    <string name="loc_0ab66fae" formatted="false">Входящий платеж</string>
+    <string name="loc_7cf79a48" formatted="false">Liquid получен</string>
+    <string name="loc_c6f76248" formatted="false">SideSwap</string>
+    <string name="loc_948bf4a1" formatted="false">Адрес депозита Liquid-обмена</string>
+    <string name="loc_a6feda9e" formatted="false">Адрес назначения Bitcoin</string>
+    <string name="balance_fee_rate_format">Ставка комиссии: %1$s sat/vB</string>
+    <string name="balance_fee_amount_format">Комиссия: %1$s %2$s</string>
+    <string name="balance_fee_rate_below_minimum_format">Ставка комиссии ниже минимума (%1$s sat/vB)</string>
+    <string name="balance_fee_rate_higher_than_current_format">Ставка комиссии должна быть выше текущей (%1$s sat/vB)</string>
+    <string name="balance_target_fee_rate_format">Целевая ставка комиссии: %1$s sat/vB</string>
+    <string name="balance_cost_amount_format">%1$s: %2$s %3$s</string>
+    <string name="balance_cpfp_estimate_format">(%1$s vB × %2$s sat/vB)</string>
+    <string name="balance_need_fee_dust_format">Нужно: %1$s %2$s (комиссия + dust)</string>
+    <string name="balance_have_output_wallet_format">Есть: %1$s %2$s (выход + кошелек)</string>
+    <string name="balance_insufficient_funds_available_format">Недостаточно средств (Доступно: %1$s %2$s)</string>
+    <string name="liquid_fee_sats_format">Комиссия: %1$s sats</string>
+    <string name="liquid_fee_rate_vbytes_format">%1$s sat/vB • %2$s vB</string>
+    <string name="liquid_source_chain_swap">Цепной обмен BTC/L-BTC</string>
+    <string name="liquid_source_lightning_receive_swap">Входящий Lightning-обмен через Boltz</string>
+    <string name="liquid_source_lightning_send_swap">Исходящий Lightning-обмен через Boltz</string>
+    <string name="liquid_source_native_receive">Нативное получение L-BTC</string>
+    <string name="liquid_source_native_send">Нативная отправка L-BTC</string>
+    <string name="loc_dc73d3bf" formatted="false">Electrum серверы</string>
+    <string name="loc_3cedb797" formatted="false">Безопасность</string>
+    <string name="loc_db888836" formatted="false">Резервная копия / Восстановление</string>
+    <string name="loc_74350de7" formatted="false">О приложении</string>
+    <string name="loc_89bab973" formatted="false">Ручная отправка</string>
+    <string name="loc_890d7574" formatted="false">Сумма</string>
+    <string name="loc_ba974c5f" formatted="false">Сумма (sats)</string>
+    <string name="loc_399e8a9a" formatted="false">Сумма (BTC)</string>
+    <string name="loc_fcc11f52" formatted="false">Несколько</string>
+    <string name="loc_277e2626" formatted="false">Доступно</string>
+    <string name="loc_81f5c0cf" formatted="false">Проверить транзакцию</string>
+    <string name="loc_35504dec" formatted="false">Проверить PSBT</string>
+    <string name="loc_943c89b7" formatted="false">Ставка комиссии</string>
+    <string name="loc_0039435a" formatted="false">Биометрическая разблокировка здесь недоступна</string>
+    <string name="loc_a06704d8" formatted="false">Блокировка приложения</string>
+    <string name="loc_10bf1589" formatted="false">Автостирание</string>
+    <string name="loc_bd14b437" formatted="false">Режим маскировки</string>
+    <string name="loc_922337f3" formatted="false">Биометрия</string>
+    <string name="loc_b2481aa2" formatted="false">Использовать отпечаток или лицо</string>
+    <string name="loc_3e2ca137" formatted="false">Недоступно на этом устройстве</string>
+    <string name="loc_4355b799" formatted="false">PIN-код</string>
+    <string name="loc_599c7d5f" formatted="false">Таймер блокировки</string>
+    <string name="security_lock_timing_when_minimized">При сворачивании</string>
+    <string name="security_lock_timing_after_1_min">Через 1 минуту</string>
+    <string name="security_lock_timing_after_5_min">Через 5 минут</string>
+    <string name="loc_a0a0bf84" formatted="false">Сначала включите блокировку по PIN-коду</string>
+    <string name="loc_b68140bc" formatted="false">PIN принуждения</string>
+    <string name="loc_a1d57483" formatted="false">Настройте PIN или биометрию, чтобы включить</string>
+    <string name="loc_4e19a59a" formatted="false">Стереть после попыток разблокировки</string>
+    <string name="loc_560ec39d" formatted="false">Настройте PIN-код, чтобы включить</string>
+    <string name="loc_127261f8" formatted="false">Замаскировать под калькулятор</string>
+    <string name="loc_5d688c9a" formatted="false">Прятать Ibis за приложением-калькулятором</string>
+    <string name="loc_0d6a729c" formatted="false">Блокирует скриншоты и предпросмотр приложения</string>
+    <string name="loc_4b582481" formatted="false">Отключить PIN принуждения?</string>
+    <string name="loc_e6b56697" formatted="false">Создать PIN принуждения</string>
+    <string name="loc_66399ff4" formatted="false">Подтвердить PIN принуждения</string>
+    <string name="loc_189d09c6" formatted="false">Включить PIN принуждения</string>
+    <string name="loc_6e64c96f" formatted="false">Перемешивать клавиатуру PIN</string>
+    <string name="loc_96e7526f" formatted="false">Сначала добавьте кошелек</string>
+    <string name="loc_f6649c50" formatted="false">Открывать Ibis в кошелек-приманку</string>
+    <string name="loc_3bbee4d1" formatted="false">Стереть данные приложения после неудачной разблокировки</string>
+    <string name="loc_72808e02" formatted="false">Значок приложения изменится после перезапуска</string>
+    <string name="loc_714c3012" formatted="false">Отключить скриншоты</string>
+    <string name="loc_3139ebdd" formatted="false">Отключить режим маскировки?</string>
+    <string name="loc_aa09917b" formatted="false">Значок приложения вернется к Ibis Wallet после перезапуска. Возможно, придется заново добавить ярлык на главный экран.</string>
+    <string name="loc_80f874cd" formatted="false">Отключить</string>
+    <string name="loc_2a9da994" formatted="false">Требуется перезапуск</string>
+    <string name="loc_28441b9b" formatted="false">Перезапустить</string>
+    <string name="loc_2dc29d4d" formatted="false">Позже</string>
+    <string name="loc_5e0c0f5b" formatted="false">Включить автостирание?</string>
+    <string name="loc_f40ccd04" formatted="false">Включить</string>
+    <string name="loc_f7b9c073" formatted="false">Все данные кошельков будут безвозвратно удалены после повторных неудачных попыток разблокировки. Это действие нельзя отменить.</string>
+    <string name="loc_5ed5bb5d" formatted="false">Убедитесь, что у вас есть резервные копии seed-фраз. Без резервной копии средства будут безвозвратно потеряны.</string>
+    <string name="loc_c47ba42d" formatted="false">Отключить защиту?</string>
+    <string name="loc_38a084fc" formatted="false">Любой, у кого есть доступ к вашему устройству, сможет открыть приложение.</string>
+    <string name="loc_40a878b7" formatted="false">Создать PIN</string>
+    <string name="loc_c3d36da0" formatted="false">Подтвердить PIN</string>
+    <string name="loc_c3c70203" formatted="false">Введите PIN еще раз для подтверждения</string>
+    <string name="loc_bbc273c5" formatted="false">Установить PIN разблокировки</string>
+    <string name="loc_b02d0f6b" formatted="false">Подтвердить PIN разблокировки</string>
+    <string name="loc_75f1a5fd" formatted="false">Введите этот PIN в приложении калькулятора и нажмите клавишу = для разблокировки.</string>
+    <string name="loc_1959e119" formatted="false">Собрать PSBT</string>
+    <string name="loc_895ab1d4" formatted="false">Куда отправить</string>
+    <string name="loc_b85ab17d" formatted="false">Назначение</string>
+    <string name="send_utxos_selected_prefix">UTXO</string>
+    <string name="coin_control_selected_summary_format">%1$d выбрано • %2$s</string>
+    <string name="swap_coin_control_utxo_badge_format">UTXO (%1$d)</string>
+    <string name="all_addresses_keychain_index_format">%1$s № %2$d</string>
+    <string name="utxo_list_summary_with_frozen">%1$d UTXO (заморожено: %2$d)</string>
+    <string name="utxo_list_search_matches">%1$d совпадений из %2$d</string>
+    <string name="import_multisig_policy_line">%1$s мультисиг</string>
+    <string name="import_wallet_cosigners_line">Со-подписанты: %1$d</string>
+    <string name="import_backup_labels_line">Метки: %1$s · %2$s</string>
+    <string name="import_backup_server_settings_line">Настройки сервера: %1$s</string>
+    <string name="import_wallet_address_line_watch">%1$s (%2$s)</string>
+    <string name="wallet_address_type_legacy_title">Legacy</string>
+    <string name="wallet_address_type_segwit_title">SegWit</string>
+    <string name="wallet_address_type_taproot_title">Taproot</string>
+    <string name="wallet_address_type_legacy_description">P2PKH — адреса начинаются с 1</string>
+    <string name="wallet_address_type_segwit_description">P2WPKH — нативный SegWit, адреса начинаются с bc1q</string>
+    <string name="wallet_address_type_taproot_description">P2TR — адреса Taproot начинаются с bc1p</string>
+    <string name="wallet_auto_name_watch_format">Watch %1$s</string>
+    <string name="wallet_auto_name_key_format">Key %1$s</string>
+    <string name="wallet_electrum_seed_variant_standard">Стандарт</string>
+    <string name="wallet_electrum_seed_variant_segwit">Сегвит</string>
+    <string name="import_seed_invalid_line">%1$s: %2$s%3$s</string>
+    <string name="import_seed_wrong_word_count">%1$d слов — нужно 12, 15, 18, 21 или 24</string>
+    <string name="loc_964abaa1" formatted="false">Неверная контрольная сумма</string>
+    <string name="loc_6dfe3462" formatted="false">Мультисиг</string>
+    <string name="loc_c821b501" formatted="false">Liquid_WatchOnly</string>
+    <string name="loc_027001ed" formatted="false">Создать</string>
+    <string name="loc_9ae2cb2b" formatted="false">Импорт</string>
+    <string name="loc_ddfe3fc8" formatted="false">Нет кошельков</string>
+    <string name="loc_2311c49c" formatted="false">Добавьте кошелёк, чтобы начать</string>
+    <string name="loc_6227ec5e" formatted="false">Создание кошелька</string>
+    <string name="loc_748eece4" formatted="false">Детали кошелька</string>
+    <string name="loc_6e9ddcf4" formatted="false">Имя кошелька</string>
+    <string name="loc_3213841a" formatted="false">Тип адреса</string>
+    <string name="loc_e3b008f1" formatted="false">Сгенерировать сид-фразу</string>
+    <string name="loc_0c25a130" formatted="false">Ваша сид-фраза</string>
+    <string name="loc_77aacbaf" formatted="false">Я сохранил сид-фразу</string>
+    <string name="loc_e81bc2a8" formatted="false">Создать кошелёк</string>
+    <string name="loc_a34ad456" formatted="false">12 слов</string>
+    <string name="loc_4e15e68f" formatted="false">24 слова</string>
+    <string name="loc_75923525" formatted="false">BIP39 Passphrase</string>
+    <string name="loc_e8a4f395" formatted="false">Введите парольную фразу</string>
+    <string name="loc_01fca34c" formatted="false">Свой путь деривации</string>
+    <string name="loc_a422f393">Имя: %1$s</string>
+    <string name="loc_629b9e5b" formatted="false">Неизвестно</string>
+    <string name="loc_25d748f3" formatted="false">Только просмотр</string>
+    <string name="loc_729b34d2" formatted="false">Свернуть</string>
+    <string name="loc_b47e7391" formatted="false">Развернуть</string>
+    <string name="loc_7c63b77c" formatted="false">Перегенерировать сид-фразу</string>
+    <string name="loc_929a5c05" formatted="false">обозреватель блоков</string>
+    <string name="loc_90799139" formatted="false">источник комиссий</string>
+    <string name="loc_52640f61" formatted="false">обозреватель Liquid</string>
+    <string name="loc_b61cfdd3" formatted="false">подключение Liquid</string>
+    <string name="loc_7420f38b" formatted="false">Мнемоника</string>
+    <string name="loc_5d00536d" formatted="false">Скопировано</string>
+    <string name="loc_fceb7ead" formatted="false">Копировать сид-фразу</string>
+    <string name="loc_e3f2267c" formatted="false">Нет подходящих адресов</string>
+    <string name="loc_514da0a5" formatted="false">Удалить метку</string>
+    <string name="loc_a735a217" formatted="false">Нет адресов</string>
+    <string name="loc_4bb9e286" formatted="false">Нет UTXO</string>
+    <string name="loc_3a296c42" formatted="false">Нет подходящих UTXO</string>
+    <string name="loc_0fddb7b5" formatted="false">Выход скопирован</string>
+    <string name="loc_cafbbb4a" formatted="false">Выход</string>
+    <string name="loc_ff1e339d" formatted="false">Поиск: адрес, метка, сумма, txid или выход</string>
+    <string name="loc_cf667fec" formatted="false">Метка</string>
+    <string name="loc_642fdbfc" formatted="false">например, платеж Алисе</string>
+    <string name="loc_19280e4e" formatted="false">Откуда</string>
+    <string name="loc_4203f666" formatted="false">Куда</string>
+    <string name="loc_2944f33c" formatted="false">Выберите UTXO для траты</string>
+    <string name="loc_abb2f6d2" formatted="false">Контроль монет</string>
+    <string name="loc_47914d64" formatted="false">Контроль монет</string>
+    <string name="loc_27833d8a" formatted="false">Выбрать все</string>
+    <string name="loc_4340d39b" formatted="false">Очистить всё</string>
+    <string name="loc_bdedd2ce" formatted="false">Неподтвержденные UTXO отключены в настройках</string>
+    <string name="loc_b01f4f95" formatted="false">Готово</string>
+    <string name="loc_e17307d1" formatted="false">Не выбрано</string>
+    <string name="security_pin_unlock_code_format">Код разблокировки из %1$d-%2$d цифр</string>
+    <string name="security_randomize_pin_subtitle">Перемешивать цифры клавиатуры при разблокировке</string>
+    <string name="security_enter_pin_range_format">Введите PIN из %1$d-%2$d цифр</string>
+    <string name="security_cloak_restart_message">Перезапустите приложение, чтобы активировать режим маскировки.&#10;&#10;Введите свой PIN маскировки в приложении калькулятора и нажмите клавишу = для разблокировки.</string>
+    <string name="server_delete_confirmation_format">Удалить "%1$s"?</string>
+    <string name="loc_33b64233" formatted="false">Sats</string>
+    <string name="loc_3822fc21" formatted="false">Сохранено</string>
+    <string name="loc_b94b1995" formatted="false">Удалить сервер</string>
+    <string name="loc_3dbe79b1" formatted="false">Удалить</string>
+    <string name="loc_e46232fe" formatted="false">Добавить сервер</string>
+    <string name="loc_8d4cd2b4" formatted="false">Текущий сервер</string>
+    <string name="loc_bb72c083" formatted="false">Подключить</string>
+    <string name="loc_4f674841" formatted="false">Отключить</string>
+    <string name="loc_e85c4517" formatted="false">Изменить сервер</string>
+    <string name="loc_77caa9b0" formatted="false">Адрес:</string>
+    <string name="loc_475e06fd" formatted="false">Порт:</string>
+    <string name="loc_c641697a" formatted="false">Блок:</string>
+    <string name="loc_9d53bbd5" formatted="false">ПО:</string>
+    <string name="loc_00ad5135" formatted="false">Перетащите для изменения порядка</string>
+    <string name="loc_4cb2f934" formatted="false">Активен</string>
+    <string name="loc_10c5a9ae" formatted="false">Загрузка</string>
+    <string name="loc_51851e0f" formatted="false">Ожидание</string>
+    <string name="loc_21077124" formatted="false">Изменить</string>
+    <string name="loc_eff04021" formatted="false">Изменить сервер</string>
+    <string name="loc_9f89304e" formatted="false">Обновить</string>
+    <string name="loc_0708218f" formatted="false">Тратить неподтвержденные</string>
+    <string name="loc_35cb0c66" formatted="false">Разрешить тратить неподтвержденные UTXO</string>
+    <string name="loc_ccb38171" formatted="false">NFC</string>
+    <string name="loc_d654b827" formatted="false">Показывать суммы кошелька в sats</string>
+    <string name="loc_781eebac" formatted="false">Показывать суммы кошелька в bitcoin</string>
+    <string name="loc_e762ab0b" formatted="false">Включите NFC в настройках Android</string>
+    <string name="loc_03cc7c45" formatted="false">Включить только чтение NFC</string>
+    <string name="loc_7e8f0b30" formatted="false">Включить чтение и обмен по NFC</string>
+    <string name="loc_892c0ce5" formatted="false">Tor подключен</string>
+    <string name="loc_1a2bbf31" formatted="false">Tor подключается...</string>
+    <string name="loc_a4c47a71" formatted="false">Tor запускается...</string>
+    <string name="loc_27d8399b" formatted="false">Ошибка Tor</string>
+    <string name="loc_d6353c61" formatted="false">Tor запустится автоматически</string>
+    <string name="loc_bb27d5c0" formatted="false">Сервер сохранен</string>
+    <string name="loc_22236665" formatted="false">Liquid</string>
+    <string name="loc_f1af1b9c" formatted="false">Федеративный сайдчейн</string>
+    <string name="loc_eda2a508" formatted="false">Показывать суммы Layer 2 в sats</string>
+    <string name="loc_e0230c8c" formatted="false">Показывать суммы Layer 2 в bitcoin</string>
+    <string name="loc_7d880cb5" formatted="false">Отключено</string>
+    <string name="loc_64d3e427" formatted="false">Без ссылок на обозреватель Liquid</string>
+    <string name="loc_bed05818" formatted="false">Клирнет</string>
+    <string name="loc_e70effb6" formatted="false">mempool.space (Onion)</string>
+    <string name="loc_c49a3480" formatted="false">Onion через Tor Browser</string>
+    <string name="loc_c032eff3" formatted="false">Пользовательский сервер</string>
+    <string name="loc_b3694f7f" formatted="false">Пользовательский URL</string>
+    <string name="loc_1ddabd37" formatted="false">Без жестов свайпа</string>
+    <string name="loc_59c793f0" formatted="false">Кошельки</string>
+    <string name="loc_ff9f65eb" formatted="false">Свайп между кошельками</string>
+    <string name="loc_6ea25f47" formatted="false">Отправка / Получение</string>
+    <string name="loc_6e8be5a6" formatted="false">Свайп между балансом, отправкой и получением</string>
+    <string name="loc_e124e866" formatted="false">Слои</string>
+    <string name="loc_62840d26" formatted="false">Свайп между layer 1 и layer 2</string>
+    <string name="loc_ff1867f2" formatted="false">Без получения комиссий</string>
+    <string name="loc_a1b0d97e" formatted="false">Onion через Tor</string>
+    <string name="loc_aab4007b" formatted="false">Electrum сервер</string>
+    <string name="loc_aeca6ac4" formatted="false">Подключенный сервер</string>
+    <string name="loc_060e830f" formatted="false">Без фиатных цен</string>
+    <string name="loc_d3b3c6d3" formatted="false">CoinGecko</string>
+    <string name="loc_c519cf9f" formatted="false">Без свопов Boltz и функциональности Lightning</string>
+    <string name="loc_29c377a4" formatted="false">Boltz (Onion)</string>
+    <string name="loc_e4e0f733" formatted="false">Без свопов SideSwap</string>
+    <string name="loc_91ea3f60" formatted="false">SideSwap (Tor)</string>
+    <string name="loc_0d01317f" formatted="false">Клирнет через Tor</string>
+    <string name="loc_bcc5378e" formatted="false">Без ссылок на обозреватель блоков</string>
+    <string name="loc_1129520d" formatted="false">liquid.network (Onion)</string>
+    <string name="loc_3b5c1bb1" formatted="false">Blockstream</string>
+    <string name="settings_spark_subtitle">Statechain с минимальным доверием</string>
+    <string name="settings_custom_server_placeholder">http://192.168... или http://...onion</string>
+    <string name="loc_3083a5d1" formatted="false">Адрес назначения</string>
+    <string name="loc_4622d13c" formatted="false">Liquid-адрес</string>
+    <string name="loc_a509369c" formatted="false">Ставка комиссии Bitcoin</string>
+    <string name="loc_bebd07bb" formatted="false">Атомарный обмен</string>
+    <string name="loc_cd053ef4" formatted="false">Провайдер отключен</string>
+    <string name="loc_e2c90bcd" formatted="false">Доверенный peg</string>
+    <string name="loc_f61cc0f6" formatted="false">Транзакции</string>
+    <string name="loc_6f9cca87" formatted="false">Обмен будет отправлен на этот Liquid-адрес.</string>
+    <string name="loc_955fce50" formatted="false">Обмен будет отправлен на этот Bitcoin-адрес.</string>
+    <string name="loc_04536bb4" formatted="false">Неверный Bitcoin-адрес</string>
+    <string name="loc_90285d1b" formatted="false">Неверный Liquid-адрес</string>
+    <string name="loc_78e3e750" formatted="false">Ставка комиссии Liquid</string>
+    <string name="loc_43525120" formatted="false">Оставьте пустым для оценки по умолчанию</string>
+    <string name="loc_857c8623" formatted="false">Введите корректную ставку комиссии</string>
+    <string name="loc_f2b5f4d4" formatted="false">Введите ставку комиссии больше 0</string>
+    <string name="loc_9384ed0d" formatted="false">sats</string>
+    <string name="loc_0430ad11" formatted="false">Свернуть адреса</string>
+    <string name="loc_afb3fec8" formatted="false">Развернуть адреса</string>
+    <string name="spark_transfer_spark_deposit_address">Адрес депозита Spark</string>
+    <string name="spark_transfer_destination_override_hint">Переопределите сгенерированный адрес назначения для этого обмена.</string>
+    <string name="spark_transfer_enter_destination_address">Введите адрес назначения</string>
+    <string name="spark_transfer_custom_fee_rate">Пользовательская ставка комиссии</string>
+    <string name="spark_transfer_enter_fee_rate">Введите ставку комиссии</string>
+    <string name="spark_transfer_bitcoin_withdrawal_fee">Комиссия за вывод Bitcoin</string>
+    <string name="swap_unable_to_prepare">Не удалось подготовить обмен</string>
+    <string name="loc_f02e2a46" formatted="false">Детали обмена</string>
+    <string name="loc_511b58c0" formatted="false">Развернуть детали обмена</string>
+    <string name="loc_12c49c0c" formatted="false">ID обмена Boltz</string>
+    <string name="loc_1598922a" formatted="false">ID ордера SideSwap</string>
+    <string name="loc_d5ff2eb5" formatted="false">Адрес депозита обмена</string>
+    <string name="loc_907247e2" formatted="false">Адрес назначения обмена</string>
+    <string name="loc_8215f8b9" formatted="false">Цепной обмен BTC/L-BTC</string>
+    <string name="loc_71ede617" formatted="false">Входящий Lightning-обмен через Boltz</string>
+    <string name="loc_78f3c020" formatted="false">Исходящий Lightning-обмен через Boltz</string>
+    <string name="loc_abbfea89" formatted="false">Комиссия обмена Boltz:</string>
+    <string name="loc_dc3dd7c1" formatted="false">Сервис Lightning-обмена</string>
+    <string name="loc_f0100030" formatted="false">Настройка обмена</string>
+    <string name="loc_979d5904" formatted="false">Направление обмена</string>
+    <string name="loc_0094f526" formatted="false">Провайдер обмена</string>
+    <string name="loc_52f64443" formatted="false">Трансляция обмена...</string>
+    <string name="loc_9a0b9f8e" formatted="false">Проверить обмен</string>
+    <string name="loc_9ff7bb31" formatted="false">Подготовка обмена...</string>
+    <string name="loc_020518a4" formatted="false">Обмен выполняется</string>
+    <string name="loc_d0375699" formatted="false">Обмен завершен</string>
+    <string name="loc_f3b88bca" formatted="false">Новый обмен</string>
+    <string name="loc_9e5eae21" formatted="false">Обмен не удался</string>
+    <string name="loc_36c054ad" formatted="false">Ожидающие обмены</string>
+    <string name="loc_6e01dd8a" formatted="false">Свернуть ожидающие обмены</string>
+    <string name="loc_0a0d0a98" formatted="false">Развернуть ожидающие обмены</string>
+    <string name="loc_65b11dc2" formatted="false">Свернуть ожидающий обмен</string>
+    <string name="loc_02cecfdb" formatted="false">Развернуть ожидающий обмен</string>
+    <string name="loc_4818a44f" formatted="false">Выберите провайдера обмена</string>
+    <string name="loc_cfe01156" formatted="false">Выберите конкретные UTXO для этого обмена</string>
+    <string name="loc_6ff3adfb" formatted="false">Выбранные UTXO L-BTC будут использованы для этого обмена.</string>
+    <string name="loc_cce909f4" formatted="false">Выбранные UTXO Bitcoin будут использованы для этого обмена.</string>
+    <string name="loc_f572fd2a" formatted="false">Обмен без доверия, более высокие комиссии</string>
+    <string name="loc_5675a8d7" formatted="false">Кастодиальный обмен, более низкие комиссии</string>
+    <string name="loc_94bea00f" formatted="false">Отправка обмена...</string>
+    <string name="loc_7a4eb12d" formatted="false">Подтвердить обмен</string>
+    <string name="loc_75935701" formatted="false">Сводка обмена</string>
+    <string name="loc_c0b66d5a" formatted="false">Копировать ID обмена</string>
+    <string name="loc_aedd48eb" formatted="false">sat/vB</string>
+    <string name="loc_85a9e0cb" formatted="false">Комиссия финансирования</string>
+    <string name="loc_c5e0700a" formatted="false">Комиссия финансирования</string>
+    <string name="loc_d3b3a18f" formatted="false">Комиссия получения</string>
+    <string name="loc_41bcc5c5" formatted="false">Комиссия получения</string>
+    <string name="loc_776ee9d4" formatted="false">Комиссия сервиса Boltz</string>
+    <string name="loc_88bc08a6" formatted="false">Комиссия сервиса SideSwap</string>
+    <string name="loc_9283713e" formatted="false">Оценка Boltz</string>
+    <string name="loc_5154065c" formatted="false">Оценка SideSwap</string>
+    <string name="loc_6203b65d" formatted="false">Комиссии перевода провайдера</string>
+    <string name="loc_00a16e52" formatted="false">Комиссии</string>
+    <string name="loc_7d9effcf" formatted="false">Всего комиссий (оценка)</string>
+    <string name="swap_review_approx_fee_rate">≈ %1$s %2$s</string>
+    <string name="loc_e607c9c3" formatted="false">Свернуть комиссии</string>
+    <string name="loc_cd1ee95d" formatted="false">Развернуть комиссии</string>
+    <string name="loc_40fb77d1" formatted="false">Адрес обмена</string>
+    <string name="loc_25938561" formatted="false">обмен</string>
+
+    <!-- Backup / Restore screen (parity with default locale) -->
+    <string name="loc_ab83811b" formatted="false">Создать резервную копию</string>
+    <string name="loc_d46d2b20" formatted="false">Полная резервная копия приложения: кошельки, метки, серверы и общие настройки. Параметры безопасности не включаются.</string>
+    <string name="loc_385cd49a" formatted="false">Резервная копия</string>
+    <string name="loc_39bc3b1b" formatted="false">Восстановить из копии</string>
+    <string name="loc_2e285bfe" formatted="false">Восстановите полную копию, просмотрите содержимое и выберите, что импортировать. Параметры безопасности не включаются.</string>
+    <string name="loc_486a1663" formatted="false">Восстановить</string>
+    <string name="loc_4218f43b">ibis-full-backup-%1$s.json</string>
+    <string name="loc_3713e18d" formatted="false">Проверьте, что именно будет экспортировано, перед сохранением файла.</string>
+    <string name="loc_8652a19f" formatted="false"> (watch-only)</string>
+    <string name="loc_794971b5" formatted="false">Настройки сервера</string>
+    <string name="loc_85611d13" formatted="false">Серверы Electrum и Liquid</string>
+    <string name="loc_19da05f8" formatted="false">Общие настройки приложения</string>
+    <string name="loc_97b9282b" formatted="false">Уведомления, внешние сервисы и т. д.</string>
+    <string name="loc_f8b82c65" formatted="false">Защита</string>
+    <string name="loc_f6dc0e2f" formatted="false">Шифровать файл резервной копии</string>
+    <string name="loc_c4d81c53" formatted="false">Защита паролем</string>
+    <string name="loc_46e1da73" formatted="false">Минимум 8 символов</string>
+    <string name="loc_3df88eb4" formatted="false">Пароли не совпадают</string>
+    <string name="loc_7fdce75b" formatted="false">Выбрать место сохранения</string>
+    <string name="loc_d3414c88" formatted="false">Изменить место сохранения</string>
+    <string name="loc_3ff4bdf5" formatted="false">Подтвердить экспорт</string>
+    <string name="loc_628698a5" formatted="false">Проверьте сведения полной резервной копии перед экспортом.</string>
+    <string name="loc_90d7bedf" formatted="false">Место сохранения</string>
+    <string name="loc_aee23349">%1$d выбрано</string>
+    <string name="loc_32b19599">%1$d включено</string>
+    <string name="loc_803f13e3" formatted="false">Настройки сервера</string>
+    <string name="loc_1bb1df5e" formatted="false">Включено</string>
+    <string name="loc_481063e5" formatted="false">Исключено</string>
+    <string name="loc_daee1794" formatted="false">Настройки приложения</string>
+    <string name="loc_14e0d86b" formatted="false">Шифрование</string>
+    <string name="loc_9f448218" formatted="false">Включено</string>
+    <string name="loc_13f11ba3" formatted="false">Выкл.</string>
+    <string name="loc_452013a2" formatted="false">Экспорт</string>
+    <string name="loc_166a5cb9" formatted="false">Не удалось разобрать резервную копию</string>
+    <string name="loc_6bf29789" formatted="false">Выберите полную резервную копию и проверьте, что будет восстановлено. Параметры безопасности всегда пропускаются.</string>
+    <string name="loc_bf2f67a0" formatted="false">Выбрать файл резервной копии</string>
+    <string name="loc_5948f994" formatted="false">Другой файл резервной копии</string>
+    <string name="loc_adf2a8dd" formatted="false">Выбранный файл</string>
+    <string name="loc_2cad992e" formatted="false">Файл</string>
+    <string name="loc_0b03f2c9" formatted="false">Экспортировано</string>
+    <string name="loc_13027ae4" formatted="false">Чтение резервной копии…</string>
+    <string name="loc_81d0b469" formatted="false">Зашифрованная резервная копия</string>
+    <string name="loc_0d70bfed" formatted="false">Эта резервная копия зашифрована. Введите пароль для просмотра содержимого.</string>
+    <string name="loc_92a1890d" formatted="false">В этой резервной копии нет кошельков</string>
+    <string name="loc_564855d0" formatted="false">В резервной копии нет меток</string>
+    <string name="loc_3e366498" formatted="false">Нет в этой резервной копии</string>
+    <string name="loc_524d0edf" formatted="false">Существующие кошельки с тем же сидом будут пропущены. Параметры безопасности не восстанавливаются.</string>
+    <string name="loc_04ab6415" formatted="false">Скрыть</string>
+    <string name="loc_923c763f" formatted="false">Показать</string>
+    <string name="loc_08201b2b" formatted="false">Подтвердите пароль</string>
+    <string name="loc_ccb42483" formatted="false">Пароль</string>
+    <string name="loc_7be7ccdc" formatted="false">Нет доступных кошельков</string>
+    <string name="spark_connection_backend_label">Бэкенд</string>
+    <string name="spark_connection_backend_value">Управляемая сессия Spark SDK</string>
+    <string name="spark_connection_wallet_label">Кошелек</string>
+    <string name="spark_connection_wallet_not_loaded">Не загружен</string>
+    <string name="spark_connection_identity_label">Идентификатор</string>
+    <string name="spark_connection_error_label">Ошибка</string>
+    <string name="spark_connection_hint">Spark использует управляемую сессию SDK, а не выбираемый сервер.</string>
+    <string name="pending_lightning_invoices_title" formatted="false">Ожидающие инвойсы</string>
+    <string name="pending_lightning_invoice_delete_title" formatted="false">Удалить ожидающий инвойс?</string>
+    <string name="pending_lightning_invoice_delete_message" formatted="false">Это уберет ожидающий инвойс из списка. Если он уже оплачен, но еще не получен, его все равно может потребоваться получить.</string>
+    <string name="pending_lightning_invoice_boltz_id" formatted="false">ID Boltz</string>
+    <string name="pending_lightning_invoice_last_claim_format">Последняя попытка: %1$s</string>
+    <string name="pending_lightning_invoice_last_claim_never" formatted="false">Никогда</string>
+    <string name="pending_lightning_invoice_claiming" formatted="false">Получение...</string>
+</resources>
