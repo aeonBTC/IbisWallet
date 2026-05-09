@@ -36,23 +36,11 @@
 -keepclassmembers enum github.aeonbtc.ibiswallet.data.local.SecureStorage$LockTiming { *; }
 
 # ==================== BDK (Bitcoin Dev Kit) ====================
-# BDK uses UniFFI/JNA. Preserve only the bridge pieces that JNA/native code
-# resolves by name; regular API/data classes may still be optimized.
--keep class org.bitcoindevkit.UniffiLib { *; }
--keep class org.bitcoindevkit.IntegrityCheckingUniffiLib { *; }
--keep class org.bitcoindevkit.RustBuffer { public *; }
--keep class org.bitcoindevkit.RustBuffer$ByReference { public *; }
--keep class org.bitcoindevkit.RustBuffer$ByValue { public *; }
--keep class org.bitcoindevkit.UniffiRustCallStatus { public *; }
--keep class org.bitcoindevkit.UniffiRustCallStatus$ByValue { public *; }
--keep class org.bitcoindevkit.UniffiForeignFuture* { public *; }
--keep class org.bitcoindevkit.UniffiVTable* { public *; }
--keep class org.bitcoindevkit.UniffiCallback* { *; }
--keep class org.bitcoindevkit.uniffiCallback* { *; }
--keep class org.bitcoindevkit.* implements com.sun.jna.Library { *; }
--keep interface org.bitcoindevkit.* extends com.sun.jna.Library { *; }
--keep class org.bitcoindevkit.* implements com.sun.jna.Callback { *; }
--keep interface org.bitcoindevkit.* extends com.sun.jna.Callback { *; }
+# BDK uses generated UniFFI/JNA bindings. JNA inspects callback signatures and
+# NativeMapped value types reflectively during static initialization, so keep
+# the binding package intact in minified release builds.
+-keep class org.bitcoindevkit.** { *; }
+-keep interface org.bitcoindevkit.** { *; }
 
 # ==================== LWK (Liquid Wallet Kit) ====================
 # LWK's generated Android bindings live in the `lwk` package, not
@@ -99,6 +87,8 @@
 -keep class * extends com.sun.jna.Structure { *; }
 -keep class * implements com.sun.jna.Structure$ByValue { *; }
 -keep class * implements com.sun.jna.Structure$ByReference { *; }
+-keep class * implements com.sun.jna.NativeMapped { *; }
+-keep interface * extends com.sun.jna.Callback { *; }
 -keep @com.sun.jna.Structure$FieldOrder class * { *; }
 -keepclassmembers class * extends com.sun.jna.Structure {
     public *;
