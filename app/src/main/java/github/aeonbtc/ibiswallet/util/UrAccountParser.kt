@@ -119,6 +119,9 @@ object UrAccountParser {
         val detectedType = scriptExpressionsToAddressType(selectedOutput.scriptExpressions)
         val descriptorStr =
             cryptoOutputToDescriptorString(selectedOutput, masterFp)
+                ?: outputs.asSequence()
+                    .mapNotNull { cryptoOutputToDescriptorString(it, masterFp) }
+                    .firstOrNull()
                 ?: return null
 
         return ParsedUrResult(
@@ -184,9 +187,12 @@ object UrAccountParser {
                 sourceToAddressType(source) == preferredAddressType
             }
 
-        // Fall back to first singlesig descriptor
+        // Fall back to multisig descriptors before generic singlesig descriptors.
         val selected =
             matched ?: descriptors.firstOrNull { desc ->
+                val source = desc.source?.lowercase() ?: return@firstOrNull false
+                source.contains("multi") || source.contains("cosigner")
+            } ?: descriptors.firstOrNull { desc ->
                 val source = desc.source?.lowercase() ?: return@firstOrNull false
                 !source.contains("multi") && !source.contains("cosigner")
             } ?: descriptors.firstOrNull()
@@ -447,6 +453,8 @@ object UrAccountParser {
     private fun sourceToAddressType(source: String): AddressType? {
         return when {
             source.startsWith("wpkh(") -> AddressType.SEGWIT
+            source.startsWith("wsh(") -> AddressType.SEGWIT
+            source.startsWith("sh(wsh(") -> AddressType.SEGWIT
             source.startsWith("sh(wpkh(") -> throw IllegalArgumentException(BitcoinUtils.UNSUPPORTED_NESTED_SEGWIT_MESSAGE)
             source.startsWith("pkh(") -> AddressType.LEGACY
             source.startsWith("tr(") -> AddressType.TAPROOT

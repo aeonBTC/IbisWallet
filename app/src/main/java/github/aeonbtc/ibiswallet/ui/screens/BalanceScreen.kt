@@ -72,9 +72,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -105,6 +106,7 @@ import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
@@ -113,6 +115,8 @@ import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.WalletState
+import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
@@ -142,13 +146,10 @@ import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
-import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
-import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.util.startActivityWithTaskFallback
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlinx.coroutines.withTimeoutOrNull
-
 /**
  * Method for speeding up a transaction
  */
@@ -167,6 +168,9 @@ fun BalanceScreen(
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
+    historicalBtcPrices: Map<String, Double> = emptyMap(),
+    showHistoricalTxPrices: Boolean = false,
+    onShowHistoricalTxPricesChange: (Boolean) -> Unit = {},
     privacyMode: Boolean = false,
     onTogglePrivacy: () -> Unit = {},
     addressLabels: Map<String, String> = emptyMap(),
@@ -253,6 +257,7 @@ fun BalanceScreen(
             mempoolUrl = mempoolUrl,
             mempoolServer = mempoolServer,
             btcPrice = btcPrice,
+            historicalBtcPrice = historicalBtcPrices[tx.txid],
             fiatCurrency = fiatCurrency,
             privacyMode = privacyMode,
             label = txLabel,
@@ -351,6 +356,28 @@ fun BalanceScreen(
         isSearchFiltering = false
     }
 
+    val isSearching = searchQuery.trim().isNotBlank()
+    val visibleTransactions by remember(
+        isSearching,
+        searchResultTxids,
+        transactionsById,
+        sourceFilteredTransactions,
+        displayLimit,
+    ) {
+        derivedStateOf {
+            if (isSearching) {
+                searchResultTxids.mapNotNull(transactionsById::get)
+            } else {
+                sourceFilteredTransactions.take(displayLimit)
+            }
+        }
+    }
+    val totalCount by remember(isSearching, searchTotalCount, sourceFilteredTransactions) {
+        derivedStateOf {
+            if (isSearching) searchTotalCount else sourceFilteredTransactions.size
+        }
+    }
+
     PullToRefreshBox(
         isRefreshing = isPullRefreshing,
         onRefresh = {
@@ -435,7 +462,7 @@ fun BalanceScreen(
                             ) {
                                 Icon(
                                     imageVector = if (privacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = "Toggle privacy",
+                                    contentDescription = stringResource(R.string.loc_990bb023),
                                     tint = TextSecondary,
                                     modifier = Modifier.size(24.dp),
                                 )
@@ -465,7 +492,7 @@ fun BalanceScreen(
                                 } else {
                                     Icon(
                                         imageVector = Icons.Default.Sync,
-                                        contentDescription = "Sync",
+                                        contentDescription = stringResource(R.string.loc_8c195a44),
                                         tint =
                                             if (walletState.isInitialized) {
                                                 TextSecondary
@@ -536,7 +563,7 @@ fun BalanceScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCode,
-                                contentDescription = "Quick receive",
+                                contentDescription = stringResource(R.string.loc_a397da3c),
                                 tint = cardAccentColor,
                                 modifier = Modifier.size(24.dp),
                             )
@@ -557,7 +584,7 @@ fun BalanceScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR",
+                                contentDescription = stringResource(R.string.loc_60129540),
                                 tint = cardAccentColor,
                                 modifier = Modifier.size(24.dp),
                             )
@@ -613,13 +640,13 @@ fun BalanceScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "No Wallet",
+                                text = stringResource(R.string.loc_fc29713a),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Add a wallet to get started",
+                                text = stringResource(R.string.loc_2311c49c),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
@@ -640,31 +667,50 @@ fun BalanceScreen(
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Add Wallet")
+                                Text(stringResource(R.string.loc_c2677517))
                             }
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
-                // Recent Transactions Header
+                // Transactions header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = "Recent Transactions",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        Text(
+                            text = stringResource(R.string.loc_f61cc0f6),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        if (historicalBtcPrices.isNotEmpty()) {
+                            TransactionFilterButton(
+                                icon = Icons.Default.Schedule,
+                                contentDescription =
+                                    if (showHistoricalTxPrices) {
+                                        stringResource(R.string.tx_history_show_current_prices)
+                                    } else {
+                                        stringResource(R.string.tx_history_show_historical_prices)
+                                    },
+                                tint = BitcoinOrange,
+                                isSelected = showHistoricalTxPrices,
+                                onClick = { onShowHistoricalTxPricesChange(!showHistoricalTxPrices) },
+                            )
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         if (hasSwapTransactions) {
                             TransactionFilterButton(
                                 icon = Icons.Default.SwapHoriz,
-                                contentDescription = "Filter swaps",
+                                contentDescription = stringResource(R.string.loc_ea6a9a53),
                                 tint = BitcoinOrange,
                                 isSelected = showSwapTransactions,
                                 onClick = { showSwapTransactions = !showSwapTransactions },
@@ -674,7 +720,7 @@ fun BalanceScreen(
                             contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
-                                    .size(32.dp)
+                                    .size(30.dp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurfaceVariant)
                                     .clickable {
@@ -684,7 +730,12 @@ fun BalanceScreen(
                         ) {
                             Icon(
                                 imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
-                                contentDescription = if (isSearchActive) "Close search" else "Search",
+                                contentDescription =
+                                    if (isSearchActive) {
+                                        stringResource(R.string.loc_dda0ea3a)
+                                    } else {
+                                        stringResource(R.string.loc_b35cde91)
+                                    },
                                 tint = if (isSearchActive) {
                                     BitcoinOrange
                                 } else {
@@ -705,7 +756,7 @@ fun BalanceScreen(
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = {
                             Text(
-                                "Search labels, addresses, txid, or date...",
+                                stringResource(R.string.loc_0177e398),
                                 color = TextSecondary.copy(alpha = 0.5f),
                             )
                         },
@@ -734,14 +785,6 @@ fun BalanceScreen(
                 Spacer(modifier = Modifier.height(4.dp))
             }
 
-            val isSearching = searchQuery.trim().isNotBlank()
-            val visibleTransactions =
-                if (isSearching) {
-                    searchResultTxids.mapNotNull(transactionsById::get)
-                } else {
-                    sourceFilteredTransactions.take(displayLimit)
-                }
-            val totalCount = if (isSearching) searchTotalCount else sourceFilteredTransactions.size
             val visibleCount = visibleTransactions.size
             val hasMore = visibleCount < totalCount
             val showTransactionLoadingState =
@@ -779,9 +822,9 @@ fun BalanceScreen(
                                     text =
                                         walletState.syncProgress?.status
                                             ?: if (walletState.isTransactionHistoryLoading) {
-                                                "Loading transaction history..."
+                                                stringResource(R.string.loc_1ed8a5e9)
                                             } else {
-                                                "Syncing wallet..."
+                                                stringResource(R.string.loc_1817b4ae)
                                             },
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onBackground,
@@ -790,9 +833,9 @@ fun BalanceScreen(
                                 Text(
                                     text =
                                         if (walletState.isTransactionHistoryLoading) {
-                                            "Balance is ready. Transactions will appear shortly."
+                                            stringResource(R.string.loc_c4bda1e4)
                                         } else {
-                                            "Recent activity will appear when sync completes."
+                                            stringResource(R.string.loc_6998e348)
                                         },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
@@ -823,7 +866,12 @@ fun BalanceScreen(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
                                 Text(
-                                    text = if (isSearching) "No matching transactions" else "No transactions yet",
+                                    text =
+                                        if (isSearching) {
+                                            stringResource(R.string.loc_167ce23f)
+                                        } else {
+                                            stringResource(R.string.loc_a317d3d8)
+                                        },
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = TextSecondary,
                                 )
@@ -831,11 +879,11 @@ fun BalanceScreen(
                                 Text(
                                     text =
                                         if (isSearching) {
-                                            "Try a different search term"
+                                            stringResource(R.string.loc_9febfd40)
                                         } else if (walletState.isInitialized) {
-                                            "Transactions will appear here after syncing"
+                                            stringResource(R.string.loc_2aebf14e)
                                         } else {
-                                            "Add a wallet to get started"
+                                            stringResource(R.string.loc_2311c49c)
                                         },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary.copy(alpha = 0.7f),
@@ -856,6 +904,12 @@ fun BalanceScreen(
                         useSats = useSats,
                         label = label,
                         btcPrice = btcPrice,
+                        historicalBtcPrice =
+                            if (showHistoricalTxPrices) {
+                                historicalBtcPrices[tx.txid]
+                            } else {
+                                null
+                            },
                         fiatCurrency = fiatCurrency,
                         privacyMode = privacyMode,
                         onClick = { selectedTransaction = tx },
@@ -888,13 +942,13 @@ fun BalanceScreen(
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Loading more transactions...",
+                                        text = stringResource(R.string.loc_54c6a9a6),
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onBackground,
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "Showing the newest activity first while older history finishes loading.",
+                                        text = stringResource(R.string.loc_c5f386a2),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary,
                                     )
@@ -957,6 +1011,7 @@ fun BalanceScreen(
     val quickReceiveAddress = walletState.currentAddress
     if (showQuickReceive && quickReceiveAddress != null) {
         var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+        var showEnlargedQr by remember { mutableStateOf(false) }
         LaunchedEffect(quickReceiveAddress) {
             qrBitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 generateQrBitmap(quickReceiveAddress)
@@ -972,11 +1027,42 @@ fun BalanceScreen(
             }
         }
 
+        if (showEnlargedQr && qrBitmap != null) {
+            Dialog(
+                onDismissRequest = { showEnlargedQr = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.9f))
+                        .clickable { showEnlargedQr = false },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(320.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.White)
+                            .padding(16.dp),
+                    ) {
+                        Image(
+                            bitmap = qrBitmap!!.asImageBitmap(),
+                            contentDescription = stringResource(R.string.loc_8fd877da),
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+                }
+            }
+        }
+
         Dialog(
             onDismissRequest = { showQuickReceive = false },
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            Card(
+            ProvideLocalizedResources {
+                Card(
                 modifier =
                     Modifier
                         .padding(horizontal = 32.dp)
@@ -999,11 +1085,12 @@ fun BalanceScreen(
                                     .size(200.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(Color.White)
+                                    .clickable { showEnlargedQr = true }
                                     .padding(8.dp),
                         ) {
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Receive address QR",
+                                contentDescription = stringResource(R.string.loc_8fd877da),
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Fit,
                             )
@@ -1026,7 +1113,7 @@ fun BalanceScreen(
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy address",
+                            contentDescription = stringResource(R.string.loc_3c19e32e),
                             tint = if (showCopied) BitcoinOrange else TextSecondary,
                             modifier =
                                 Modifier
@@ -1034,7 +1121,6 @@ fun BalanceScreen(
                                     .clickable {
                                         SecureClipboard.copyAndScheduleClear(
                                             context,
-                                            "Address",
                                             quickReceiveAddress,
                                         )
                                         showCopied = true
@@ -1045,12 +1131,13 @@ fun BalanceScreen(
                     if (showCopied) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Copied to clipboard!",
+                            text = stringResource(R.string.loc_e287255d),
                             style = MaterialTheme.typography.bodySmall,
                             color = BitcoinOrange,
                         )
                     }
                 }
+            }
             }
         }
     }
@@ -1086,14 +1173,14 @@ private fun Layer2RequiredPlaceholder(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        text = walletName ?: "Layer 2 required",
+                        text = walletName ?: stringResource(R.string.loc_ec64ef5e),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                         textAlign = TextAlign.Center,
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "Enable Layer 2 to view this Liquid watch-only wallet.",
+                        text = stringResource(R.string.loc_7821917a),
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary,
                         textAlign = TextAlign.Center,
@@ -1106,7 +1193,7 @@ private fun Layer2RequiredPlaceholder(
                                 .fillMaxWidth()
                                 .height(48.dp),
                     ) {
-                        Text("Open Settings", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.loc_a48e1208), style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
@@ -1120,6 +1207,7 @@ private fun TransactionItem(
     useSats: Boolean = false,
     label: String? = null,
     btcPrice: Double? = null,
+    historicalBtcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     onClick: () -> Unit = {},
@@ -1132,6 +1220,11 @@ private fun TransactionItem(
             null -> transaction.amountSats > 0
         }
     val absSats = swapDisplayAmountSats(transaction).toULong()
+    val formattedTimestamp =
+        remember(transaction.timestamp) {
+            transaction.timestamp?.let { formatDateTime(it) }.orEmpty()
+        }
+    val effectiveBtcPrice = historicalBtcPrice ?: btcPrice
 
     Card(
         modifier =
@@ -1173,7 +1266,12 @@ private fun TransactionItem(
                         } else {
                             Icons.AutoMirrored.Filled.CallMade
                         },
-                    contentDescription = if (isReceived) "Received" else "Sent",
+                    contentDescription =
+                        if (isReceived) {
+                            stringResource(R.string.loc_301a5b91)
+                        } else {
+                            stringResource(R.string.loc_1af68597)
+                        },
                     tint = if (isReceived) AccentGreen else AccentRed,
                     modifier = Modifier.size(24.dp),
                 )
@@ -1185,7 +1283,12 @@ private fun TransactionItem(
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = if (isReceived) "Received" else "Sent",
+                        text =
+                            if (isReceived) {
+                                stringResource(R.string.loc_301a5b91)
+                            } else {
+                                stringResource(R.string.loc_1af68597)
+                            },
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                         color = MaterialTheme.colorScheme.onBackground,
                     )
@@ -1199,7 +1302,7 @@ private fun TransactionItem(
                                     .padding(horizontal = 5.dp, vertical = 2.dp),
                         ) {
                             Text(
-                                text = "Swap",
+                                text = stringResource(R.string.loc_85a12a5f),
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
                                 color = BitcoinOrange,
                                 fontWeight = FontWeight.SemiBold,
@@ -1218,7 +1321,7 @@ private fun TransactionItem(
                 }
                 // Date and time
                 Text(
-                    text = transaction.timestamp?.let { formatDateTime(it) } ?: "",
+                    text = formattedTimestamp,
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                     color = TextSecondary,
                 )
@@ -1242,18 +1345,17 @@ private fun TransactionItem(
                     textAlign = TextAlign.End,
                 )
                 // USD value
-                if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                    val usdValue = (absSats.toDouble() / 100_000_000.0) * btcPrice
-                    Text(
+                if (effectiveBtcPrice != null && effectiveBtcPrice > 0 && !privacyMode) {
+                    val usdValue = (absSats.toDouble() / 100_000_000.0) * effectiveBtcPrice
+                    HistoricalFiatText(
                         text = formatFiat(usdValue, fiatCurrency),
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                        color = TextSecondary,
-                        textAlign = TextAlign.End,
+                        isHistorical = historicalBtcPrice != null && historicalBtcPrice > 0,
+                        tint = BitcoinOrange,
                     )
                 }
                 if (!transaction.isConfirmed) {
                     StatusBadge(
-                        label = "Pending",
+                        label = stringResource(R.string.loc_1b684325),
                         color = BitcoinOrange,
                         modifier = Modifier.align(Alignment.End),
                     )
@@ -1265,9 +1367,13 @@ private fun TransactionItem(
 
 private fun formatDateTime(timestamp: Long): String {
     val date = Date(timestamp * 1000) // Convert seconds to milliseconds
-    val format = SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
-    return format.format(date)
+    return balanceDateTimeFormatter.get()?.format(date).orEmpty()
 }
+
+private val balanceDateTimeFormatter: ThreadLocal<SimpleDateFormat> =
+    ThreadLocal.withInitial {
+        SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
+    }
 
 private fun TransactionDetails.confirmationProgressText(currentBlockHeight: UInt?): String? {
     if (!isConfirmed) return "0/6"
@@ -1313,10 +1419,11 @@ private fun swapDisplayAmountSats(transaction: TransactionDetails): Long {
     }
 }
 
+@Composable
 private fun swapProviderLabel(service: SwapService): String =
     when (service) {
-        SwapService.BOLTZ -> "Boltz"
-        SwapService.SIDESWAP -> "SideSwap"
+        SwapService.BOLTZ -> stringResource(R.string.loc_3d1a0df5)
+        SwapService.SIDESWAP -> stringResource(R.string.loc_c6f76248)
     }
 
 private fun swapProviderColor(service: SwapService): Color =
@@ -1325,16 +1432,18 @@ private fun swapProviderColor(service: SwapService): Color =
         SwapService.SIDESWAP -> AccentTeal
     }
 
+@Composable
 private fun swapDepositLabel(details: LiquidSwapDetails): String =
     when (details.direction) {
-        SwapDirection.BTC_TO_LBTC -> "Bitcoin Deposit Address"
-        SwapDirection.LBTC_TO_BTC -> "Liquid Deposit Address"
+        SwapDirection.BTC_TO_LBTC -> stringResource(R.string.loc_37a5c459)
+        SwapDirection.LBTC_TO_BTC -> stringResource(R.string.loc_53204016)
     }
 
+@Composable
 private fun swapReceiveLabel(details: LiquidSwapDetails): String =
     when (details.direction) {
-        SwapDirection.BTC_TO_LBTC -> "Liquid Destination Address"
-        SwapDirection.LBTC_TO_BTC -> "Bitcoin Destination Address"
+        SwapDirection.BTC_TO_LBTC -> stringResource(R.string.loc_8f9ee8e6)
+        SwapDirection.LBTC_TO_BTC -> stringResource(R.string.loc_a6feda9e)
     }
 
 private fun swapPrimaryAmountColor(direction: SwapDirection): Color =
@@ -1349,6 +1458,7 @@ private fun swapExpectedReceiveColor(direction: SwapDirection): Color =
         SwapDirection.LBTC_TO_BTC -> BitcoinOrange
     }
 
+@Composable
 private fun swapDetailPrimaryAmountText(
     transaction: TransactionDetails,
     details: LiquidSwapDetails,
@@ -1364,6 +1474,7 @@ private fun swapDetailPrimaryAmountText(
     return formatSwapAssetAmount(amountSats, asset, useSats, privacyMode)
 }
 
+@Composable
 private fun swapDetailExpectedReceiveText(
     transaction: TransactionDetails,
     details: LiquidSwapDetails,
@@ -1379,6 +1490,7 @@ private fun swapDetailExpectedReceiveText(
     return formatSwapAssetAmount(amountSats, asset, useSats, privacyMode)
 }
 
+@Composable
 private fun formatSwapAssetAmount(
     amountSats: Long,
     asset: String,
@@ -1386,7 +1498,7 @@ private fun formatSwapAssetAmount(
     privacyMode: Boolean,
 ): String {
     if (privacyMode) return HIDDEN_AMOUNT
-    val unit = if (useSats) "sats" else "BTC"
+    val unit = if (useSats) stringResource(R.string.loc_9384ed0d) else "BTC"
     return "${formatAmount(amountSats.toULong(), useSats)} $unit $asset"
 }
 
@@ -1460,7 +1572,7 @@ private fun SwapDetailCopyRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
-                    contentDescription = "Copy $copyLabel",
+                    contentDescription = stringResource(R.string.common_copy_with_label, copyLabel),
                     tint = if (copied) BitcoinOrange else TextSecondary,
                     modifier = Modifier.size(18.dp),
                 )
@@ -1468,7 +1580,7 @@ private fun SwapDetailCopyRow(
         }
         if (copied) {
             Text(
-                text = "Copied to clipboard!",
+                text = stringResource(R.string.loc_e287255d),
                 style = MaterialTheme.typography.bodySmall,
                 color = BitcoinOrange,
             )
@@ -1548,7 +1660,7 @@ private fun TransactionFilterButton(
         contentAlignment = Alignment.Center,
         modifier =
             Modifier
-                .size(28.dp)
+                .size(30.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(if (isSelected) tint.copy(alpha = 0.16f) else DarkSurfaceVariant)
                 .clickable(onClick = onClick),
@@ -1557,12 +1669,53 @@ private fun TransactionFilterButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = if (isSelected) tint else TextSecondary,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(20.dp),
         )
     }
 }
 
 private const val HIDDEN_AMOUNT = "****"
+
+@Composable
+private fun HistoricalFiatText(
+    text: String,
+    isHistorical: Boolean,
+    tint: Color,
+    modifier: Modifier = Modifier,
+    large: Boolean = false,
+) {
+    val style =
+        if (large) {
+            MaterialTheme.typography.titleMedium.copy(
+                fontSize = 18.sp,
+                lineHeight = 26.sp,
+                fontWeight = FontWeight.Normal,
+            )
+        } else {
+            MaterialTheme.typography.bodyMedium.copy(fontSize = 16.sp, lineHeight = 22.sp)
+        }
+    val iconSize = if (large) 18.dp else 14.dp
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        if (isHistorical) {
+            Icon(
+                imageVector = Icons.Default.Schedule,
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(iconSize),
+            )
+        }
+        Text(
+            text = text,
+            style = style,
+            color = TextSecondary,
+            textAlign = TextAlign.End,
+        )
+    }
+}
 
 /**
  * Transaction Detail Dialog
@@ -1576,6 +1729,7 @@ fun TransactionDetailDialog(
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
     btcPrice: Double? = null,
+    historicalBtcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     label: String? = null,
@@ -1678,13 +1832,13 @@ fun TransactionDetailDialog(
                     setPackage(torBrowserPackage)
                 }
             try {
-                context.startActivity(intent)
+                context.startActivityWithTaskFallback(intent)
             } catch (_: Exception) {
                 showTorBrowserError = true
             }
         } else {
             val intent = Intent(Intent.ACTION_VIEW, url.toUri())
-            context.startActivity(intent)
+            context.startActivityWithTaskFallback(intent)
         }
     }
 
@@ -1697,8 +1851,12 @@ fun TransactionDetailDialog(
             else -> null
         }
 
-    val denominationLabel = if (useSats) "sats" else "BTC"
+    val denominationLabel = if (useSats) stringResource(R.string.loc_9384ed0d) else "BTC"
     val confirmationProgressText = transaction.confirmationProgressText(currentBlockHeight)
+    val swapIdLabel = stringResource(R.string.loc_3e5cd869)
+    val swapDepositAddressLabel = stringResource(R.string.loc_d5ff2eb5)
+    val swapReceiveAddressLabel = stringResource(R.string.loc_907247e2)
+    val refundAddressLabel = stringResource(R.string.loc_245027bd)
 
     // Tor Browser error dialog
     if (showTorBrowserError) {
@@ -1781,29 +1939,30 @@ fun TransactionDetailDialog(
                 usePlatformDefaultWidth = false,
             ),
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = DarkSurface,
-        ) {
-            Column(
+        ProvideLocalizedResources {
+            Surface(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(16.dp)
-                        .verticalScroll(scrollState),
+                        .padding(16.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = DarkSurface,
             ) {
-                // Header with close button
-                Row(
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .verticalScroll(scrollState),
+                ) {
+                    // Header with close button
+                    Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Transaction Details",
+                        text = stringResource(R.string.loc_98c5fbdc),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground,
@@ -1819,7 +1978,7 @@ fun TransactionDetailDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.loc_d2c0aec0),
                             tint = TextSecondary,
                             modifier = Modifier.size(16.dp),
                         )
@@ -1868,10 +2027,10 @@ fun TransactionDetailDialog(
                         Text(
                             text =
                                 when {
-                                    swapDetails != null -> "Swap"
-                                    transaction.isSelfTransfer -> "Self-Transfer"
-                                    isReceived -> "Received"
-                                    else -> "Sent"
+                                    swapDetails != null -> stringResource(R.string.loc_85a12a5f)
+                                    transaction.isSelfTransfer -> stringResource(R.string.loc_222c0de6)
+                                    isReceived -> stringResource(R.string.loc_301a5b91)
+                                    else -> stringResource(R.string.loc_1af68597)
                                 },
                             style = MaterialTheme.typography.titleSmall,
                             color =
@@ -1900,15 +2059,28 @@ fun TransactionDetailDialog(
                             color = if (isReceived) AccentGreen else AccentRed,
                         )
 
-                        // USD amount (if price is available)
-                        if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                            val usdValue = (amountAbs.toDouble() / 100_000_000.0) * btcPrice
-                            Text(
-                                text = formatFiat(usdValue, fiatCurrency),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
+                        if (!privacyMode) {
+                            if (btcPrice != null && btcPrice > 0) {
+                                val currentFiatValue = (amountAbs.toDouble() / 100_000_000.0) * btcPrice
+                                HistoricalFiatText(
+                                    text = formatFiat(currentFiatValue, fiatCurrency),
+                                    isHistorical = false,
+                                    tint = BitcoinOrange,
+                                    large = true,
+                                    modifier = Modifier.padding(top = 2.dp),
+                                )
+                            }
+                            if (historicalBtcPrice != null && historicalBtcPrice > 0) {
+                                val historicalFiatValue =
+                                    (amountAbs.toDouble() / 100_000_000.0) * historicalBtcPrice
+                                HistoricalFiatText(
+                                    text = formatFiat(historicalFiatValue, fiatCurrency),
+                                    isHistorical = true,
+                                    tint = BitcoinOrange,
+                                    large = true,
+                                    modifier = Modifier.padding(top = 1.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -1939,9 +2111,9 @@ fun TransactionDetailDialog(
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = when (speedUpMethod) {
-                                SpeedUpMethod.RBF -> "Bump Fee (RBF)"
-                                SpeedUpMethod.CPFP -> "Bump Fee (CPFP)"
-                                SpeedUpMethod.REDIRECT -> "Bump Fee (RBF)"
+                                SpeedUpMethod.RBF -> stringResource(R.string.loc_3dae8142)
+                                SpeedUpMethod.CPFP -> stringResource(R.string.loc_51321a45)
+                                SpeedUpMethod.REDIRECT -> stringResource(R.string.loc_3dae8142)
                             },
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -1973,7 +2145,7 @@ fun TransactionDetailDialog(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "Cancel Transaction (RBF)",
+                            text = stringResource(R.string.loc_7f958245),
                             style = MaterialTheme.typography.bodyMedium,
                             color = ErrorRed,
                         )
@@ -2002,7 +2174,7 @@ fun TransactionDetailDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "Status",
+                                    text = stringResource(R.string.loc_7cac602a),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                 )
@@ -2035,7 +2207,12 @@ fun TransactionDetailDialog(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = if (transaction.isConfirmed) "Confirmed" else "Pending",
+                                        text =
+                                            if (transaction.isConfirmed) {
+                                                stringResource(R.string.loc_4ab75d7f)
+                                            } else {
+                                                stringResource(R.string.loc_1b684325)
+                                            },
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = if (transaction.isConfirmed) AccentGreen else BitcoinOrange,
                                     )
@@ -2066,7 +2243,7 @@ fun TransactionDetailDialog(
                         // Transaction ID
                         Column {
                             Text(
-                                text = "Transaction ID",
+                                text = stringResource(R.string.loc_13e398d0),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
@@ -2102,7 +2279,6 @@ fun TransactionDetailDialog(
                                             .clickable {
                                                 SecureClipboard.copyAndScheduleClear(
                                                     context,
-                                                    "Transaction ID",
                                                     transaction.txid,
                                                 )
                                                 showCopiedTxid = true
@@ -2110,7 +2286,7 @@ fun TransactionDetailDialog(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.ContentCopy,
-                                        contentDescription = "Copy",
+                                        contentDescription = stringResource(R.string.loc_ed8814bc),
                                         tint = if (showCopiedTxid) BitcoinOrange else TextSecondary,
                                         modifier = Modifier.size(18.dp),
                                     )
@@ -2119,7 +2295,7 @@ fun TransactionDetailDialog(
                             // Show "Copied!" text
                             if (showCopiedTxid) {
                                 Text(
-                                    text = "Copied to clipboard!",
+                                    text = stringResource(R.string.loc_e287255d),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = BitcoinOrange,
                                 )
@@ -2133,19 +2309,25 @@ fun TransactionDetailDialog(
 
                         // Address (recipient for sent, receiving address for received, or destination for self-transfer)
                         if (transaction.address != null) {
+                            val addressLabel =
+                                if (isReceived && !transaction.isSelfTransfer) {
+                                    stringResource(R.string.loc_b47edf23)
+                                } else {
+                                    stringResource(R.string.loc_eaf579ea)
+                                }
                             Column {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = if (isReceived && !transaction.isSelfTransfer) "Received at" else "Recipient",
+                                        text = addressLabel,
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary,
                                     )
                                     if (transaction.isSelfTransfer) {
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = "(Self-transfer)",
+                                            text = "(${stringResource(R.string.loc_222c0de6)})",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = BorderColor,
                                         )
@@ -2197,7 +2379,6 @@ fun TransactionDetailDialog(
                                                 .clickable {
                                                     SecureClipboard.copyAndScheduleClear(
                                                         context,
-                                                        "Address",
                                                         transaction.address,
                                                     )
                                                     showCopiedAddress = true
@@ -2205,7 +2386,7 @@ fun TransactionDetailDialog(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ContentCopy,
-                                            contentDescription = "Copy Address",
+                                            contentDescription = stringResource(R.string.loc_f3a4dab2),
                                             tint = if (showCopiedAddress) BitcoinOrange else TextSecondary,
                                             modifier = Modifier.size(18.dp),
                                         )
@@ -2214,7 +2395,7 @@ fun TransactionDetailDialog(
                                 // Show "Copied!" text
                                 if (showCopiedAddress) {
                                     Text(
-                                        text = "Copied to clipboard!",
+                                        text = stringResource(R.string.loc_e287255d),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = BitcoinOrange,
                                     )
@@ -2230,7 +2411,7 @@ fun TransactionDetailDialog(
                             if ((!isReceived || transaction.isSelfTransfer) && transaction.changeAddress != null && transaction.changeAddress != transaction.address) {
                                 Column {
                                     Text(
-                                        text = "Change returned to",
+                                        text = stringResource(R.string.loc_a28f34b2),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary,
                                     )
@@ -2280,7 +2461,6 @@ fun TransactionDetailDialog(
                                                     .clickable {
                                                         SecureClipboard.copyAndScheduleClear(
                                                             context,
-                                                            "Change Address",
                                                             transaction.changeAddress,
                                                         )
                                                         showCopiedChangeAddress = true
@@ -2288,7 +2468,7 @@ fun TransactionDetailDialog(
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.ContentCopy,
-                                                contentDescription = "Copy Change Address",
+                                                contentDescription = stringResource(R.string.loc_90d5f46b),
                                                 tint = if (showCopiedChangeAddress) BitcoinOrange else TextSecondary,
                                                 modifier = Modifier.size(18.dp),
                                             )
@@ -2297,7 +2477,7 @@ fun TransactionDetailDialog(
                                     // Show "Copied!" text
                                     if (showCopiedChangeAddress) {
                                         Text(
-                                            text = "Copied to clipboard!",
+                                            text = stringResource(R.string.loc_e287255d),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = BitcoinOrange,
                                         )
@@ -2315,7 +2495,7 @@ fun TransactionDetailDialog(
                         if (!isReceived && transaction.fee != null && transaction.fee > 0UL) {
                             Column {
                                 Text(
-                                    text = "Network Fee",
+                                    text = stringResource(R.string.loc_f72cc482),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                 )
@@ -2331,9 +2511,12 @@ fun TransactionDetailDialog(
                                     }
                                 if (displayFeeRate != null && displayVsize != null) {
                                     Text(
-                                        text = "${formatFeeRate(
-                                            displayFeeRate,
-                                        )} sat/vB • ${formatVBytes(displayVsize)} vB",
+                                        text =
+                                            stringResource(
+                                                R.string.liquid_fee_rate_vbytes_format,
+                                                formatFeeRate(displayFeeRate),
+                                                formatVBytes(displayVsize),
+                                            ),
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontFamily = FontFamily.Monospace,
                                         color = MaterialTheme.colorScheme.onBackground,
@@ -2364,7 +2547,7 @@ fun TransactionDetailDialog(
                         // Label section
                         Column {
                             Text(
-                                text = "Label",
+                                text = stringResource(R.string.loc_cf667fec),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
@@ -2373,7 +2556,12 @@ fun TransactionDetailDialog(
                                 OutlinedTextField(
                                     value = labelText,
                                     onValueChange = { labelText = it },
-                                    placeholder = { Text("Enter label", color = TextSecondary.copy(alpha = 0.5f)) },
+                                    placeholder = {
+                                        Text(
+                                            stringResource(R.string.loc_822c6f45),
+                                            color = TextSecondary.copy(alpha = 0.5f),
+                                        )
+                                    },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
                                     colors =
@@ -2389,7 +2577,7 @@ fun TransactionDetailDialog(
                                                 isEditingLabel = false
                                             },
                                         ) {
-                                            Text("Save", color = BitcoinOrange)
+                                            Text(stringResource(R.string.loc_f55495e0), color = BitcoinOrange)
                                         }
                                     },
                                     modifier = Modifier.fillMaxWidth(),
@@ -2423,7 +2611,7 @@ fun TransactionDetailDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "Swap Details",
+                                    text = stringResource(R.string.loc_f02e2a46),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                     modifier = Modifier.weight(1f),
@@ -2435,7 +2623,12 @@ fun TransactionDetailDialog(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Icon(
                                     imageVector = if (swapDetailsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                    contentDescription = if (swapDetailsExpanded) "Collapse swap details" else "Expand swap details",
+                                    contentDescription =
+                                        if (swapDetailsExpanded) {
+                                            stringResource(R.string.loc_36648ad9)
+                                        } else {
+                                            stringResource(R.string.loc_511b58c0)
+                                        },
                                     tint = BitcoinOrange,
                                 )
                             }
@@ -2457,12 +2650,20 @@ fun TransactionDetailDialog(
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
                                     SwapDetailCopyRow(
-                                        label = if (details.service == SwapService.BOLTZ) "Boltz Swap ID" else "SideSwap Order ID",
+                                        label =
+                                            if (details.service == SwapService.BOLTZ) {
+                                                stringResource(R.string.loc_12c49c0c)
+                                            } else {
+                                                stringResource(R.string.loc_1598922a)
+                                            },
                                         value = details.swapId,
-                                        copyLabel = "Swap ID",
+                                        copyLabel = swapIdLabel,
                                         copied = copiedSwapField == "swap_id",
                                         onCopy = {
-                                            SecureClipboard.copyAndScheduleClear(context, "Swap ID", details.swapId)
+                                            SecureClipboard.copyAndScheduleClear(
+                                                context,
+                                                details.swapId,
+                                            )
                                             copiedSwapField = "swap_id"
                                         },
                                     )
@@ -2470,7 +2671,7 @@ fun TransactionDetailDialog(
                                     SwapDetailCopyRow(
                                         label = swapDepositLabel(details),
                                         value = details.depositAddress,
-                                        copyLabel = "Swap Deposit Address",
+                                        copyLabel = swapDepositAddressLabel,
                                         amountText =
                                             swapDetailPrimaryAmountText(
                                                 transaction = transaction,
@@ -2483,7 +2684,6 @@ fun TransactionDetailDialog(
                                         onCopy = {
                                             SecureClipboard.copyAndScheduleClear(
                                                 context,
-                                                "Swap Deposit Address",
                                                 details.depositAddress,
                                             )
                                             copiedSwapField = "deposit_address"
@@ -2494,7 +2694,7 @@ fun TransactionDetailDialog(
                                         SwapDetailCopyRow(
                                             label = swapReceiveLabel(details),
                                             value = receiveAddress,
-                                            copyLabel = "Swap Destination Address",
+                                            copyLabel = swapReceiveAddressLabel,
                                             amountText =
                                                 swapDetailExpectedReceiveText(
                                                     transaction = transaction,
@@ -2507,7 +2707,6 @@ fun TransactionDetailDialog(
                                             onCopy = {
                                                 SecureClipboard.copyAndScheduleClear(
                                                     context,
-                                                    "Swap Destination Address",
                                                     receiveAddress,
                                                 )
                                                 copiedSwapField = "receive_address"
@@ -2517,14 +2716,13 @@ fun TransactionDetailDialog(
                                     details.refundAddress?.let { refundAddress ->
                                         Spacer(modifier = Modifier.height(10.dp))
                                         SwapDetailCopyRow(
-                                            label = "Refund Address",
+                                            label = refundAddressLabel,
                                             value = refundAddress,
-                                            copyLabel = "Refund Address",
+                                            copyLabel = refundAddressLabel,
                                             copied = copiedSwapField == "refund_address",
                                             onCopy = {
                                                 SecureClipboard.copyAndScheduleClear(
                                                     context,
-                                                    "Refund Address",
                                                     refundAddress,
                                                 )
                                                 copiedSwapField = "refund_address"
@@ -2536,6 +2734,8 @@ fun TransactionDetailDialog(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
                 Spacer(modifier = Modifier.height(8.dp))
                 // Close button
                 IbisButton(
@@ -2544,9 +2744,10 @@ fun TransactionDetailDialog(
                         .fillMaxWidth()
                         .height(48.dp),
                 ) {
-                    Text("Close", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                 }
             }
+        }
         }
     }
 }
@@ -2564,15 +2765,16 @@ private fun TorBrowserErrorDialog(onDismiss: () -> Unit) {
                 usePlatformDefaultWidth = false,
             ),
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = DarkSurface,
-        ) {
-            Column(
+        ProvideLocalizedResources {
+            Surface(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = DarkSurface,
+            ) {
+                Column(
                 modifier =
                     Modifier
                         .fillMaxWidth()
@@ -2582,7 +2784,7 @@ private fun TorBrowserErrorDialog(onDismiss: () -> Unit) {
                 // Warning icon
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "Error",
+                    contentDescription = stringResource(R.string.loc_9c1c9375),
                     tint = AccentRed,
                     modifier = Modifier.size(48.dp),
                 )
@@ -2591,7 +2793,7 @@ private fun TorBrowserErrorDialog(onDismiss: () -> Unit) {
 
                 // Header
                 Text(
-                    text = "Tor Browser Required",
+                    text = stringResource(R.string.loc_3a15e5cd),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -2600,13 +2802,15 @@ private fun TorBrowserErrorDialog(onDismiss: () -> Unit) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Tor Browser is required to view onion links. Please install it from the Play Store or F-Droid.",
+                    text = stringResource(R.string.loc_71c1fcab),
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
                     textAlign = TextAlign.Center,
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Close button
                 IbisButton(
@@ -2615,9 +2819,10 @@ private fun TorBrowserErrorDialog(onDismiss: () -> Unit) {
                         .fillMaxWidth()
                         .height(48.dp),
                 ) {
-                    Text("Close", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                 }
             }
+        }
         }
     }
 }
@@ -2644,15 +2849,15 @@ private fun SpeedUpDialog(
 ) {
     val dialogTitle =
         when (method) {
-            SpeedUpMethod.RBF -> "Bump Fee (RBF)"
-            SpeedUpMethod.CPFP -> "Bump Fee (CPFP)"
-            SpeedUpMethod.REDIRECT -> "Cancel Transaction"
+            SpeedUpMethod.RBF -> stringResource(R.string.loc_3dae8142)
+            SpeedUpMethod.CPFP -> stringResource(R.string.loc_51321a45)
+            SpeedUpMethod.REDIRECT -> stringResource(R.string.loc_92f9c847)
         }
     val dialogDescription =
         when (method) {
-            SpeedUpMethod.RBF -> "Replace this transaction with a higher fee (RBF)"
-            SpeedUpMethod.CPFP -> "Create a child transaction with high fee to speed up confirmation (CPFP)"
-            SpeedUpMethod.REDIRECT -> "Redirect all funds back to your wallet or a custom address. Requires a higher fee than the original."
+            SpeedUpMethod.RBF -> stringResource(R.string.loc_f5040eb4)
+            SpeedUpMethod.CPFP -> stringResource(R.string.loc_987ca029)
+            SpeedUpMethod.REDIRECT -> stringResource(R.string.loc_a3190b21)
         }
     var appliedFeeRate by remember { mutableDoubleStateOf(0.0) }
     var rawCustomFeeRate by remember { mutableStateOf<Double?>(null) }
@@ -2681,7 +2886,7 @@ private fun SpeedUpDialog(
     val customDestinationHelperText =
         when {
             method != SpeedUpMethod.REDIRECT || !useCustomDestinationAddress -> null
-            customDestinationInput.isBlank() -> "Enter a Bitcoin address"
+            customDestinationInput.isBlank() -> stringResource(R.string.loc_9f80cab8)
             else -> null
         }
     val customDestinationError =
@@ -2690,7 +2895,7 @@ private fun SpeedUpDialog(
             customDestinationInput.isBlank() -> null
             parsedCustomDestination is ParsedSendRecipient.Bitcoin -> null
             parsedCustomDestination is ParsedSendRecipient.Unknown -> parsedCustomDestination.errorMessage
-            else -> "Enter a Bitcoin address"
+            else -> stringResource(R.string.loc_9f80cab8)
         }
     val resolvedCustomDestination =
         (parsedCustomDestination as? ParsedSendRecipient.Bitcoin)?.address
@@ -2789,15 +2994,16 @@ private fun SpeedUpDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            shape = RoundedCornerShape(24.dp),
-            color = DarkSurface,
-        ) {
-            Column(
+        ProvideLocalizedResources {
+            Surface(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                shape = RoundedCornerShape(24.dp),
+                color = DarkSurface,
+            ) {
+                Column(
                 modifier =
                     Modifier
                         .fillMaxWidth()
@@ -2836,14 +3042,18 @@ private fun SpeedUpDialog(
                                     .padding(12.dp),
                         ) {
                             Text(
-                                text = "Current Transaction:",
+                                text = stringResource(R.string.loc_85507fe1),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = TextSecondary,
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             if (currentFeeRate != null) {
                                 Text(
-                                    text = "Fee rate: ${formatFeeRate(currentFeeRate)} sat/vB",
+                                    text =
+                                        stringResource(
+                                            R.string.balance_fee_rate_format,
+                                            formatFeeRate(currentFeeRate),
+                                        ),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = TextSecondary,
@@ -2854,12 +3064,13 @@ private fun SpeedUpDialog(
                                 Text(
                                     text =
                                         if (privacyMode) {
-                                            "Fee: $HIDDEN_AMOUNT"
+                                            stringResource(R.string.loc_de90114d)
                                         } else {
-                                            "Fee: ${formatAmount(
-                                                currentFee,
-                                                useSats,
-                                            )} ${if (useSats) "sats" else "BTC"}"
+                                            stringResource(
+                                                R.string.balance_fee_amount_format,
+                                                formatAmount(currentFee, useSats),
+                                                if (useSats) "sats" else "BTC",
+                                            )
                                         },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = BitcoinOrange,
@@ -2883,7 +3094,11 @@ private fun SpeedUpDialog(
                 if (isBelowMinFeeRate) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Fee rate is below the minimum (${formatFeeRate(minFeeRate)} sat/vB)",
+                        text =
+                            stringResource(
+                                R.string.balance_fee_rate_below_minimum_format,
+                                formatFeeRate(minFeeRate),
+                            ),
                         style = MaterialTheme.typography.bodySmall,
                         color = ErrorRed,
                     )
@@ -2892,7 +3107,11 @@ private fun SpeedUpDialog(
                 currentFeeRate?.takeIf { isBelowCurrentFeeRate }?.let { currentRate ->
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Fee rate must be higher than current (${formatFeeRate(currentRate)} sat/vB)",
+                        text =
+                            stringResource(
+                                R.string.balance_fee_rate_higher_than_current_format,
+                                formatFeeRate(currentRate),
+                            ),
                         style = MaterialTheme.typography.bodySmall,
                         color = ErrorRed,
                     )
@@ -2914,48 +3133,63 @@ private fun SpeedUpDialog(
                                     .padding(12.dp),
                         ) {
                             Text(
-                                text = when (method) {
-                                    SpeedUpMethod.RBF -> "Replacement Transaction:"
-                                    SpeedUpMethod.REDIRECT -> "Redirect Transaction:"
-                                    SpeedUpMethod.CPFP -> "Child Transaction (CPFP):"
-                                },
+                                text =
+                                    when (method) {
+                                        SpeedUpMethod.RBF -> stringResource(R.string.loc_ca3e4dcf)
+                                        SpeedUpMethod.REDIRECT -> stringResource(R.string.loc_e5455471)
+                                        SpeedUpMethod.CPFP -> stringResource(R.string.loc_42ccefb2)
+                                    },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = TextSecondary,
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Target fee rate: ${formatFeeRate(appliedFeeRate)} sat/vB",
+                                text =
+                                    stringResource(
+                                        R.string.balance_target_fee_rate_format,
+                                        formatFeeRate(appliedFeeRate),
+                                    ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = TextSecondary,
                             )
                             if (additionalCost != null && additionalCost > 0) {
                                 Spacer(modifier = Modifier.height(4.dp))
-                                val costLabel = if (method == SpeedUpMethod.CPFP) "Child tx fee" else "Additional cost"
+                                val costLabel =
+                                    if (method == SpeedUpMethod.CPFP) {
+                                        stringResource(R.string.loc_4aade885)
+                                    } else {
+                                        stringResource(R.string.loc_c5f55bb2)
+                                    }
                                 Text(
                                     text =
                                         if (privacyMode) {
-                                            "$costLabel: $HIDDEN_AMOUNT"
+                                            stringResource(R.string.balance_cost_amount_format, costLabel, HIDDEN_AMOUNT, "")
                                         } else {
-                                            "$costLabel: ${formatAmount(
-                                                additionalCost.toULong(),
-                                                useSats,
-                                            )} ${if (useSats) "sats" else "BTC"}"
+                                            stringResource(
+                                                R.string.balance_cost_amount_format,
+                                                costLabel,
+                                                formatAmount(additionalCost.toULong(), useSats),
+                                                if (useSats) "sats" else "BTC",
+                                            ).trimEnd()
                                         },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (canAfford) BitcoinOrange else ErrorRed,
                                 )
                                 if (method == SpeedUpMethod.CPFP) {
                                     Text(
-                                        text = "($estimatedChildVsize vB × ${kotlin.math.ceil(
-                                            appliedFeeRate,
-                                        ).toLong()} sat/vB)",
+                                        text =
+                                            stringResource(
+                                                R.string.balance_cpfp_estimate_format,
+                                                estimatedChildVsize.toString(),
+                                                kotlin.math.ceil(appliedFeeRate).toLong().toString(),
+                                            ),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = TextSecondary,
                                     )
                                     if (willConsolidateWallet) {
                                         Text(
-                                            text = "Will consolidate all wallet UTXOs",
+                                            text = stringResource(R.string.loc_9081b0e6),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = BitcoinOrange,
                                         )
@@ -2966,19 +3200,20 @@ private fun SpeedUpDialog(
                                     if (method == SpeedUpMethod.CPFP) {
                                         val needed = additionalCost + dustLimit
                                         Text(
-                                            text = "Insufficient funds",
+                                            text = stringResource(R.string.loc_534e1eb2),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = ErrorRed,
                                         )
                                         Text(
                                             text =
                                                 if (privacyMode) {
-                                                    "Need: $HIDDEN_AMOUNT (fee + dust)"
+                                                    stringResource(R.string.loc_35652873)
                                                 } else {
-                                                    "Need: ${formatAmount(
-                                                        needed.toULong(),
-                                                        useSats,
-                                                    )} ${if (useSats) "sats" else "BTC"} (fee + dust)"
+                                                    stringResource(
+                                                        R.string.balance_need_fee_dust_format,
+                                                        formatAmount(needed.toULong(), useSats),
+                                                        if (useSats) "sats" else "BTC",
+                                                    )
                                                 },
                                             style = MaterialTheme.typography.labelSmall,
                                             color = ErrorRed,
@@ -2986,12 +3221,13 @@ private fun SpeedUpDialog(
                                         Text(
                                             text =
                                                 if (privacyMode) {
-                                                    "Have: $HIDDEN_AMOUNT (output + wallet)"
+                                                    stringResource(R.string.loc_760081de)
                                                 } else {
-                                                    "Have: ${formatAmount(
-                                                        fundsForFee,
-                                                        useSats,
-                                                    )} ${if (useSats) "sats" else "BTC"} (output + wallet)"
+                                                    stringResource(
+                                                        R.string.balance_have_output_wallet_format,
+                                                        formatAmount(fundsForFee, useSats),
+                                                        if (useSats) "sats" else "BTC",
+                                                    )
                                                 },
                                             style = MaterialTheme.typography.labelSmall,
                                             color = TextSecondary,
@@ -3000,12 +3236,13 @@ private fun SpeedUpDialog(
                                         Text(
                                             text =
                                                 if (privacyMode) {
-                                                    "Insufficient funds"
+                                                    stringResource(R.string.loc_534e1eb2)
                                                 } else {
-                                                    "Insufficient funds (Available: ${formatAmount(
-                                                        fundsForFee,
-                                                        useSats,
-                                                    )} ${if (useSats) "sats" else "BTC"})"
+                                                    stringResource(
+                                                        R.string.balance_insufficient_funds_available_format,
+                                                        formatAmount(fundsForFee, useSats),
+                                                        if (useSats) "sats" else "BTC",
+                                                    )
                                                 },
                                             style = MaterialTheme.typography.bodySmall,
                                             color = ErrorRed,
@@ -3053,7 +3290,7 @@ private fun SpeedUpDialog(
                             modifier = Modifier.weight(1f),
                         ) {
                             Text(
-                                text = "Custom destination address",
+                                text = stringResource(R.string.loc_ee7df965),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
@@ -3076,7 +3313,7 @@ private fun SpeedUpDialog(
                                         .padding(start = 12.dp),
                                 placeholder = {
                                     Text(
-                                        text = "Bitcoin address",
+                                        text = stringResource(R.string.loc_a18fd453),
                                         color = TextSecondary.copy(alpha = 0.7f),
                                     )
                                 },
@@ -3084,7 +3321,7 @@ private fun SpeedUpDialog(
                                     IconButton(onClick = { showCustomDestinationQrScanner = true }) {
                                         Icon(
                                             imageVector = Icons.Default.QrCodeScanner,
-                                            contentDescription = "Scan QR Code",
+                                            contentDescription = stringResource(R.string.loc_59b2cdc5),
                                             tint = BitcoinOrange,
                                             modifier = Modifier.size(20.dp),
                                         )
@@ -3102,7 +3339,10 @@ private fun SpeedUpDialog(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = customDestinationError ?: (customDestinationHelperText ?: "Funds will be redirected to this Bitcoin address."),
+                                text =
+                                    customDestinationError
+                                        ?: (customDestinationHelperText
+                                            ?: stringResource(R.string.loc_30261319)),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (customDestinationError != null) ErrorRed else TextSecondary,
                                 modifier = Modifier.padding(start = 12.dp),
@@ -3135,14 +3375,16 @@ private fun SpeedUpDialog(
                     Text(
                         text =
                             when (method) {
-                                SpeedUpMethod.RBF -> "Bump Fee"
-                                SpeedUpMethod.CPFP -> "Bump Fee"
-                                SpeedUpMethod.REDIRECT -> "Cancel Transaction"
+                                SpeedUpMethod.RBF -> stringResource(R.string.loc_0c054d47)
+                                SpeedUpMethod.CPFP -> stringResource(R.string.loc_0c054d47)
+                                SpeedUpMethod.REDIRECT -> stringResource(R.string.loc_92f9c847)
                             },
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
 
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Cancel button
@@ -3152,9 +3394,13 @@ private fun SpeedUpDialog(
                         .fillMaxWidth()
                         .height(48.dp),
                 ) {
-                    Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = stringResource(R.string.loc_51bac044),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
             }
+        }
         }
     }
 }
@@ -3175,14 +3421,14 @@ private fun TransactionExplorerBadge(
                 .padding(horizontal = 8.dp),
     ) {
         Text(
-            text = "Explorer",
+            text = stringResource(R.string.loc_1e89ceb8),
             style = MaterialTheme.typography.labelMedium,
             color = tint,
         )
         Spacer(modifier = Modifier.width(4.dp))
         Icon(
             imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-            contentDescription = "Open in block explorer",
+            contentDescription = stringResource(R.string.loc_f07d5799),
             tint = tint,
             modifier = Modifier.size(16.dp),
         )

@@ -15,12 +15,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,11 +37,15 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.data.model.SwapService
+import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import kotlinx.coroutines.delay
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 private const val BOLTZ_RESCUE_URL = "https://boltz.exchange/rescue/external"
 
@@ -67,7 +71,7 @@ fun BoltzRescueKeyButton(
             ),
     ) {
         Text(
-            text = "Rescue Key",
+            text = stringResource(R.string.loc_378dc5c9),
             style = MaterialTheme.typography.labelMedium,
         )
     }
@@ -79,7 +83,6 @@ fun BoltzRescueMnemonicDialog(
     accentColor: Color,
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
     var showCopied by remember { mutableStateOf(false) }
 
     LaunchedEffect(showCopied, mnemonic) {
@@ -92,22 +95,29 @@ fun BoltzRescueMnemonicDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
-            color = DarkSurface,
-        ) {
-            Column(
+        ProvideLocalizedResources {
+            val context = LocalContext.current
+            val titleText = stringResource(R.string.loc_54bf6d2a)
+            val instructionText = stringResource(R.string.loc_7ea64bdf)
+            val subtitleText = stringResource(R.string.loc_13505d59)
+            val closeText = stringResource(R.string.loc_d2c0aec0)
+            val copiedToastText = stringResource(R.string.loc_e287255d)
+            Surface(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                color = DarkSurface,
+            ) {
+                Column(
                 modifier =
                     Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
             ) {
                 Text(
-                    text = "Emergency Rescue Key",
+                    text = titleText,
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                     fontWeight = FontWeight.SemiBold,
@@ -118,7 +128,7 @@ fun BoltzRescueMnemonicDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "If swap fails, open Boltz rescue link and paste this 12-word seed.",
+                        text = instructionText,
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                         modifier = Modifier.weight(1f),
@@ -138,7 +148,7 @@ fun BoltzRescueMnemonicDialog(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                            contentDescription = "Open Boltz rescue page",
+                            contentDescription = stringResource(R.string.loc_7666b1a4),
                             tint = accentColor,
                             modifier = Modifier.size(18.dp),
                         )
@@ -146,7 +156,7 @@ fun BoltzRescueMnemonicDialog(
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Boltz Rescue Key",
+                    text = subtitleText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
                 )
@@ -164,14 +174,17 @@ fun BoltzRescueMnemonicDialog(
                     )
                     IconButton(
                         onClick = {
-                            SecureClipboard.copyAndScheduleClear(context, "Boltz Rescue Key", mnemonic)
+                            SecureClipboard.copyAndScheduleClear(
+                                context,
+                                mnemonic,
+                            )
                             showCopied = true
                         },
                         modifier = Modifier.size(36.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy Boltz rescue key",
+                            contentDescription = stringResource(R.string.loc_729dc6f0),
                             tint = accentColor,
                             modifier = Modifier.size(18.dp),
                         )
@@ -179,12 +192,14 @@ fun BoltzRescueMnemonicDialog(
                 }
                 if (showCopied) {
                     Text(
-                        text = "Copied to clipboard!",
+                        text = copiedToastText,
                         style = MaterialTheme.typography.labelSmall,
                         color = accentColor,
                     )
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
+                Spacer(modifier = Modifier.height(8.dp))
                 IbisButton(
                     onClick = onDismiss,
                     modifier =
@@ -192,9 +207,10 @@ fun BoltzRescueMnemonicDialog(
                             .fillMaxWidth()
                             .height(48.dp),
                 ) {
-                    Text("Close", style = MaterialTheme.typography.titleMedium)
+                    Text(closeText, style = MaterialTheme.typography.titleMedium)
                 }
             }
+        }
         }
     }
 }

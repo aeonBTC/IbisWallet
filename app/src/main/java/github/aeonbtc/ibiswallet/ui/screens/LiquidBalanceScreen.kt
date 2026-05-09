@@ -3,7 +3,6 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -47,7 +46,6 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.WaterDrop
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -55,7 +53,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -64,9 +61,10 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -88,6 +86,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
@@ -105,15 +104,18 @@ import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentSession
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
 import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
+import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
+import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.LiquidTransactionItem
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
-import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
+import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.components.shouldShowBoltzRescueKey
 import github.aeonbtc.ibiswallet.ui.theme.AccentBlue
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
@@ -131,10 +133,8 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
-import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
-import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.util.startActivityWithTaskFallback
 import kotlin.math.pow
-import kotlinx.coroutines.withTimeoutOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -142,6 +142,9 @@ fun LiquidBalanceScreen(
     denomination: String = SecureStorage.DENOMINATION_BTC,
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
+    historicalBtcPrices: Map<String, Double> = emptyMap(),
+    showHistoricalTxPrices: Boolean = false,
+    onShowHistoricalTxPricesChange: (Boolean) -> Unit = {},
     privacyMode: Boolean = false,
     liquidExplorer: String = SecureStorage.LIQUID_EXPLORER_DISABLED,
     liquidExplorerUrl: String = "",
@@ -206,6 +209,7 @@ fun LiquidBalanceScreen(
             transaction = tx,
             useSats = useSats,
             btcPrice = btcPrice,
+            historicalBtcPrice = historicalBtcPrices[tx.txid],
             fiatCurrency = fiatCurrency,
             privacyMode = privacyMode,
             liquidExplorer = liquidExplorer,
@@ -316,6 +320,28 @@ fun LiquidBalanceScreen(
         isSearchFiltering = false
     }
 
+    val isSearching = searchQuery.isNotBlank()
+    val visibleTransactions by remember(
+        isSearching,
+        searchResultTxids,
+        transactionsById,
+        sourceFilteredTransactions,
+        displayLimit,
+    ) {
+        derivedStateOf {
+            if (isSearching) {
+                searchResultTxids.mapNotNull(transactionsById::get)
+            } else {
+                sourceFilteredTransactions.take(displayLimit)
+            }
+        }
+    }
+    val totalCount by remember(isSearching, searchTotalCount, sourceFilteredTransactions) {
+        derivedStateOf {
+            if (isSearching) searchTotalCount else sourceFilteredTransactions.size
+        }
+    }
+
     PullToRefreshBox(
         isRefreshing = isPullRefreshing,
         onRefresh = {
@@ -392,7 +418,7 @@ fun LiquidBalanceScreen(
                             ) {
                                 Icon(
                                     imageVector = if (privacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = "Toggle privacy",
+                                    contentDescription = stringResource(R.string.loc_990bb023),
                                     tint = TextSecondary,
                                     modifier = Modifier.size(24.dp),
                                 )
@@ -418,7 +444,7 @@ fun LiquidBalanceScreen(
                                 } else {
                                     Icon(
                                         imageVector = Icons.Default.Sync,
-                                        contentDescription = "Sync",
+                                        contentDescription = stringResource(R.string.loc_8c195a44),
                                         tint = TextSecondary,
                                         modifier = Modifier.size(24.dp),
                                     )
@@ -477,7 +503,7 @@ fun LiquidBalanceScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCode,
-                                contentDescription = "Quick receive",
+                                contentDescription = stringResource(R.string.loc_a397da3c),
                                 tint = LiquidTeal,
                                 modifier = Modifier.size(24.dp),
                             )
@@ -497,7 +523,7 @@ fun LiquidBalanceScreen(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR",
+                                contentDescription = stringResource(R.string.loc_60129540),
                                 tint = LiquidTeal,
                                 modifier = Modifier.size(24.dp),
                             )
@@ -549,32 +575,51 @@ fun LiquidBalanceScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = "Recent Transactions",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        Text(
+                            text = stringResource(R.string.loc_f61cc0f6),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        if (historicalBtcPrices.isNotEmpty()) {
+                            LiquidTransactionFilterButton(
+                                icon = Icons.Default.Schedule,
+                                contentDescription =
+                                    if (showHistoricalTxPrices) {
+                                        stringResource(R.string.tx_history_show_current_prices)
+                                    } else {
+                                        stringResource(R.string.tx_history_show_historical_prices)
+                                    },
+                                tint = BitcoinOrange,
+                                isSelected = showHistoricalTxPrices,
+                                onClick = { onShowHistoricalTxPricesChange(!showHistoricalTxPrices) },
+                            )
+                        }
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
                         LiquidTransactionFilterButton(
                             icon = Icons.Default.WaterDrop,
-                            contentDescription = "Filter Liquid transactions",
+                            contentDescription = stringResource(R.string.loc_1bdca9b7),
                             tint = LiquidTeal,
                             isSelected = showLiquidTransactions,
                             onClick = { showLiquidTransactions = !showLiquidTransactions },
                         )
                         LiquidTransactionFilterButton(
                             icon = Icons.Default.Bolt,
-                            contentDescription = "Filter Lightning transactions",
+                            contentDescription = stringResource(R.string.loc_ce31119b),
                             tint = LightningYellow,
                             isSelected = showLightningTransactions,
                             onClick = { showLightningTransactions = !showLightningTransactions },
                         )
                         LiquidTransactionFilterButton(
                             icon = Icons.Default.SwapHoriz,
-                            contentDescription = "Filter swaps",
+                            contentDescription = stringResource(R.string.loc_ea6a9a53),
                             tint = BitcoinOrange,
                             isSelected = showSwapTransactions,
                             onClick = { showSwapTransactions = !showSwapTransactions },
@@ -591,7 +636,7 @@ fun LiquidBalanceScreen(
                             contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
-                                    .size(32.dp)
+                                    .size(30.dp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurfaceVariant)
                                     .clickable {
@@ -601,7 +646,12 @@ fun LiquidBalanceScreen(
                         ) {
                             Icon(
                                 imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
-                                contentDescription = if (isSearchActive) "Close search" else "Search",
+                                contentDescription =
+                                    if (isSearchActive) {
+                                        stringResource(R.string.loc_dda0ea3a)
+                                    } else {
+                                        stringResource(R.string.loc_b35cde91)
+                                    },
                                 tint = if (isSearchActive) LiquidTeal else TextSecondary,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -617,7 +667,7 @@ fun LiquidBalanceScreen(
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = {
                             Text(
-                                "Search labels, addresses, txid, or date...",
+                                stringResource(R.string.loc_0177e398),
                                 color = TextSecondary.copy(alpha = 0.5f),
                             )
                         },
@@ -646,13 +696,6 @@ fun LiquidBalanceScreen(
                 Spacer(modifier = Modifier.height(4.dp))
             }
 
-            val isSearching = searchQuery.isNotBlank()
-            val visibleTransactions = if (isSearching) {
-                searchResultTxids.mapNotNull(transactionsById::get)
-            } else {
-                sourceFilteredTransactions.take(displayLimit)
-            }
-            val totalCount = if (isSearching) searchTotalCount else sourceFilteredTransactions.size
             val visibleCount = visibleTransactions.size
             val hasMore = visibleCount < totalCount
 
@@ -672,19 +715,25 @@ fun LiquidBalanceScreen(
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    text = if (searchQuery.isNotBlank()) "No matching transactions" else "No transactions yet",
+                                    text =
+                                        if (searchQuery.isNotBlank()) {
+                                            stringResource(R.string.loc_167ce23f)
+                                        } else {
+                                            stringResource(R.string.loc_a317d3d8)
+                                        },
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = TextSecondary,
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = if (searchQuery.isNotBlank()) {
-                                        "Try a different search term"
-                                    } else if (liquidState.isInitialized) {
-                                        "Transactions will appear here after syncing"
-                                    } else {
-                                        "Liquid is loading for this wallet"
-                                    },
+                                    text =
+                                        if (searchQuery.isNotBlank()) {
+                                            stringResource(R.string.loc_9febfd40)
+                                        } else if (liquidState.isInitialized) {
+                                            stringResource(R.string.loc_2aebf14e)
+                                        } else {
+                                            stringResource(R.string.loc_2fd2faaa)
+                                        },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary.copy(alpha = 0.7f),
                                 )
@@ -698,6 +747,13 @@ fun LiquidBalanceScreen(
                         tx = tx,
                         denomination = denomination,
                         btcPrice = btcPrice,
+                        fiatCurrency = fiatCurrency,
+                        historicalBtcPrice =
+                            if (showHistoricalTxPrices) {
+                                historicalBtcPrices[tx.txid]
+                            } else {
+                                null
+                            },
                         privacyMode = privacyMode,
                         label = liquidTransactionLabels[tx.txid],
                         onClick = { selectedLiquidTransaction = tx },
@@ -724,9 +780,9 @@ fun LiquidBalanceScreen(
                             Text(
                                 text =
                                     if (displayLimit <= 25) {
-                                        "Show More"
+                                        stringResource(R.string.loc_0ee47e3c)
                                     } else {
-                                        "Show All ($remaining remaining)"
+                                        stringResource(R.string.common_show_all_remaining_format, remaining)
                                     },
                                 color = TextSecondary,
                             )
@@ -754,6 +810,7 @@ fun LiquidBalanceScreen(
     val quickReceiveAddress = liquidState.currentAddress
     if (showQuickReceive && quickReceiveAddress != null) {
         var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+        var showEnlargedQr by remember { mutableStateOf(false) }
         LaunchedEffect(quickReceiveAddress) {
             qrBitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 generateQrBitmap(quickReceiveAddress)
@@ -768,18 +825,49 @@ fun LiquidBalanceScreen(
             }
         }
 
+        if (showEnlargedQr && qrBitmap != null) {
+            Dialog(
+                onDismissRequest = { showEnlargedQr = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.9f))
+                        .clickable { showEnlargedQr = false },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(320.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color.White)
+                            .padding(16.dp),
+                    ) {
+                        Image(
+                            bitmap = qrBitmap!!.asImageBitmap(),
+                            contentDescription = stringResource(R.string.loc_8fd877da),
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+                }
+            }
+        }
+
         Dialog(
             onDismissRequest = { showQuickReceive = false },
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            Card(
-                modifier =
-                    Modifier
-                        .padding(horizontal = 32.dp)
-                        .fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
-            ) {
+            ProvideLocalizedResources {
+                Card(
+                    modifier =
+                        Modifier
+                            .padding(horizontal = 32.dp)
+                            .fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = DarkCard),
+                ) {
                 Column(
                     modifier =
                         Modifier
@@ -794,11 +882,12 @@ fun LiquidBalanceScreen(
                                     .size(200.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(Color.White)
+                                    .clickable { showEnlargedQr = true }
                                     .padding(8.dp),
                         ) {
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Receive address QR",
+                                contentDescription = stringResource(R.string.loc_8fd877da),
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Fit,
                             )
@@ -820,7 +909,7 @@ fun LiquidBalanceScreen(
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.Default.ContentCopy,
-                            contentDescription = "Copy address",
+                            contentDescription = stringResource(R.string.loc_3c19e32e),
                             tint = if (showCopied) LiquidTeal else TextSecondary,
                             modifier =
                                 Modifier
@@ -828,7 +917,6 @@ fun LiquidBalanceScreen(
                                     .clickable {
                                         SecureClipboard.copyAndScheduleClear(
                                             context,
-                                            "Liquid Address",
                                             quickReceiveAddress,
                                         )
                                         showCopied = true
@@ -839,14 +927,54 @@ fun LiquidBalanceScreen(
                     if (showCopied) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Copied to clipboard!",
+                            text = stringResource(R.string.loc_e287255d),
                             style = MaterialTheme.typography.bodySmall,
                             color = LiquidTeal,
                         )
                     }
                 }
             }
+            }
         }
+    }
+}
+
+@Composable
+private fun LiquidHistoricalFiatText(
+    text: String,
+    isHistorical: Boolean,
+    modifier: Modifier = Modifier,
+    large: Boolean = false,
+) {
+    val style =
+        if (large) {
+            MaterialTheme.typography.titleMedium.copy(
+                fontSize = 18.sp,
+                lineHeight = 26.sp,
+                fontWeight = FontWeight.Normal,
+            )
+        } else {
+            MaterialTheme.typography.bodyMedium.copy(fontSize = 16.sp, lineHeight = 22.sp)
+        }
+    val iconSize = if (large) 18.dp else 14.dp
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        if (isHistorical) {
+            Icon(
+                imageVector = Icons.Default.Schedule,
+                contentDescription = null,
+                tint = BitcoinOrange,
+                modifier = Modifier.size(iconSize),
+            )
+        }
+        Text(
+            text = text,
+            style = style,
+            color = TextSecondary,
+        )
     }
 }
 
@@ -856,6 +984,7 @@ private fun LiquidTransactionDetailDialog(
     useSats: Boolean,
     btcPrice: Double?,
     fiatCurrency: String,
+    historicalBtcPrice: Double?,
     privacyMode: Boolean,
     liquidExplorer: String = SecureStorage.LIQUID_EXPLORER_DISABLED,
     liquidExplorerUrl: String = "",
@@ -907,14 +1036,14 @@ private fun LiquidTransactionDetailDialog(
     val chainSwapFundingAmountSats =
         if (swapRole == LiquidSwapTxRole.FUNDING) {
             (kotlin.math.abs(transaction.balanceSatoshi) - transaction.fee).takeIf { it > 0L }
-                ?: chainSwapDetails?.sendAmountSats?.takeIf { it > 0L }
+                ?: chainSwapDetails.sendAmountSats.takeIf { it > 0L }
         } else {
             null
         }
     val chainSwapSettlementAmountSats =
         if (swapRole == LiquidSwapTxRole.SETTLEMENT) {
             transaction.walletAddressAmountSats?.takeIf { it > 0L }
-                ?: chainSwapDetails?.expectedReceiveAmountSats?.takeIf { it > 0L }
+                ?: chainSwapDetails.expectedReceiveAmountSats.takeIf { it > 0L }
                 ?: kotlin.math.abs(transaction.balanceSatoshi)
         } else {
             null
@@ -936,7 +1065,12 @@ private fun LiquidTransactionDetailDialog(
         } else {
             lightningSwapDetails?.paymentInput ?: lightningSwapDetails?.resolvedPaymentInput ?: lightningSwapDetails?.invoice
         }
-    val lightningPrimaryLabel = if (isReceive) "Received via" else "Recipient"
+    val lightningPrimaryLabel =
+        if (isReceive) {
+            stringResource(R.string.loc_ac616807)
+        } else {
+            stringResource(R.string.loc_eaf579ea)
+        }
     val lightningPrimaryAmountSats =
         lightningPaymentAmountSats ?: lightningSwapDetails?.expectedReceiveAmountSats?.takeIf { it > 0L } ?: amountAbs.toLong()
     val hasLightningAdvancedDetails =
@@ -1030,13 +1164,13 @@ private fun LiquidTransactionDetailDialog(
                     setPackage(torBrowserPackage)
                 }
             try {
-                context.startActivity(intent)
+                context.startActivityWithTaskFallback(intent)
             } catch (_: Exception) {
                 showTorBrowserError = true
             }
         } else {
             val intent = Intent(Intent.ACTION_VIEW, explorerUrl.toUri())
-            context.startActivity(intent)
+            context.startActivityWithTaskFallback(intent)
         }
     }
 
@@ -1105,28 +1239,29 @@ private fun LiquidTransactionDetailDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = DarkSurface,
-        ) {
-            Column(
+        ProvideLocalizedResources {
+            Surface(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(16.dp)
-                        .verticalScroll(scrollState),
+                        .padding(16.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = DarkSurface,
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp)
+                            .verticalScroll(scrollState),
                 ) {
-                    Text(
-                        text = "Transaction Details",
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.loc_98c5fbdc),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground,
@@ -1142,7 +1277,7 @@ private fun LiquidTransactionDetailDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.loc_d2c0aec0),
                             tint = TextSecondary,
                             modifier = Modifier.size(16.dp),
                         )
@@ -1200,7 +1335,11 @@ private fun LiquidTransactionDetailDialog(
                             if (!isReceive && !privacyMode && transaction.fee > 0L) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = "Fee: ${formatAmount(transaction.fee.toULong(), true)} sats",
+                                    text =
+                                        stringResource(
+                                            R.string.liquid_fee_sats_format,
+                                            formatAmount(transaction.fee.toULong(), true),
+                                        ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary,
                                 )
@@ -1218,10 +1357,22 @@ private fun LiquidTransactionDetailDialog(
                             )
                             if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text(
+                                LiquidHistoricalFiatText(
                                     text = formatFiat(amountAbs.toDouble() / 100_000_000.0 * btcPrice, fiatCurrency),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary,
+                                    isHistorical = false,
+                                    large = true,
+                                )
+                            }
+                            if (historicalBtcPrice != null && historicalBtcPrice > 0 && !privacyMode) {
+                                LiquidHistoricalFiatText(
+                                    text =
+                                        formatFiat(
+                                            amountAbs.toDouble() / 100_000_000.0 * historicalBtcPrice,
+                                            fiatCurrency,
+                                        ),
+                                    isHistorical = true,
+                                    large = true,
+                                    modifier = Modifier.padding(top = 2.dp),
                                 )
                             }
                         }
@@ -1247,7 +1398,11 @@ private fun LiquidTransactionDetailDialog(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text("Status", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                                Text(
+                                    text = stringResource(R.string.loc_7cac602a),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                )
                                 if (canOpenBlockExplorer) {
                                     TransactionExplorerBadge(
                                         tint = LiquidTeal,
@@ -1275,7 +1430,12 @@ private fun LiquidTransactionDetailDialog(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = if (transaction.height != null) "Confirmed" else "Pending",
+                                        text =
+                                            if (transaction.height != null) {
+                                                stringResource(R.string.loc_4ab75d7f)
+                                            } else {
+                                                stringResource(R.string.loc_1b684325)
+                                            },
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = if (transaction.height != null) AccentGreen else BitcoinOrange,
                                     )
@@ -1295,7 +1455,11 @@ private fun LiquidTransactionDetailDialog(
                             color = TextSecondary.copy(alpha = 0.1f),
                         )
 
-                        Text("Transaction ID", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                        Text(
+                            text = stringResource(R.string.loc_13e398d0),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                        )
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -1327,7 +1491,6 @@ private fun LiquidTransactionDetailDialog(
                                         .clickable {
                                             SecureClipboard.copyAndScheduleClear(
                                                 context,
-                                                "Liquid Transaction ID",
                                                 transaction.txid,
                                             )
                                             showCopiedTxid = true
@@ -1335,7 +1498,7 @@ private fun LiquidTransactionDetailDialog(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy Transaction ID",
+                                    contentDescription = stringResource(R.string.loc_09d663eb),
                                     tint = if (showCopiedTxid) LiquidTeal else TextSecondary,
                                     modifier = Modifier.size(18.dp),
                                 )
@@ -1343,7 +1506,7 @@ private fun LiquidTransactionDetailDialog(
                         }
                         if (showCopiedTxid) {
                             Text(
-                                text = "Copied to clipboard!",
+                                text = stringResource(R.string.loc_e287255d),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = LiquidTeal,
                             )
@@ -1397,7 +1560,6 @@ private fun LiquidTransactionDetailDialog(
                                                 .clickable {
                                                     SecureClipboard.copyAndScheduleClear(
                                                         context,
-                                                        "Lightning reference",
                                                         lightningPrimaryValue,
                                                     )
                                                     showCopiedLightningReference = true
@@ -1405,7 +1567,7 @@ private fun LiquidTransactionDetailDialog(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ContentCopy,
-                                            contentDescription = "Copy Lightning Reference",
+                                            contentDescription = stringResource(R.string.loc_1bb54c32),
                                             tint = if (showCopiedLightningReference) LiquidTeal else TextSecondary,
                                             modifier = Modifier.size(18.dp),
                                         )
@@ -1413,7 +1575,7 @@ private fun LiquidTransactionDetailDialog(
                                 }
                                 if (showCopiedLightningReference) {
                                     Text(
-                                        text = "Copied to clipboard!",
+                                        text = stringResource(R.string.loc_e287255d),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = LiquidTeal,
                                     )
@@ -1427,7 +1589,11 @@ private fun LiquidTransactionDetailDialog(
                                 color = TextSecondary.copy(alpha = 0.1f),
                             )
                             Column {
-                                Text("Received at", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                                Text(
+                                    text = stringResource(R.string.loc_b47edf23),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1478,7 +1644,6 @@ private fun LiquidTransactionDetailDialog(
                                                 .clickable {
                                                     SecureClipboard.copyAndScheduleClear(
                                                         context,
-                                                        "Liquid Address",
                                                         transaction.walletAddress,
                                                     )
                                                     showCopiedAddress = true
@@ -1486,7 +1651,7 @@ private fun LiquidTransactionDetailDialog(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ContentCopy,
-                                            contentDescription = "Copy Address",
+                                            contentDescription = stringResource(R.string.loc_f3a4dab2),
                                             tint = if (showCopiedAddress) LiquidTeal else TextSecondary,
                                             modifier = Modifier.size(18.dp),
                                         )
@@ -1494,7 +1659,7 @@ private fun LiquidTransactionDetailDialog(
                                 }
                                 if (showCopiedAddress) {
                                     Text(
-                                        text = "Copied to clipboard!",
+                                        text = stringResource(R.string.loc_e287255d),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = LiquidTeal,
                                     )
@@ -1514,7 +1679,11 @@ private fun LiquidTransactionDetailDialog(
                                 color = TextSecondary.copy(alpha = 0.1f),
                             )
                             Column {
-                                Text("Recipient", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                                Text(
+                                    text = stringResource(R.string.loc_eaf579ea),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1566,7 +1735,6 @@ private fun LiquidTransactionDetailDialog(
                                                 .clickable {
                                                     SecureClipboard.copyAndScheduleClear(
                                                         context,
-                                                        if (!isReceive && !lightningPrimaryValue.isNullOrBlank()) "Lightning Recipient" else "Recipient Address",
                                                         recipientValue,
                                                     )
                                                     showCopiedRecipient = true
@@ -1576,9 +1744,9 @@ private fun LiquidTransactionDetailDialog(
                                             imageVector = Icons.Default.ContentCopy,
                                             contentDescription =
                                                 if (!isReceive && !lightningPrimaryValue.isNullOrBlank()) {
-                                                    "Copy Lightning Recipient"
+                                                    stringResource(R.string.loc_dd12fe68)
                                                 } else {
-                                                    "Copy Recipient Address"
+                                                    stringResource(R.string.loc_06d539e7)
                                                 },
                                             tint = if (showCopiedRecipient) LiquidTeal else TextSecondary,
                                             modifier = Modifier.size(18.dp),
@@ -1587,7 +1755,7 @@ private fun LiquidTransactionDetailDialog(
                                 }
                                 if (showCopiedRecipient) {
                                     Text(
-                                        text = "Copied to clipboard!",
+                                        text = stringResource(R.string.loc_e287255d),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = LiquidTeal,
                                     )
@@ -1600,7 +1768,11 @@ private fun LiquidTransactionDetailDialog(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 color = TextSecondary.copy(alpha = 0.1f),
                             )
-                            Text("Boltz Swap Fee", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                            Text(
+                                text = stringResource(R.string.loc_61bda033),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                            )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = if (privacyMode) {
@@ -1621,7 +1793,11 @@ private fun LiquidTransactionDetailDialog(
                                     color = TextSecondary.copy(alpha = 0.1f),
                                 )
                                 Column {
-                                    Text("Swap ID", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                                    Text(
+                                        text = stringResource(R.string.loc_3e5cd869),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextSecondary,
+                                    )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -1649,13 +1825,16 @@ private fun LiquidTransactionDetailDialog(
                                                     .clip(RoundedCornerShape(6.dp))
                                                     .background(DarkSurfaceVariant)
                                                     .clickable {
-                                                        SecureClipboard.copyAndScheduleClear(context, "Swap ID", lightningSwapId)
+                                                        SecureClipboard.copyAndScheduleClear(
+                                                            context,
+                                                            lightningSwapId,
+                                                        )
                                                         showCopiedLightningSwapId = true
                                                     },
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.ContentCopy,
-                                                contentDescription = "Copy Swap ID",
+                                                contentDescription = stringResource(R.string.loc_0f0b54c6),
                                                 tint = if (showCopiedLightningSwapId) LiquidTeal else TextSecondary,
                                                 modifier = Modifier.size(18.dp),
                                             )
@@ -1663,7 +1842,7 @@ private fun LiquidTransactionDetailDialog(
                                     }
                                     if (showCopiedLightningSwapId) {
                                         Text(
-                                            text = "Copied to clipboard!",
+                                            text = stringResource(R.string.loc_e287255d),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = LiquidTeal,
                                         )
@@ -1677,7 +1856,11 @@ private fun LiquidTransactionDetailDialog(
                                 color = TextSecondary.copy(alpha = 0.1f),
                             )
                             Column {
-                                Text("Change returned to", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                                Text(
+                                    text = stringResource(R.string.loc_a28f34b2),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -1720,7 +1903,6 @@ private fun LiquidTransactionDetailDialog(
                                                 .clickable {
                                                     SecureClipboard.copyAndScheduleClear(
                                                         context,
-                                                        "Change Address",
                                                         transaction.changeAddress,
                                                     )
                                                     showCopiedChangeAddress = true
@@ -1728,7 +1910,7 @@ private fun LiquidTransactionDetailDialog(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ContentCopy,
-                                            contentDescription = "Copy Change Address",
+                                            contentDescription = stringResource(R.string.loc_90d5f46b),
                                             tint = if (showCopiedChangeAddress) LiquidTeal else TextSecondary,
                                             modifier = Modifier.size(18.dp),
                                         )
@@ -1736,7 +1918,7 @@ private fun LiquidTransactionDetailDialog(
                                 }
                                 if (showCopiedChangeAddress) {
                                     Text(
-                                        text = "Copied to clipboard!",
+                                        text = stringResource(R.string.loc_e287255d),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = LiquidTeal,
                                     )
@@ -1749,11 +1931,20 @@ private fun LiquidTransactionDetailDialog(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 color = TextSecondary.copy(alpha = 0.1f),
                             )
-                            Text("Network Fee", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                            Text(
+                                text = stringResource(R.string.loc_f72cc482),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                            )
                             Spacer(modifier = Modifier.height(4.dp))
                             if (transaction.feeRate != null && transaction.vsize != null) {
                                 Text(
-                                    text = "${formatFeeRate(transaction.feeRate)} sat/vB • ${formatVBytes(transaction.vsize)} vB",
+                                    text =
+                                        stringResource(
+                                            R.string.liquid_fee_rate_vbytes_format,
+                                            formatFeeRate(transaction.feeRate),
+                                            formatVBytes(transaction.vsize),
+                                        ),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontFamily = FontFamily.Monospace,
                                     color = MaterialTheme.colorScheme.onBackground,
@@ -1784,7 +1975,7 @@ private fun LiquidTransactionDetailDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "Advanced",
+                                    text = stringResource(R.string.loc_45f80a27),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                     modifier = Modifier.weight(1f),
@@ -1798,9 +1989,9 @@ private fun LiquidTransactionDetailDialog(
                                         },
                                     contentDescription =
                                         if (lightningAdvancedExpanded) {
-                                            "Collapse advanced Lightning details"
+                                            stringResource(R.string.loc_2254b16b)
                                         } else {
-                                            "Expand advanced Lightning details"
+                                            stringResource(R.string.loc_0c3d4854)
                                         },
                                     tint = LiquidTeal,
                                 )
@@ -1812,14 +2003,23 @@ private fun LiquidTransactionDetailDialog(
                                     if (details.depositAddress.isNotBlank()) {
                                         Spacer(modifier = Modifier.height(8.dp))
                                         SwapDetailCopyRow(
-                                            label = if (isReceive) "Claim Address" else "Lockup Address",
+                                            label =
+                                                if (isReceive) {
+                                                    stringResource(R.string.loc_950671ea)
+                                                } else {
+                                                    stringResource(R.string.loc_f967d9c8)
+                                                },
                                             value = details.depositAddress,
-                                            copyLabel = if (isReceive) "Claim Address" else "Lockup Address",
+                                            copyLabel =
+                                                if (isReceive) {
+                                                    stringResource(R.string.loc_950671ea)
+                                                } else {
+                                                    stringResource(R.string.loc_f967d9c8)
+                                                },
                                             copied = copiedSwapField == "lightning_deposit_address",
                                             onCopy = {
                                                 SecureClipboard.copyAndScheduleClear(
                                                     context,
-                                                    if (isReceive) "Claim Address" else "Lockup Address",
                                                     details.depositAddress,
                                                 )
                                                 copiedSwapField = "lightning_deposit_address"
@@ -1829,12 +2029,15 @@ private fun LiquidTransactionDetailDialog(
                                     details.refundAddress?.let { refundAddress ->
                                         Spacer(modifier = Modifier.height(10.dp))
                                         SwapDetailCopyRow(
-                                            label = "Refund Address",
+                                            label = stringResource(R.string.loc_245027bd),
                                             value = refundAddress,
-                                            copyLabel = "Refund Address",
+                                            copyLabel = stringResource(R.string.loc_245027bd),
                                             copied = copiedSwapField == "lightning_refund_address",
                                             onCopy = {
-                                                SecureClipboard.copyAndScheduleClear(context, "Refund Address", refundAddress)
+                                                SecureClipboard.copyAndScheduleClear(
+                                                    context,
+                                                    refundAddress,
+                                                )
                                                 copiedSwapField = "lightning_refund_address"
                                             },
                                         )
@@ -1845,12 +2048,15 @@ private fun LiquidTransactionDetailDialog(
                                     ?.let { invoice ->
                                         Spacer(modifier = Modifier.height(10.dp))
                                         SwapDetailCopyRow(
-                                            label = "Invoice",
+                                            label = stringResource(R.string.loc_5fd82ed8),
                                             value = invoice,
-                                            copyLabel = "Invoice",
+                                            copyLabel = stringResource(R.string.loc_5fd82ed8),
                                             copied = copiedSwapField == "lightning_invoice",
                                             onCopy = {
-                                                SecureClipboard.copyAndScheduleClear(context, "Invoice", invoice)
+                                                SecureClipboard.copyAndScheduleClear(
+                                                    context,
+                                                    invoice,
+                                                )
                                                 copiedSwapField = "lightning_invoice"
                                             },
                                         )
@@ -1863,14 +2069,13 @@ private fun LiquidTransactionDetailDialog(
                                     }?.let { resolvedInput ->
                                         Spacer(modifier = Modifier.height(10.dp))
                                         SwapDetailCopyRow(
-                                            label = "Resolved Payment Input",
+                                            label = stringResource(R.string.loc_35e0bd00),
                                             value = resolvedInput,
-                                            copyLabel = "Resolved Payment Input",
+                                            copyLabel = stringResource(R.string.loc_35e0bd00),
                                             copied = copiedSwapField == "lightning_resolved_input",
                                             onCopy = {
                                                 SecureClipboard.copyAndScheduleClear(
                                                     context,
-                                                    "Resolved Payment Input",
                                                     resolvedInput,
                                                 )
                                                 copiedSwapField = "lightning_resolved_input"
@@ -1884,14 +2089,13 @@ private fun LiquidTransactionDetailDialog(
                                 details.refundPublicKey?.let { refundPublicKey ->
                                     Spacer(modifier = Modifier.height(10.dp))
                                     SwapDetailCopyRow(
-                                        label = "Refund Public Key",
+                                        label = stringResource(R.string.loc_8236c6fa),
                                         value = refundPublicKey,
-                                        copyLabel = "Refund Public Key",
+                                        copyLabel = stringResource(R.string.loc_8236c6fa),
                                         copied = copiedSwapField == "lightning_refund_pubkey",
                                         onCopy = {
                                             SecureClipboard.copyAndScheduleClear(
                                                 context,
-                                                "Refund Public Key",
                                                 refundPublicKey,
                                             )
                                             copiedSwapField = "lightning_refund_pubkey"
@@ -1901,14 +2105,13 @@ private fun LiquidTransactionDetailDialog(
                                 details.claimPublicKey?.let { claimPublicKey ->
                                     Spacer(modifier = Modifier.height(10.dp))
                                     SwapDetailCopyRow(
-                                        label = "Claim Public Key",
+                                        label = stringResource(R.string.loc_852cf06d),
                                         value = claimPublicKey,
-                                        copyLabel = "Claim Public Key",
+                                        copyLabel = stringResource(R.string.loc_852cf06d),
                                         copied = copiedSwapField == "lightning_claim_pubkey",
                                         onCopy = {
                                             SecureClipboard.copyAndScheduleClear(
                                                 context,
-                                                "Claim Public Key",
                                                 claimPublicKey,
                                             )
                                             copiedSwapField = "lightning_claim_pubkey"
@@ -1918,12 +2121,15 @@ private fun LiquidTransactionDetailDialog(
                                 details.swapTree?.let { swapTree ->
                                     Spacer(modifier = Modifier.height(10.dp))
                                     SwapDetailCopyRow(
-                                        label = "Swap Tree",
+                                        label = stringResource(R.string.loc_da29bafe),
                                         value = swapTree,
-                                        copyLabel = "Swap Tree",
+                                        copyLabel = stringResource(R.string.loc_da29bafe),
                                         copied = copiedSwapField == "lightning_swap_tree",
                                         onCopy = {
-                                            SecureClipboard.copyAndScheduleClear(context, "Swap Tree", swapTree)
+                                            SecureClipboard.copyAndScheduleClear(
+                                                context,
+                                                swapTree,
+                                            )
                                             copiedSwapField = "lightning_swap_tree"
                                         },
                                     )
@@ -1931,12 +2137,15 @@ private fun LiquidTransactionDetailDialog(
                                 details.blindingKey?.let { blindingKey ->
                                     Spacer(modifier = Modifier.height(10.dp))
                                     SwapDetailCopyRow(
-                                        label = "Blinding Key",
+                                        label = stringResource(R.string.loc_fadd6716),
                                         value = blindingKey,
-                                        copyLabel = "Blinding Key",
+                                        copyLabel = stringResource(R.string.loc_fadd6716),
                                         copied = copiedSwapField == "lightning_blinding_key",
                                         onCopy = {
-                                            SecureClipboard.copyAndScheduleClear(context, "Blinding Key", blindingKey)
+                                            SecureClipboard.copyAndScheduleClear(
+                                                context,
+                                                blindingKey,
+                                            )
                                             copiedSwapField = "lightning_blinding_key"
                                         },
                                     )
@@ -1950,7 +2159,11 @@ private fun LiquidTransactionDetailDialog(
                                 color = TextSecondary.copy(alpha = 0.1f),
                             )
 
-                            Text("Source", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                            Text(
+                                text = stringResource(R.string.loc_58267a45),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary,
+                            )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = transactionSourceDetail(transaction),
@@ -1964,13 +2177,22 @@ private fun LiquidTransactionDetailDialog(
                             color = TextSecondary.copy(alpha = 0.1f),
                         )
 
-                        Text("Label", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                        Text(
+                            text = stringResource(R.string.loc_cf667fec),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                        )
                         Spacer(modifier = Modifier.height(4.dp))
                         if (isEditingLabel) {
                             OutlinedTextField(
                                 value = labelText,
                                 onValueChange = { labelText = it },
-                                placeholder = { Text("Enter label", color = TextSecondary.copy(alpha = 0.5f)) },
+                                placeholder = {
+                                    Text(
+                                        text = stringResource(R.string.loc_822c6f45),
+                                        color = TextSecondary.copy(alpha = 0.5f),
+                                    )
+                                },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
                                 colors =
@@ -1986,7 +2208,7 @@ private fun LiquidTransactionDetailDialog(
                                             isEditingLabel = false
                                         },
                                     ) {
-                                        Text("Save", color = LiquidTeal)
+                                        Text(text = stringResource(R.string.loc_f55495e0), color = LiquidTeal)
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
@@ -2019,7 +2241,7 @@ private fun LiquidTransactionDetailDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "Swap Details",
+                                    text = stringResource(R.string.loc_f02e2a46),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                     modifier = Modifier.weight(1f),
@@ -2031,7 +2253,12 @@ private fun LiquidTransactionDetailDialog(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Icon(
                                     imageVector = if (swapDetailsExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                    contentDescription = if (swapDetailsExpanded) "Collapse swap details" else "Expand swap details",
+                                    contentDescription =
+                                        if (swapDetailsExpanded) {
+                                            stringResource(R.string.loc_36648ad9)
+                                        } else {
+                                            stringResource(R.string.loc_511b58c0)
+                                        },
                                     tint = LiquidTeal,
                                 )
                             }
@@ -2055,12 +2282,20 @@ private fun LiquidTransactionDetailDialog(
                                     }
                                     Spacer(modifier = Modifier.height(8.dp))
                                     SwapDetailCopyRow(
-                                        label = if (swapDetails.service == SwapService.BOLTZ) "Boltz Swap ID" else "SideSwap Order ID",
+                                        label =
+                                            if (swapDetails.service == SwapService.BOLTZ) {
+                                                stringResource(R.string.loc_12c49c0c)
+                                            } else {
+                                                stringResource(R.string.loc_1598922a)
+                                            },
                                         value = swapDetails.swapId,
-                                        copyLabel = "Swap ID",
+                                        copyLabel = stringResource(R.string.loc_3e5cd869),
                                         copied = copiedSwapField == "swap_id",
                                         onCopy = {
-                                            SecureClipboard.copyAndScheduleClear(context, "Swap ID", swapDetails.swapId)
+                                            SecureClipboard.copyAndScheduleClear(
+                                                context,
+                                                swapDetails.swapId,
+                                            )
                                             copiedSwapField = "swap_id"
                                         },
                                     )
@@ -2068,7 +2303,7 @@ private fun LiquidTransactionDetailDialog(
                                     SwapDetailCopyRow(
                                         label = swapDepositLabel(swapDetails),
                                         value = swapDetails.depositAddress,
-                                        copyLabel = "Swap Deposit Address",
+                                        copyLabel = stringResource(R.string.loc_d5ff2eb5),
                                         amountText =
                                             swapPrimaryAmountText(
                                                 details = swapDetails,
@@ -2081,7 +2316,6 @@ private fun LiquidTransactionDetailDialog(
                                         onCopy = {
                                             SecureClipboard.copyAndScheduleClear(
                                                 context,
-                                                "Swap Deposit Address",
                                                 swapDetails.depositAddress,
                                             )
                                             copiedSwapField = "deposit_address"
@@ -2092,7 +2326,7 @@ private fun LiquidTransactionDetailDialog(
                                         SwapDetailCopyRow(
                                             label = swapReceiveLabel(swapDetails),
                                             value = receiveAddress,
-                                            copyLabel = "Swap Destination Address",
+                                            copyLabel = stringResource(R.string.loc_907247e2),
                                             amountText = swapExpectedReceiveText(
                                                 details = swapDetails,
                                                 useSats = useSats,
@@ -2104,7 +2338,6 @@ private fun LiquidTransactionDetailDialog(
                                             onCopy = {
                                                 SecureClipboard.copyAndScheduleClear(
                                                     context,
-                                                    "Swap Destination Address",
                                                     receiveAddress,
                                                 )
                                                 copiedSwapField = "receive_address"
@@ -2114,14 +2347,13 @@ private fun LiquidTransactionDetailDialog(
                                     swapDetails.refundAddress?.let { refundAddress ->
                                         Spacer(modifier = Modifier.height(10.dp))
                                         SwapDetailCopyRow(
-                                            label = "Refund Address",
+                                            label = stringResource(R.string.loc_245027bd),
                                             value = refundAddress,
-                                            copyLabel = "Refund Address",
+                                            copyLabel = stringResource(R.string.loc_245027bd),
                                             copied = copiedSwapField == "refund_address",
                                             onCopy = {
                                                 SecureClipboard.copyAndScheduleClear(
                                                     context,
-                                                    "Refund Address",
                                                     refundAddress,
                                                 )
                                                 copiedSwapField = "refund_address"
@@ -2133,6 +2365,8 @@ private fun LiquidTransactionDetailDialog(
                         }
                     }
                 }
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
                 Spacer(modifier = Modifier.height(8.dp))
                 IbisButton(
                     onClick = onDismiss,
@@ -2140,9 +2374,13 @@ private fun LiquidTransactionDetailDialog(
                         .fillMaxWidth()
                         .height(48.dp),
                 ) {
-                    Text("Close", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = stringResource(R.string.loc_d2c0aec0),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
             }
+        }
         }
     }
 }
@@ -2153,15 +2391,16 @@ private fun LiquidTorBrowserErrorDialog(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = DarkSurface,
-        ) {
-            Column(
+        ProvideLocalizedResources {
+            Surface(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                shape = RoundedCornerShape(12.dp),
+                color = DarkSurface,
+            ) {
+                Column(
                 modifier =
                     Modifier
                         .fillMaxWidth()
@@ -2170,7 +2409,7 @@ private fun LiquidTorBrowserErrorDialog(onDismiss: () -> Unit) {
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "Error",
+                    contentDescription = stringResource(R.string.loc_9c1c9375),
                     tint = AccentRed,
                     modifier = Modifier.size(48.dp),
                 )
@@ -2178,7 +2417,7 @@ private fun LiquidTorBrowserErrorDialog(onDismiss: () -> Unit) {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Tor Browser Required",
+                    text = stringResource(R.string.loc_3a15e5cd),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -2187,12 +2426,14 @@ private fun LiquidTorBrowserErrorDialog(onDismiss: () -> Unit) {
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "Tor Browser is required to view onion links. Please install it from the Play Store or F-Droid.",
+                    text = stringResource(R.string.loc_71c1fcab),
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
+                Spacer(modifier = Modifier.height(8.dp))
 
                 IbisButton(
                     onClick = onDismiss,
@@ -2200,9 +2441,13 @@ private fun LiquidTorBrowserErrorDialog(onDismiss: () -> Unit) {
                         .fillMaxWidth()
                         .height(48.dp),
                 ) {
-                    Text("Close", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = stringResource(R.string.loc_d2c0aec0),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 }
             }
+        }
         }
     }
 }
@@ -2213,7 +2458,7 @@ private fun SwapDetailTextRow(
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Timeout Block Height",
+            text = stringResource(R.string.loc_b2a432e9),
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary,
             maxLines = 1,
@@ -2311,7 +2556,7 @@ private fun SwapDetailCopyRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
-                    contentDescription = "Copy $copyLabel",
+                    contentDescription = stringResource(R.string.common_copy_with_label, copyLabel),
                     tint = if (copied) LiquidTeal else TextSecondary,
                     modifier = Modifier.size(18.dp),
                 )
@@ -2319,7 +2564,7 @@ private fun SwapDetailCopyRow(
         }
         if (copied) {
             Text(
-                text = "Copied to clipboard!",
+                text = stringResource(R.string.loc_e287255d),
                 style = MaterialTheme.typography.bodySmall,
                 color = LiquidTeal,
             )
@@ -2385,10 +2630,11 @@ private fun SwapDetailDirectionBadge(
     }
 }
 
+@Composable
 private fun swapProviderLabel(service: SwapService): String =
     when (service) {
-        SwapService.BOLTZ -> "Boltz"
-        SwapService.SIDESWAP -> "SideSwap"
+        SwapService.BOLTZ -> stringResource(R.string.loc_3d1a0df5)
+        SwapService.SIDESWAP -> stringResource(R.string.loc_c6f76248)
     }
 
 private fun swapProviderColor(service: SwapService): Color =
@@ -2397,16 +2643,18 @@ private fun swapProviderColor(service: SwapService): Color =
         SwapService.SIDESWAP -> LiquidTeal
     }
 
+@Composable
 private fun swapDepositLabel(details: LiquidSwapDetails): String =
     when (details.direction) {
-        SwapDirection.BTC_TO_LBTC -> "Bitcoin Funding Address"
-        SwapDirection.LBTC_TO_BTC -> "Liquid Swap Deposit Address"
+        SwapDirection.BTC_TO_LBTC -> stringResource(R.string.loc_fd2abe42)
+        SwapDirection.LBTC_TO_BTC -> stringResource(R.string.loc_948bf4a1)
     }
 
+@Composable
 private fun swapReceiveLabel(details: LiquidSwapDetails): String =
     when (details.direction) {
-        SwapDirection.BTC_TO_LBTC -> "Liquid Destination Address"
-        SwapDirection.LBTC_TO_BTC -> "Bitcoin Destination Address"
+        SwapDirection.BTC_TO_LBTC -> stringResource(R.string.loc_8f9ee8e6)
+        SwapDirection.LBTC_TO_BTC -> stringResource(R.string.loc_a6feda9e)
     }
 
 private fun swapPrimaryAmountColor(direction: SwapDirection): Color =
@@ -2421,6 +2669,7 @@ private fun swapExpectedReceiveColor(direction: SwapDirection): Color =
         SwapDirection.LBTC_TO_BTC -> BitcoinOrange
     }
 
+@Composable
 private fun swapPrimaryAmountText(
     details: LiquidSwapDetails,
     useSats: Boolean,
@@ -2435,6 +2684,7 @@ private fun swapPrimaryAmountText(
     return formatSwapAssetAmount(displayAmountSats, asset, useSats, privacyMode)
 }
 
+@Composable
 private fun swapExpectedReceiveText(
     details: LiquidSwapDetails,
     useSats: Boolean,
@@ -2449,6 +2699,7 @@ private fun swapExpectedReceiveText(
     return formatSwapAssetAmount(displayAmountSats, asset, useSats, privacyMode)
 }
 
+@Composable
 private fun formatSwapAssetAmount(
     amountSats: Long,
     asset: String,
@@ -2470,14 +2721,26 @@ private fun truncateSwapDetailValue(
 
 private const val HIDDEN_AMOUNT = "****"
 
-private fun liquidBalanceUnitLabel(useSats: Boolean): String = if (useSats) "sats" else "BTC"
+@Composable
+private fun liquidBalanceUnitLabel(useSats: Boolean): String =
+    if (useSats) {
+        stringResource(R.string.loc_9384ed0d)
+    } else {
+        "BTC"
+    }
 
+@Composable
 private fun liquidTransactionKindLabel(transaction: LiquidTransaction): String =
     when (transaction.source) {
-        LiquidTxSource.CHAIN_SWAP -> "Swap"
-        LiquidTxSource.LIGHTNING_RECEIVE_SWAP -> "Lightning Received"
-        LiquidTxSource.LIGHTNING_SEND_SWAP -> "Lightning Sent"
-        LiquidTxSource.NATIVE -> if (transaction.balanceSatoshi >= 0) "Received" else "Sent"
+        LiquidTxSource.CHAIN_SWAP -> stringResource(R.string.loc_85a12a5f)
+        LiquidTxSource.LIGHTNING_RECEIVE_SWAP -> stringResource(R.string.loc_ce4ef127)
+        LiquidTxSource.LIGHTNING_SEND_SWAP -> stringResource(R.string.loc_15e084c6)
+        LiquidTxSource.NATIVE ->
+            if (transaction.balanceSatoshi >= 0) {
+                stringResource(R.string.loc_301a5b91)
+            } else {
+                stringResource(R.string.loc_1af68597)
+            }
     }
 
 @Composable
@@ -2492,7 +2755,7 @@ private fun LiquidTransactionFilterButton(
         contentAlignment = Alignment.Center,
         modifier =
             Modifier
-                .size(28.dp)
+                .size(30.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(if (isSelected) tint.copy(alpha = 0.16f) else DarkSurfaceVariant)
                 .clickable(onClick = onClick),
@@ -2501,7 +2764,7 @@ private fun LiquidTransactionFilterButton(
             imageVector = icon,
             contentDescription = contentDescription,
             tint = if (isSelected) tint else TextSecondary,
-            modifier = Modifier.size(18.dp),
+            modifier = Modifier.size(20.dp),
         )
     }
 }
@@ -2517,7 +2780,7 @@ private fun LiquidTransactionTextFilterButton(
         contentAlignment = Alignment.Center,
         modifier =
             Modifier
-                .size(28.dp)
+                .size(30.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(if (isSelected) tint.copy(alpha = 0.16f) else DarkSurfaceVariant)
                 .clickable(onClick = onClick),
@@ -2547,29 +2810,30 @@ private fun TransactionExplorerBadge(
                 .padding(horizontal = 8.dp),
     ) {
         Text(
-            text = "Explorer",
+            text = stringResource(R.string.loc_1e89ceb8),
             style = MaterialTheme.typography.labelMedium,
             color = tint,
         )
         Spacer(modifier = Modifier.width(4.dp))
         Icon(
             imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-            contentDescription = "Open in block explorer",
+            contentDescription = stringResource(R.string.loc_f07d5799),
             tint = tint,
             modifier = Modifier.size(16.dp),
         )
     }
 }
 
+@Composable
 private fun transactionSourceDetail(transaction: LiquidTransaction): String =
     when (transaction.source) {
-        LiquidTxSource.CHAIN_SWAP -> "BTC/L-BTC chain swap"
-        LiquidTxSource.LIGHTNING_RECEIVE_SWAP -> "Boltz Lightning receive swap"
-        LiquidTxSource.LIGHTNING_SEND_SWAP -> "Boltz Lightning send swap"
+        LiquidTxSource.CHAIN_SWAP -> stringResource(R.string.liquid_source_chain_swap)
+        LiquidTxSource.LIGHTNING_RECEIVE_SWAP -> stringResource(R.string.liquid_source_lightning_receive_swap)
+        LiquidTxSource.LIGHTNING_SEND_SWAP -> stringResource(R.string.liquid_source_lightning_send_swap)
         LiquidTxSource.NATIVE -> if (transaction.balanceSatoshi >= 0) {
-            "Native L-BTC receive"
+            stringResource(R.string.liquid_source_native_receive)
         } else {
-            "Native L-BTC send"
+            stringResource(R.string.liquid_source_native_send)
         }
     }
 

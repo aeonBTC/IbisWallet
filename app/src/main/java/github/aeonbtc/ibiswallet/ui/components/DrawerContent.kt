@@ -24,7 +24,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,43 +42,44 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DrawerIconColor
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.viewmodel.AppUpdateStatus
+import androidx.compose.material3.Text
 
 sealed class DrawerItem(
-    val title: String,
+    val titleRes: Int,
     val icon: ImageVector,
 ) {
     data object ManageWallets : DrawerItem(
-        title = "Manage Wallets",
+        titleRes = R.string.loc_bcb6fe62,
         icon = Icons.Default.AccountBalanceWallet,
     )
 
     data object ElectrumServer : DrawerItem(
-        title = "Electrum Servers",
+        titleRes = R.string.loc_dc73d3bf,
         icon = Icons.Default.Dns,
     )
 
     data object Settings : DrawerItem(
-        title = "Settings",
+        titleRes = R.string.loc_1c33c293,
         icon = Icons.Default.Settings,
     )
 
     data object Layer2Options : DrawerItem(
-        title = "Layer 2",
+        titleRes = R.string.loc_2f73501f,
         icon = Icons.Default.Layers,
     )
 
     data object Security : DrawerItem(
-        title = "Security",
+        titleRes = R.string.loc_3cedb797,
         icon = Icons.Default.Lock,
     )
 
     data object BackupRestore : DrawerItem(
-        title = "Backup / Restore",
+        titleRes = R.string.loc_db888836,
         icon = Icons.Default.SaveAlt,
     )
 
     data object About : DrawerItem(
-        title = "About",
+        titleRes = R.string.loc_74350de7,
         icon = Icons.Default.Info,
     )
 }
@@ -130,7 +130,7 @@ fun DrawerContent(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Ibis Wallet",
+                    text = stringResource(R.string.loc_6bf5da9c),
                     style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
@@ -179,13 +179,14 @@ fun DrawerContent(
                     overflow = TextOverflow.Ellipsis,
                 )
 
-                Spacer(modifier = Modifier.width(12.dp))
+                if (appUpdateStatus is AppUpdateStatus.UpdateAvailable) {
+                    Spacer(modifier = Modifier.width(12.dp))
 
-                DrawerUpdateLabel(
-                    appUpdateStatus = appUpdateStatus,
-                    onDownloadUpdateClick = onDownloadUpdateClick,
-                    defaultColor = footerTextColor,
-                )
+                    DrawerUpdateLabel(
+                        appUpdateStatus = appUpdateStatus,
+                        onDownloadUpdateClick = onDownloadUpdateClick,
+                    )
+                }
             }
         }
     }
@@ -193,65 +194,35 @@ fun DrawerContent(
 
 @Composable
 private fun DrawerUpdateLabel(
-    appUpdateStatus: AppUpdateStatus,
+    appUpdateStatus: AppUpdateStatus.UpdateAvailable,
     onDownloadUpdateClick: (String) -> Unit,
-    defaultColor: androidx.compose.ui.graphics.Color,
 ) {
-    when (appUpdateStatus) {
-        AppUpdateStatus.Checking -> {
-            Text(
-                text = stringResource(R.string.drawer_update_checking),
-                style = MaterialTheme.typography.bodyMedium,
-                color = defaultColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+    val contentDescription =
+        stringResource(
+            R.string.drawer_update_available,
+            appUpdateStatus.latestVersionName,
+        )
+    val updateAvailableText =
+        stringResource(
+            R.string.drawer_update_available,
+            appUpdateStatus.latestVersionName,
+        )
 
-        AppUpdateStatus.UpToDate -> {
-            Text(
-                text = stringResource(R.string.drawer_update_up_to_date),
-                style = MaterialTheme.typography.bodyMedium,
-                color = defaultColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        AppUpdateStatus.Error -> {
-            Text(
-                text = stringResource(R.string.drawer_update_check_failed),
-                style = MaterialTheme.typography.bodyMedium,
-                color = defaultColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-
-        is AppUpdateStatus.UpdateAvailable -> {
-            val contentDescription =
-                stringResource(
-                    R.string.drawer_update_available,
-                    appUpdateStatus.latestVersionName,
-                )
-
-            Text(
-                text = stringResource(R.string.download_update),
-                style = MaterialTheme.typography.bodyMedium,
-                color = BitcoinOrange,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier =
-                    Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onDownloadUpdateClick(appUpdateStatus.releaseUrl) }
-                        .semantics {
-                            this.contentDescription = contentDescription
-                        }
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-        }
-    }
+    Text(
+        text = updateAvailableText,
+        style = MaterialTheme.typography.bodyMedium,
+        color = BitcoinOrange,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { onDownloadUpdateClick(appUpdateStatus.releaseUrl) }
+                .semantics {
+                    this.contentDescription = contentDescription
+                }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+    )
 }
 
 @Composable
@@ -259,6 +230,7 @@ private fun DrawerMenuItem(
     item: DrawerItem,
     onClick: () -> Unit,
 ) {
+    val title = stringResource(item.titleRes)
     Row(
         modifier =
             Modifier
@@ -271,7 +243,7 @@ private fun DrawerMenuItem(
     ) {
         Icon(
             imageVector = item.icon,
-            contentDescription = item.title,
+            contentDescription = title,
             tint = DrawerIconColor,
             modifier = Modifier.size(24.dp),
         )
@@ -279,7 +251,7 @@ private fun DrawerMenuItem(
         Spacer(modifier = Modifier.width(16.dp))
 
         Text(
-            text = item.title,
+            text = title,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )

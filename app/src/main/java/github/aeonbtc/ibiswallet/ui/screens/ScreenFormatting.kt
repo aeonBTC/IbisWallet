@@ -15,6 +15,10 @@ fun formatBtc(sats: ULong): String {
 
 fun formatSats(sats: ULong): String = NumberFormat.getNumberInstance(Locale.US).format(sats.toLong())
 
+/**
+ * Formats a balance or tx amount. When [includeUnit] is true and [useSats], appends lowercase **sats**
+ * after the number (never **Sats** — that casing is reserved for standalone denomination labels).
+ */
 fun formatAmount(
     sats: ULong,
     useSats: Boolean,

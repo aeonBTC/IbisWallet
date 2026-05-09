@@ -23,7 +23,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,6 +47,10 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import java.util.Locale
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 /** Safety cap for manual fee rate entry (sat/vB). Users can still type higher values
  *  but a warning is shown and the value is clamped when applied. */
@@ -143,7 +146,7 @@ fun FeeRateSection(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Fee Rate",
+                text = stringResource(R.string.loc_943c89b7),
                 style = MaterialTheme.typography.labelLarge,
                 color = TextSecondary,
             )
@@ -223,9 +226,12 @@ fun FeeRateSection(
         } else {
             val isLoading = feeEstimationState is FeeEstimationResult.Loading
             val isElectrum = estimates?.source == FeeEstimateSource.ELECTRUM_SERVER
-            val fastLabel = if (isElectrum) "~2 blocks" else "~1 block"
-            val medLabel = if (isElectrum) "~6 blocks" else "~3 blocks"
-            val slowLabel = if (isElectrum) "~12 blocks" else "~6 blocks"
+            val fastCount = if (isElectrum) 2 else 1
+            val medCount = if (isElectrum) 6 else 3
+            val slowCount = if (isElectrum) 12 else 6
+            val fastLabel = pluralStringResource(R.plurals.fee_estimate_approx_blocks, fastCount, fastCount)
+            val medLabel = pluralStringResource(R.plurals.fee_estimate_approx_blocks, medCount, medCount)
+            val slowLabel = pluralStringResource(R.plurals.fee_estimate_approx_blocks, slowCount, slowCount)
 
             val errorState = feeEstimationState as? FeeEstimationResult.Error
             if (errorState != null) {
@@ -241,7 +247,7 @@ fun FeeRateSection(
                         modifier = Modifier.padding(12.dp),
                     ) {
                         Text(
-                            text = "Failed to load fee estimates",
+                            text = stringResource(R.string.loc_82c7cb6e),
                             style = MaterialTheme.typography.bodySmall,
                             color = WarningYellow,
                         )
@@ -353,7 +359,7 @@ fun FeeRateSection(
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
-                            text = "Custom",
+                            text = stringResource(R.string.loc_f22813ad),
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary,
                         )
@@ -417,7 +423,7 @@ internal fun FeeTargetButton(
                 )
             }
             Text(
-                text = "sat/vB",
+                text = stringResource(R.string.loc_aedd48eb),
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,
@@ -459,7 +465,7 @@ private fun ManualFeeInput(
         modifier = modifier.fillMaxWidth(),
         suffix = {
             Text(
-                text = "sat/vB",
+                text = stringResource(R.string.loc_aedd48eb),
                 color = TextSecondary.copy(alpha = 0.7f),
             )
         },
@@ -468,13 +474,13 @@ private fun ManualFeeInput(
         supportingText = {
             if (isOverCap) {
                 Text(
-                    text = "Exceeds ${formatFeeRate(MAX_FEE_RATE_SAT_VB)} sat/vB safety cap — will be clamped",
+                    text = "Maximum: ${formatFeeRate(MAX_FEE_RATE_SAT_VB)} sat/vB",
                     style = MaterialTheme.typography.bodySmall,
                     color = WarningYellow,
                 )
             } else if (isBelowMin) {
                 Text(
-                    text = "Below minimum: ${formatFeeRate(minFeeRate)} sat/vB",
+                    text = "Fee rate is below the minimum (${formatFeeRate(minFeeRate)} sat/vB)",
                     style = MaterialTheme.typography.bodySmall,
                     color = WarningYellow,
                 )

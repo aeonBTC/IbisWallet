@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -40,6 +39,9 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import androidx.camera.core.Preview as CameraPreview
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
+import androidx.compose.material3.Text
 
 /**
  * QR Scanner Dialog - provides camera-based QR code scanning with dialog wrapper
@@ -102,13 +104,13 @@ fun QrScannerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Scan QR Code",
+                            text = stringResource(R.string.loc_59b2cdc5),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                         TextButton(onClick = onDismiss) {
-                            Text("Cancel", color = TextSecondary)
+                            Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
                         }
                     }
 

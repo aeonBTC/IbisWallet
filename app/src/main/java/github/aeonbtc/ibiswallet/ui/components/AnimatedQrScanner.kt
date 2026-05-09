@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -50,6 +49,9 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.UrAccountParser
 import java.util.concurrent.Executors
 import androidx.camera.core.Preview as CameraPreview
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
+import androidx.compose.material3.Text
 
 /**
  * Animated QR scanner dialog that supports both single-frame and multi-frame BC-UR QR codes.
@@ -126,13 +128,13 @@ fun AnimatedQrScannerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Scan Signed Transaction",
+                            text = stringResource(R.string.loc_d1f803ab),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                         TextButton(onClick = onDismiss) {
-                            Text("Cancel", color = TextSecondary)
+                            Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
                         }
                     }
 
@@ -177,7 +179,7 @@ fun AnimatedQrScannerDialog(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Scanning: ${(scanProgress * 100).toInt()}%",
+                                text = stringResource(R.string.loc_2c2e5efe, (scanProgress * 100).toInt()),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                             )
@@ -266,13 +268,13 @@ fun ImportQrScannerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Scan QR Code",
+                            text = stringResource(R.string.loc_59b2cdc5),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                         TextButton(onClick = onDismiss) {
-                            Text("Cancel", color = TextSecondary)
+                            Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
                         }
                     }
 
@@ -321,7 +323,7 @@ fun ImportQrScannerDialog(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Scanning: ${(scanProgress * 100).toInt()}%",
+                                text = stringResource(R.string.loc_2c2e5efe, (scanProgress * 100).toInt()),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                             )
@@ -571,13 +573,13 @@ fun LabelsQrScannerDialog(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Scan Labels QR",
+                            text = stringResource(R.string.loc_9cd7a398),
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                         TextButton(onClick = onDismiss) {
-                            Text("Cancel", color = TextSecondary)
+                            Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
                         }
                     }
 
@@ -633,7 +635,7 @@ fun LabelsQrScannerDialog(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Scan a BIP 329 labels QR code exported from another wallet",
+                        text = stringResource(R.string.loc_7f1b7539),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                         modifier = Modifier.padding(horizontal = 16.dp),

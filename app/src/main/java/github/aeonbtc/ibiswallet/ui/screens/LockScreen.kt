@@ -21,6 +21,9 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.ui.theme.*
 import kotlinx.coroutines.delay
 import java.security.SecureRandom
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 private const val MIN_PIN_LENGTH = 4
 private const val MAX_PIN_LENGTH = 12
@@ -39,6 +42,8 @@ fun LockScreen(
     var attempts by remember { mutableIntStateOf(0) }
     var pendingValidation by remember { mutableStateOf(false) }
     val pinMaxLength = MAX_PIN_LENGTH
+    val incorrectPinMsg = stringResource(R.string.loc_0a18f141)
+    val tooManyAttemptsMsg = stringResource(R.string.loc_364b0d65)
 
     // Auto-trigger biometric on first composition if biometric is the security method
     // Skip auto-trigger in duress+biometric mode (the C button is the hidden trigger)
@@ -57,9 +62,9 @@ fun LockScreen(
                 attempts++
                 error =
                     if (attempts >= 6) {
-                        "Too many attempts"
+                        tooManyAttemptsMsg
                     } else {
-                        "Incorrect PIN"
+                        incorrectPinMsg
                     }
                 pin = ""
             }
@@ -89,9 +94,11 @@ fun LockScreen(
             Text(
                 text =
                     when {
-                        isDuressWithBiometric -> "Enter PIN to unlock"
-                        securityMethod == SecureStorage.SecurityMethod.BIOMETRIC -> "Authenticate to continue"
-                        securityMethod == SecureStorage.SecurityMethod.PIN -> "Enter PIN to unlock"
+                        isDuressWithBiometric -> stringResource(R.string.loc_bf4a5bdb)
+                        securityMethod == SecureStorage.SecurityMethod.BIOMETRIC ->
+                            stringResource(R.string.loc_cabf9832)
+                        securityMethod == SecureStorage.SecurityMethod.PIN ->
+                            stringResource(R.string.loc_bf4a5bdb)
                         else -> ""
                     },
                 style = MaterialTheme.typography.bodyLarge,
@@ -154,7 +161,7 @@ fun LockScreen(
                 ) {
                     Icon(
                         imageVector = Icons.Default.Fingerprint,
-                        contentDescription = "Use biometric",
+                        contentDescription = stringResource(R.string.loc_d00009b0),
                         tint = BitcoinOrange,
                         modifier = Modifier.size(48.dp),
                     )
@@ -163,7 +170,7 @@ fun LockScreen(
                 Spacer(modifier = Modifier.height(24.dp))
 
                 Text(
-                    text = "Tap to use biometric\nor enter PIN below",
+                    text = stringResource(R.string.loc_10459bad),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                     textAlign = TextAlign.Center,
@@ -174,6 +181,8 @@ fun LockScreen(
 
             // Number pad
             NumberPad(
+                backspaceContentDescription = stringResource(R.string.loc_3d1100cc),
+                biometricContentDescription = stringResource(R.string.loc_d00009b0),
                 onNumberClick = { number ->
                     if (pin.length < pinMaxLength && !pendingValidation) {
                         val newPin = pin + number
@@ -219,6 +228,8 @@ fun LockScreen(
 
 @Composable
 private fun NumberPad(
+    backspaceContentDescription: String,
+    biometricContentDescription: String,
     onNumberClick: (String) -> Unit,
     onBackspaceClick: () -> Unit,
     onConfirmClick: (() -> Unit)? = null,
@@ -258,7 +269,7 @@ private fun NumberPad(
                                     contentPadding = PaddingValues(0.dp),
                                 ) {
                                     Text(
-                                        text = "C",
+                                        text = stringResource(R.string.loc_3dd7ffa7),
                                         style = MaterialTheme.typography.headlineMedium,
                                         fontSize = 28.sp,
                                     )
@@ -274,7 +285,7 @@ private fun NumberPad(
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Fingerprint,
-                                        contentDescription = "Biometric",
+                                        contentDescription = biometricContentDescription,
                                         tint = BitcoinOrange,
                                         modifier = Modifier.size(30.dp),
                                     )
@@ -295,7 +306,7 @@ private fun NumberPad(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.Backspace,
-                                    contentDescription = "Backspace",
+                                    contentDescription = backspaceContentDescription,
                                     tint = TextSecondary,
                                     modifier = Modifier.size(26.dp),
                                 )
@@ -350,7 +361,7 @@ private fun NumberPad(
                 ),
         ) {
             Text(
-                text = "Unlock",
+                text = stringResource(R.string.loc_6d48b5d9),
                 style = MaterialTheme.typography.titleMedium,
             )
         }

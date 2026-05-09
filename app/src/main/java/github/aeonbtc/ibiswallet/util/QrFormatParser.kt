@@ -1,7 +1,6 @@
 package github.aeonbtc.ibiswallet.util
 
 import android.content.Context
-import android.util.Log
 import github.aeonbtc.ibiswallet.data.model.AddressType
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -261,7 +260,7 @@ object QrFormatParser {
 
             null
         } catch (e: Exception) {
-            Log.d(TAG, "Failed to parse JSON wallet export: ${e.message}")
+            SecureLog.d(TAG, "Failed to parse JSON wallet export: ${e.message}", e)
             null
         }
     }

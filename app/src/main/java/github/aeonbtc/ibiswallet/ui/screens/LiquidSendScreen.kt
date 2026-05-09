@@ -51,7 +51,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -87,6 +86,7 @@ import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentExecutionPlan
+import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidSendKind
 import github.aeonbtc.ibiswallet.data.model.LiquidSendPreview
@@ -132,6 +132,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToLong
+import androidx.compose.material3.Text
 
 @Composable
 fun LiquidSendScreen(
@@ -320,7 +321,7 @@ fun LiquidSendScreen(
         } else if (isAssetMode && parsedRecipient is ParsedSendRecipient.Lightning) {
             "Lightning is not available for ${sendAsset.ticker} sends"
         } else {
-            layer2RecipientValidationError(parsedRecipient)
+            layer2RecipientValidationError(parsedRecipient, Layer2Provider.LIQUID)
         }
     }
     val isAddressValid = recipientAddress.isNotBlank() && addressValidationError == null
@@ -384,12 +385,50 @@ fun LiquidSendScreen(
     val inlineSendError = if (!showConfirmDialog) dismissedSendError else null
     val sendingState = liquidSendState as? LiquidSendState.Sending
     val isSendLocked = sendingState != null
+    val chainSendPreviewReady = liquidSendState is LiquidSendState.ReviewReady
+    val assetOverBalance =
+        isAssetMode &&
+            liquidRecipient != null &&
+            isAddressValid &&
+            !isMaxMode &&
+            amountSats > 0L &&
+            amountSats > availableSats
+    val multiLbtcOverAvailable =
+        isMultiMode &&
+            !isAssetMode &&
+            multiRecipientList.size >= 2 &&
+            multiTotalSats > availableSats
+    val assetOverBalanceMessage =
+        if (assetOverBalance) {
+            stringResource(
+                R.string.balance_insufficient_funds_available_format,
+                formatLiquidAmount(availableSats, useSats),
+                if (useSats) "sats" else "BTC",
+            )
+        } else {
+            null
+        }
+    val multiOverBalanceMessage =
+        if (multiLbtcOverAvailable) {
+            stringResource(
+                R.string.balance_insufficient_funds_available_format,
+                formatLiquidAmount(availableSats, useSats),
+                if (useSats) "sats" else "BTC",
+            )
+        } else {
+            null
+        }
+    val amountFieldInlineError = inlineSendError ?: assetOverBalanceMessage
+    val previewErrorForMulti = inlineSendError ?: multiOverBalanceMessage
     val canReview =
         liquidState.isInitialized &&
             !isLiquidWatchOnly &&
             !isSendLocked &&
             when {
-                isMultiMode -> multiRecipientList.size >= 2
+                isMultiMode ->
+                    multiRecipientList.size >= 2 &&
+                        chainSendPreviewReady &&
+                        !multiLbtcOverAvailable
                 lightningRecipient != null ->
                     isAddressValid &&
                         (
@@ -397,7 +436,11 @@ fun LiquidSendScreen(
                                 !canEditLightningAmount ||
                                 lightningRequestedAmountSats?.let { it > 0L } == true
                         )
-                liquidRecipient != null -> isAddressValid && (amountSats > 0L || isMaxMode)
+                liquidRecipient != null ->
+                    isAddressValid &&
+                        (amountSats > 0L || isMaxMode) &&
+                        !assetOverBalance &&
+                        chainSendPreviewReady
                 else -> false
             }
 
@@ -461,9 +504,11 @@ fun LiquidSendScreen(
             ),
         )
     }
-    LaunchedEffect(liquidSendState) {
+    LaunchedEffect(liquidSendState, showConfirmDialog) {
         val isSendingNow = liquidSendState is LiquidSendState.Sending
+        var handledPostSendTransition = false
         if (wasSending && !isSendingNow) {
+            handledPostSendTransition = true
             when (liquidSendState) {
                 is LiquidSendState.Failed -> {
                     dismissedSendError = null
@@ -482,8 +527,19 @@ fun LiquidSendScreen(
                 else -> Unit
             }
         }
-        if (liquidSendState is LiquidSendState.ReviewReady) {
-            dismissedSendError = null
+        if (!handledPostSendTransition) {
+            when (val state = liquidSendState) {
+                is LiquidSendState.ReviewReady -> dismissedSendError = null
+                is LiquidSendState.Failed ->
+                    if (!showConfirmDialog) {
+                        dismissedSendError = state.error
+                    }
+                is LiquidSendState.Estimating ->
+                    if (!showConfirmDialog) {
+                        dismissedSendError = null
+                    }
+                else -> Unit
+            }
         }
         wasSending = isSendingNow
     }
@@ -651,7 +707,7 @@ fun LiquidSendScreen(
             estimatedFeeSats = preview?.feeSats,
             validRecipientCount = multiRecipientList.size,
             totalSendingSats = multiTotalSats,
-            previewError = inlineSendError,
+            previewError = previewErrorForMulti,
             onDone = { showMultiDialog = false },
             onDismiss = { showMultiDialog = false },
         )
@@ -660,29 +716,33 @@ fun LiquidSendScreen(
     if (showQrScanner) {
         QrScannerDialog(
             onCodeScanned = { code ->
-                when (val parsedScan = parseSendRecipient(code.trim())) {
-                    is ParsedSendRecipient.Liquid -> {
-                        recipientAddress = parsedScan.address
-                        amountInput = parsedScan.amountSats?.let { formatLiquidInputAmount(it, useSats, isUsdMode, btcPrice) }.orEmpty()
-                        parsedScan.label?.let {
-                            labelText = it
-                            showLabelField = true
+                val parsedScan = parseSendRecipient(code.trim())
+                val scanError = layer2RecipientValidationError(parsedScan, Layer2Provider.LIQUID)
+                if (scanError != null) {
+                    dismissedSendError = scanError
+                } else {
+                    when (parsedScan) {
+                        is ParsedSendRecipient.Liquid -> {
+                            recipientAddress = parsedScan.address
+                            amountInput = parsedScan.amountSats?.let { formatLiquidInputAmount(it, useSats, isUsdMode, btcPrice) }.orEmpty()
+                            parsedScan.label?.let {
+                                labelText = it
+                                showLabelField = true
+                            }
+                            isMaxMode = false
                         }
-                        isMaxMode = false
-                    }
 
-                    is ParsedSendRecipient.Lightning -> {
-                        val allowManualAmount = parsedScan.kind == LightningKind.BOLT12 && parsedScan.amountSats == null
-                        recipientAddress = parsedScan.paymentInput
-                        amountInput = parsedScan.amountSats?.let { formatLiquidInputAmount(it, useSats, false, btcPrice) }.orEmpty()
-                        if (!allowManualAmount) {
-                            isUsdMode = false
+                        is ParsedSendRecipient.Lightning -> {
+                            val allowManualAmount = parsedScan.kind == LightningKind.BOLT12 && parsedScan.amountSats == null
+                            recipientAddress = parsedScan.paymentInput
+                            amountInput = parsedScan.amountSats?.let { formatLiquidInputAmount(it, useSats, false, btcPrice) }.orEmpty()
+                            if (!allowManualAmount) {
+                                isUsdMode = false
+                            }
+                            isMaxMode = false
                         }
-                        isMaxMode = false
-                    }
 
-                    else -> {
-                        recipientAddress = code.trim()
+                        else -> Unit
                     }
                 }
                 showQrScanner = false
@@ -844,7 +904,7 @@ fun LiquidSendScreen(
                         if (nonLbtcAssets.isNotEmpty()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = "Send ",
+                                    text = stringResource(R.string.loc_cddf2d76),
                                     style = MaterialTheme.typography.titleLarge,
                                     color = TextPrimary,
                                 )
@@ -876,7 +936,7 @@ fun LiquidSendScreen(
                             }
                         } else {
                             Text(
-                                text = "Send L-BTC",
+                                text = stringResource(R.string.loc_972e5de0),
                                 style = MaterialTheme.typography.titleLarge,
                                 color = TextPrimary,
                             )
@@ -917,7 +977,12 @@ fun LiquidSendScreen(
                         border = BorderStroke(1.dp, if (coinControlActive) LiquidTeal else BorderColor),
                     ) {
                         Text(
-                            text = if (coinControlActive) "UTXOs (${selectedUtxos.size})" else "Coin Control",
+                            text =
+                                if (coinControlActive) {
+                                    "${stringResource(R.string.send_utxos_selected_prefix)} (${selectedUtxos.size})"
+                                } else {
+                                    stringResource(R.string.loc_47914d64)
+                                },
                             style = MaterialTheme.typography.labelMedium,
                             color = if (coinControlActive) LiquidTeal else TextSecondary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -933,7 +998,7 @@ fun LiquidSendScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Recipient",
+                        text = stringResource(R.string.loc_eaf579ea),
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
@@ -986,7 +1051,12 @@ fun LiquidSendScreen(
                         ),
                     ) {
                         Text(
-                            text = if (isMultiMode) "Multiple (${multiRecipientList.size})" else "Multiple",
+                            text =
+                                if (isMultiMode) {
+                                    "${stringResource(R.string.loc_fcc11f52)} (${multiRecipientList.size})"
+                                } else {
+                                    stringResource(R.string.loc_fcc11f52)
+                                },
                             style = MaterialTheme.typography.labelMedium,
                             color =
                                 when {
@@ -1019,7 +1089,7 @@ fun LiquidSendScreen(
                         ) {
                             if (multiRecipientList.isEmpty()) {
                                 Text(
-                                    text = "Tap to add Liquid recipients",
+                                    text = stringResource(R.string.loc_8a1057a2),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary.copy(alpha = 0.5f),
                                 )
@@ -1070,7 +1140,7 @@ fun LiquidSendScreen(
 
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Tap to edit recipients",
+                        text = stringResource(R.string.loc_d98e9517),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary.copy(alpha = 0.6f),
                     )
@@ -1302,10 +1372,21 @@ fun LiquidSendScreen(
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
+                        isError = amountFieldInlineError != null,
                         colors =
                             OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = if (isMaxMode) LiquidTeal else BorderColor,
-                                unfocusedBorderColor = if (isMaxMode) LiquidTeal else BorderColor,
+                                focusedBorderColor =
+                                    when {
+                                        amountFieldInlineError != null -> AccentRed
+                                        isMaxMode -> LiquidTeal
+                                        else -> BorderColor
+                                    },
+                                unfocusedBorderColor =
+                                    when {
+                                        amountFieldInlineError != null -> AccentRed
+                                        isMaxMode -> LiquidTeal
+                                        else -> BorderColor
+                                    },
                                 disabledBorderColor = BorderColor,
                                 focusedTextColor = TextPrimary,
                                 unfocusedTextColor = TextPrimary,
@@ -1314,10 +1395,10 @@ fun LiquidSendScreen(
                             ),
                     )
 
-                    if (inlineSendError != null && (!isLightningPayment || canEditLightningAmount) && amountInput.isNotBlank()) {
+                    if (amountFieldInlineError != null && (!isLightningPayment || canEditLightningAmount) && amountInput.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = inlineSendError,
+                            text = amountFieldInlineError,
                             style = MaterialTheme.typography.bodySmall,
                             color = WarningYellow,
                         )
@@ -1331,7 +1412,7 @@ fun LiquidSendScreen(
                         horizontalArrangement = Arrangement.Start,
                     ) {
                         Text(
-                            text = "Available",
+                            text = stringResource(R.string.loc_277e2626),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -1404,7 +1485,7 @@ fun LiquidSendScreen(
                             ),
                         ) {
                             Text(
-                                text = "Max",
+                                text = stringResource(R.string.loc_a53b6469),
                                 style = MaterialTheme.typography.labelMedium,
                                 color =
                                     when {
@@ -1444,7 +1525,7 @@ fun LiquidSendScreen(
                         border = BorderStroke(1.dp, if (showLabelField || labelText.isNotBlank()) LiquidTeal else BorderColor),
                     ) {
                         Text(
-                            text = "Label",
+                            text = stringResource(R.string.loc_cf667fec),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (showLabelField || labelText.isNotBlank()) LiquidTeal else TextSecondary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -1461,7 +1542,7 @@ fun LiquidSendScreen(
                                     .padding(start = 8.dp),
                             placeholder = {
                                 Text(
-                                    "e.g. Payment to Alice",
+                                    stringResource(R.string.loc_642fdbfc),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary.copy(alpha = 0.5f),
                                 )
@@ -1518,23 +1599,6 @@ fun LiquidSendScreen(
                         color = WarningYellow,
                     )
                 }
-            }
-        }
-
-        if (inlineSendError != null && !showConfirmDialog) {
-            Spacer(modifier = Modifier.height(12.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
-                border = BorderStroke(1.dp, WarningYellow.copy(alpha = 0.35f)),
-            ) {
-                Text(
-                    text = inlineSendError,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = WarningYellow,
-                    modifier = Modifier.padding(16.dp),
-                )
             }
         }
 
@@ -1624,7 +1688,7 @@ private fun LiquidFeeRateSection(
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
-            text = "Fee Rate",
+            text = stringResource(R.string.loc_943c89b7),
             style = MaterialTheme.typography.labelLarge,
             color = TextSecondary,
         )
@@ -1655,13 +1719,13 @@ private fun LiquidFeeRateSection(
             modifier = Modifier.fillMaxWidth(),
             suffix = {
                 Text(
-                    text = "sat/vB",
+                    text = stringResource(R.string.loc_aedd48eb),
                     color = TextSecondary.copy(alpha = 0.7f),
                 )
             },
             supportingText = {
                 Text(
-                    text = "Default: 0.1 sat/vB",
+                    text = stringResource(R.string.loc_149818bf),
                     color = TextSecondary,
                 )
             },
@@ -1739,11 +1803,13 @@ private fun LiquidSendConfirmationDialog(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Estimating Fee...",
+                            text = stringResource(R.string.loc_41389778),
                             style = MaterialTheme.typography.titleMedium,
                         )
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = BorderColor)
+                    Spacer(modifier = Modifier.height(8.dp))
                     IbisButton(
                         onClick = onDismiss,
                         modifier =
@@ -1751,7 +1817,7 @@ private fun LiquidSendConfirmationDialog(
                                 .fillMaxWidth()
                                 .height(48.dp),
                     ) {
-                        Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
                 }
                 is LiquidSendState.ReviewReady -> {
@@ -1782,7 +1848,9 @@ private fun LiquidSendConfirmationDialog(
                             style = MaterialTheme.typography.titleMedium,
                         )
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = BorderColor)
+                    Spacer(modifier = Modifier.height(8.dp))
                     IbisButton(
                         onClick = onDismiss,
                         modifier =
@@ -1790,7 +1858,7 @@ private fun LiquidSendConfirmationDialog(
                                 .fillMaxWidth()
                                 .height(48.dp),
                     ) {
-                        Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
                 }
 
@@ -1866,7 +1934,9 @@ private fun LiquidSendConfirmationDialog(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = BorderColor)
+                    Spacer(modifier = Modifier.height(8.dp))
                     IbisButton(
                         onClick = onDismiss,
                         modifier =
@@ -1886,6 +1956,9 @@ private fun LiquidSendConfirmationDialog(
                 is LiquidSendState.Failed,
                 LiquidSendState.Idle,
                 -> {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = BorderColor)
+                    Spacer(modifier = Modifier.height(8.dp))
                     IbisButton(
                         onClick = onDismiss,
                         modifier =
@@ -1893,7 +1966,7 @@ private fun LiquidSendConfirmationDialog(
                                 .fillMaxWidth()
                                 .height(48.dp),
                     ) {
-                        Text("Close", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
@@ -1930,7 +2003,7 @@ private fun LiquidSendConfirmationDialog(
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    text = "Building transaction preview...",
+                                    text = stringResource(R.string.loc_b86dbd12),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextPrimary,
                                     textAlign = TextAlign.Center,
@@ -1991,7 +2064,7 @@ private fun LiquidSendConfirmationDialog(
                         sendState.refundAddress?.let { refundAddress ->
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = "Refund address",
+                                text = stringResource(R.string.loc_ebed1e21),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                             )
@@ -2069,7 +2142,10 @@ private fun LiquidSendReviewContent(
             modifier = Modifier.fillMaxWidth().height(160.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(preview.recipients) { recipient ->
+            items(
+                items = preview.recipients,
+                key = { recipient -> "${recipient.address}:${recipient.amountSats}" },
+            ) { recipient ->
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2124,7 +2200,7 @@ private fun LiquidSendReviewContent(
     preview.label?.let { label ->
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "Label",
+            text = stringResource(R.string.loc_cf667fec),
             style = MaterialTheme.typography.bodyLarge,
             color = TextSecondary,
         )
@@ -2173,7 +2249,7 @@ private fun LiquidSendReviewContent(
                         .padding(end = 16.dp),
             ) {
                 Text(
-                    text = "Change:",
+                    text = stringResource(R.string.loc_e09d7895),
                     style = MaterialTheme.typography.bodyLarge,
                     color = TextSecondary,
                 )
@@ -2237,7 +2313,7 @@ private fun LiquidSendReviewContent(
 
     preview.selectedUtxoCount.takeIf { it > 0 }?.let { count ->
         Text(
-            text = "Spending from $count selected UTXO${if (count > 1) "s" else ""}",
+            text = stringResource(R.string.loc_f9bcfb07, count, if (count > 1) "s" else ""),
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
         )
@@ -2268,7 +2344,7 @@ private fun AssetSendReviewContent(
     }
 
     Text(
-        text = "Paying To",
+        text = stringResource(R.string.loc_65759a78),
         style = MaterialTheme.typography.bodyLarge,
         color = TextSecondary,
     )
@@ -2284,7 +2360,7 @@ private fun AssetSendReviewContent(
     preview.label?.let { label ->
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "Label",
+            text = stringResource(R.string.loc_cf667fec),
             style = MaterialTheme.typography.bodyLarge,
             color = TextSecondary,
         )
@@ -2343,7 +2419,7 @@ private fun AssetSendReviewContent(
 
     preview.selectedUtxoCount.takeIf { it > 0 }?.let { count ->
         Text(
-            text = "Funding from $count selected UTXO${if (count > 1) "s" else ""}",
+            text = stringResource(R.string.loc_c7ee4baa, count, if (count > 1) "s" else ""),
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary,
         )
@@ -2393,9 +2469,9 @@ private fun LightningSendReviewContent(
             boltzFeeSats?.takeIf { it > 0L }?.let { fee ->
                 add(
                     LightningFeeLine(
-                        label = "Boltz Swap Fee:",
+                        label = stringResource(R.string.loc_abbfea89),
                         value = fee,
-                        subtext = "Lightning swap service",
+                        subtext = stringResource(R.string.loc_dc3dd7c1),
                         valueColor = LiquidTeal,
                     ),
                 )
@@ -2413,7 +2489,7 @@ private fun LightningSendReviewContent(
         }
 
     Text(
-        text = "Paying To",
+        text = stringResource(R.string.loc_65759a78),
             style = MaterialTheme.typography.bodyLarge,
         color = TextSecondary,
     )
@@ -2435,7 +2511,7 @@ private fun LightningSendReviewContent(
     if (refundAddress != null) {
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "Refund Address",
+            text = stringResource(R.string.loc_245027bd),
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary,
         )
@@ -2452,7 +2528,7 @@ private fun LightningSendReviewContent(
     preview.label?.let { label ->
         Spacer(modifier = Modifier.height(10.dp))
         Text(
-            text = "Label",
+            text = stringResource(R.string.loc_cf667fec),
             style = MaterialTheme.typography.bodyLarge,
             color = TextSecondary,
         )
@@ -2509,7 +2585,7 @@ private fun LightningSendReviewContent(
 
     preview.selectedUtxoCount.takeIf { it > 0 }?.let { count ->
         Text(
-            text = "Funding from $count selected UTXO${if (count > 1) "s" else ""}",
+            text = stringResource(R.string.loc_c7ee4baa, count, if (count > 1) "s" else ""),
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary,
         )
@@ -2720,7 +2796,7 @@ private fun LiquidCoinControlDialog(
                         .padding(16.dp),
             ) {
                 Text(
-                    text = "Coin Control",
+                    text = stringResource(R.string.loc_47914d64),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary,
@@ -2731,10 +2807,18 @@ private fun LiquidCoinControlDialog(
                 val totalSelectedText =
                     if (selectedUtxos.isNotEmpty()) {
                         if (privacyMode) {
-                            "${selectedUtxos.size} selected • $LIQUID_HIDDEN_AMOUNT"
+                            stringResource(
+                                R.string.coin_control_selected_summary_format,
+                                selectedUtxos.size,
+                                LIQUID_HIDDEN_AMOUNT,
+                            )
                         } else {
                             val baseText =
-                                "${selectedUtxos.size} selected • ${formatLiquidAmount(totalSelected, useSats)}"
+                                stringResource(
+                                    R.string.coin_control_selected_summary_format,
+                                    selectedUtxos.size,
+                                    formatLiquidAmount(totalSelected, useSats),
+                                )
                             if (btcPrice != null && btcPrice > 0) {
                                 "$baseText · ${formatLiquidUsd(totalSelected, btcPrice, fiatCurrency)}"
                             } else {
@@ -2742,7 +2826,7 @@ private fun LiquidCoinControlDialog(
                             }
                         }
                     } else {
-                        "Select UTXOs to spend from"
+                        stringResource(R.string.loc_2944f33c)
                     }
                 Text(
                     text = totalSelectedText,
@@ -2760,7 +2844,7 @@ private fun LiquidCoinControlDialog(
                         onClick = onSelectAll,
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Select All", color = LiquidTeal)
+                        Text(stringResource(R.string.loc_27833d8a), color = LiquidTeal)
                     }
                     TextButton(
                         onClick = onClearAll,
@@ -2768,7 +2852,7 @@ private fun LiquidCoinControlDialog(
                         enabled = selectedUtxos.isNotEmpty(),
                     ) {
                         Text(
-                            "Clear All",
+                            stringResource(R.string.loc_4340d39b),
                             color = if (selectedUtxos.isNotEmpty()) TextSecondary else TextSecondary.copy(alpha = 0.5f),
                         )
                     }
@@ -2829,7 +2913,12 @@ private fun LiquidCoinControlDialog(
                                         } else {
                                             Icons.Default.RadioButtonUnchecked
                                         },
-                                    contentDescription = if (isSelected) "Selected" else "Not selected",
+                                    contentDescription =
+                                        if (isSelected) {
+                                            stringResource(R.string.common_selected)
+                                        } else {
+                                            stringResource(R.string.loc_e17307d1)
+                                        },
                                     tint =
                                         when {
                                             isDisabled -> TextSecondary.copy(alpha = 0.3f)
@@ -2882,7 +2971,7 @@ private fun LiquidCoinControlDialog(
                                     }
 
                                     Text(
-                                        text = "${utxo.address.take(12)}...${utxo.address.takeLast(8)}",
+                                        text = abbreviateMiddle(utxo.address),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontFamily = FontFamily.Monospace,
                                         color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
@@ -2902,7 +2991,7 @@ private fun LiquidCoinControlDialog(
 
                                     if (isDisabled) {
                                         Text(
-                                            text = "Unconfirmed UTXOs are disabled in settings",
+                                            text = stringResource(R.string.loc_bdedd2ce),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = WarningYellow,
                                         )
@@ -2941,7 +3030,12 @@ private fun LiquidCoinControlDialog(
                                             .padding(horizontal = 6.dp, vertical = 2.dp),
                                     ) {
                                         Text(
-                                            text = if (utxo.isConfirmed) "Confirmed" else "Pending",
+                                            text =
+                                                if (utxo.isConfirmed) {
+                                                    stringResource(R.string.loc_4ab75d7f)
+                                                } else {
+                                                    stringResource(R.string.loc_1b684325)
+                                                },
                                             style = MaterialTheme.typography.labelSmall,
                                             color =
                                                 if (utxo.isConfirmed) {
@@ -2973,7 +3067,7 @@ private fun LiquidCoinControlDialog(
                         ),
                 ) {
                     Text(
-                        text = "Done",
+                        text = stringResource(R.string.loc_b01f4f95),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -3049,7 +3143,7 @@ private fun LiquidMultiRecipientDialog(
                         color = TextPrimary,
                     )
                     TextButton(onClick = onDone) {
-                        Text("Done", color = LiquidTeal)
+                        Text(stringResource(R.string.loc_b01f4f95), color = LiquidTeal)
                     }
                 }
 
@@ -3090,7 +3184,7 @@ private fun LiquidMultiRecipientDialog(
                                             onClick = { recipients.removeAt(index) },
                                             contentPadding = PaddingValues(0.dp),
                                         ) {
-                                            Text("Remove", style = MaterialTheme.typography.labelSmall, color = AccentRed)
+                                            Text(stringResource(R.string.loc_6f2c1806), style = MaterialTheme.typography.labelSmall, color = AccentRed)
                                         }
                                     }
                                 }
@@ -3101,7 +3195,7 @@ private fun LiquidMultiRecipientDialog(
                                     value = address,
                                     onValueChange = { recipients[index] = it.trim() to amount },
                                     modifier = Modifier.fillMaxWidth(),
-                                    placeholder = { Text("Liquid address", color = TextSecondary.copy(alpha = 0.5f)) },
+                                    placeholder = { Text(stringResource(R.string.loc_4622d13c), color = TextSecondary.copy(alpha = 0.5f)) },
                                     trailingIcon = {
                                         IconButton(onClick = { qrScanRecipientIndex = index }) {
                                             Icon(
@@ -3190,7 +3284,7 @@ private fun LiquidMultiRecipientDialog(
                     contentPadding = PaddingValues(vertical = 10.dp),
                 ) {
                     Text(
-                        text = "+ Add Recipient",
+                        text = stringResource(R.string.loc_a4657728),
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
@@ -3255,7 +3349,7 @@ private fun LiquidMultiRecipientDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "Est. fee",
+                            text = stringResource(R.string.loc_fea7157d),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -3279,7 +3373,7 @@ private fun LiquidMultiRecipientDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "Available",
+                        text = stringResource(R.string.loc_277e2626),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                     )
@@ -3304,7 +3398,7 @@ private fun LiquidMultiRecipientDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "Remaining",
+                        text = stringResource(R.string.loc_2b1af52a),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold,
                         color = TextSecondary,
@@ -3573,7 +3667,7 @@ private fun PendingPaymentsCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Pending Payments",
+                    text = stringResource(R.string.loc_23424238),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                     fontWeight = FontWeight.SemiBold,
@@ -3754,7 +3848,7 @@ private fun PendingLightningPaymentDetails(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column {
-                Text("Lockup", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                Text(stringResource(R.string.loc_bd660b8b), style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                 Text(
                     text = if (privacyMode) LIQUID_HIDDEN_AMOUNT
                     else formatLiquidAmount(session.lockupAmountSats, useSats),
@@ -3764,7 +3858,7 @@ private fun PendingLightningPaymentDetails(
             }
             if (session.paymentAmountSats > 0) {
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("Payment", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                    Text(stringResource(R.string.loc_a295bd91), style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                     Text(
                         text = if (privacyMode) LIQUID_HIDDEN_AMOUNT
                         else formatLiquidAmount(session.paymentAmountSats, useSats),
@@ -3791,7 +3885,7 @@ private fun PendingLightningPaymentDetails(
                     }
                     if (session.swapFeeSats > 0 && !privacyMode) {
                         Text(
-                            text = "Swap fee: ${formatLiquidAmount(session.swapFeeSats, useSats)}",
+                            text = "${stringResource(R.string.loc_abbfea89)} ${formatLiquidAmount(session.swapFeeSats, useSats)}",
                             style = MaterialTheme.typography.labelSmall,
                             color = TextSecondary,
                         )
@@ -3807,7 +3901,7 @@ private fun PendingLightningPaymentDetails(
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                     ) {
                         Text(
-                            text = "Rescue Key",
+                            text = stringResource(R.string.loc_378dc5c9),
                             style = MaterialTheme.typography.labelMedium,
                             color = TextPrimary,
                         )
@@ -3818,14 +3912,14 @@ private fun PendingLightningPaymentDetails(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        PendingDetailRow(label = "Boltz Swap ID", value = session.swapId)
+        PendingDetailRow(label = stringResource(R.string.loc_12c49c0c), value = session.swapId)
 
-        PendingDetailRow(label = "Lockup Address", value = session.lockupAddress)
-        PendingDetailRow(label = "Refund Address", value = session.refundAddress)
-        session.fundingTxid?.let { PendingDetailRow(label = "Funding Txid", value = it) }
-        session.refundPublicKey?.let { PendingDetailRow(label = "Refund Public Key", value = it) }
+        PendingDetailRow(label = stringResource(R.string.loc_f967d9c8), value = session.lockupAddress)
+        PendingDetailRow(label = stringResource(R.string.loc_245027bd), value = session.refundAddress)
+        session.fundingTxid?.let { PendingDetailRow(label = stringResource(R.string.loc_c52f86d9), value = it) }
+        session.refundPublicKey?.let { PendingDetailRow(label = stringResource(R.string.loc_8236c6fa), value = it) }
         session.timeoutBlockHeight?.let {
-            PendingDetailRow(label = "Timeout Block Height", value = it.toString())
+            PendingDetailRow(label = stringResource(R.string.loc_b2a432e9), value = it.toString())
         }
     }
 }
@@ -3842,7 +3936,7 @@ private fun PendingLiquidTxDetails(
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Column {
-                Text("Amount", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                Text(stringResource(R.string.loc_890d7574), style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                 Text(
                     text = if (privacyMode) LIQUID_HIDDEN_AMOUNT
                     else formatLiquidAmount(abs(tx.balanceSatoshi), useSats),
@@ -3851,7 +3945,7 @@ private fun PendingLiquidTxDetails(
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("Fee", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+                Text(stringResource(R.string.loc_ae042255), style = MaterialTheme.typography.labelSmall, color = TextSecondary)
                 Text(
                     text = if (privacyMode) LIQUID_HIDDEN_AMOUNT
                     else formatLiquidAmount(tx.fee, useSats),
@@ -3864,7 +3958,7 @@ private fun PendingLiquidTxDetails(
         Spacer(modifier = Modifier.height(8.dp))
 
         PendingDetailRow(label = "Txid", value = tx.txid)
-        tx.walletAddress?.let { PendingDetailRow(label = "Recipient", value = it) }
+        tx.recipientAddress?.let { PendingDetailRow(label = "Recipient", value = it) }
     }
 }
 
@@ -3907,7 +4001,7 @@ private fun PendingDetailRow(
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
                 onClick = {
-                    SecureClipboard.copyAndScheduleClear(context, label, value)
+                    SecureClipboard.copyAndScheduleClear(context, value)
                     showCopied = true
                 },
                 modifier = Modifier.size(36.dp),
@@ -3923,7 +4017,7 @@ private fun PendingDetailRow(
         if (showCopied) {
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Copied to clipboard!",
+                text = stringResource(R.string.loc_e287255d),
                 style = MaterialTheme.typography.bodySmall,
                 color = LiquidTeal,
             )
@@ -3960,7 +4054,7 @@ private fun RescueMnemonicDialog(
                     .padding(16.dp),
             ) {
                 Text(
-                    text = "Emergency Rescue Key",
+                    text = stringResource(R.string.loc_54bf6d2a),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                     fontWeight = FontWeight.SemiBold,
@@ -3971,7 +4065,7 @@ private fun RescueMnemonicDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "If swap fails, open Boltz rescue link and paste this 12-word seed.",
+                        text = stringResource(R.string.loc_7ea64bdf),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                         modifier = Modifier.weight(1f),
@@ -3999,7 +4093,7 @@ private fun RescueMnemonicDialog(
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Boltz Rescue Key",
+                    text = stringResource(R.string.loc_13505d59),
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
                 )
@@ -4017,7 +4111,7 @@ private fun RescueMnemonicDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(
                         onClick = {
-                            SecureClipboard.copyAndScheduleClear(context, "Boltz Rescue Key", mnemonic)
+                            SecureClipboard.copyAndScheduleClear(context, mnemonic)
                             showCopied = true
                         },
                         modifier = Modifier.size(36.dp),
@@ -4032,19 +4126,21 @@ private fun RescueMnemonicDialog(
                 }
                 if (showCopied) {
                     Text(
-                        text = "Copied to clipboard!",
+                        text = stringResource(R.string.loc_e287255d),
                         style = MaterialTheme.typography.labelSmall,
                         color = LiquidTeal,
                     )
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
+                Spacer(modifier = Modifier.height(8.dp))
                 IbisButton(
                     onClick = onDismiss,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp),
                 ) {
-                    Text("Close", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }

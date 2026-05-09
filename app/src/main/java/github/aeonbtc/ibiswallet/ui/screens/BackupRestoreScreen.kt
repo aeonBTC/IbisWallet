@@ -40,11 +40,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -56,21 +54,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
-import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -90,16 +95,7 @@ data class FullBackupPreview(
     val hasLiquidServers: Boolean,
     val hasAppSettings: Boolean,
     val exportedAt: String,
-) {
-    val walletNames: List<String>
-        get() = wallets.map { it.name }
-
-    val walletCount: Int
-        get() = wallets.size
-
-    val hasLabels: Boolean
-        get() = wallets.any { it.hasLabels }
-}
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -132,71 +128,68 @@ fun BackupRestoreScreen(
     var showBackupDialog by remember { mutableStateOf(false) }
     var showRestoreDialog by remember { mutableStateOf(false) }
 
-    Scaffold(
-        containerColor = DarkBackground,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = "Backup / Restore",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = DarkBackground,
-                ),
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp),
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (resultMessage != null) {
-                ResultBanner(
-                    message = resultMessage,
-                    onDismiss = onClearResult,
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
-                Spacer(modifier = Modifier.height(12.dp))
             }
-
-            BackupRestoreActionCard(
-                title = "Create Backup",
-                description = "Create a full app backup with wallets, labels, server settings, and general app settings. Security settings are excluded.",
-                actionText = "Backup",
-                enabled = !isLoading,
-                onClick = {
-                    showRestoreDialog = false
-                    showBackupDialog = true
-                },
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.loc_db888836),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
             )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            BackupRestoreActionCard(
-                title = "Restore Backup",
-                description = "Restore a full app backup, review its contents, and choose what to restore. Security settings are excluded.",
-                actionText = "Restore",
-                enabled = !isLoading,
-                onClick = {
-                    showBackupDialog = false
-                    showRestoreDialog = true
-                },
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        if (resultMessage != null) {
+            ResultBanner(
+                message = resultMessage,
+                onDismiss = onClearResult,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        BackupRestoreActionCard(
+            title = stringResource(R.string.loc_ab83811b),
+            description = stringResource(R.string.loc_d46d2b20),
+            actionText = stringResource(R.string.loc_385cd49a),
+            enabled = !isLoading,
+            onClick = {
+                showRestoreDialog = false
+                showBackupDialog = true
+            },
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        BackupRestoreActionCard(
+            title = stringResource(R.string.loc_39bc3b1b),
+            description = stringResource(R.string.loc_2e285bfe),
+            actionText = stringResource(R.string.loc_486a1663),
+            enabled = !isLoading,
+            onClick = {
+                showBackupDialog = false
+                showRestoreDialog = true
+            },
+        )
+
+        Spacer(modifier = Modifier.height(24.dp))
     }
 
     if (showBackupDialog) {
@@ -298,15 +291,36 @@ private fun BackupDialog(
     var confirmPassword by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     var exportUri by remember { mutableStateOf<Uri?>(null) }
+    var exportFileName by remember { mutableStateOf<String?>(null) }
+    var showExportConfirmation by remember { mutableStateOf(false) }
 
     val dateStr = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-    val suggestedFileName = "ibis-full-backup-$dateStr.json"
+    val suggestedFileName = stringResource(R.string.loc_4218f43b, dateStr)
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/json"),
     ) { uri: Uri? ->
         if (uri != null) {
             exportUri = uri
+            exportFileName = try {
+                context.contentResolver.query(
+                    uri,
+                    arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                    null,
+                    null,
+                    null,
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (index >= 0) cursor.getString(index) else null
+                    } else {
+                        null
+                    }
+                }
+            } catch (_: Exception) {
+                null
+            } ?: suggestedFileName
+            showExportConfirmation = true
         }
     }
 
@@ -317,29 +331,61 @@ private fun BackupDialog(
     val passwordLongEnough = password.length >= 8
     val encryptionValid = !encryptBackup || (passwordLongEnough && passwordsMatch)
     val canExport = exportUri != null && selectedIds.isNotEmpty() && encryptionValid && !isLoading
+    val canChooseLocation = selectedIds.isNotEmpty() && encryptionValid && !isLoading
+
+    if (showExportConfirmation && exportUri != null) {
+        FullBackupExportConfirmationDialog(
+            fileName = exportFileName ?: suggestedFileName,
+            walletCount = selectedEntries.size,
+            labelWalletCount = labelWalletIds.size,
+            includeServers = includeServers,
+            includeAppSettings = includeAppSettings,
+            encryptBackup = encryptBackup,
+            canExport = canExport,
+            isLoading = isLoading,
+            onBack = {
+                showExportConfirmation = false
+                exportUri = null
+                exportFileName = null
+            },
+            onExport = {
+                exportUri?.let { uri ->
+                    onExport(
+                        uri,
+                        selectedIds,
+                        labelWalletIds,
+                        includeServers,
+                        includeAppSettings,
+                        if (encryptBackup) password else null,
+                    )
+                    onDismiss()
+                }
+            },
+        )
+    }
 
     ScrollableAlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Create Backup",
+                text = stringResource(R.string.loc_ab83811b),
                 color = MaterialTheme.colorScheme.onBackground,
             )
         },
         text = {
             Column {
                 Text(
-                    text = "Review exactly what will be exported before saving the file.",
+                    text = stringResource(R.string.loc_3713e18d),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                DetailCard(title = "Wallets") {
+                DetailCard(title = stringResource(R.string.loc_59c793f0)) {
                     if (wallets.isEmpty()) {
                         Text(
-                            text = "No wallets available",
+                            text = stringResource(R.string.loc_7be7ccdc),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -350,7 +396,7 @@ private fun BackupDialog(
                             }
                             BackupWalletOptionCard(
                                 title = wallet.name,
-                                subtitle = wallet.type + if (wallet.isWatchOnly) " (watch-only)" else "",
+                                subtitle = wallet.type + if (wallet.isWatchOnly) stringResource(R.string.loc_8652a19f) else "",
                                 selected = selectedWallets[wallet.id] == true,
                                 labelsEnabled = walletLabels[wallet.id] == true,
                                 onSelectedChange = { checked -> selectedWallets[wallet.id] = checked },
@@ -362,17 +408,17 @@ private fun BackupDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                DetailCard(title = "Settings") {
+                DetailCard(title = stringResource(R.string.loc_1c33c293)) {
                     ToggleRow(
-                        title = "Server Settings",
-                        subtitle = "Electrum and Liquid server settings",
+                        title = stringResource(R.string.loc_794971b5),
+                        subtitle = stringResource(R.string.loc_85611d13),
                         checked = includeServers,
                         onCheckedChange = { includeServers = it },
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     ToggleRow(
-                        title = "General App Settings",
-                        subtitle = "Notifications, external services, etc...",
+                        title = stringResource(R.string.loc_19da05f8),
+                        subtitle = stringResource(R.string.loc_97b9282b),
                         checked = includeAppSettings,
                         onCheckedChange = { includeAppSettings = it },
                     )
@@ -380,10 +426,10 @@ private fun BackupDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                DetailCard(title = "Protection") {
+                DetailCard(title = stringResource(R.string.loc_f8b82c65)) {
                     ToggleRow(
-                        title = "Encrypt Backup File",
-                        subtitle = "Protect with a password",
+                        title = stringResource(R.string.loc_f6dc0e2f),
+                        subtitle = stringResource(R.string.loc_c4d81c53),
                         checked = encryptBackup,
                         onCheckedChange = { encryptBackup = it },
                     )
@@ -393,7 +439,7 @@ private fun BackupDialog(
                         OutlinedTextField(
                             value = password,
                             onValueChange = { password = it },
-                            label = { Text("Password") },
+                            label = { Text(stringResource(R.string.loc_ccb42483)) },
                             singleLine = true,
                             visualTransformation =
                                 if (showPassword) {
@@ -411,7 +457,11 @@ private fun BackupDialog(
                                             } else {
                                                 Icons.Default.Visibility
                                             },
-                                        contentDescription = if (showPassword) "Hide" else "Show",
+                                        contentDescription = if (showPassword) {
+                                            stringResource(R.string.loc_04ab6415)
+                                        } else {
+                                            stringResource(R.string.loc_923c763f)
+                                        },
                                         tint = TextSecondary,
                                     )
                                 }
@@ -428,7 +478,7 @@ private fun BackupDialog(
                         OutlinedTextField(
                             value = confirmPassword,
                             onValueChange = { confirmPassword = it },
-                            label = { Text("Confirm Password") },
+                            label = { Text(stringResource(R.string.loc_08201b2b)) },
                             singleLine = true,
                             visualTransformation =
                                 if (showPassword) {
@@ -450,9 +500,9 @@ private fun BackupDialog(
                             Text(
                                 text =
                                     if (!passwordLongEnough) {
-                                        "Min 8 characters"
+                                        stringResource(R.string.loc_46e1da73)
                                     } else {
-                                        "Passwords do not match"
+                                        stringResource(R.string.loc_3df88eb4)
                                     },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = ErrorRed,
@@ -471,7 +521,7 @@ private fun BackupDialog(
                     shape = RoundedCornerShape(8.dp),
                     border = BorderStroke(1.dp, BorderColor),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
-                    enabled = !isLoading,
+                    enabled = canChooseLocation,
                 ) {
                     Icon(
                         imageVector = Icons.Default.FolderOpen,
@@ -479,48 +529,199 @@ private fun BackupDialog(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (exportUri == null) "Choose Save Location" else "Change Save Location")
+                    Text(
+                        if (exportUri == null) {
+                            stringResource(R.string.loc_7fdce75b)
+                        } else {
+                            stringResource(R.string.loc_d3414c88)
+                        },
+                    )
                 }
             }
         },
         confirmButton = {
-            IbisButton(
-                onClick = {
-                    exportUri?.let { uri ->
-                        onExport(
-                            uri,
-                            selectedIds,
-                            labelWalletIds,
-                            includeServers,
-                            includeAppSettings,
-                            if (encryptBackup) password else null,
-                        )
-                        onDismiss()
-                    }
-                },
-                enabled = canExport,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Text("Export")
-                }
-            }
         },
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
                 enabled = !isLoading,
             ) {
-                Text("Cancel", color = TextSecondary)
+                Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
             }
         },
     )
+}
+
+@Composable
+private fun FullBackupExportConfirmationDialog(
+    fileName: String,
+    walletCount: Int,
+    labelWalletCount: Int,
+    includeServers: Boolean,
+    includeAppSettings: Boolean,
+    encryptBackup: Boolean,
+    canExport: Boolean,
+    isLoading: Boolean,
+    onBack: () -> Unit,
+    onExport: () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onBack,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            shape = RoundedCornerShape(20.dp),
+            color = DarkSurface,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.loc_3ff4bdf5),
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.loc_628698a5),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = BorderColor.copy(alpha = 0.18f)),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FolderOpen,
+                            contentDescription = null,
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.loc_90d7bedf),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                            )
+                            Text(
+                                text = fileName,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Card(
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = BorderColor.copy(alpha = 0.14f)),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        SummaryRow(
+                            label = stringResource(R.string.loc_59c793f0),
+                            value = stringResource(R.string.loc_aee23349, walletCount),
+                        )
+                        SummaryRow(
+                            label = stringResource(R.string.loc_b27d0727),
+                            value = stringResource(R.string.loc_32b19599, labelWalletCount),
+                            valueColor = if (labelWalletCount > 0) SuccessGreen else ErrorRed,
+                        )
+                        SummaryRow(
+                            label = stringResource(R.string.loc_803f13e3),
+                            value =
+                                stringResource(
+                                    if (includeServers) R.string.loc_1bb1df5e else R.string.loc_481063e5,
+                                ),
+                            valueColor = if (includeServers) SuccessGreen else ErrorRed,
+                        )
+                        SummaryRow(
+                            label = stringResource(R.string.loc_daee1794),
+                            value =
+                                stringResource(
+                                    if (includeAppSettings) R.string.loc_1bb1df5e else R.string.loc_481063e5,
+                                ),
+                            valueColor = if (includeAppSettings) SuccessGreen else ErrorRed,
+                        )
+                        SummaryRow(
+                            label = stringResource(R.string.loc_14e0d86b),
+                            value =
+                                stringResource(
+                                    if (encryptBackup) R.string.loc_9f448218 else R.string.loc_13f11ba3,
+                                ),
+                            valueColor = if (encryptBackup) SuccessGreen else ErrorRed,
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    OutlinedButton(
+                        onClick = onBack,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, BorderColor),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                        enabled = !isLoading,
+                    ) {
+                        Text(stringResource(R.string.loc_cdfc6e09))
+                    }
+                    Button(
+                        onClick = onExport,
+                        enabled = canExport,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        ),
+                    ) {
+                        if (isLoading) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(stringResource(R.string.loc_452013a2))
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -539,6 +740,7 @@ private fun RestoreDialog(
     isLoading: Boolean,
 ) {
     val context = LocalContext.current
+    val genericParseErrorMessage = stringResource(R.string.loc_166a5cb9)
     val scope = rememberCoroutineScope()
 
     var restoreUri by remember { mutableStateOf<Uri?>(null) }
@@ -576,15 +778,17 @@ private fun RestoreDialog(
                 resetWalletSelections(result.wallets)
                 importServers = result.hasServers || result.hasLiquidServers
                 importAppSettings = result.hasAppSettings
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                val message = e.message ?: "Failed to parse backup"
+                val rawMessage = e.message.orEmpty()
                 preview = null
-                parseError = message
+                parseError = genericParseErrorMessage
                 selectedWallets.clear()
                 walletLabels.clear()
                 needsPassword =
-                    message.contains("encrypted", ignoreCase = true) ||
-                        message.contains("password", ignoreCase = true)
+                    rawMessage.contains("encrypted", ignoreCase = true) ||
+                        rawMessage.contains("password", ignoreCase = true)
             } finally {
                 isParsing = false
             }
@@ -648,14 +852,14 @@ private fun RestoreDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = "Restore Backup",
+                text = stringResource(R.string.loc_39bc3b1b),
                 color = MaterialTheme.colorScheme.onBackground,
             )
         },
         text = {
             Column {
                 Text(
-                    text = "Select a full backup and review what will be restored. Security settings are always skipped.",
+                    text = stringResource(R.string.loc_6bf29789),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                 )
@@ -678,21 +882,27 @@ private fun RestoreDialog(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(if (restoreUri == null) "Choose Backup File" else "Change Backup File")
+                    Text(
+                        if (restoreUri == null) {
+                            stringResource(R.string.loc_bf2f67a0)
+                        } else {
+                            stringResource(R.string.loc_5948f994)
+                        },
+                    )
                 }
 
                 if (restoreFileName != null) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    DetailCard(title = "Selected File") {
+                    DetailCard(title = stringResource(R.string.loc_adf2a8dd)) {
                         SummaryRow(
-                            label = "File",
+                            label = stringResource(R.string.loc_2cad992e),
                             value = restoreFileName ?: "",
                         )
                         if (preview != null) {
                             Spacer(modifier = Modifier.height(10.dp))
                             SummaryRow(
-                                label = "Exported",
-                                value = preview?.exportedAt ?: "Unknown",
+                                label = stringResource(R.string.loc_0b03f2c9),
+                                value = preview?.exportedAt ?: stringResource(R.string.loc_629b9e5b),
                             )
                         }
                         if (isParsing) {
@@ -707,7 +917,7 @@ private fun RestoreDialog(
                                     strokeWidth = 2.dp,
                                 )
                                 Text(
-                                    text = "Reading backup contents...",
+                                    text = stringResource(R.string.loc_13027ae4),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary,
                                 )
@@ -718,9 +928,9 @@ private fun RestoreDialog(
 
                 if (needsPassword) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    DetailCard(title = "Encrypted Backup") {
+                    DetailCard(title = stringResource(R.string.loc_81d0b469)) {
                         Text(
-                            text = "This backup is encrypted. Enter the password to view its contents.",
+                            text = stringResource(R.string.loc_0d70bfed),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -728,7 +938,7 @@ private fun RestoreDialog(
                         OutlinedTextField(
                             value = password,
                             onValueChange = { password = it },
-                            label = { Text("Backup Password") },
+                            label = { Text(stringResource(R.string.loc_1cdedba2)) },
                             singleLine = true,
                             visualTransformation =
                                 if (showPassword) {
@@ -746,7 +956,11 @@ private fun RestoreDialog(
                                             } else {
                                                 Icons.Default.Visibility
                                             },
-                                        contentDescription = if (showPassword) "Hide" else "Show",
+                                        contentDescription = if (showPassword) {
+                                            stringResource(R.string.loc_04ab6415)
+                                        } else {
+                                            stringResource(R.string.loc_923c763f)
+                                        },
                                         tint = TextSecondary,
                                     )
                                 }
@@ -776,7 +990,7 @@ private fun RestoreDialog(
                                 disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
                             ),
                         ) {
-                            Text("Unlock Backup")
+                            Text(stringResource(R.string.loc_0edc6bdd))
                         }
                     }
                 }
@@ -793,10 +1007,10 @@ private fun RestoreDialog(
                 if (preview != null) {
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    DetailCard(title = "Wallets") {
+                    DetailCard(title = stringResource(R.string.loc_59c793f0)) {
                         if (previewWallets.isEmpty()) {
                             Text(
-                                text = "No wallets in this backup",
+                                text = stringResource(R.string.loc_92a1890d),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                             )
@@ -807,7 +1021,7 @@ private fun RestoreDialog(
                                 }
                                 BackupWalletOptionCard(
                                     title = wallet.name,
-                                    subtitle = wallet.type + if (wallet.isWatchOnly) " (watch-only)" else "",
+                                    subtitle = wallet.type + if (wallet.isWatchOnly) stringResource(R.string.loc_8652a19f) else "",
                                     selected = selectedWallets[wallet.id] == true,
                                     labelsEnabled = walletLabels[wallet.id] == true,
                                     onSelectedChange = { checked ->
@@ -817,7 +1031,7 @@ private fun RestoreDialog(
                                         walletLabels[wallet.id] = checked
                                     },
                                     labelsAvailable = wallet.hasLabels,
-                                    unavailableLabelsText = "No labels in backup",
+                                    unavailableLabelsText = stringResource(R.string.loc_564855d0),
                                 )
                             }
                         }
@@ -825,14 +1039,14 @@ private fun RestoreDialog(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    DetailCard(title = "Settings") {
+                    DetailCard(title = stringResource(R.string.loc_1c33c293)) {
                         ToggleRow(
-                            title = "Server Settings",
+                            title = stringResource(R.string.loc_794971b5),
                             subtitle =
                                 if (preview?.hasServers == true || preview?.hasLiquidServers == true) {
-                                    "Electrum and Liquid server settings"
+                                    stringResource(R.string.loc_85611d13)
                                 } else {
-                                    "Not included in this backup"
+                                    stringResource(R.string.loc_3e366498)
                                 },
                             checked = importServers,
                             onCheckedChange = { importServers = it },
@@ -842,12 +1056,12 @@ private fun RestoreDialog(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         ToggleRow(
-                            title = "General App Settings",
+                            title = stringResource(R.string.loc_19da05f8),
                             subtitle =
                                 if (preview?.hasAppSettings == true) {
-                                    "Notifications, external services, etc..."
+                                    stringResource(R.string.loc_97b9282b)
                                 } else {
-                                    "Not included in this backup"
+                                    stringResource(R.string.loc_3e366498)
                                 },
                             checked = importAppSettings,
                             onCheckedChange = { importAppSettings = it },
@@ -858,7 +1072,7 @@ private fun RestoreDialog(
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Existing wallets with the same seed will be skipped. Security settings are not restored.",
+                        text = stringResource(R.string.loc_524d0edf),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                     )
@@ -883,7 +1097,7 @@ private fun RestoreDialog(
                 enabled = preview != null && hasRestorableContent && !isLoading && !isParsing,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Restore")
+                Text(stringResource(R.string.loc_486a1663))
             }
         },
         dismissButton = {
@@ -891,7 +1105,7 @@ private fun RestoreDialog(
                 onClick = onDismiss,
                 enabled = !isLoading && !isParsing,
             ) {
-                Text("Cancel", color = TextSecondary)
+                Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
             }
         },
     )
@@ -926,6 +1140,7 @@ private fun DetailCard(
 private fun SummaryRow(
     label: String,
     value: String,
+    valueColor: Color = MaterialTheme.colorScheme.onBackground,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -942,7 +1157,7 @@ private fun SummaryRow(
         Text(
             text = value,
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onBackground,
+            color = valueColor,
             modifier = Modifier.weight(1.2f),
         )
     }
@@ -1013,7 +1228,7 @@ private fun BackupWalletOptionCard(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Labels",
+                            text = stringResource(R.string.loc_b27d0727),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -1085,49 +1300,6 @@ private fun BackupMainToggle(
         trackHeight = 22.dp,
         thumbSize = 16.dp,
     )
-}
-
-@Composable
-private fun PreviewRow(
-    label: String,
-    detail: String,
-    available: Boolean,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(enabled = available) { onCheckedChange(!checked) },
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium,
-                color =
-                    if (available) {
-                        MaterialTheme.colorScheme.onBackground
-                    } else {
-                        TextSecondary.copy(alpha = 0.5f)
-                    },
-            )
-            Text(
-                text = detail,
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-                maxLines = 3,
-            )
-        }
-        if (available) {
-            BackupMainToggle(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-            )
-        }
-    }
 }
 
 @Composable

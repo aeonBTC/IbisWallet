@@ -6,12 +6,14 @@ import org.json.JSONObject
 enum class Bip329LabelScope {
     BITCOIN,
     LIQUID,
+    SPARK,
     BOTH,
 }
 
 enum class Bip329LabelNetwork(val wireValue: String) {
     BITCOIN("bitcoin"),
-    LIQUID("liquid"), ;
+    LIQUID("liquid"),
+    SPARK("spark"), ;
 
     companion object {
         fun fromWireValue(value: String?): Bip329LabelNetwork? =
@@ -24,19 +26,23 @@ data class Bip329LabelCounts(
     val bitcoinTransactionCount: Int = 0,
     val liquidAddressCount: Int = 0,
     val liquidTransactionCount: Int = 0,
+    val sparkAddressCount: Int = 0,
+    val sparkTransactionCount: Int = 0,
 ) {
     fun addressCount(scope: Bip329LabelScope): Int =
         when (scope) {
             Bip329LabelScope.BITCOIN -> bitcoinAddressCount
             Bip329LabelScope.LIQUID -> liquidAddressCount
-            Bip329LabelScope.BOTH -> bitcoinAddressCount + liquidAddressCount
+            Bip329LabelScope.SPARK -> sparkAddressCount
+            Bip329LabelScope.BOTH -> bitcoinAddressCount + liquidAddressCount + sparkAddressCount
         }
 
     fun transactionCount(scope: Bip329LabelScope): Int =
         when (scope) {
             Bip329LabelScope.BITCOIN -> bitcoinTransactionCount
             Bip329LabelScope.LIQUID -> liquidTransactionCount
-            Bip329LabelScope.BOTH -> bitcoinTransactionCount + liquidTransactionCount
+            Bip329LabelScope.SPARK -> sparkTransactionCount
+            Bip329LabelScope.BOTH -> bitcoinTransactionCount + liquidTransactionCount + sparkTransactionCount
         }
 
     fun totalCount(scope: Bip329LabelScope): Int = addressCount(scope) + transactionCount(scope)
@@ -165,6 +171,8 @@ object Bip329Labels {
         val bitcoinTransactionLabels = mutableMapOf<String, String>()
         val liquidAddressLabels = mutableMapOf<String, String>()
         val liquidTransactionLabels = mutableMapOf<String, String>()
+        val sparkAddressLabels = mutableMapOf<String, String>()
+        val sparkTransactionLabels = mutableMapOf<String, String>()
         val outputSpendable = mutableMapOf<String, Boolean>()
         var totalLines = 0
         var errorLines = 0
@@ -182,6 +190,7 @@ object Bip329Labels {
                             when (resolveNetwork(parsed, defaultScope)) {
                                 Bip329LabelNetwork.BITCOIN -> bitcoinTransactionLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.LIQUID -> liquidTransactionLabels[parsed.ref] = parsed.label
+                                Bip329LabelNetwork.SPARK -> sparkTransactionLabels[parsed.ref] = parsed.label
                             }
                         }
                     }
@@ -191,12 +200,13 @@ object Bip329Labels {
                             when (resolveNetwork(parsed, defaultScope)) {
                                 Bip329LabelNetwork.BITCOIN -> bitcoinAddressLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.LIQUID -> liquidAddressLabels[parsed.ref] = parsed.label
+                                Bip329LabelNetwork.SPARK -> sparkAddressLabels[parsed.ref] = parsed.label
                             }
                         }
                     }
 
                     Type.OUTPUT -> {
-                        if (parsed.spendable != null && resolveNetwork(parsed, defaultScope) != Bip329LabelNetwork.LIQUID) {
+                        if (parsed.spendable != null && resolveNetwork(parsed, defaultScope) == Bip329LabelNetwork.BITCOIN) {
                             outputSpendable[parsed.ref] = parsed.spendable
                         }
                     }
@@ -211,6 +221,7 @@ object Bip329Labels {
                 when (defaultNetwork(defaultScope)) {
                     Bip329LabelNetwork.BITCOIN -> bitcoinTransactionLabels[csvResult.first] = csvResult.second
                     Bip329LabelNetwork.LIQUID -> liquidTransactionLabels[csvResult.first] = csvResult.second
+                    Bip329LabelNetwork.SPARK -> sparkTransactionLabels[csvResult.first] = csvResult.second
                 }
                 continue
             }
@@ -223,6 +234,8 @@ object Bip329Labels {
             bitcoinTransactionLabels = bitcoinTransactionLabels,
             liquidAddressLabels = liquidAddressLabels,
             liquidTransactionLabels = liquidTransactionLabels,
+            sparkAddressLabels = sparkAddressLabels,
+            sparkTransactionLabels = sparkTransactionLabels,
             outputSpendable = outputSpendable,
             totalLines = totalLines,
             errorLines = errorLines,
@@ -275,6 +288,7 @@ object Bip329Labels {
         when (defaultScope) {
             Bip329LabelScope.BITCOIN, Bip329LabelScope.BOTH -> Bip329LabelNetwork.BITCOIN
             Bip329LabelScope.LIQUID -> Bip329LabelNetwork.LIQUID
+            Bip329LabelScope.SPARK -> Bip329LabelNetwork.SPARK
         }
 
     private fun inferAddressNetwork(ref: String): Bip329LabelNetwork? {
@@ -283,6 +297,8 @@ object Bip329Labels {
             normalized.startsWith("lq1") || normalized.startsWith("ex1") ||
                 normalized.startsWith("vj") || normalized.startsWith("ct") ||
                 normalized.startsWith("liquidnetwork:") -> Bip329LabelNetwork.LIQUID
+
+            normalized.startsWith("spark") || normalized.startsWith("sp1") -> Bip329LabelNetwork.SPARK
 
             normalized.startsWith("bc1") || normalized.startsWith("1") ||
                 normalized.startsWith("3") ||
@@ -347,6 +363,8 @@ object Bip329Labels {
         val outputSpendable: Map<String, Boolean>,
         val totalLines: Int,
         val errorLines: Int,
+        val sparkAddressLabels: Map<String, String> = emptyMap(),
+        val sparkTransactionLabels: Map<String, String> = emptyMap(),
     ) {
         val totalBitcoinLabelsImported: Int
             get() = bitcoinAddressLabels.size + bitcoinTransactionLabels.size
@@ -354,8 +372,11 @@ object Bip329Labels {
         val totalLiquidLabelsImported: Int
             get() = liquidAddressLabels.size + liquidTransactionLabels.size
 
+        val totalSparkLabelsImported: Int
+            get() = sparkAddressLabels.size + sparkTransactionLabels.size
+
         val totalLabelsImported: Int
-            get() = totalBitcoinLabelsImported + totalLiquidLabelsImported
+            get() = totalBitcoinLabelsImported + totalLiquidLabelsImported + totalSparkLabelsImported
 
         val isEmpty: Boolean
             get() = totalLabelsImported == 0

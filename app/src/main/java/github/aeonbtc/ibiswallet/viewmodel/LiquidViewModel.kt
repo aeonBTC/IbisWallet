@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import github.aeonbtc.ibiswallet.BuildConfig
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.boltz.BoltzMaxReviewState
 import github.aeonbtc.ibiswallet.data.boltz.BoltzTraceContext
 import github.aeonbtc.ibiswallet.data.boltz.BoltzTraceLevel
@@ -38,6 +39,7 @@ import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidTxType
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
+import github.aeonbtc.ibiswallet.data.model.PendingLightningInvoice
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentPhase
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentSession
 import github.aeonbtc.ibiswallet.data.model.PendingSwapPhase
@@ -54,6 +56,7 @@ import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.WalletAddress
 import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import github.aeonbtc.ibiswallet.data.repository.LiquidRepository
+import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy
 import github.aeonbtc.ibiswallet.data.swap.buildBitcoinSwapFundingRequest
 import github.aeonbtc.ibiswallet.data.swap.buildLiquidSwapFundingRequest
@@ -67,6 +70,8 @@ import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.Bip329Labels
 import github.aeonbtc.ibiswallet.util.CertificateFirstUseException
 import github.aeonbtc.ibiswallet.util.CertificateMismatchException
+import github.aeonbtc.ibiswallet.util.isTransactionInsufficientFundsError
+import github.aeonbtc.ibiswallet.util.SecureLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -127,6 +132,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         private const val RECONNECT_BASE_DELAY_MS = 5_000L
         private const val RECONNECT_MAX_DELAY_MS = 60_000L
         private const val RECONNECT_MAX_ATTEMPTS = 10
+        private const val ADDRESS_BOOK_PREVIEW_SIZE = 20
     }
 
     private val secureStorage = SecureStorage.getInstance(application)
@@ -188,6 +194,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _lightningInvoiceState = MutableStateFlow<LightningInvoiceState>(LightningInvoiceState.Idle)
     val lightningInvoiceState: StateFlow<LightningInvoiceState> = _lightningInvoiceState
+
+    private val _pendingLightningInvoices = MutableStateFlow<List<PendingLightningInvoice>>(emptyList())
+    val pendingLightningInvoices: StateFlow<List<PendingLightningInvoice>> = _pendingLightningInvoices
 
     private val _liquidServersState = MutableStateFlow(LiquidServersState())
     val liquidServersState: StateFlow<LiquidServersState> = _liquidServersState
@@ -264,7 +273,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     private var backgroundSyncJob: Job? = null
     private var heartbeatJob: Job? = null
     private var reconnectRetryJob: Job? = null
-    private var lightningInvoiceMonitorJob: Job? = null
+    private val lightningInvoiceMonitorJobs = linkedMapOf<String, Job>()
+    private val lightningInvoiceLastClaimAttempts = mutableMapOf<String, Long>()
+    private val lightningInvoiceClaimingSwapIds = mutableSetOf<String>()
     private var lightningPaymentMonitorJob: Job? = null
     private var activeLayerPersistJob: Job? = null
     private var activeLightningInvoiceSwapId: String? = null
@@ -369,6 +380,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         refreshLiquidAddressBook()
                         refreshLiquidUtxos()
                         refreshLiquidTransactionLabelSnapshots()
+                        clearSettledLightningInvoiceUiIfNeeded()
                     }
                 }
         }
@@ -389,9 +401,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 when (event) {
                     LiquidRepository.ConnectionEvent.ConnectionLost -> {
                         if (BuildConfig.DEBUG) {
-                            Log.w(TAG, "Liquid subscription loss detected; escalating to full reconnect")
+                            Log.w(TAG, "Liquid subscription loss detected; checking server before reconnect")
                         }
-                        handleLiquidConnectionLost("Liquid server connection lost")
+                        handleLiquidSubscriptionLost()
                     }
                 }
             }
@@ -426,6 +438,12 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         liquidAddressRefreshJob?.cancel()
         liquidAddressRefreshJob =
             launchLiquidJob(Dispatchers.IO) {
+                if (_allLiquidAddresses.value.first.isEmpty() &&
+                    _allLiquidAddresses.value.second.isEmpty() &&
+                    _allLiquidAddresses.value.third.isEmpty()
+                ) {
+                    _allLiquidAddresses.value = repository.getAddressPreview(ADDRESS_BOOK_PREVIEW_SIZE)
+                }
                 _allLiquidAddresses.value = repository.getAllAddresses()
             }
     }
@@ -451,6 +469,47 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         refreshLiquidAddressBook()
         refreshLiquidUtxos()
         refreshLiquidTransactionLabelSnapshots()
+    }
+
+    private fun refreshPendingLightningInvoices() {
+        val pending = repository.getPendingLightningInvoices()
+        val pendingSwapIds = pending.mapTo(mutableSetOf()) { it.swapId }
+        lightningInvoiceLastClaimAttempts.keys.retainAll(pendingSwapIds)
+        lightningInvoiceClaimingSwapIds.retainAll(pendingSwapIds)
+        _pendingLightningInvoices.value = pending.map { invoice ->
+            invoice.copy(
+                lastClaimAttemptAt = lightningInvoiceLastClaimAttempts[invoice.swapId],
+                isClaiming = invoice.swapId in lightningInvoiceClaimingSwapIds,
+            )
+        }
+    }
+
+    private fun markLightningInvoiceClaiming(
+        swapId: String,
+        claiming: Boolean,
+        updateAttempt: Boolean = false,
+    ) {
+        if (updateAttempt) {
+            lightningInvoiceLastClaimAttempts[swapId] = nowMs()
+        }
+        if (claiming) {
+            lightningInvoiceClaimingSwapIds += swapId
+        } else {
+            lightningInvoiceClaimingSwapIds -= swapId
+        }
+        refreshPendingLightningInvoices()
+    }
+
+    private suspend fun clearSettledLightningInvoiceUiIfNeeded() {
+        refreshPendingLightningInvoices()
+        val readyState = _lightningInvoiceState.value as? LightningInvoiceState.Ready ?: return
+        if (repository.getPendingLightningInvoiceSession(readyState.swapId) != null) return
+
+        if (activeLightningInvoiceSwapId == readyState.swapId) {
+            activeLightningInvoiceSwapId = null
+        }
+        stopLightningInvoiceMonitorAndJoin(readyState.swapId)
+        _lightningInvoiceState.value = LightningInvoiceState.Idle
     }
 
     private fun refreshLiquidSnapshotsIfNeeded(walletId: String) {
@@ -551,7 +610,10 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         _pendingSwaps.value = emptyList()
         _pendingSubmarineSwap.value = null
         _swapLimits.value = emptyMap()
+        _pendingLightningInvoices.value = emptyList()
         _lightningInvoiceState.value = LightningInvoiceState.Idle
+        activeLightningInvoiceSwapId = null
+        stopAllLightningInvoiceMonitors()
         _isLiquidConnecting.value = false
         _liquidConnectionError.value = null
         _liquidBlockHeight.value = null
@@ -586,7 +648,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     throw e
                 } catch (e: Exception) {
                     if (requestId == sendPreviewRequestId) {
-                        _sendState.value = LiquidSendState.Failed(e.message ?: "Send failed")
+                        _sendState.value = LiquidSendState.Failed(safeLiquidErrorMessage(e, "Send failed"))
                     }
                 } finally {
                     if (sendPreviewJob === currentCoroutineContext()[Job]) {
@@ -630,6 +692,30 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             allJobs
         }
         jobs.forEach { it.cancel() }
+    }
+
+    private fun stopAllLightningInvoiceMonitors() {
+        val jobs = synchronized(lightningInvoiceMonitorJobs) {
+            val allJobs = lightningInvoiceMonitorJobs.values.toList()
+            lightningInvoiceMonitorJobs.clear()
+            allJobs
+        }
+        jobs.forEach { it.cancel() }
+    }
+
+    private suspend fun stopLightningInvoiceMonitorAndJoin(swapId: String) {
+        val job = synchronized(lightningInvoiceMonitorJobs) {
+            lightningInvoiceMonitorJobs.remove(swapId)
+        } ?: return
+        if (job == currentCoroutineContext()[Job]) return
+        job.cancelAndJoin()
+    }
+
+    private fun stopLightningInvoiceMonitor(swapId: String) {
+        val job = synchronized(lightningInvoiceMonitorJobs) {
+            lightningInvoiceMonitorJobs.remove(swapId)
+        } ?: return
+        job.cancel()
     }
 
     private suspend fun stopSwapMonitorAndJoin(swapId: String) {
@@ -1279,32 +1365,40 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun resumePendingLightningWorkIfNeeded() {
         _pendingSubmarineSwap.value = null
 
-        repository.getPendingLightningInvoiceSession()?.let { session ->
+        val pendingInvoiceSessions = repository.getPendingLightningInvoiceSessions()
+        refreshPendingLightningInvoices()
+        pendingInvoiceSessions.forEach { session ->
             if (BullBoltzBehavior.shouldResumePendingLightningInvoice(session)) {
                 val restored =
-                    runCatching { repository.restorePendingLightningInvoice() }
+                    runCatching { repository.restorePendingLightningInvoice(session.swapId) }
                         .onFailure {
                             logWarn(
                                 "resumePendingLightningWorkIfNeeded failed to restore lightning invoice swapId=${session.swapId}",
                                 Exception(it),
                             )
                         }.getOrNull()
-                if (restored != null) {
+                if (restored != null && activeLightningInvoiceSwapId == null) {
                     activeLightningInvoiceSwapId = restored.swapId
                     _lightningInvoiceState.value = LightningInvoiceState.Ready(
                         invoice = restored.invoice,
                         swapId = restored.swapId,
                         amountSats = restored.amountSats,
                     )
-                    lightningInvoiceMonitorJob = monitorLightningInvoice(restored.swapId)
-                } else {
-                    runCatching { repository.failLightningInvoice(session.swapId, clearPendingMetadata = true) }
+                } else if (activeLightningInvoiceSwapId == null) {
+                    activeLightningInvoiceSwapId = session.swapId
+                    _lightningInvoiceState.value = LightningInvoiceState.Ready(
+                        invoice = session.invoice,
+                        swapId = session.swapId,
+                        amountSats = session.amountSats,
+                    )
                 }
+                monitorLightningInvoice(session.swapId)
             } else {
                 logDebug("resumePendingLightningWorkIfNeeded discarding persisted lightning invoice swapId=${session.swapId}")
                 runCatching { repository.failLightningInvoice(session.swapId, clearPendingMetadata = true) }
             }
         }
+        refreshPendingLightningInvoices()
 
         repository.getPendingLightningPaymentSession()?.let { session ->
             if (isLightningRefundDetected(session)) {
@@ -1446,7 +1540,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     repository.sync()
                     _liquidBlockHeight.value = repository.getServerBlockHeight()
                 } catch (e: Exception) {
-                    Log.w(TAG, "Background Liquid sync failed: ${e.message}")
+                    SecureLog.w(TAG, "Background Liquid sync failed: ${e.message}", e)
                 }
             }
         }
@@ -1548,7 +1642,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     runCatching {
                         connectToActiveServer()
                     }.onFailure { error ->
-                        Log.w(TAG, "Liquid reconnect retry $attempt failed: ${error.message}")
+                        SecureLog.w(TAG, "Liquid reconnect retry $attempt failed: ${error.message}", error)
                     }
 
                     if (isLiquidConnected.value) return@retry
@@ -1566,7 +1660,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         try {
             connectToActiveServer()
         } catch (e: Exception) {
-            Log.w(TAG, "Liquid reconnect on foreground failed: ${e.message}")
+            SecureLog.w(TAG, "Liquid reconnect on foreground failed: ${e.message}", e)
         }
     }
 
@@ -1594,7 +1688,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Liquid real-time subscription startup failed: ${e.message}")
+                SecureLog.w(TAG, "Liquid real-time subscription startup failed: ${e.message}", e)
                 runCatching {
                     repository.sync()
                     _liquidBlockHeight.value = repository.getServerBlockHeight()
@@ -1603,6 +1697,32 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 _initialLiquidSyncComplete.value = true
             }
         }
+    }
+
+    private suspend fun handleLiquidSubscriptionLost() {
+        if (repository.isUserDisconnected()) return
+        if (_isLiquidConnecting.value || connectionJob?.isActive == true) return
+        if (!isLiquidConnected.value) return
+        if (liquidState.value.isSyncing || liquidFullSyncJob?.isActive == true) return
+
+        val alive =
+            withTimeoutOrNull(HEARTBEAT_PING_TIMEOUT_MS) {
+                withContext(Dispatchers.IO) {
+                    repository.pingServer()
+                }
+            } ?: false
+
+        if (alive) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "Liquid server is alive after subscription loss; restarting subscriptions only")
+            }
+            startBackgroundSync()
+            startHeartbeat()
+            launchRealtimeSubscriptions(reason = "subscription_recovery")
+            return
+        }
+
+        handleLiquidConnectionLost("Liquid server connection lost")
     }
 
     private suspend fun handleLiquidConnectionLost(message: String) {
@@ -1728,7 +1848,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     delay(10_000)
                 } catch (e: Exception) {
-                    Log.w(TAG, "Failed to subscribe to SideSwap wallet info: ${e.message}")
+                    SecureLog.w(TAG, "Failed to subscribe to SideSwap wallet info: ${e.message}", e)
                     delay(5_000)
                 }
             }
@@ -1844,7 +1964,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 repository.sync()
                 _liquidBlockHeight.value = repository.getServerBlockHeight()
             }.onFailure { error ->
-                Log.w(TAG, "Liquid sync after wallet reload failed: ${error.message}")
+                SecureLog.w(TAG, "Liquid sync after wallet reload failed: ${error.message}", error)
             }
             launchRealtimeSubscriptions(reason = "wallet_reload")
         }
@@ -1908,7 +2028,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 repository.sync()
                 _liquidBlockHeight.value = repository.getServerBlockHeight()
             }.onFailure { e ->
-                Log.w(TAG, "Liquid sync after wallet switch failed: ${e.message}")
+                SecureLog.w(TAG, "Liquid sync after wallet switch failed: ${e.message}", e)
             }
             startBackgroundSync()
             startHeartbeat()
@@ -2046,6 +2166,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         stopBackgroundSync()
         stopHeartbeat()
         stopReconnectRetry()
+        _isLiquidConnecting.value = true
+        _liquidConnectionError.value = null
         val config =
             secureStorage.getLiquidServer(serverId)
                 ?: run {
@@ -2059,8 +2181,6 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         val shouldKeepTorRunning = shouldKeepTorRunningForLiquid(serverRequiresTor || otherNeedsTor)
         connectionJob = launchLiquidJob {
             previousJob?.cancelAndJoin()
-            _isLiquidConnecting.value = true
-            _liquidConnectionError.value = null
             try {
                 disconnectForLiquidServerSwitch(
                     previousServerUsedTor = previousServerUsedTor,
@@ -2080,7 +2200,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 logError("Failed to connect to Liquid server: $serverId", e)
                 _isLiquidConnecting.value = false
-                _liquidConnectionError.value = e.message ?: "Connection failed"
+                _liquidConnectionError.value = safeLiquidErrorMessage(e, "Connection failed")
                 tryAutoSwitchFrom(serverId)
             }
         }
@@ -2398,8 +2518,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             clearPendingFullSyncProgress()
             logError("Failed to connect to Liquid server", e)
             _isLiquidConnecting.value = false
-            _liquidConnectionError.value = e.message ?: "Connection failed"
-            _events.emit(LiquidEvent.Error("Connection failed: ${e.message}"))
+            _liquidConnectionError.value = safeLiquidErrorMessage(e, "Connection failed")
+            _events.emit(LiquidEvent.Error("Connection failed"))
             tryAutoSwitchFrom(activeId)
         }
     }
@@ -2640,7 +2760,6 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             _lightningInvoiceState.value = LightningInvoiceState.Generating
             logBoltzTrace("start", trace, "amountSats" to amountSats)
             try {
-                clearActiveLightningInvoice(clearPendingMetadata = true)
                 val created =
                     repository.createLightningInvoice(
                         amountSats = amountSats,
@@ -2659,7 +2778,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     swapId = created.swapId,
                     amountSats = amountSats,
                 )
-                lightningInvoiceMonitorJob = monitorLightningInvoice(created.swapId)
+                refreshPendingLightningInvoices()
+                monitorLightningInvoice(created.swapId)
             } catch (e: Exception) {
                 logBoltzTrace(
                     "failed",
@@ -2671,13 +2791,18 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 logError("Failed to create Lightning invoice", e)
                 _lightningInvoiceState.value = LightningInvoiceState.Failed(
-                    error = e.message ?: "Failed to create invoice",
+                    error = safeLiquidErrorMessage(e, "Failed to create invoice"),
                 )
             }
         }
     }
 
     private fun monitorLightningInvoice(swapId: String): Job {
+        synchronized(lightningInvoiceMonitorJobs) {
+            lightningInvoiceMonitorJobs[swapId]
+                ?.takeIf { it.isActive }
+                ?.let { return it }
+        }
         val job = launchLiquidJob monitor@{
             val traceStartedAt = boltzTraceStart()
             val trace =
@@ -2689,56 +2814,15 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 )
             var lastBoltzUpdate: BoltzSwapUpdate? = null
             logBoltzTrace("start", trace)
-            try {
-                while (true) {
-                    when (repository.advanceLightningInvoice(swapId)) {
-                        lwk.PaymentState.CONTINUE -> {
-                            logBoltzTrace("continue", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt))
-                            val boltzUpdate =
-                                repository.awaitBoltzSwapActivity(
-                                    swapId = swapId,
-                                    previousUpdate = lastBoltzUpdate,
-                                )
-                            if (boltzUpdate != null) {
-                                lastBoltzUpdate = boltzUpdate
-                                logBoltzTrace(
-                                    "status",
-                                    trace,
-                                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                                    "status" to boltzUpdate.status,
-                                    "txid" to boltzUpdate.transactionId,
-                                )
-                            }
-                            if (boltzUpdate?.status == "transaction.claimed") {
-                                logBoltzTrace(
-                                    "claimed_shortcut",
-                                    trace,
-                                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                                    "txid" to boltzUpdate.transactionId,
-                                )
-                                Log.w(
-                                    TAG,
-                                    "Boltz reported transaction.claimed before LWK completed the lightning invoice; forcing success",
-                                )
-                                repository.finalizeLightningInvoiceClaimed(
-                                    swapId = swapId,
-                                    txid = boltzUpdate.transactionId,
-                                )
-                                if (activeLightningInvoiceSwapId == swapId) {
-                                    activeLightningInvoiceSwapId = null
-                                }
-                                _lightningInvoiceState.value = LightningInvoiceState.Claimed(
-                                    txid = boltzUpdate.transactionId.orEmpty(),
-                                )
-                                _events.emit(LiquidEvent.LightningReceived(boltzUpdate.transactionId.orEmpty()))
-                                repository.sync()
-                                return@monitor
-                            }
-                        }
-                        lwk.PaymentState.SUCCESS -> {
-                            val txid = repository.finishLightningInvoice(swapId)
-                            if (txid == null) {
-                                logBoltzTrace("finish_waiting", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt))
+            var retryCount = 0
+            retryLoop@ while (true) {
+                try {
+                    while (true) {
+                        val paymentState = repository.advanceLightningInvoice(swapId)
+                        retryCount = 0
+                        when (paymentState) {
+                            lwk.PaymentState.CONTINUE -> {
+                                logBoltzTrace("continue", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt))
                                 val boltzUpdate =
                                     repository.awaitBoltzSwapActivity(
                                         swapId = swapId,
@@ -2754,114 +2838,297 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                         "txid" to boltzUpdate.transactionId,
                                     )
                                 }
-                                if (boltzUpdate?.status == "transaction.claimed") {
-                                    logBoltzTrace(
-                                        "claimed_after_success",
-                                        trace,
-                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                                        "txid" to boltzUpdate.transactionId,
-                                    )
-                                    Log.w(
-                                        TAG,
-                                        "Boltz reported transaction.claimed after LWK success path stalled for a lightning invoice; forcing success",
-                                    )
-                                    repository.finalizeLightningInvoiceClaimed(
+                                val claimUpdate = selectLiquidLightningInvoiceClaimUpdate(boltzUpdate, lastBoltzUpdate)
+                                if (handleLightningInvoiceBoltzStatus(
                                         swapId = swapId,
-                                        txid = boltzUpdate.transactionId,
+                                        boltzUpdate = claimUpdate,
+                                        trace = trace,
+                                        traceStartedAt = traceStartedAt,
+                                        source = "continue_status",
                                     )
-                                    if (activeLightningInvoiceSwapId == swapId) {
-                                        activeLightningInvoiceSwapId = null
-                                    }
-                                    _lightningInvoiceState.value = LightningInvoiceState.Claimed(
-                                        txid = boltzUpdate.transactionId.orEmpty(),
-                                    )
-                                    _events.emit(LiquidEvent.LightningReceived(boltzUpdate.transactionId.orEmpty()))
-                                    repository.sync()
+                                ) {
                                     return@monitor
                                 }
-                                continue
+                                if (claimUpdate == null) {
+                                    markLightningInvoiceClaiming(swapId, claiming = false)
+                                }
                             }
-                            if (activeLightningInvoiceSwapId == swapId) {
-                                activeLightningInvoiceSwapId = null
+                            lwk.PaymentState.SUCCESS -> {
+                                val claimCompleted = completeLightningInvoiceClaim(
+                                    swapId = swapId,
+                                    trace = trace,
+                                    traceStartedAt = traceStartedAt,
+                                    source = "success_complete",
+                                )
+                                if (!claimCompleted) {
+                                    logBoltzTrace("finish_waiting", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt))
+                                    val boltzUpdate =
+                                        repository.awaitBoltzSwapActivity(
+                                            swapId = swapId,
+                                            previousUpdate = lastBoltzUpdate,
+                                        )
+                                    if (boltzUpdate != null) {
+                                        lastBoltzUpdate = boltzUpdate
+                                        logBoltzTrace(
+                                            "status",
+                                            trace,
+                                            "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                            "status" to boltzUpdate.status,
+                                            "txid" to boltzUpdate.transactionId,
+                                        )
+                                    }
+                                    val claimUpdate = selectLiquidLightningInvoiceClaimUpdate(boltzUpdate, lastBoltzUpdate)
+                                    if (handleLightningInvoiceBoltzStatus(
+                                            swapId = swapId,
+                                            boltzUpdate = claimUpdate,
+                                            trace = trace,
+                                            traceStartedAt = traceStartedAt,
+                                            source = "success_status",
+                                        )
+                                    ) {
+                                        return@monitor
+                                    }
+                                    continue
+                                }
+                                return@monitor
                             }
-                            if (txid.isNotBlank()) {
-                                repository.finalizeLightningReceiveTransaction(swapId, txid)
+                            lwk.PaymentState.FAILED -> {
+                                val boltzUpdate =
+                                    repository.awaitBoltzSwapActivity(
+                                        swapId = swapId,
+                                        previousUpdate = lastBoltzUpdate,
+                                    )
+                                if (boltzUpdate != null) {
+                                    lastBoltzUpdate = boltzUpdate
+                                    logBoltzTrace(
+                                        "status_after_failed_state",
+                                        trace,
+                                        level = BoltzTraceLevel.WARN,
+                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                        "status" to boltzUpdate.status,
+                                        "txid" to boltzUpdate.transactionId,
+                                    )
+                                }
+                                val claimUpdate = selectLiquidLightningInvoiceClaimUpdate(boltzUpdate, lastBoltzUpdate)
+                                if (handleLightningInvoiceBoltzStatus(
+                                        swapId = swapId,
+                                        boltzUpdate = claimUpdate,
+                                        trace = trace,
+                                        traceStartedAt = traceStartedAt,
+                                        source = "failed_state_status",
+                                    )
+                                ) {
+                                    return@monitor
+                                }
+                                if (isLiquidLightningInvoiceTerminalFailureStatus(boltzUpdate?.status)) {
+                                    if (repository.getPendingLightningInvoiceSession(swapId) == null) {
+                                        if (activeLightningInvoiceSwapId == swapId) {
+                                            activeLightningInvoiceSwapId = null
+                                            _lightningInvoiceState.value = LightningInvoiceState.Idle
+                                        }
+                                        refreshPendingLightningInvoices()
+                                        logBoltzTrace(
+                                            "settled_cleanup",
+                                            trace,
+                                            "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                            "status" to boltzUpdate?.status,
+                                        )
+                                        return@monitor
+                                    }
+                                    repository.failLightningInvoice(swapId)
+                                    if (activeLightningInvoiceSwapId == swapId) {
+                                        activeLightningInvoiceSwapId = null
+                                        _lightningInvoiceState.value = LightningInvoiceState.Failed(
+                                            error = "Lightning receive failed",
+                                        )
+                                    }
+                                    refreshPendingLightningInvoices()
+                                    logBoltzTrace("failed", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt))
+                                    return@monitor
+                                }
+                                logBoltzTrace(
+                                    "failed_state_retrying",
+                                    trace,
+                                    level = BoltzTraceLevel.WARN,
+                                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                    "status" to boltzUpdate?.status,
+                                )
+                                delay(MONITOR_RETRY_BASE_MS)
                             }
-                            _lightningInvoiceState.value = LightningInvoiceState.Claimed(
-                                txid = txid,
-                            )
-                            logBoltzTrace(
-                                "claimed",
-                                trace,
-                                "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                                "txid" to txid,
-                            )
-                            _events.emit(LiquidEvent.LightningReceived(txid))
-                            repository.sync()
-                            return@monitor
-                        }
-                        lwk.PaymentState.FAILED -> {
-                            repository.failLightningInvoice(swapId)
-                            if (activeLightningInvoiceSwapId == swapId) {
-                                activeLightningInvoiceSwapId = null
-                            }
-                            _lightningInvoiceState.value = LightningInvoiceState.Failed(
-                                error = "Lightning receive failed",
-                            )
-                            logBoltzTrace("failed", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt))
-                            return@monitor
                         }
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (settleMissingPendingLightningInvoice(swapId)) {
+                        return@monitor
+                    }
+                    retryCount++
+                    logBoltzTrace(
+                        "failed",
+                        trace,
+                        level = BoltzTraceLevel.WARN,
+                        throwable = e,
+                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                        "retry" to retryCount,
+                    )
+                    logError("Failed to monitor Lightning invoice", e)
+                    val stillPending = repository.getPendingLightningInvoiceSession(swapId) != null
+                    runCatching { repository.failLightningInvoice(swapId, clearPendingMetadata = false) }
+                    markLightningInvoiceClaiming(swapId, claiming = false)
+                    if (stillPending) {
+                        val delayMs =
+                            (MONITOR_RETRY_BASE_MS * (1L shl (retryCount - 1).coerceAtMost(4)))
+                                .coerceAtMost(RECONNECT_MAX_DELAY_MS)
+                        delay(delayMs)
+                        continue@retryLoop
+                    } else {
+                        if (activeLightningInvoiceSwapId == swapId) {
+                            activeLightningInvoiceSwapId = null
+                            _lightningInvoiceState.value = LightningInvoiceState.Idle
+                        }
+                        refreshPendingLightningInvoices()
+                        return@monitor
+                    }
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                logBoltzTrace(
-                    "failed",
-                    trace,
-                    level = BoltzTraceLevel.WARN,
-                    throwable = e,
-                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                )
-                logError("Failed to monitor Lightning invoice", e)
-                runCatching { repository.failLightningInvoice(swapId, clearPendingMetadata = false) }
-                if (activeLightningInvoiceSwapId == swapId) {
-                    activeLightningInvoiceSwapId = null
-                }
-                _lightningInvoiceState.value = LightningInvoiceState.Failed(
-                    error = e.message ?: "Lightning receive failed",
-                )
             }
         }
+        synchronized(lightningInvoiceMonitorJobs) {
+            lightningInvoiceMonitorJobs[swapId] = job
+        }
         job.invokeOnCompletion {
-            if (lightningInvoiceMonitorJob === job) {
-                lightningInvoiceMonitorJob = null
+            synchronized(lightningInvoiceMonitorJobs) {
+                if (lightningInvoiceMonitorJobs[swapId] === job) {
+                    lightningInvoiceMonitorJobs.remove(swapId)
+                }
             }
         }
         return job
     }
 
-    private suspend fun clearActiveLightningInvoice(clearPendingMetadata: Boolean) {
-        lightningInvoiceMonitorJob?.cancelAndJoin()
-        lightningInvoiceMonitorJob = null
-
-        val swapId =
-            activeLightningInvoiceSwapId
-                ?: if (clearPendingMetadata) {
-                    repository.getPendingLightningInvoiceSession()?.swapId
-                } else {
-                    null
-                }
-        activeLightningInvoiceSwapId = null
-        if (swapId != null) {
-            runCatching { repository.failLightningInvoice(swapId, clearPendingMetadata = clearPendingMetadata) }
+    private suspend fun handleLightningInvoiceBoltzStatus(
+        swapId: String,
+        boltzUpdate: BoltzSwapUpdate?,
+        trace: BoltzTraceContext,
+        traceStartedAt: Long,
+        source: String,
+    ): Boolean {
+        val status = boltzUpdate?.status ?: return false
+        if (isLiquidLightningInvoiceClaimedStatus(status)) {
+            val txid = boltzUpdate.transactionId
+            if (txid.isNullOrBlank()) {
+                logBoltzTrace("claimed_without_txid", trace, level = BoltzTraceLevel.WARN, "source" to source)
+                return completeLightningInvoiceClaim(swapId, trace, traceStartedAt, "${source}_claimed_no_txid")
+            }
+            SecureLog.w(TAG, "Boltz reported $status before LWK completed the lightning invoice; forcing success")
+            repository.finalizeLightningInvoiceClaimed(swapId = swapId, txid = txid)
+            publishLightningInvoiceClaimed(swapId = swapId, txid = txid)
+            logBoltzTrace("claimed_shortcut", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt), "txid" to txid)
+            return true
         }
+        if (!isLiquidLightningInvoiceClaimableStatus(status)) {
+            markLightningInvoiceClaiming(swapId, claiming = false)
+            return false
+        }
+        logBoltzTrace("claim_ready", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt), "status" to status)
+        return completeLightningInvoiceClaim(swapId, trace, traceStartedAt, "${source}_claim_ready")
+    }
+
+    private fun settleMissingPendingLightningInvoice(swapId: String): Boolean {
+        if (repository.getPendingLightningInvoiceSession(swapId) != null) return false
+        markLightningInvoiceClaiming(swapId, claiming = false)
+        if (activeLightningInvoiceSwapId == swapId) {
+            activeLightningInvoiceSwapId = null
+            _lightningInvoiceState.value = LightningInvoiceState.Idle
+        }
+        refreshPendingLightningInvoices()
+        return true
+    }
+
+    private suspend fun completeLightningInvoiceClaim(
+        swapId: String,
+        trace: BoltzTraceContext,
+        traceStartedAt: Long,
+        source: String,
+    ): Boolean {
+        val txid =
+            try {
+                repository.finishLightningInvoice(swapId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (settleMissingPendingLightningInvoice(swapId)) {
+                    return true
+                }
+                logBoltzTrace(
+                    "claim_retry",
+                    trace,
+                    level = BoltzTraceLevel.WARN,
+                    throwable = e,
+                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                    "source" to source,
+                )
+                null
+            }
+        if (txid.isNullOrBlank()) {
+            markLightningInvoiceClaiming(swapId, claiming = false)
+            return false
+        }
+        logBoltzTrace("claimed", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt), "txid" to txid, "source" to source)
+        publishLightningInvoiceClaimed(swapId = swapId, txid = txid)
+        return true
+    }
+
+    private suspend fun publishLightningInvoiceClaimed(
+        swapId: String,
+        txid: String,
+    ) {
+        markLightningInvoiceClaiming(swapId, claiming = false)
+        if (activeLightningInvoiceSwapId == swapId) {
+            activeLightningInvoiceSwapId = null
+            _lightningInvoiceState.value = LightningInvoiceState.Claimed(txid = txid)
+        }
+        _events.emit(LiquidEvent.LightningReceived(txid))
+        repository.sync()
+        refreshPendingLightningInvoices()
     }
 
     fun resetLightningInvoice() {
         launchLiquidJob {
-            clearActiveLightningInvoice(clearPendingMetadata = true)
+            activeLightningInvoiceSwapId = null
             _lightningInvoiceState.value = LightningInvoiceState.Idle
+            refreshPendingLightningInvoices()
+        }
+    }
+
+    fun claimPendingLightningInvoice(swapId: String) {
+        launchLiquidJob {
+            val session = repository.getPendingLightningInvoiceSession(swapId) ?: return@launchLiquidJob
+            markLightningInvoiceClaiming(swapId, claiming = true, updateAttempt = true)
+            activeLightningInvoiceSwapId = session.swapId
+            _lightningInvoiceState.value = LightningInvoiceState.Ready(
+                invoice = session.invoice,
+                swapId = session.swapId,
+                amountSats = session.amountSats,
+            )
+            monitorLightningInvoice(session.swapId)
+            refreshPendingLightningInvoices()
+        }
+    }
+
+    fun deletePendingLightningInvoice(swapId: String) {
+        launchLiquidJob {
+            stopLightningInvoiceMonitor(swapId)
+            lightningInvoiceClaimingSwapIds -= swapId
+            lightningInvoiceLastClaimAttempts.remove(swapId)
+            repository.deletePendingLightningInvoice(swapId)
+            if (activeLightningInvoiceSwapId == swapId ||
+                (_lightningInvoiceState.value as? LightningInvoiceState.Ready)?.swapId == swapId
+            ) {
+                activeLightningInvoiceSwapId = null
+                _lightningInvoiceState.value = LightningInvoiceState.Idle
+            }
+            refreshPendingLightningInvoices()
         }
     }
 
@@ -2915,13 +3182,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     ): Int {
         val result = Bip329Labels.import(content, defaultScope)
 
-        for ((address, label) in result.liquidAddressLabels) {
-            secureStorage.saveLiquidAddressLabel(walletId, address, label)
-        }
-
-        for ((txid, label) in result.liquidTransactionLabels) {
-            secureStorage.saveLiquidTransactionLabel(walletId, txid, label)
-        }
+        secureStorage.saveLiquidAddressLabels(walletId, result.liquidAddressLabels)
+        secureStorage.saveLiquidTransactionLabels(walletId, result.liquidTransactionLabels)
 
         repository.refreshCachedWalletState()
         refreshLiquidSnapshotsIfNeeded(walletId)
@@ -3187,7 +3449,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     "input" to summarizeValue(paymentInput),
                 )
                 logError("Failed to resolve Lightning payment", e)
-                _sendState.value = LiquidSendState.Failed(e.message ?: "Payment resolution failed", basicPreview)
+                _sendState.value = LiquidSendState.Failed(safeLiquidErrorMessage(e, "Payment resolution failed"), basicPreview)
             }
         }
     }
@@ -3240,7 +3502,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 _events.emit(LiquidEvent.TransactionSent(txid))
             } catch (e: Exception) {
-                _sendState.value = LiquidSendState.Failed(e.message ?: "Send failed", preview)
+                _sendState.value = LiquidSendState.Failed(safeLiquidErrorMessage(e, "Send failed"), preview)
             }
         }
     }
@@ -3285,7 +3547,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 _events.emit(LiquidEvent.TransactionSent(txid))
             } catch (e: Exception) {
-                _sendState.value = LiquidSendState.Failed(e.message ?: "Send failed", preview)
+                _sendState.value = LiquidSendState.Failed(safeLiquidErrorMessage(e, "Send failed"), preview)
             }
         }
     }
@@ -3364,7 +3626,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 _events.emit(LiquidEvent.TransactionSent(txid))
             } catch (e: Exception) {
-                _sendState.value = LiquidSendState.Failed(e.message ?: "Send failed", preview)
+                _sendState.value = LiquidSendState.Failed(safeLiquidErrorMessage(e, "Send failed"), preview)
             }
         }
     }
@@ -3526,7 +3788,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 logError("Failed to confirm Lightning payment", e)
                 deleteLightningSession()
                 presentLightningPaymentFailure(
-                    error = e.message ?: "Payment failed",
+                    error = safeLiquidErrorMessage(e, "Payment failed"),
                     preview = preview,
                 )
             }
@@ -3661,7 +3923,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                         "elapsedMs" to boltzElapsedMs(traceStartedAt),
                                         "txid" to boltzUpdate.transactionId,
                                     )
-                                    Log.w(
+                                    SecureLog.w(
                                         TAG,
                                         "Boltz reported transaction.claimed before LWK completed the prepared payment; forcing success",
                                     )
@@ -3727,7 +3989,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                         "elapsedMs" to boltzElapsedMs(traceStartedAt),
                                         "txid" to boltzUpdate.transactionId,
                                     )
-                                    Log.w(
+                                    SecureLog.w(
                                         TAG,
                                         "Boltz reported transaction.claimed after LWK success path stalled; forcing success",
                                     )
@@ -3787,6 +4049,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                    if (settleMissingPendingLightningInvoice(swapId)) {
+                        return@monitor
+                    }
                 retryCount++
                 logBoltzTrace(
                     "failed",
@@ -3816,7 +4081,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 } ?: run {
                     presentLightningPaymentFailure(
-                        error = e.message ?: "Lightning payment failed",
+                        error = safeLiquidErrorMessage(e, "Lightning payment failed"),
                         preview = preview,
                     )
                 }
@@ -4030,7 +4295,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 } ?: run {
                     presentLightningPaymentFailure(
-                        error = e.message ?: "Lightning payment failed",
+                        error = safeLiquidErrorMessage(e, "Lightning payment failed"),
                         preview = preview,
                     )
                 }
@@ -4183,7 +4448,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         this[service] = limits
                     }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to fetch swap limits: ${e.message}")
+                SecureLog.e(TAG, "Failed to fetch swap limits: ${e.message}", e)
                 _swapLimits.value =
                     _swapLimits.value.toMutableMap().apply {
                         this[service] = SwapLimits(
@@ -4191,7 +4456,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                             direction = direction,
                             minAmount = 0,
                             maxAmount = 0,
-                            error = e.message,
+                            error = "Failed to fetch swap limits",
                         )
                     }
             }
@@ -4470,7 +4735,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     throwable = e,
                     "elapsedMs" to boltzElapsedMs(traceStartedAt),
                 )
-                Log.e(TAG, "Failed to fetch Lightning invoice limits: ${e.message}")
+                SecureLog.e(TAG, "Failed to fetch Lightning invoice limits: ${e.message}", e)
             }
         }
     }
@@ -5870,24 +6135,36 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun logError(message: String, error: Exception) {
-        if (BuildConfig.DEBUG) {
-            Log.e(BOLTZ_LOG_TAG, message, error)
-        } else {
-            Log.e(BOLTZ_LOG_TAG, message)
-        }
+        SecureLog.e(BOLTZ_LOG_TAG, message, error)
     }
 
     private fun logWarn(message: String, error: Exception) {
-        if (BuildConfig.DEBUG) {
-            Log.w(BOLTZ_LOG_TAG, message, error)
-        } else {
-            Log.w(BOLTZ_LOG_TAG, message)
-        }
+        SecureLog.w(BOLTZ_LOG_TAG, message, error)
     }
 
     private fun logDebug(message: String) {
         if (BuildConfig.DEBUG) {
             Log.d(BOLTZ_LOG_TAG, message)
+        }
+    }
+
+    private fun safeLiquidErrorMessage(error: Throwable?, fallback: String): String {
+        if (error?.isTransactionInsufficientFundsError() == true) {
+            return AppLocale.createLocalizedContext(appContext, secureStorage.getAppLocale())
+                .getString(R.string.loc_534e1eb2)
+        }
+        val message = error?.message.orEmpty()
+        return when {
+            message.contains("dust", ignoreCase = true) -> "Amount below dust limit"
+            message.contains("timed out", ignoreCase = true) ||
+                message.contains("timeout", ignoreCase = true) -> "Connection timed out"
+            message.contains("network", ignoreCase = true) ||
+                message.contains("connection", ignoreCase = true) ||
+                message.contains("socket", ignoreCase = true) -> "Network error"
+            message.contains("invalid address", ignoreCase = true) -> "Invalid address"
+            message.contains("exceeds maximal", ignoreCase = true) ||
+                message.contains("minimum", ignoreCase = true) -> "Amount outside supported limits"
+            else -> fallback
         }
     }
 
@@ -5909,6 +6186,44 @@ internal fun isRestLightningPaymentPendingStatus(status: String?): Boolean {
 internal fun isRestLightningPaymentSuccessStatus(status: String?): Boolean {
     return when (status) {
         "invoice.paid", "transaction.claim.pending", "transaction.claimed" -> true
+        else -> false
+    }
+}
+
+internal fun isLiquidLightningInvoiceClaimableStatus(status: String?): Boolean {
+    return when (status) {
+        "transaction.mempool",
+        "transaction.confirmed",
+        "invoice.settled",
+        "invoice.paid",
+        "transaction.claim.pending",
+        -> true
+        else -> false
+    }
+}
+
+internal fun selectLiquidLightningInvoiceClaimUpdate(
+    latestUpdate: BoltzSwapUpdate?,
+    previousUpdate: BoltzSwapUpdate?,
+): BoltzSwapUpdate? {
+    if (latestUpdate != null) return latestUpdate
+    return previousUpdate?.takeIf {
+        isLiquidLightningInvoiceClaimableStatus(it.status) ||
+            isLiquidLightningInvoiceClaimedStatus(it.status)
+    }
+}
+
+internal fun isLiquidLightningInvoiceClaimedStatus(status: String?): Boolean = status == "transaction.claimed"
+
+internal fun isLiquidLightningInvoiceTerminalFailureStatus(status: String?): Boolean {
+    return when (status) {
+        "invoice.expired",
+        "swap.expired",
+        "transaction.failed",
+        "transaction.refunded",
+        "transaction.lockupFailed",
+        "invoice.failedToPay",
+        -> true
         else -> false
     }
 }

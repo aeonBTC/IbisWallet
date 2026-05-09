@@ -20,7 +20,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -43,6 +43,9 @@ import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 /**
  * Pill-style layer switcher with Swap button in the center.
@@ -57,6 +60,8 @@ fun LayerSwitcher(
     isSwapSelected: Boolean = false,
     isSwapEnabled: Boolean = true,
     isLayer1Enabled: Boolean = true,
+    layer2Color: Color = LiquidTeal,
+    layer2Label: String = stringResource(R.string.loc_2f73501f),
     onSwap: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
@@ -75,7 +80,7 @@ fun LayerSwitcher(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LayerPill(
-                label = "Layer 1",
+                label = stringResource(R.string.loc_b67a01a5),
                 isSelected = !isSwapSelected && activeLayer == WalletLayer.LAYER1,
                 selectedColor = BitcoinOrange,
                 enabled = isLayer1Enabled,
@@ -94,13 +99,14 @@ fun LayerSwitcher(
             SwapPill(
                 isSelected = isSwapSelected,
                 enabled = isSwapEnabled || isSwapSelected,
+                layer2Accent = layer2Color,
                 onClick = onSwap,
             )
             Spacer(modifier = Modifier.width(2.dp))
             LayerPill(
-                label = "Layer 2",
+                label = layer2Label,
                 isSelected = !isSwapSelected && activeLayer == WalletLayer.LAYER2,
-                selectedColor = LiquidTeal,
+                selectedColor = layer2Color,
                 onClick = {
                     if (!layerSwitchLocked && (isSwapSelected || activeLayer != WalletLayer.LAYER2)) {
                         layerSwitchLocked = true
@@ -120,6 +126,7 @@ fun LayerSwitcher(
 private fun SwapPill(
     isSelected: Boolean,
     enabled: Boolean,
+    layer2Accent: Color,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(16.dp)
@@ -144,7 +151,7 @@ private fun SwapPill(
     val borderColor by animateColorAsState(
         targetValue =
             when {
-                isSelected -> LiquidTeal.copy(alpha = 0.75f)
+                isSelected -> layer2Accent.copy(alpha = 0.75f)
                 enabled -> BorderColor.copy(alpha = 0.45f)
                 else -> BorderColor.copy(alpha = 0.10f)
             },
@@ -164,12 +171,12 @@ private fun SwapPill(
         Icon(
             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
             contentDescription = null,
-            tint = if (enabled || isSelected) LiquidTeal else LiquidTeal.copy(alpha = 0.35f),
+            tint = textColor,
             modifier = Modifier.size(13.dp),
         )
         Spacer(modifier = Modifier.width(3.dp))
         Text(
-            text = "Swap",
+            text = stringResource(R.string.loc_85a12a5f),
             color = textColor,
             style = MaterialTheme.typography.labelMedium.copy(lineHeight = 16.sp),
             fontWeight = FontWeight.SemiBold,
@@ -178,7 +185,7 @@ private fun SwapPill(
         Icon(
             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
             contentDescription = null,
-            tint = if (enabled || isSelected) BitcoinOrange else BitcoinOrange.copy(alpha = 0.35f),
+            tint = textColor,
             modifier = Modifier.size(13.dp),
         )
     }
@@ -188,7 +195,7 @@ private fun SwapPill(
 private fun LayerPill(
     label: String,
     isSelected: Boolean,
-    selectedColor: androidx.compose.ui.graphics.Color,
+    selectedColor: Color,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {

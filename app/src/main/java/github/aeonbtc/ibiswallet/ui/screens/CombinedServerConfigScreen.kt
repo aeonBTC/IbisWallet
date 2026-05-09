@@ -20,7 +20,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,6 +38,9 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 enum class ServerConfigSection {
     BITCOIN,
@@ -76,7 +78,7 @@ fun CombinedServerConfigScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -87,11 +89,13 @@ fun CombinedServerConfigScreen(
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Electrum Servers",
+                text = stringResource(R.string.loc_dc73d3bf),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         if (showLiquidSection) {
             Row(

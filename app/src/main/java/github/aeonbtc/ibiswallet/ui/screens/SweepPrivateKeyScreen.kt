@@ -27,6 +27,9 @@ import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.theme.*
 import github.aeonbtc.ibiswallet.viewmodel.SweepState
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -91,7 +94,7 @@ fun SweepPrivateKeyScreen(
             containerColor = DarkCard,
             title = {
                 Text(
-                    "Confirm Sweep",
+                    stringResource(R.string.loc_f71ec2bd),
                     color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -129,7 +132,7 @@ fun SweepPrivateKeyScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            "Total",
+                            stringResource(R.string.loc_03eece5a),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -194,14 +197,14 @@ fun SweepPrivateKeyScreen(
                             strokeWidth = 2.dp,
                         )
                     } else {
-                        Text("Broadcast")
+                        Text(stringResource(R.string.loc_1900fe56))
                     }
                 }
             },
             dismissButton = {
                 if (!sweepState.isSweeping) {
                     TextButton(onClick = { showReviewDialog = false }) {
-                        Text("Cancel", color = TextSecondary)
+                        Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
                     }
                 }
             },
@@ -222,7 +225,7 @@ fun SweepPrivateKeyScreen(
             containerColor = DarkCard,
             title = {
                 Text(
-                    "Sweep Successful",
+                    stringResource(R.string.loc_e0f93278),
                     color = SuccessGreen,
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -230,14 +233,18 @@ fun SweepPrivateKeyScreen(
             text = {
                 Column {
                     Text(
-                        "${sweepState.sweepTxids.size} transaction${if (sweepState.sweepTxids.size > 1) "s" else ""} broadcast",
+                        stringResource(
+                            R.string.loc_fe79714b,
+                            sweepState.sweepTxids.size,
+                            if (sweepState.sweepTxids.size > 1) "s" else "",
+                        ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     sweepState.sweepTxids.forEach { txid ->
                         Text(
-                            "${txid.take(16)}...${txid.takeLast(8)}",
+                            stringResource(R.string.loc_131fd811),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -253,7 +260,7 @@ fun SweepPrivateKeyScreen(
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
                 ) {
-                    Text("Done")
+                    Text(stringResource(R.string.loc_b01f4f95))
                 }
             },
         )
@@ -285,7 +292,7 @@ fun SweepPrivateKeyScreen(
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Sweep Private Key",
+                text = stringResource(R.string.loc_380cec3b),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -295,7 +302,7 @@ fun SweepPrivateKeyScreen(
 
         // WIF Private Key input
         Text(
-            text = "Private Key (WIF)",
+            text = stringResource(R.string.loc_e109877e),
             style = MaterialTheme.typography.labelLarge,
             color = TextSecondary,
         )
@@ -309,7 +316,7 @@ fun SweepPrivateKeyScreen(
                         .fillMaxWidth()
                         .height(80.dp),
                 shape = RoundedCornerShape(8.dp),
-                placeholder = { Text("Enter WIF key (K..., L..., 5...)", color = TextSecondary.copy(alpha = 0.5f)) },
+                placeholder = { Text(stringResource(R.string.loc_3a47abe2), color = TextSecondary.copy(alpha = 0.5f)) },
                 keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
                 singleLine = false,
                 colors =
@@ -354,7 +361,7 @@ fun SweepPrivateKeyScreen(
 
         // Destination Address
         Text(
-            text = "Destination Address",
+            text = stringResource(R.string.loc_ff3e9c4d),
             style = MaterialTheme.typography.labelLarge,
             color = TextSecondary,
         )
@@ -364,7 +371,7 @@ fun SweepPrivateKeyScreen(
             onValueChange = { destinationAddress = it },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(8.dp),
-            placeholder = { Text("Bitcoin address to receive funds", color = TextSecondary.copy(alpha = 0.5f)) },
+            placeholder = { Text(stringResource(R.string.loc_b7fdd705), color = TextSecondary.copy(alpha = 0.5f)) },
             keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
             singleLine = true,
             trailingIcon = {
@@ -425,7 +432,7 @@ fun SweepPrivateKeyScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(sweepState.scanProgress ?: "Scanning...")
             } else {
-                Text("Check Balance")
+                Text(stringResource(R.string.loc_e35ba02b))
             }
         }
 
@@ -440,7 +447,7 @@ fun SweepPrivateKeyScreen(
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        "Funds Found",
+                        stringResource(R.string.loc_085b1404),
                         style = MaterialTheme.typography.titleSmall,
                         color = SuccessGreen,
                     )
@@ -481,7 +488,7 @@ fun SweepPrivateKeyScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            "Total",
+                            stringResource(R.string.loc_03eece5a),
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -511,7 +518,7 @@ fun SweepPrivateKeyScreen(
                         disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
                     ),
             ) {
-                Text("Review Sweep")
+                Text(stringResource(R.string.loc_b82175c1))
             }
         }
 
@@ -535,7 +542,7 @@ fun SweepPrivateKeyScreen(
         if (!isConnected) {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Connect to an Electrum server to sweep",
+                text = stringResource(R.string.loc_4ce2351d),
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,

@@ -18,22 +18,31 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
 import android.view.WindowManager
+import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.ViewModelProvider
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.localization.AppLocale
+import github.aeonbtc.ibiswallet.localization.LocalAppLocale
 import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
 import github.aeonbtc.ibiswallet.nfc.NfcReaderModeRequestRegistry
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
@@ -45,6 +54,7 @@ import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.isRecognizedSendInput
 import github.aeonbtc.ibiswallet.viewmodel.LiquidViewModel
+import github.aeonbtc.ibiswallet.viewmodel.SparkViewModel
 import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -84,6 +94,7 @@ class MainActivity : FragmentActivity() {
     private lateinit var secureStorage: SecureStorage
     private lateinit var walletViewModel: WalletViewModel
     private lateinit var liquidViewModel: LiquidViewModel
+    private lateinit var sparkViewModel: SparkViewModel
     private var isUnlocked by mutableStateOf(false)
     private var appUnlockCounter by mutableIntStateOf(0)
     private var cloakBypassed by mutableStateOf(false)
@@ -144,37 +155,49 @@ class MainActivity : FragmentActivity() {
 
             val selectAidResponse = transceiveSelectAid(isoDep)
             if (!selectAidResponse.contentEquals(NFC_SW_OK)) {
-                Log.w(TAG, "Unexpected SELECT AID response: ${selectAidResponse.toHexString()}")
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Unexpected SELECT AID response: ${selectAidResponse.toHexString()}")
+                }
                 return null
             }
 
             val selectCcResponse = isoDep.transceive(NFC_SELECT_CC_FILE)
             if (!selectCcResponse.contentEquals(NFC_SW_OK)) {
-                Log.w(TAG, "Unexpected SELECT CC response: ${selectCcResponse.toHexString()}")
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Unexpected SELECT CC response: ${selectCcResponse.toHexString()}")
+                }
                 return null
             }
 
             val readCcResponse = isoDep.transceive(NFC_READ_CC)
             if (!hasSuccessStatus(readCcResponse)) {
-                Log.w(TAG, "Unexpected READ CC response: ${readCcResponse.toHexString()}")
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Unexpected READ CC response: ${readCcResponse.toHexString()}")
+                }
                 return null
             }
 
             val selectNdefResponse = isoDep.transceive(NFC_SELECT_NDEF_FILE)
             if (!selectNdefResponse.contentEquals(NFC_SW_OK)) {
-                Log.w(TAG, "Unexpected SELECT NDEF response: ${selectNdefResponse.toHexString()}")
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Unexpected SELECT NDEF response: ${selectNdefResponse.toHexString()}")
+                }
                 return null
             }
 
             val lengthResponse = isoDep.transceive(NFC_READ_NDEF_LENGTH)
             if (!hasSuccessStatus(lengthResponse)) {
-                Log.w(TAG, "Unexpected NDEF length response: ${lengthResponse.toHexString()}")
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Unexpected NDEF length response: ${lengthResponse.toHexString()}")
+                }
                 return null
             }
 
             val lengthBytes = responsePayload(lengthResponse)
             if (lengthBytes.size != 2) {
-                Log.w(TAG, "Unexpected NDEF length payload size: ${lengthBytes.size}")
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Unexpected NDEF length payload size: ${lengthBytes.size}")
+                }
                 return null
             }
 
@@ -199,13 +222,17 @@ class MainActivity : FragmentActivity() {
                     )
 
                 if (!hasSuccessStatus(response)) {
-                    Log.w(TAG, "Unexpected READ NDEF response at offset $offset: ${response.toHexString()}")
+                    if (BuildConfig.DEBUG) {
+                        Log.w(TAG, "Unexpected READ NDEF response at offset $offset: ${response.toHexString()}")
+                    }
                     return null
                 }
 
                 val chunk = responsePayload(response)
                 if (chunk.isEmpty()) {
-                    Log.w(TAG, "Empty READ NDEF chunk at offset $offset")
+                    if (BuildConfig.DEBUG) {
+                        Log.w(TAG, "Empty READ NDEF chunk at offset $offset")
+                    }
                     return null
                 }
 
@@ -216,7 +243,9 @@ class MainActivity : FragmentActivity() {
 
             extractRecognizedSendInput(NdefMessage(messageBytes))
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to read NFC tag via ISO-DEP", e)
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Failed to read NFC tag via ISO-DEP", e)
+            }
             null
         } finally {
             runCatching { isoDep.close() }
@@ -305,7 +334,9 @@ class MainActivity : FragmentActivity() {
         if (!nfcAvailability.isSystemEnabled) {
             isNfcReaderModeActive = false
             NfcRuntimeStatus.setReaderInactive()
-            Log.w(TAG, "NFC reader mode unavailable because system NFC is disabled")
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "NFC reader mode unavailable because system NFC is disabled")
+            }
             return
         }
 
@@ -313,7 +344,9 @@ class MainActivity : FragmentActivity() {
         if (adapter == null) {
             isNfcReaderModeActive = false
             NfcRuntimeStatus.setReaderInactive()
-            Log.w(TAG, "NFC reader mode unavailable because the adapter could not be acquired")
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "NFC reader mode unavailable because the adapter could not be acquired")
+            }
             return
         }
 
@@ -329,7 +362,9 @@ class MainActivity : FragmentActivity() {
         } catch (e: Exception) {
             isNfcReaderModeActive = false
             NfcRuntimeStatus.setReaderInactive()
-            Log.w(TAG, "Failed to enable NFC reader mode", e)
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Failed to enable NFC reader mode", e)
+            }
         }
     }
 
@@ -348,7 +383,9 @@ class MainActivity : FragmentActivity() {
         val adapter = nfcAdapter
         if (adapter == null) {
             isPreferredHceServiceActive = false
-            Log.w(TAG, "HCE preference unavailable because the NFC adapter could not be acquired")
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "HCE preference unavailable because the NFC adapter could not be acquired")
+            }
             return
         }
 
@@ -357,7 +394,9 @@ class MainActivity : FragmentActivity() {
                 .getOrNull()
         if (cardEmulation == null) {
             isPreferredHceServiceActive = false
-            Log.w(TAG, "HCE preference unavailable because CardEmulation is not supported")
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "HCE preference unavailable because CardEmulation is not supported")
+            }
             return
         }
 
@@ -368,13 +407,17 @@ class MainActivity : FragmentActivity() {
                     ComponentName(this, NdefHostApduService::class.java),
                 )
             }.getOrElse { error ->
-                Log.w(TAG, "Failed to prefer Ibis HCE service", error)
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Failed to prefer Ibis HCE service", error)
+                }
                 false
             }
 
         isPreferredHceServiceActive = didSetPreferred
         if (!didSetPreferred) {
-            Log.w(TAG, "Android refused to prefer the Ibis HCE service")
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Android refused to prefer the Ibis HCE service")
+            }
         }
     }
 
@@ -384,7 +427,9 @@ class MainActivity : FragmentActivity() {
             runCatching {
                 CardEmulation.getInstance(adapter).unsetPreferredService(this)
             }.onFailure { error ->
-                Log.w(TAG, "Failed to clear preferred Ibis HCE service", error)
+                if (BuildConfig.DEBUG) {
+                    Log.w(TAG, "Failed to clear preferred Ibis HCE service", error)
+                }
             }
         }
         isPreferredHceServiceActive = false
@@ -449,6 +494,7 @@ class MainActivity : FragmentActivity() {
             secureStorage = SecureStorage.getInstance(this)
             walletViewModel = ViewModelProvider(this)[WalletViewModel::class.java]
             liquidViewModel = ViewModelProvider(this)[LiquidViewModel::class.java]
+            sparkViewModel = ViewModelProvider(this)[SparkViewModel::class.java]
             nfcAdapter = NfcAdapter.getDefaultAdapter(this)
 
             // Apply pending icon swap before any UI
@@ -481,46 +527,58 @@ class MainActivity : FragmentActivity() {
             handleSendIntent(intent)
 
         setContent {
-            IbisWalletTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = DarkBackground,
-                ) {
-                    if (isUnlocked) {
-                        IbisWalletApp(
-                            onLockApp = { isUnlocked = false },
-                            appUnlockCounter = appUnlockCounter,
-                        )
-                    } else if (isCloakActive && !cloakBypassed) {
-                        // Show calculator disguise — entering the secret code bypasses it
-                        CalculatorScreen(
-                            cloakCode = secureStorage.getCloakCode() ?: "",
-                            onUnlock = {
-                                cloakBypassed = true
-                                val secMethod = secureStorage.getSecurityMethod()
-                                if (secMethod == SecureStorage.SecurityMethod.NONE) {
-                                    // No additional auth — go straight to wallet
-                                    isUnlocked = true
-                                }
-                                // Otherwise fall through to LockScreen on next recompose
-                            },
-                        )
-                    } else {
-                        val biometricManager = BiometricManager.from(this)
-                        val isBiometricAvailable =
-                            biometricManager.canAuthenticate(
-                                BiometricManager.Authenticators.BIOMETRIC_STRONG,
-                            ) == BiometricManager.BIOMETRIC_SUCCESS
+            val appLocale by walletViewModel.appLocale.collectAsStateWithLifecycle()
+            val localizedContext = remember(appLocale) {
+                AppLocale.createLocalizedContext(this, appLocale)
+            }
 
-                        val secMethod = secureStorage.getSecurityMethod()
-                        val isDuressEnabled = secureStorage.isDuressEnabled()
-                        val isDuressWithBiometric =
-                            isDuressEnabled &&
-                                secMethod == SecureStorage.SecurityMethod.BIOMETRIC
+            CompositionLocalProvider(
+                LocalActivityResultRegistryOwner provides this,
+                LocalAppLocale provides appLocale,
+                LocalContext provides this,
+                LocalConfiguration provides localizedContext.resources.configuration,
+                LocalResources provides localizedContext.resources,
+            ) {
+                IbisWalletTheme {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = DarkBackground,
+                    ) {
+                        if (isUnlocked) {
+                            IbisWalletApp(
+                                onLockApp = { isUnlocked = false },
+                                appUnlockCounter = appUnlockCounter,
+                            )
+                        } else if (isCloakActive && !cloakBypassed) {
+                            // Show calculator disguise — entering the secret code bypasses it
+                            CalculatorScreen(
+                                cloakCode = secureStorage.getCloakCode() ?: "",
+                                onUnlock = {
+                                    cloakBypassed = true
+                                    val secMethod = secureStorage.getSecurityMethod()
+                                    if (secMethod == SecureStorage.SecurityMethod.NONE) {
+                                        // No additional auth — go straight to wallet
+                                        isUnlocked = true
+                                    }
+                                    // Otherwise fall through to LockScreen on next recompose
+                                },
+                            )
+                        } else {
+                            val biometricManager = BiometricManager.from(this)
+                            val isBiometricAvailable =
+                                biometricManager.canAuthenticate(
+                                    BiometricManager.Authenticators.BIOMETRIC_STRONG,
+                                ) == BiometricManager.BIOMETRIC_SUCCESS
 
-                        LockScreen(
-                            securityMethod = secMethod,
-                            onPinEntered = { pin ->
+                            val secMethod = secureStorage.getSecurityMethod()
+                            val isDuressEnabled = secureStorage.isDuressEnabled()
+                            val isDuressWithBiometric =
+                                isDuressEnabled &&
+                                    secMethod == SecureStorage.SecurityMethod.BIOMETRIC
+
+                            LockScreen(
+                                securityMethod = secMethod,
+                                onPinEntered = { pin ->
                                 // For PIN mode: check real PIN first, then duress PIN
                                 // For BIOMETRIC mode with duress: only duress PIN works
                                 //   (real wallet accessed via biometric through the C button)
@@ -559,6 +617,7 @@ class MainActivity : FragmentActivity() {
                                         if (secureStorage.shouldAutoWipe()) {
                                             lifecycleScope.launch {
                                                 liquidViewModel.prepareForFullWipe()
+                                                sparkViewModel.prepareForFullWipe()
                                                 walletViewModel.wipeAllData {
                                                     // Kill the process to simulate a crash — no restart,
                                                     // no fresh state visible. The app simply vanishes.
@@ -569,14 +628,15 @@ class MainActivity : FragmentActivity() {
                                         false
                                     }
                                 }
-                            },
-                            onBiometricRequest = {
-                                showBiometricPrompt(isDuressWithBiometric)
-                            },
-                            isBiometricAvailable = isBiometricAvailable,
-                            randomizePinPad = secureStorage.getRandomizePinPad(),
-                            isDuressWithBiometric = isDuressWithBiometric,
-                        )
+                                },
+                                onBiometricRequest = {
+                                    showBiometricPrompt(isDuressWithBiometric)
+                                },
+                                isBiometricAvailable = isBiometricAvailable,
+                                randomizePinPad = secureStorage.getRandomizePinPad(),
+                                isDuressWithBiometric = isDuressWithBiometric,
+                            )
+                        }
                     }
                 }
             }
@@ -767,11 +827,23 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun showBiometricPrompt(autoCancelAfter2s: Boolean = false) {
+        val promptTitle =
+            if (isCloakActive) {
+                getString(R.string.biometric_prompt_authenticate)
+            } else {
+                getString(R.string.biometric_prompt_unlock_ibis_wallet)
+            }
+        val promptSubtitle =
+            if (isCloakActive) {
+                getString(R.string.biometric_prompt_verify_identity)
+            } else {
+                getString(R.string.biometric_prompt_access_wallet)
+            }
         val promptInfo =
             BiometricPrompt.PromptInfo.Builder()
-                .setTitle(if (isCloakActive) "Authenticate" else "Unlock Ibis Wallet")
-                .setSubtitle(if (isCloakActive) "Verify your identity" else "Authenticate to access your wallet")
-                .setNegativeButtonText("Use PIN")
+                .setTitle(promptTitle)
+                .setSubtitle(promptSubtitle)
+                .setNegativeButtonText(getString(R.string.loc_10459bad))
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 .build()
 

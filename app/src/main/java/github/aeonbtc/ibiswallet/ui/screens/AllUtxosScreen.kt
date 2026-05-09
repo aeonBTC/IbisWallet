@@ -1,7 +1,6 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.widget.Toast
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -38,7 +37,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -72,7 +70,6 @@ import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
-import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
@@ -80,6 +77,9 @@ import github.aeonbtc.ibiswallet.util.SecureClipboard
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.pow
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
+import androidx.compose.material3.Text
 
 @Composable
 fun AllUtxosScreen(
@@ -155,7 +155,7 @@ fun AllUtxosScreen(
                 ) {
                     Column {
                         Text(
-                            text = "Spendable",
+                            text = stringResource(R.string.loc_ba1d1a3c),
                             style = MaterialTheme.typography.labelSmall,
                             color = TextSecondary,
                         )
@@ -176,7 +176,7 @@ fun AllUtxosScreen(
 
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            text = "Frozen",
+                            text = stringResource(R.string.loc_63722213),
                             style = MaterialTheme.typography.labelSmall,
                             color = TextSecondary,
                         )
@@ -201,9 +201,17 @@ fun AllUtxosScreen(
                 Text(
                     text =
                         if (searchQuery.isBlank()) {
-                            "${localUtxos.size} UTXOs (${localUtxos.count { it.isFrozen }} frozen)"
+                            stringResource(
+                                R.string.utxo_list_summary_with_frozen,
+                                localUtxos.size,
+                                localUtxos.count { it.isFrozen },
+                            )
                         } else {
-                            "${filteredUtxos.size} matches / ${localUtxos.size} total"
+                            stringResource(
+                                R.string.utxo_list_search_matches,
+                                filteredUtxos.size,
+                                localUtxos.size,
+                            )
                         },
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
@@ -218,7 +226,7 @@ fun AllUtxosScreen(
             onValueChange = { searchQuery = it },
             placeholder = {
                 Text(
-                    text = "Search address, label, amount, txid, or outpoint",
+                    text = stringResource(R.string.loc_ff1e339d),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -235,7 +243,7 @@ fun AllUtxosScreen(
                     IconButton(onClick = { searchQuery = "" }) {
                         Icon(
                             imageVector = Icons.Default.Clear,
-                            contentDescription = "Clear",
+                            contentDescription = stringResource(R.string.loc_2470de02),
                             tint = TextSecondary,
                         )
                     }
@@ -264,7 +272,12 @@ fun AllUtxosScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = if (searchQuery.isBlank()) "No UTXOs" else "No matching UTXOs",
+                    text =
+                        if (searchQuery.isBlank()) {
+                            stringResource(R.string.loc_4bb9e286)
+                        } else {
+                            stringResource(R.string.loc_3a296c42)
+                        },
                     style = MaterialTheme.typography.bodyLarge,
                     color = TextSecondary,
                 )
@@ -309,7 +322,12 @@ fun AllUtxosScreen(
                                 // Persist the change
                                 onFreezeUtxo(currentUtxo.outpoint, newFrozenState)
                                 // Show feedback
-                                val message = if (newFrozenState) "UTXO frozen" else "UTXO unfrozen"
+                                val message =
+                                    if (newFrozenState) {
+                                        context.getString(R.string.loc_f1076a8d)
+                                    } else {
+                                        context.getString(R.string.loc_e1b46fb6)
+                                    }
                                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             }
                         },
@@ -375,8 +393,8 @@ private fun UtxoCard(
     }
     val copyStatusText =
         when {
-            showCopiedAddress -> "Address copied"
-            showCopiedOutpoint -> "Outpoint copied"
+            showCopiedAddress -> stringResource(R.string.loc_b6b10bfe)
+            showCopiedOutpoint -> stringResource(R.string.loc_0fddb7b5)
             else -> null
         }
 
@@ -407,7 +425,7 @@ private fun UtxoCard(
                     if (utxo.isFrozen) {
                         Icon(
                             imageVector = Icons.Default.AcUnit,
-                            contentDescription = "Frozen",
+                            contentDescription = stringResource(R.string.loc_63722213),
                             tint = AccentBlue,
                             modifier = Modifier.size(18.dp),
                         )
@@ -472,7 +490,7 @@ private fun UtxoCard(
                             .padding(horizontal = 8.dp, vertical = 2.dp),
                 ) {
                     Text(
-                        text = if (utxo.isConfirmed) "Confirmed" else "Pending",
+                        text = if (utxo.isConfirmed) stringResource(R.string.loc_4ab75d7f) else stringResource(R.string.loc_1b684325),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (utxo.isConfirmed) AccentGreen else BitcoinOrange,
                     )
@@ -486,24 +504,30 @@ private fun UtxoCard(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 CompactInfoRow(
-                    label = "Address",
+                    label = stringResource(R.string.loc_c2f3561d),
                     value = displayAddress,
                     copied = showCopiedAddress,
                     modifier = Modifier.weight(1f),
                     onCopy = {
-                        SecureClipboard.copyAndScheduleClear(context, "Address", utxo.address)
+                        SecureClipboard.copyAndScheduleClear(
+                            context,
+                            utxo.address,
+                        )
                         showCopiedAddress = true
                     },
                 )
 
                 CompactInfoRow(
-                    label = "Outpoint",
+                    label = stringResource(R.string.loc_cafbbb4a),
                     value = displayOutpoint,
                     copied = showCopiedOutpoint,
                     valueColor = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                     modifier = Modifier.weight(1f),
                     onCopy = {
-                        SecureClipboard.copyAndScheduleClear(context, "Outpoint", utxo.outpoint)
+                        SecureClipboard.copyAndScheduleClear(
+                            context,
+                            utxo.outpoint,
+                        )
                         showCopiedOutpoint = true
                     },
                 )
@@ -556,7 +580,7 @@ private fun UtxoCard(
                                     ) {
                                         if (labelDraft.isEmpty()) {
                                             Text(
-                                                text = "Enter label",
+                                                text = stringResource(R.string.loc_822c6f45),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = TextSecondary.copy(alpha = 0.5f),
                                             )
@@ -582,7 +606,7 @@ private fun UtxoCard(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = "Save",
+                                contentDescription = stringResource(R.string.loc_f55495e0),
                                     tint = SuccessGreen,
                                     modifier = Modifier.size(20.dp),
                                 )
@@ -617,7 +641,7 @@ private fun UtxoCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (utxo.isFrozen) "Unfreeze" else "Freeze",
+                            text = if (utxo.isFrozen) stringResource(R.string.loc_543e40ca) else stringResource(R.string.loc_413df12c),
                             color = if (utxo.isFrozen) AccentGreen else AccentBlue,
                         )
                     }
@@ -635,7 +659,7 @@ private fun UtxoCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Send",
+                            text = stringResource(R.string.loc_074195f3),
                             color = if (canSend) AccentGreen else TextSecondary,
                         )
                     }
@@ -676,7 +700,7 @@ private fun CompactInfoRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
-                    contentDescription = "Copy $label",
+                    contentDescription = stringResource(R.string.common_copy_with_label, label),
                     tint = if (copied) BitcoinOrange else TextSecondary,
                     modifier = Modifier.size(14.dp),
                 )

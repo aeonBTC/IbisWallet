@@ -71,18 +71,31 @@ import org.bitcoindevkit.Network
 import org.bitcoindevkit.WordCount
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.ui.localization.descriptionText
+import github.aeonbtc.ibiswallet.ui.localization.seedVariantLabel
+import github.aeonbtc.ibiswallet.ui.localization.titleText
 
 private const val MIN_PIN_LENGTH = 4
 private const val MAX_PIN_LENGTH = 12
 
-private enum class DuressWordCountOption(val label: String, val wordCount: WordCount) {
-    TWELVE("12 words", WordCount.WORDS12),
-    TWENTY_FOUR("24 words", WordCount.WORDS24),
+private enum class DuressWordCountOption(val wordCount: WordCount) {
+    TWELVE(WordCount.WORDS12),
+    TWENTY_FOUR(WordCount.WORDS24),
 }
 
-private enum class DuressSeedSource(val label: String) {
-    GENERATE("Generate"),
-    EXISTING("Import"),
+@Composable
+private fun DuressWordCountOption.labelText(): String =
+    when (this) {
+        DuressWordCountOption.TWELVE -> stringResource(R.string.loc_a34ad456)
+        DuressWordCountOption.TWENTY_FOUR -> stringResource(R.string.loc_4e15e68f)
+    }
+
+private enum class DuressSeedSource {
+    GENERATE,
+    EXISTING,
 }
 
 @Suppress("AssignedValueIsNeverRead")
@@ -174,24 +187,24 @@ fun SecurityScreen(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 8.dp),
+                        .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.loc_cdfc6e09),
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Security",
+                    text = stringResource(R.string.loc_3cedb797),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Security Options
             Card(
@@ -206,7 +219,7 @@ fun SecurityScreen(
                             .padding(16.dp),
                 ) {
                     Text(
-                        text = "App Lock",
+                        text = stringResource(R.string.loc_a06704d8),
                         style = MaterialTheme.typography.titleMedium,
                         color = BitcoinOrange,
                     )
@@ -242,12 +255,12 @@ fun SecurityScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             ToggleOptionText(
-                                title = "Biometric",
+                                title = stringResource(R.string.loc_922337f3),
                                 subtitle =
                                     if (isBiometricAvailable) {
-                                        "Use fingerprint or face"
+                                        stringResource(R.string.loc_b2481aa2)
                                     } else {
-                                        "Not available on this device"
+                                        stringResource(R.string.loc_3e2ca137)
                                     },
                                 titleColor =
                                     if (isBiometricAvailable) {
@@ -308,8 +321,13 @@ fun SecurityScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             ToggleOptionText(
-                                title = "PIN code",
-                                subtitle = "$MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit unlock code",
+                                title = stringResource(R.string.loc_4355b799),
+                                subtitle =
+                                    stringResource(
+                                        R.string.security_pin_unlock_code_format,
+                                        MIN_PIN_LENGTH,
+                                        MAX_PIN_LENGTH,
+                                    ),
                             )
                         }
 
@@ -332,7 +350,7 @@ fun SecurityScreen(
                         )
 
                         Text(
-                            text = "Lock Timer",
+                            text = stringResource(R.string.loc_599c7d5f),
                             style = MaterialTheme.typography.labelLarge,
                             color = TextSecondary,
                         )
@@ -370,12 +388,12 @@ fun SecurityScreen(
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 ToggleOptionText(
-                                    title = "Randomize PIN pad",
+                                    title = stringResource(R.string.loc_6e64c96f),
                                     subtitle =
                                         if (isPinEnabled) {
-                                            "Shuffle keypad digits on unlock"
+                                            stringResource(R.string.security_randomize_pin_subtitle)
                                         } else {
-                                            "Enable PIN code lock first"
+                                            stringResource(R.string.loc_a0a0bf84)
                                         },
                                     titleColor =
                                         if (isPinEnabled) {
@@ -423,7 +441,7 @@ fun SecurityScreen(
                             .padding(16.dp),
                 ) {
                     Text(
-                        text = "Duress PIN",
+                        text = stringResource(R.string.loc_b68140bc),
                         style = MaterialTheme.typography.titleMedium,
                         color = if (canEnableDuress) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f),
                     )
@@ -463,14 +481,14 @@ fun SecurityScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             ToggleOptionText(
-                                title = "Duress PIN",
+                                title = stringResource(R.string.loc_b68140bc),
                                 subtitle =
                                     if (!isSecurityActive) {
-                                        "Set up PIN or biometric to enable"
+                                        stringResource(R.string.loc_a1d57483)
                                     } else if (!hasWallet) {
-                                        "Add a wallet first"
+                                        stringResource(R.string.loc_96e7526f)
                                     } else {
-                                        "Unlock Ibis into a decoy wallet"
+                                        stringResource(R.string.loc_f6649c50)
                                     },
                                 titleColor =
                                     if (canEnableDuress) {
@@ -520,7 +538,7 @@ fun SecurityScreen(
                             .padding(16.dp),
                 ) {
                     Text(
-                        text = "Auto-Wipe",
+                        text = stringResource(R.string.loc_10bf1589),
                         style = MaterialTheme.typography.titleMedium,
                         color = if (isAutoWipeSecurityActive) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f),
                     )
@@ -551,12 +569,12 @@ fun SecurityScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             ToggleOptionText(
-                                title = "Wipe after unlock attempts",
+                                title = stringResource(R.string.loc_4e19a59a),
                                 subtitle =
                                     if (isAutoWipeSecurityActive) {
-                                        "Erase app data after failed unlock"
+                                        stringResource(R.string.loc_3bbee4d1)
                                     } else {
-                                        "Set up PIN code to enable"
+                                        stringResource(R.string.loc_560ec39d)
                                     },
                                 titleColor =
                                     if (isAutoWipeSecurityActive) {
@@ -647,7 +665,7 @@ fun SecurityScreen(
                             .padding(16.dp),
                 ) {
                     Text(
-                        text = "Cloak Mode",
+                        text = stringResource(R.string.loc_bd14b437),
                         style = MaterialTheme.typography.titleMedium,
                         color = BitcoinOrange,
                     )
@@ -681,12 +699,12 @@ fun SecurityScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             ToggleOptionText(
-                                title = "Disguise as calculator",
+                                title = stringResource(R.string.loc_127261f8),
                                 subtitle =
                                     if (isCloakModeEnabled) {
-                                        "App icon changes after restart"
+                                        stringResource(R.string.loc_72808e02)
                                     } else {
-                                        "Hide Ibis behind a calculator app"
+                                        stringResource(R.string.loc_5d688c9a)
                                     },
                             )
                         }
@@ -740,8 +758,8 @@ fun SecurityScreen(
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             ToggleOptionText(
-                                title = "Disable Screenshots",
-                                subtitle = "Blocks screenshots and app previews",
+                                title = stringResource(R.string.loc_714c3012),
+                                subtitle = stringResource(R.string.loc_0d6a729c),
                             )
                         }
 
@@ -760,9 +778,9 @@ fun SecurityScreen(
         if (showDisableCloakDialog) {
             IbisConfirmDialog(
                 onDismissRequest = { showDisableCloakDialog = false },
-                title = "Disable Cloak Mode?",
-                message = "The app icon will revert to Ibis Wallet after restart. You may need to re-add the homescreen shortcut.",
-                confirmText = "Disable",
+                title = stringResource(R.string.loc_3139ebdd),
+                message = stringResource(R.string.loc_aa09917b),
+                confirmText = stringResource(R.string.loc_80f874cd),
                 confirmColor = ErrorRed,
                 onConfirm = {
                     onDisableCloakMode()
@@ -776,14 +794,14 @@ fun SecurityScreen(
         if (showCloakRestartDialog) {
             IbisConfirmDialog(
                 onDismissRequest = { showCloakRestartDialog = false },
-                title = "Restart Required",
-                message = "Restart the app to activate cloak mode.\n\nEnter your cloak pin in the calculator app and press the '=' key to unlock.",
-                confirmText = "Restart",
+                title = stringResource(R.string.loc_2a9da994),
+                message = stringResource(R.string.security_cloak_restart_message),
+                confirmText = stringResource(R.string.loc_28441b9b),
                 onConfirm = {
                     showCloakRestartDialog = false
                     onRestartApp()
                 },
-                dismissText = "Later",
+                dismissText = stringResource(R.string.loc_2dc29d4d),
             )
         }
 
@@ -791,9 +809,9 @@ fun SecurityScreen(
         if (showDisableDuressDialog) {
             IbisConfirmDialog(
                 onDismissRequest = { showDisableDuressDialog = false },
-                title = "Disable Duress PIN?",
-                message = "The decoy wallet will be removed.",
-                confirmText = "Disable",
+                title = stringResource(R.string.loc_4b582481),
+                message = stringResource(R.string.loc_cd305fb8),
+                confirmText = stringResource(R.string.loc_80f874cd),
                 confirmColor = ErrorRed,
                 onConfirm = {
                     onDisableDuress()
@@ -806,8 +824,8 @@ fun SecurityScreen(
         if (showAutoWipeConfirmDialog) {
             IbisConfirmDialog(
                 onDismissRequest = { showAutoWipeConfirmDialog = false },
-                title = "Enable Auto-Wipe?",
-                confirmText = "Enable",
+                title = stringResource(R.string.loc_5e0c0f5b),
+                confirmText = stringResource(R.string.loc_f40ccd04),
                 confirmColor = ErrorRed,
                 onConfirm = {
                     onAutoWipeThresholdChange(SecureStorage.AutoWipeThreshold.AFTER_10)
@@ -816,12 +834,12 @@ fun SecurityScreen(
                 body = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "All wallet data will be permanently erased after repeated failed unlock attempts. This cannot be undone.",
+                            text = stringResource(R.string.loc_f7b9c073),
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary,
                         )
                         Text(
-                            text = "Make sure your seed phrases are backed up. Without a backup, your funds will be lost permanently.",
+                            text = stringResource(R.string.loc_5ed5bb5d),
                             style = MaterialTheme.typography.bodyMedium,
                             color = ErrorRed,
                         )
@@ -834,9 +852,9 @@ fun SecurityScreen(
         if (showDisableConfirmDialog) {
             IbisConfirmDialog(
                 onDismissRequest = { showDisableConfirmDialog = false },
-                title = "Disable Security?",
-                message = "Anyone with access to your device will be able to open the app.",
-                confirmText = "Disable",
+                title = stringResource(R.string.loc_c47ba42d),
+                message = stringResource(R.string.loc_38a084fc),
+                confirmText = stringResource(R.string.loc_80f874cd),
                 confirmColor = ErrorRed,
                 onConfirm = {
                     onDisableSecurity()
@@ -890,7 +908,7 @@ private fun PinSetupScreen(
                 }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.loc_cdfc6e09),
                         tint = MaterialTheme.colorScheme.onBackground,
                     )
                 }
@@ -900,7 +918,12 @@ private fun PinSetupScreen(
 
             // Title
             Text(
-                text = if (step == 1) "Create PIN" else "Confirm PIN",
+                text =
+                    if (step == 1) {
+                        stringResource(R.string.loc_40a878b7)
+                    } else {
+                        stringResource(R.string.loc_c3d36da0)
+                    },
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -910,8 +933,13 @@ private fun PinSetupScreen(
             Text(
                 text =
                     when {
-                        step == 1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
-                        else -> "Enter the PIN again to confirm"
+                        step == 1 ->
+                            stringResource(
+                                R.string.security_enter_pin_range_format,
+                                MIN_PIN_LENGTH,
+                                MAX_PIN_LENGTH,
+                            )
+                        else -> stringResource(R.string.loc_c3c70203)
                     },
                 style = MaterialTheme.typography.titleMedium,
                 color = TextSecondary,
@@ -1061,7 +1089,7 @@ private fun PinNumberPad(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Filled.Backspace,
-                                    contentDescription = "Backspace",
+                                    contentDescription = stringResource(R.string.loc_3d1100cc),
                                     tint = TextSecondary,
                                     modifier = Modifier.size(26.dp),
                                 )
@@ -1124,6 +1152,15 @@ private fun PinNumberPad(
     }
 }
 
+@Composable
+private fun lockTimingLabel(timing: SecureStorage.LockTiming): String =
+    when (timing) {
+        SecureStorage.LockTiming.DISABLED -> stringResource(R.string.loc_7d880cb5)
+        SecureStorage.LockTiming.WHEN_MINIMIZED -> stringResource(R.string.security_lock_timing_when_minimized)
+        SecureStorage.LockTiming.AFTER_1_MIN -> stringResource(R.string.security_lock_timing_after_1_min)
+        SecureStorage.LockTiming.AFTER_5_MIN -> stringResource(R.string.security_lock_timing_after_5_min)
+    }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LockTimingDropdown(
@@ -1137,7 +1174,7 @@ private fun LockTimingDropdown(
         onExpandedChange = { expanded = it },
     ) {
         OutlinedTextField(
-            value = currentTiming.displayName,
+            value = lockTimingLabel(currentTiming),
             onValueChange = {},
             readOnly = true,
             modifier =
@@ -1171,7 +1208,7 @@ private fun LockTimingDropdown(
                 DropdownMenuItem(
                     text = {
                         Text(
-                            text = timing.displayName,
+                            text = lockTimingLabel(timing),
                             style = MaterialTheme.typography.titleMedium,
                             color =
                                 if (timing == currentTiming) {
@@ -1189,7 +1226,7 @@ private fun LockTimingDropdown(
                         if (timing == currentTiming) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
@@ -1231,7 +1268,7 @@ private sealed class DuressMnemonicValidation {
 
     data class ValidElectrum(val seedType: ElectrumSeedUtil.ElectrumSeedType) : DuressMnemonicValidation()
 
-    data class Invalid(val error: String) : DuressMnemonicValidation()
+    data object Invalid : DuressMnemonicValidation()
 }
 
 /**
@@ -1441,7 +1478,7 @@ private fun DuressSetupScreen(
                     if (electrumType != null) {
                         DuressMnemonicValidation.ValidElectrum(electrumType)
                     } else {
-                        DuressMnemonicValidation.Invalid("Invalid checksum")
+                        DuressMnemonicValidation.Invalid
                     }
                 }
             } else {
@@ -1572,7 +1609,7 @@ private fun DuressSetupScreen(
                     }) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.loc_cdfc6e09),
                             tint = MaterialTheme.colorScheme.onBackground,
                         )
                     }
@@ -1581,7 +1618,12 @@ private fun DuressSetupScreen(
                 Spacer(modifier = Modifier.height(18.dp))
 
                 Text(
-                    text = if (step == 1) "Create Duress PIN" else "Confirm Duress PIN",
+                    text =
+                        if (step == 1) {
+                            stringResource(R.string.loc_e6b56697)
+                        } else {
+                            stringResource(R.string.loc_66399ff4)
+                        },
                     style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
@@ -1591,8 +1633,13 @@ private fun DuressSetupScreen(
                 Text(
                     text =
                         when (step) {
-                            1 -> "Enter a $MIN_PIN_LENGTH\u2013$MAX_PIN_LENGTH digit PIN"
-                            else -> "Enter the PIN again to confirm"
+                            1 ->
+                                stringResource(
+                                    R.string.security_enter_pin_range_format,
+                                    MIN_PIN_LENGTH,
+                                    MAX_PIN_LENGTH,
+                                )
+                            else -> stringResource(R.string.loc_c3c70203)
                         },
                     style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
@@ -1601,7 +1648,7 @@ private fun DuressSetupScreen(
                 if (currentSecurityMethod == SecureStorage.SecurityMethod.BIOMETRIC) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "To trigger biometric unlock, press 'C' on the lock screen PIN pad",
+                        text = stringResource(R.string.loc_e624c41d),
                         style = MaterialTheme.typography.bodyMedium,
                         color = ErrorRed,
                         textAlign = TextAlign.Center,
@@ -1747,12 +1794,12 @@ private fun DuressSetupScreen(
                 }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.loc_cdfc6e09),
                     )
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Decoy Wallet Setup",
+                    text = stringResource(R.string.loc_ad46d69f),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
@@ -1772,13 +1819,13 @@ private fun DuressSetupScreen(
                             .padding(16.dp),
                 ) {
                     Text(
-                        text = "Wallet Details",
+                        text = stringResource(R.string.loc_748eece4),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Seed Source",
+                        text = stringResource(R.string.loc_d9194d2d),
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
@@ -1789,7 +1836,11 @@ private fun DuressSetupScreen(
                     ) {
                         DuressSeedSource.entries.forEach { option ->
                             DuressSegmentButton(
-                                text = option.label,
+                                text =
+                                    when (option) {
+                                        DuressSeedSource.GENERATE -> stringResource(R.string.loc_027001ed)
+                                        DuressSeedSource.EXISTING -> stringResource(R.string.loc_9ae2cb2b)
+                                    },
                                 isSelected = seedSource == option,
                                 onClick = { seedSource = option },
                                 modifier = Modifier.weight(1f),
@@ -1798,7 +1849,7 @@ private fun DuressSetupScreen(
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Wallet Name",
+                        text = stringResource(R.string.loc_6e9ddcf4),
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
@@ -1810,7 +1861,7 @@ private fun DuressSetupScreen(
                         singleLine = true,
                         placeholder = {
                             Text(
-                                text = "Wallet",
+                                text = stringResource(R.string.loc_7bc49729),
                                 color = TextSecondary.copy(alpha = 0.5f),
                             )
                         },
@@ -1826,7 +1877,7 @@ private fun DuressSetupScreen(
                     )
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "Address Type",
+                        text = stringResource(R.string.loc_3213841a),
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
@@ -1845,7 +1896,7 @@ private fun DuressSetupScreen(
                                         !(isBitcoinAddress && detectedAddressType != null && addressType != detectedAddressType)
                                 }
                             DuressSegmentButton(
-                                text = addressType.displayName,
+                                text = addressType.titleText(),
                                 isSelected = selectedAddressType == addressType,
                                 onClick = { selectedAddressType = addressType },
                                 enabled = enabled,
@@ -1855,7 +1906,7 @@ private fun DuressSetupScreen(
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = selectedAddressType.description,
+                        text = selectedAddressType.descriptionText(),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                     )
@@ -1877,7 +1928,7 @@ private fun DuressSetupScreen(
                                 .padding(16.dp),
                     ) {
                         Text(
-                            text = "Generate Seed Phrase",
+                            text = stringResource(R.string.loc_e3b008f1),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -1888,7 +1939,7 @@ private fun DuressSetupScreen(
                         ) {
                             DuressWordCountOption.entries.forEach { option ->
                                 DuressSegmentButton(
-                                    text = option.label,
+                                    text = option.labelText(),
                                     isSelected = selectedWordCount == option.wordCount,
                                     onClick = { selectedWordCount = option.wordCount },
                                     modifier = Modifier.weight(1f),
@@ -1915,7 +1966,7 @@ private fun DuressSetupScreen(
                                     ),
                             ) {
                                 Text(
-                                    text = "Generate Seed Phrase",
+                                    text = stringResource(R.string.loc_e3b008f1),
                                     style = MaterialTheme.typography.titleMedium,
                                 )
                             }
@@ -1939,13 +1990,13 @@ private fun DuressSetupScreen(
                                         verticalAlignment = Alignment.Top,
                                     ) {
                                         Text(
-                                            text = "Decoy Seed Phrase",
+                                            text = stringResource(R.string.loc_47bc3f78),
                                             style = MaterialTheme.typography.titleSmall,
                                             color = MaterialTheme.colorScheme.onBackground,
                                         )
                                         generatedFingerprint?.let { fp ->
                                             Text(
-                                                text = "Fingerprint: $fp",
+                                                text = stringResource(R.string.common_fingerprint_format, fp),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = BitcoinOrange,
                                             )
@@ -1962,7 +2013,7 @@ private fun DuressSetupScreen(
                                         OutlinedIconButton(
                                             onClick = {
                                                 generatedSeedPhrase?.let {
-                                                    SecureClipboard.copyAndScheduleClear(context, "Mnemonic", it)
+                                                    SecureClipboard.copyAndScheduleClear(context, it)
                                                     copiedGeneratedSeed = true
                                                 }
                                             },
@@ -2001,7 +2052,7 @@ private fun DuressSetupScreen(
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Default.Refresh,
-                                                    contentDescription = "Regenerate seed phrase",
+                                                    contentDescription = stringResource(R.string.loc_7c63b77c),
                                                     tint = TextSecondary,
                                                     modifier = Modifier.size(20.dp),
                                                 )
@@ -2031,7 +2082,7 @@ private fun DuressSetupScreen(
                                         ),
                                 )
                                 Text(
-                                    text = "I have backed up my seed phrase",
+                                    text = stringResource(R.string.loc_77aacbaf),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -2057,7 +2108,7 @@ private fun DuressSetupScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "Import",
+                                text = stringResource(R.string.loc_9ae2cb2b),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
@@ -2124,7 +2175,7 @@ private fun DuressSetupScreen(
                                         .height(120.dp),
                                 placeholder = {
                                     Text(
-                                        text = "BIP39 seed, Electrum seed, WIF private key, xpub/zpub, or address",
+                                        text = stringResource(R.string.loc_16bd0da2),
                                         color = TextSecondary,
                                     )
                                 },
@@ -2171,7 +2222,7 @@ private fun DuressSetupScreen(
                             }
                             isJsonFormat -> {
                                 Text(
-                                    text = "JSON wallet export detected",
+                                    text = stringResource(R.string.loc_d5fabbff),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = AccentTeal,
                                 )
@@ -2190,7 +2241,7 @@ private fun DuressSetupScreen(
                             }
                             isOriginPrefixed -> {
                                 Text(
-                                    text = "Watch-only with key origin",
+                                    text = stringResource(R.string.loc_c8579cd6),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = AccentTeal,
                                 )
@@ -2198,14 +2249,14 @@ private fun DuressSetupScreen(
                             isWatchOnly -> {
                                 Column {
                                     Text(
-                                        text = "Watch-only wallet",
+                                        text = stringResource(R.string.loc_9dec0f67),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = AccentTeal,
                                     )
                                     if (isExtendedKey && !hasEmbeddedFingerprint) {
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
-                                            text = "Set a master fingerprint for better hardware wallet PSBT compatibility.",
+                                            text = stringResource(R.string.loc_396e66e1),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = BitcoinOrange,
                                         )
@@ -2214,43 +2265,48 @@ private fun DuressSetupScreen(
                             }
                             isWifKey -> {
                                 Text(
-                                    text = "WIF private key detected",
+                                    text = stringResource(R.string.loc_517ece75),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = SuccessGreen,
                                 )
                             }
                             isBitcoinAddress -> {
                                 Text(
-                                    text = "Watch address (${detectedAddressType?.displayName ?: ""})",
+                                    text = stringResource(R.string.loc_541ee340),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = AccentTeal,
                                 )
                             }
                             isExtendedKey && !isWatchOnly -> {
                                 Text(
-                                    text = "Extended private key",
+                                    text = stringResource(R.string.loc_85e5fba3),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = BitcoinOrange,
                                 )
                             }
                             mnemonicValidation is DuressMnemonicValidation.ValidElectrum -> {
-                                val seedLabel = mnemonicValidation.seedType.label
+                                val seedLabel = mnemonicValidation.seedType.seedVariantLabel()
                                 Text(
-                                    text = "Electrum $seedLabel seed ($wordCount words)",
+                                    text =
+                                        stringResource(
+                                            R.string.common_electrum_seed_format,
+                                            seedLabel,
+                                            wordCount,
+                                        ),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = SuccessGreen,
                                 )
                             }
                             isValidImportMnemonic -> {
                                 Text(
-                                    text = "Valid BIP39 seed phrase",
+                                    text = stringResource(R.string.loc_e7f0104f),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = SuccessGreen,
                                 )
                             }
                             mnemonicValidation is DuressMnemonicValidation.Invalid -> {
                                 Text(
-                                    text = mnemonicValidation.error,
+                                    text = stringResource(R.string.loc_964abaa1),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = ErrorRed,
                                 )
@@ -2260,7 +2316,7 @@ private fun DuressSetupScreen(
                         parsedFingerprint?.let { fp ->
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Fingerprint: $fp",
+                                text = stringResource(R.string.common_fingerprint_format, fp),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = BitcoinOrange,
                             )
@@ -2291,7 +2347,7 @@ private fun DuressSetupScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "Advanced Options",
+                                text = stringResource(R.string.loc_20a1d916),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
@@ -2350,7 +2406,7 @@ private fun DuressSetupScreen(
                                                 ),
                                         )
                                         Text(
-                                            text = "Set Master Fingerprint",
+                                            text = stringResource(R.string.loc_a7557fbf),
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onBackground,
                                         )
@@ -2377,7 +2433,7 @@ private fun DuressSetupScreen(
                                                         .padding(start = 12.dp),
                                                 placeholder = {
                                                     Text(
-                                                        "00000000",
+                                                        stringResource(R.string.loc_70352f41),
                                                         color = TextSecondary.copy(alpha = 0.5f),
                                                     )
                                                 },
@@ -2395,7 +2451,7 @@ private fun DuressSetupScreen(
                                             )
                                             if (masterFingerprint.isNotEmpty() && masterFingerprint.length != 8) {
                                                 Text(
-                                                    text = "Must be exactly 8 hex characters",
+                                                    text = stringResource(R.string.loc_161165a5),
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = ErrorRed,
                                                     modifier = Modifier.padding(start = 12.dp),
@@ -2428,7 +2484,7 @@ private fun DuressSetupScreen(
                                     enabled = !(seedSource == DuressSeedSource.EXISTING && isExtendedKey),
                                 )
                                 Text(
-                                    text = "BIP39 Passphrase",
+                                    text = stringResource(R.string.loc_75923525),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color =
                                         if (seedSource == DuressSeedSource.EXISTING && isExtendedKey) {
@@ -2455,7 +2511,7 @@ private fun DuressSetupScreen(
                                                 .padding(start = 12.dp),
                                         placeholder = {
                                             Text(
-                                                "Enter passphrase",
+                                                stringResource(R.string.loc_e8a4f395),
                                                 color = TextSecondary.copy(alpha = 0.5f),
                                             )
                                         },
@@ -2519,7 +2575,7 @@ private fun DuressSetupScreen(
                                         ),
                                 )
                                 Text(
-                                    text = "Custom Derivation Path",
+                                    text = stringResource(R.string.loc_01fca34c),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -2544,7 +2600,7 @@ private fun DuressSetupScreen(
                                         ),
                                 )
                                 Text(
-                                    text = "Custom Gap Limit",
+                                    text = stringResource(R.string.loc_894dedef),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -2578,7 +2634,7 @@ private fun DuressSetupScreen(
                                         isError = gapLimitText.isNotEmpty() && !gapLimitValid,
                                         supportingText = {
                                             Text(
-                                                "Default: ${StoredWallet.DEFAULT_GAP_LIMIT}. Scan limit for empty addresses (1–10000)",
+                                                "Default: ${StoredWallet.DEFAULT_GAP_LIMIT}. Scan limit for empty addresses (1-10000)",
                                                 color = TextSecondary.copy(alpha = 0.5f),
                                             )
                                         },
@@ -2629,7 +2685,11 @@ private fun DuressSetupScreen(
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "Default: ${selectedAddressType.defaultPath}",
+                                        text =
+                                            stringResource(
+                                                R.string.common_default_format,
+                                                selectedAddressType.defaultPath,
+                                            ),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary.copy(alpha = 0.7f),
                                         modifier = Modifier.padding(start = 12.dp),
@@ -2704,7 +2764,7 @@ private fun DuressSetupScreen(
                     ),
             ) {
                 Text(
-                    text = "Enable Duress PIN",
+                    text = stringResource(R.string.loc_189d09c6),
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
@@ -2864,7 +2924,7 @@ private fun CloakCodeSetupScreen(
                 }) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back",
+                        contentDescription = stringResource(R.string.loc_cdfc6e09),
                         tint = MaterialTheme.colorScheme.onBackground,
                     )
                 }
@@ -2873,7 +2933,12 @@ private fun CloakCodeSetupScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = if (step == 1) "Set Unlock Pin" else "Confirm Unlock Pin",
+                text =
+                    if (step == 1) {
+                        stringResource(R.string.loc_bbc273c5)
+                    } else {
+                        stringResource(R.string.loc_b02d0f6b)
+                    },
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -2881,7 +2946,7 @@ private fun CloakCodeSetupScreen(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Enter a $MIN_CLOAK_CODE_LENGTH\u2013$MAX_CLOAK_CODE_LENGTH digit pin for cloak mode",
+                text = stringResource(R.string.loc_1d1e82ec),
                 style = MaterialTheme.typography.titleMedium,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,
@@ -2890,7 +2955,7 @@ private fun CloakCodeSetupScreen(
             Spacer(modifier = Modifier.height(6.dp))
 
             Text(
-                text = "Enter this pin in the calculator app and press the '=' key to unlock",
+                text = stringResource(R.string.loc_75f1a5fd),
                 style = MaterialTheme.typography.bodyMedium,
                 color = ErrorRed,
                 textAlign = TextAlign.Center,

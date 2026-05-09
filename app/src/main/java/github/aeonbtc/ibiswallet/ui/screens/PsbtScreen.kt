@@ -53,7 +53,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -92,13 +91,16 @@ import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
 import github.aeonbtc.ibiswallet.viewmodel.PsbtState
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
+import androidx.compose.material3.Text
 
 /**
- * PSBT export and signing flow screen for watch-only wallets.
+ * PSBT export and signing flow screen for watch-only and multisig wallets.
  *
  * Three-phase flow:
- * 1. Display unsigned PSBT as animated QR code for hardware wallet to scan
- * 2. Scan the signed PSBT/raw transaction back from the hardware wallet
+ * 1. Display unsigned or partially signed PSBT as animated QR code
+ * 2. Scan signed/partial PSBT or raw transaction back into the wallet
  * 3. Confirm transaction details before broadcasting
  */
 private enum class PsbtQrExportFormat {
@@ -111,14 +113,18 @@ private data class BbqrVersionRange(
     val maxVersion: Int,
 )
 
-private val OPTIMAL_BCUR_PLAYBACK_SPEED = SecureStorage.QrPlaybackSpeed.FAST
-private const val OPTIMAL_BBQR_FRAME_DELAY_MS = 220L
-
 private fun resolvePsbtBbqrVersionRange(density: SecureStorage.QrDensity): BbqrVersionRange =
     when (density) {
         SecureStorage.QrDensity.LOW -> BbqrVersionRange(minVersion = 8, maxVersion = 12)
         SecureStorage.QrDensity.MEDIUM -> BbqrVersionRange(minVersion = 8, maxVersion = 14)
         SecureStorage.QrDensity.HIGH -> BbqrVersionRange(minVersion = 10, maxVersion = 18)
+    }
+
+private fun resolvePsbtBbqrFrameDelayMs(density: SecureStorage.QrDensity): Long =
+    when (density) {
+        SecureStorage.QrDensity.LOW -> 300L
+        SecureStorage.QrDensity.MEDIUM -> 340L
+        SecureStorage.QrDensity.HIGH -> 380L
     }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -216,7 +222,7 @@ fun PsbtScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Build PSBT",
+                        text = stringResource(R.string.loc_1959e119),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 },
@@ -259,7 +265,21 @@ fun PsbtScreen(
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
-                        text = "Creating PSBT...",
+                        text = stringResource(R.string.loc_b6d2470a),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = TextSecondary,
+                    )
+                }
+
+                psbtState.isCombining -> {
+                    Spacer(modifier = Modifier.height(80.dp))
+                    CircularProgressIndicator(
+                        color = BitcoinOrange,
+                        modifier = Modifier.size(48.dp),
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = stringResource(R.string.loc_e44c4bc5),
                         style = MaterialTheme.typography.bodyLarge,
                         color = TextSecondary,
                     )
@@ -306,7 +326,12 @@ fun PsbtScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "Step 1: Export Unsigned PSBT",
+                                text =
+                                    if (psbtState.requiredSignatures != null) {
+                                        "Export Partial PSBT"
+                                    } else {
+                                        "Step 1: Export Unsigned PSBT"
+                                    },
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground,
@@ -315,13 +340,32 @@ fun PsbtScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
-                                text = "Scan or save PSBT for signing.",
+                                text =
+                                    if (psbtState.requiredSignatures != null) {
+                                        "Pass this PSBT to the next signer."
+                                    } else {
+                                        "Scan or save PSBT for signing."
+                                    },
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,
                             )
 
                             Spacer(modifier = Modifier.height(16.dp))
+
+                            psbtState.requiredSignatures?.let { required ->
+                                Text(
+                                    text = "Signatures: ${psbtState.presentSignatures}/$required",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color =
+                                        if (psbtState.isReadyToBroadcast) {
+                                            BitcoinOrange
+                                        } else {
+                                            TextSecondary
+                                        },
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
 
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -371,12 +415,19 @@ fun PsbtScreen(
                                                 exportProfile = AnimatedQrExportProfile.BITCOIN_PSBT,
                                             )
 
-                                        AnimatedQrCode(
-                                            encodingPlan = qrEncodingPlan,
-                                            qrSize = exportQrSize,
-                                            brightness = qrBrightness,
-                                            playbackSpeed = OPTIMAL_BCUR_PLAYBACK_SPEED,
-                                        )
+                                        if (qrEncodingPlan != null) {
+                                            AnimatedQrCode(
+                                                encodingPlan = qrEncodingPlan,
+                                                qrSize = exportQrSize,
+                                                brightness = qrBrightness,
+                                            )
+                                        } else {
+                                            Text(
+                                                text = stringResource(R.string.loc_fb52d8a9),
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = TextSecondary,
+                                            )
+                                        }
                                     }
 
                                     PsbtQrExportFormat.BBQR -> {
@@ -384,7 +435,7 @@ fun PsbtScreen(
                                             AnimatedQrCodeBytes(
                                                 data = psbtBytes,
                                                 qrSize = exportQrSize,
-                                                frameDelayMs = OPTIMAL_BBQR_FRAME_DELAY_MS,
+                                                frameDelayMs = resolvePsbtBbqrFrameDelayMs(qrDensity),
                                                 fileType = Bbqr.FILE_TYPE_PSBT,
                                                 brightness = qrBrightness,
                                                 minVersion = bbqrVersionRange.minVersion,
@@ -404,7 +455,13 @@ fun PsbtScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = {
-                                        savePsbtLauncher.launch("unsigned.psbt")
+                                        val fileName =
+                                            if (psbtState.requiredSignatures != null) {
+                                                "partial.psbt"
+                                            } else {
+                                                "unsigned.psbt"
+                                            }
+                                        savePsbtLauncher.launch(fileName)
                                     },
                                     shape = RoundedCornerShape(8.dp),
                                     border = BorderStroke(1.dp, BorderColor),
@@ -417,7 +474,7 @@ fun PsbtScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Save File",
+                                        text = stringResource(R.string.loc_aa3edbf6),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = TextSecondary,
                                     )
@@ -429,7 +486,6 @@ fun PsbtScreen(
                                     onClick = {
                                         SecureClipboard.copyAndScheduleClear(
                                             context,
-                                            "PSBT",
                                             signerExportPsbtBase64,
                                         )
                                         Toast.makeText(context, "PSBT copied", Toast.LENGTH_SHORT).show()
@@ -445,7 +501,7 @@ fun PsbtScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Copy PSBT",
+                                        text = stringResource(R.string.loc_02e71d7c),
                                         style = MaterialTheme.typography.labelMedium,
                                         color = TextSecondary,
                                     )
@@ -469,7 +525,7 @@ fun PsbtScreen(
                                         .padding(16.dp),
                             ) {
                                 Text(
-                                    text = "Transaction Details",
+                                    text = stringResource(R.string.loc_98c5fbdc),
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onBackground,
@@ -527,7 +583,7 @@ fun PsbtScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "Step 2: Import Signed PSBT",
+                                text = stringResource(R.string.loc_a413cd58),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground,
@@ -536,7 +592,7 @@ fun PsbtScreen(
                             Spacer(modifier = Modifier.height(4.dp))
 
                             Text(
-                                text = "Scan or load signed PSBT for broadcasting.",
+                                text = stringResource(R.string.loc_85833e18),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,
@@ -564,7 +620,12 @@ fun PsbtScreen(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Scan QR",
+                                    text =
+                                        if (psbtState.requiredSignatures != null) {
+                                            "Import Partial"
+                                        } else {
+                                            "Scan QR"
+                                        },
                                     style = MaterialTheme.typography.titleMedium,
                                 )
                             }
@@ -595,7 +656,12 @@ fun PsbtScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Load File",
+                                        text =
+                                            if (psbtState.requiredSignatures != null) {
+                                                "Load Partial"
+                                            } else {
+                                                "Load File"
+                                            },
                                         style = MaterialTheme.typography.labelLarge,
                                         color = TextSecondary,
                                     )
@@ -618,7 +684,7 @@ fun PsbtScreen(
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text = "Paste",
+                                        text = stringResource(R.string.loc_5d97579c),
                                         style = MaterialTheme.typography.labelLarge,
                                         color = TextSecondary,
                                     )
@@ -628,7 +694,7 @@ fun PsbtScreen(
                             if (!uiState.isConnected) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Connect to Electrum to broadcast",
+                                    text = stringResource(R.string.loc_61673a2c),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary,
                                 )
@@ -677,7 +743,7 @@ fun PsbtScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "Failed to Create PSBT",
+                                text = stringResource(R.string.loc_5a0b70fc),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = ErrorRed,
@@ -723,7 +789,7 @@ private fun BroadcastConfirmation(
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Text(
-                text = "Confirm Broadcast",
+                text = stringResource(R.string.loc_c1c941b3),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -732,7 +798,7 @@ private fun BroadcastConfirmation(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Signed transaction received. Review and confirm to broadcast.",
+                text = stringResource(R.string.loc_3d3785e2),
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,
@@ -798,7 +864,7 @@ private fun BroadcastConfirmation(
                     ),
             ) {
                 Text(
-                    text = "Broadcast Transaction",
+                    text = stringResource(R.string.loc_f45861d1),
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
@@ -806,7 +872,7 @@ private fun BroadcastConfirmation(
             if (!uiState.isConnected) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Connect to Electrum to broadcast",
+                    text = stringResource(R.string.loc_61673a2c),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                 )
@@ -825,7 +891,7 @@ private fun BroadcastConfirmation(
                 border = BorderStroke(1.dp, BorderColor),
             ) {
                 Text(
-                    text = "Cancel",
+                    text = stringResource(R.string.loc_51bac044),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
                 )
@@ -884,7 +950,7 @@ private fun PasteSignedTransactionDialog(
                         .padding(20.dp),
             ) {
                 Text(
-                    text = "Paste Signed Transaction",
+                    text = stringResource(R.string.loc_ea6d758a),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -893,7 +959,7 @@ private fun PasteSignedTransactionDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = "Paste signed PSBT base64 or raw transaction hex",
+                    text = stringResource(R.string.loc_07fafe3b),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                 )
@@ -912,7 +978,7 @@ private fun PasteSignedTransactionDialog(
                                 .height(150.dp),
                         placeholder = {
                             Text(
-                                "Signed PSBT or raw tx hex",
+                                stringResource(R.string.loc_460573b5),
                                 color = TextSecondary.copy(alpha = 0.6f),
                             )
                         },
@@ -937,7 +1003,7 @@ private fun PasteSignedTransactionDialog(
                     horizontalArrangement = Arrangement.End,
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = TextSecondary)
+                        Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
                     }
 
                     Spacer(modifier = Modifier.width(8.dp))
@@ -952,7 +1018,7 @@ private fun PasteSignedTransactionDialog(
                                 contentColor = DarkBackground,
                             ),
                     ) {
-                        Text("Submit")
+                        Text(stringResource(R.string.loc_389db675))
                     }
                 }
             }
@@ -1192,13 +1258,13 @@ private fun QrBrightnessSlider(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "QR Brightness",
+                text = stringResource(R.string.loc_f8155e77),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Medium,
                 color = MaterialTheme.colorScheme.onBackground,
             )
             Text(
-                text = "${(brightness * 100).toInt()}%",
+                text = stringResource(R.string.loc_0dd3b9b2),
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
             )

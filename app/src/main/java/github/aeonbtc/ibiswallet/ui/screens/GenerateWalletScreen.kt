@@ -45,7 +45,6 @@ import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,6 +63,9 @@ import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.localization.descriptionText
+import github.aeonbtc.ibiswallet.ui.localization.localizedTitle
+import github.aeonbtc.ibiswallet.ui.localization.titleText
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
@@ -82,6 +84,9 @@ import org.bitcoindevkit.KeychainKind
 import org.bitcoindevkit.Mnemonic
 import org.bitcoindevkit.Network
 import org.bitcoindevkit.WordCount
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -162,8 +167,8 @@ fun GenerateWalletScreen(
 
     // Auto-generate wallet name based on address type with incremental suffix
     val autoWalletName =
-        remember(selectedAddressType, existingWalletNames) {
-            val base = selectedAddressType.displayName
+        remember(selectedAddressType, existingWalletNames, context) {
+            val base = selectedAddressType.localizedTitle(context)
             val count =
                 existingWalletNames.count { name ->
                     name == base || name.matches(Regex("${Regex.escape(base)}_(\\d+)"))
@@ -192,12 +197,12 @@ fun GenerateWalletScreen(
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Generate Wallet",
+                text = stringResource(R.string.loc_6227ec5e),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -219,13 +224,13 @@ fun GenerateWalletScreen(
             ) {
                 // Wallet Name
                 Text(
-                    text = "Wallet Details",
+                    text = stringResource(R.string.loc_748eece4),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Wallet Name",
+                    text = stringResource(R.string.loc_6e9ddcf4),
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -251,7 +256,7 @@ fun GenerateWalletScreen(
 
                 // Address Type
                 Text(
-                    text = "Address Type",
+                    text = stringResource(R.string.loc_3213841a),
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -271,7 +276,7 @@ fun GenerateWalletScreen(
                 }
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = selectedAddressType.description,
+                    text = selectedAddressType.descriptionText(),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                 )
@@ -293,7 +298,7 @@ fun GenerateWalletScreen(
                         .padding(16.dp),
             ) {
                 Text(
-                    text = "Generate Seed Phrase",
+                    text = stringResource(R.string.loc_e3b008f1),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
@@ -304,7 +309,7 @@ fun GenerateWalletScreen(
                 ) {
                     WordCountOption.entries.forEach { option ->
                         GenerateSegmentButton(
-                            text = option.label,
+                            text = option.labelText(),
                             isSelected = selectedWordCount == option.wordCount,
                             onClick = {
                                 selectedWordCount = option.wordCount
@@ -325,7 +330,7 @@ fun GenerateWalletScreen(
                                 .height(48.dp),
                     ) {
                         Text(
-                            text = "Generate Seed Phrase",
+                            text = stringResource(R.string.loc_e3b008f1),
                             style = MaterialTheme.typography.titleMedium,
                         )
                     }
@@ -349,13 +354,13 @@ fun GenerateWalletScreen(
                                 verticalAlignment = Alignment.Top,
                             ) {
                                 Text(
-                                    text = "Your Seed Phrase",
+                                    text = stringResource(R.string.loc_0c25a130),
                                     style = MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
                                 derivedFingerprint?.let { fp ->
                                     Text(
-                                        text = "Fingerprint: $fp",
+                                        text = stringResource(R.string.common_fingerprint_format, fp),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = BitcoinOrange,
                                     )
@@ -374,7 +379,10 @@ fun GenerateWalletScreen(
                                 OutlinedIconButton(
                                     onClick = {
                                         generatedMnemonic?.let {
-                                            SecureClipboard.copyAndScheduleClear(context, "Mnemonic", it)
+                                            SecureClipboard.copyAndScheduleClear(
+                                                context,
+                                                it,
+                                            )
                                             copied = true
                                         }
                                     },
@@ -388,7 +396,12 @@ fun GenerateWalletScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ContentCopy,
-                                            contentDescription = if (copied) "Copied" else "Copy seed phrase",
+                                            contentDescription =
+                                                if (copied) {
+                                                    stringResource(R.string.loc_5d00536d)
+                                                } else {
+                                                    stringResource(R.string.loc_fceb7ead)
+                                                },
                                             tint = if (copied) SuccessGreen else TextSecondary,
                                             modifier = Modifier.size(20.dp),
                                         )
@@ -409,7 +422,7 @@ fun GenerateWalletScreen(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.Refresh,
-                                            contentDescription = "Regenerate seed phrase",
+                                            contentDescription = stringResource(R.string.loc_7c63b77c),
                                             tint = TextSecondary,
                                             modifier = Modifier.size(20.dp),
                                         )
@@ -439,7 +452,7 @@ fun GenerateWalletScreen(
                                 ),
                         )
                         Text(
-                            text = "I have backed up my seed phrase",
+                            text = stringResource(R.string.loc_77aacbaf),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -473,7 +486,7 @@ fun GenerateWalletScreen(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "Advanced Options",
+                                text = stringResource(R.string.loc_20a1d916),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
@@ -484,7 +497,12 @@ fun GenerateWalletScreen(
                                     } else {
                                         Icons.Default.KeyboardArrowDown
                                     },
-                                contentDescription = if (showAdvancedOptions) "Collapse" else "Expand",
+                                contentDescription =
+                                    if (showAdvancedOptions) {
+                                        stringResource(R.string.loc_729b34d2)
+                                    } else {
+                                        stringResource(R.string.loc_b47e7391)
+                                    },
                                 tint = TextSecondary,
                             )
                         }
@@ -527,7 +545,7 @@ fun GenerateWalletScreen(
                                         ),
                                 )
                                 Text(
-                                    text = "BIP39 Passphrase",
+                                    text = stringResource(R.string.loc_75923525),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -549,7 +567,7 @@ fun GenerateWalletScreen(
                                                 .padding(start = 12.dp),
                                         placeholder = {
                                             Text(
-                                                "Enter passphrase",
+                                                stringResource(R.string.loc_e8a4f395),
                                                 color = TextSecondary.copy(alpha = 0.5f),
                                             )
                                         },
@@ -612,7 +630,7 @@ fun GenerateWalletScreen(
                                         ),
                                 )
                                 Text(
-                                    text = "Custom Derivation Path",
+                                    text = stringResource(R.string.loc_01fca34c),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
@@ -651,7 +669,11 @@ fun GenerateWalletScreen(
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "Default: ${selectedAddressType.defaultPath}",
+                                        text =
+                                            stringResource(
+                                                R.string.common_default_format,
+                                                selectedAddressType.defaultPath,
+                                            ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TextSecondary.copy(alpha = 0.7f),
                                         modifier = Modifier.padding(start = 12.dp),
@@ -702,7 +724,7 @@ fun GenerateWalletScreen(
                     )
                 } else {
                     Text(
-                        text = "Create Wallet",
+                        text = stringResource(R.string.loc_e81bc2a8),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -839,7 +861,7 @@ private fun GenerateAddressTypeButton(
             modifier = Modifier.fillMaxSize(),
         ) {
             Text(
-                text = addressType.displayName,
+                text = addressType.titleText(),
                 style = MaterialTheme.typography.labelLarge,
                 color = contentColor,
             )
@@ -847,7 +869,14 @@ private fun GenerateAddressTypeButton(
     }
 }
 
-private enum class WordCountOption(val label: String, val wordCount: WordCount) {
-    TWELVE("12 words", WordCount.WORDS12),
-    TWENTY_FOUR("24 words", WordCount.WORDS24),
+private enum class WordCountOption(val wordCount: WordCount) {
+    TWELVE(WordCount.WORDS12),
+    TWENTY_FOUR(WordCount.WORDS24),
 }
+
+@Composable
+private fun WordCountOption.labelText(): String =
+    when (this) {
+        WordCountOption.TWELVE -> stringResource(R.string.loc_a34ad456)
+        WordCountOption.TWENTY_FOUR -> stringResource(R.string.loc_4e15e68f)
+    }

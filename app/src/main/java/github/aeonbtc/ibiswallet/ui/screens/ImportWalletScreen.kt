@@ -57,7 +57,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -71,6 +70,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -81,7 +82,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.AddressType
+import github.aeonbtc.ibiswallet.data.model.MultisigScriptType
+import github.aeonbtc.ibiswallet.data.model.MultisigWalletConfig
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
@@ -93,6 +97,10 @@ import github.aeonbtc.ibiswallet.ui.components.SensitiveSeedIme
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.components.sensitiveSeedKeyboardOptions
+import github.aeonbtc.ibiswallet.ui.localization.descriptionText
+import github.aeonbtc.ibiswallet.ui.localization.localizedTitle
+import github.aeonbtc.ibiswallet.ui.localization.seedVariantLabel
+import github.aeonbtc.ibiswallet.ui.localization.titleText
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -104,6 +112,7 @@ import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
+import github.aeonbtc.ibiswallet.util.MultisigWalletParser
 import github.aeonbtc.ibiswallet.util.QrFormatParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -114,6 +123,7 @@ import org.bitcoindevkit.KeychainKind
 import org.bitcoindevkit.Mnemonic
 import org.bitcoindevkit.Network
 import org.json.JSONObject
+import androidx.compose.material3.Text
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -136,6 +146,11 @@ fun ImportWalletScreen(
     // QR scanner state
     var showQrScanner by remember { mutableStateOf(false) }
     var scannerError by remember { mutableStateOf<String?>(null) }
+    var showManualMultisigDialog by remember { mutableStateOf(false) }
+    var manualMultisigLocalCosignerMaterial by remember { mutableStateOf<String?>(null) }
+    var multisigLocalCosignerField by remember { mutableStateOf("") }
+    var multisigLocalCosignerPassphrase by remember { mutableStateOf("") }
+    var showMultisigLocalCosignerPassphrase by remember { mutableStateOf(false) }
 
     // Backup restore state
     var backupFileUri by remember { mutableStateOf<Uri?>(null) }
@@ -150,6 +165,10 @@ fun ImportWalletScreen(
     var showBackupRestoreDialog by remember { mutableStateOf(false) }
     val backupCoroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val backupParseFallbackError = stringResource(R.string.loc_53017e88)
+    val walletConfigFileReadError = stringResource(R.string.loc_e61e3fea)
+    val backupDecryptPasswordError = stringResource(R.string.loc_94b6dca8)
+    val backupDecryptFallbackError = stringResource(R.string.loc_20968582)
 
     val backupFilePickerLauncher =
         rememberLauncherForActivityResult(
@@ -177,10 +196,39 @@ fun ImportWalletScreen(
                             backupIsEncrypted = true
                             backupError = null
                         } else {
-                            backupError = e.message ?: "Failed to read backup file"
+                            backupError = e.message ?: backupParseFallbackError
                         }
                     } finally {
                         isParsingBackup = false
+                    }
+                }
+            }
+        }
+
+    val walletConfigFilePickerLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.OpenDocument(),
+        ) { uri: Uri? ->
+            if (uri != null) {
+                backupCoroutineScope.launch {
+                    try {
+                        val content =
+                            withContext(Dispatchers.IO) {
+                                context.contentResolver.openInputStream(uri)?.use { stream ->
+                                    stream.readBytes().toString(Charsets.UTF_8)
+                                }.orEmpty()
+                            }
+                        keyMaterialField =
+                            TextFieldValue(
+                                text = content.trim(),
+                                selection = TextRange(content.trim().length),
+                            )
+                        manualMultisigLocalCosignerMaterial = null
+                        multisigLocalCosignerField = ""
+                        multisigLocalCosignerPassphrase = ""
+                        scannerError = null
+                    } catch (_: Exception) {
+                        scannerError = walletConfigFileReadError
                     }
                 }
             }
@@ -228,7 +276,7 @@ fun ImportWalletScreen(
                     it.startsWith("zpub") || it.startsWith("upub")
             }
     val isOutputDescriptor =
-        listOf("pkh(", "wpkh(", "tr(").any {
+        listOf("pkh(", "wpkh(", "tr(", "wsh(", "sh(wsh(").any {
             trimmedInput.lowercase().startsWith(it)
         } && (
             trimmedInput.contains("xpub") || trimmedInput.contains("zpub")
@@ -251,19 +299,41 @@ fun ImportWalletScreen(
             BitcoinUtils.normalizeLiquidDescriptorInput(trimmedInput)
         }
     val isLiquidCtDescriptor = normalizedLiquidDescriptor != null
+    val multisigConfig =
+        remember(keyMaterial) {
+            if (MultisigWalletParser.looksLikeMultisig(trimmedInput)) {
+                MultisigWalletParser.parse(trimmedInput)
+            } else {
+                null
+            }
+        }
+    val isMultisigConfig = multisigConfig != null
+    val importedMultisigLocalCosignerMaterial =
+        remember(multisigConfig, multisigLocalCosignerField, multisigLocalCosignerPassphrase) {
+            multisigConfig?.let {
+                buildMultisigLocalCosignerMaterial(
+                    config = it,
+                    localCosignerKey = multisigLocalCosignerField,
+                    localCosignerPassphrase = multisigLocalCosignerPassphrase,
+                )
+            }
+        }
+    val multisigLocalCosignerValid =
+        multisigLocalCosignerField.isBlank() || importedMultisigLocalCosignerMaterial != null
     val liquidDescriptorError =
         when {
             liquidDescriptorLines.size > 1 && looksLikeLiquidDescriptorInput && normalizedLiquidDescriptor == null ->
-                "Invalid Liquid descriptor pair. Paste one combined ct(...) descriptor or a matching /0/* and /1/* pair."
+                stringResource(R.string.loc_74b37443)
             looksLikeLiquidDescriptorInput &&
                 normalizedLiquidDescriptor == null &&
                 trimmedInput.endsWith(")") ->
-                "Invalid Liquid descriptor."
+                stringResource(R.string.loc_a8d202fe)
             else -> null
         }
 
     val isWatchOnlyKey =
-        isExtendedKey || isOriginPrefixed || isOutputDescriptor || isJsonFormat || looksLikeLiquidDescriptorInput
+        isExtendedKey || isOriginPrefixed || isOutputDescriptor || isJsonFormat ||
+            looksLikeLiquidDescriptorInput || isMultisigConfig
     val isWatchOnly =
         isWatchOnlyKey &&
             !trimmedInput.let {
@@ -400,12 +470,21 @@ fun ImportWalletScreen(
         when {
             invalidWords.isNotEmpty() -> {
                 val badWords = invalidWords.take(3).joinToString(", ") { "\"${it.second}\"" }
-                val suffix = if (invalidWords.size > 3) " +${invalidWords.size - 3} more" else ""
-                "Invalid word${if (invalidWords.size > 1) "s" else ""}: $badWords$suffix" to ErrorRed
+                val moreCount = invalidWords.size - 3
+                val moreSuffix =
+                    if (moreCount > 0) {
+                        pluralStringResource(R.plurals.import_seed_invalid_more, moreCount, moreCount)
+                    } else {
+                        ""
+                    }
+                val title = pluralStringResource(R.plurals.import_seed_invalid_title, invalidWords.size)
+                stringResource(R.string.import_seed_invalid_line, title, badWords, moreSuffix) to ErrorRed
             }
-            isValidWordCount -> "$wordCount words entered" to TextSecondary
-            wordCount in 1..11 -> "$wordCount ${if (wordCount == 1) "word" else "words"} entered" to TextSecondary
-            wordCount > 11 -> "$wordCount words - need 12, 15, 18, 21, or 24" to ErrorRed
+            isValidWordCount -> pluralStringResource(R.plurals.import_seed_words_entered, wordCount, wordCount) to TextSecondary
+            wordCount in 1..11 ->
+                pluralStringResource(R.plurals.import_seed_words_entered, wordCount, wordCount) to TextSecondary
+            wordCount > 11 ->
+                stringResource(R.string.import_seed_wrong_word_count, wordCount) to ErrorRed
             else -> null
         }
 
@@ -428,7 +507,7 @@ fun ImportWalletScreen(
                     if (electrumType != null) {
                         MnemonicValidation.ValidElectrum(electrumType)
                     } else {
-                        MnemonicValidation.Invalid("Invalid checksum")
+                        MnemonicValidation.Invalid
                     }
                 }
             } else {
@@ -441,23 +520,30 @@ fun ImportWalletScreen(
     val isValidInput =
         unsupportedNonMainnetReason == null &&
             unsupportedNestedSegwitReason == null &&
-            (isWatchOnlyKey || isExtendedKey || isValidMnemonic || isWifKey || isBitcoinAddress || isLiquidCtDescriptor)
+            multisigLocalCosignerValid &&
+            (isWatchOnlyKey || isExtendedKey || isValidMnemonic || isWifKey || isBitcoinAddress || isLiquidCtDescriptor || isMultisigConfig)
 
     // Auto-generate wallet name based on input type with incremental suffix
+    val addressTypeTitle = selectedAddressType.localizedTitle(context)
+    val autoWalletBase =
+        when {
+            isMultisigConfig ->
+                requireNotNull(multisigConfig).name ?: stringResource(R.string.loc_6dfe3462)
+            isLiquidCtDescriptor -> stringResource(R.string.loc_c821b501)
+            isBitcoinAddress ->
+                stringResource(R.string.wallet_auto_name_watch_format, addressTypeTitle)
+            isWifKey ->
+                stringResource(R.string.wallet_auto_name_key_format, addressTypeTitle)
+            else -> addressTypeTitle
+        }
     val autoWalletName =
-        remember(selectedAddressType, existingWalletNames, isWifKey, isBitcoinAddress, isLiquidCtDescriptor) {
-            val base =
-                when {
-                    isLiquidCtDescriptor -> "Liquid_WatchOnly"
-                    isBitcoinAddress -> "Watch_${selectedAddressType.displayName}"
-                    isWifKey -> "Key_${selectedAddressType.displayName}"
-                    else -> selectedAddressType.displayName
-                }
+        remember(autoWalletBase, existingWalletNames) {
             val count =
                 existingWalletNames.count { name ->
-                    name == base || name.matches(Regex("${Regex.escape(base)}_(\\d+)"))
+                    name == autoWalletBase ||
+                        name.matches(Regex("${Regex.escape(autoWalletBase)}_(\\d+)"))
                 }
-            if (count == 0) base else "${base}_${count + 1}"
+            if (count == 0) autoWalletBase else "${autoWalletBase}_${count + 1}"
         }
 
     // Track whether address type is locked by Electrum seed detection
@@ -538,6 +624,9 @@ fun ImportWalletScreen(
                             text = parsedKeyMaterial,
                             selection = TextRange(parsedKeyMaterial.length),
                         )
+                    manualMultisigLocalCosignerMaterial = null
+                    multisigLocalCosignerField = ""
+                    multisigLocalCosignerPassphrase = ""
                     scannerError = null
                     showQrScanner = false
                 } catch (e: IllegalArgumentException) {
@@ -577,9 +666,9 @@ fun ImportWalletScreen(
                                 e.message?.contains("tag", ignoreCase = true) == true ||
                                 e.message?.contains("AEADBadTagException", ignoreCase = true) == true
                             ) {
-                                "Incorrect password"
+                                backupDecryptPasswordError
                             } else {
-                                e.message ?: "Decryption failed"
+                                e.message ?: backupDecryptFallbackError
                             }
                         backupParsedJson = null
                     } finally {
@@ -597,6 +686,28 @@ fun ImportWalletScreen(
                 backupFilePickerLauncher.launch(arrayOf("application/json", "*/*"))
             },
             onDismiss = { showBackupRestoreDialog = false },
+        )
+    }
+
+    if (showManualMultisigDialog) {
+        ManualMultisigDialog(
+            existingWalletName = walletName,
+            onDismiss = { showManualMultisigDialog = false },
+            onApply = { name, bsmsText, localCosignerMaterial ->
+                if (walletName.isBlank() && name.isNotBlank()) {
+                    walletName = name
+                }
+                manualMultisigLocalCosignerMaterial = localCosignerMaterial
+                multisigLocalCosignerField = ""
+                multisigLocalCosignerPassphrase = ""
+                keyMaterialField =
+                    TextFieldValue(
+                        text = bsmsText,
+                        selection = TextRange(bsmsText.length),
+                    )
+                scannerError = null
+                showManualMultisigDialog = false
+            },
         )
     }
 
@@ -618,12 +729,12 @@ fun ImportWalletScreen(
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Import Wallet",
+                text = stringResource(R.string.loc_aeabc606),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -633,7 +744,7 @@ fun ImportWalletScreen(
 
         // Manual Import Section
         Text(
-            text = "Manual Import",
+            text = stringResource(R.string.loc_7c2117d5),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -654,13 +765,13 @@ fun ImportWalletScreen(
             ) {
                 // Wallet Name
                 Text(
-                    text = "Wallet Details",
+                    text = stringResource(R.string.loc_748eece4),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Wallet Name",
+                    text = stringResource(R.string.loc_6e9ddcf4),
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -686,7 +797,7 @@ fun ImportWalletScreen(
 
                 // Address Type Selection
                 Text(
-                    text = "Address Type",
+                    text = stringResource(R.string.loc_3213841a),
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -714,7 +825,7 @@ fun ImportWalletScreen(
 
                 // Address type description
                 Text(
-                    text = selectedAddressType.description,
+                    text = selectedAddressType.descriptionText(),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary,
                 )
@@ -728,7 +839,7 @@ fun ImportWalletScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Import",
+                        text = stringResource(R.string.loc_9ae2cb2b),
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
@@ -747,6 +858,9 @@ fun ImportWalletScreen(
                         OutlinedTextField(
                             value = keyMaterialField,
                             onValueChange = { input ->
+                                manualMultisigLocalCosignerMaterial = null
+                                multisigLocalCosignerField = ""
+                                multisigLocalCosignerPassphrase = ""
                                 scannerError = null
                                 val trimmed = input.text.trim()
                                 val isKeyOrDescriptor =
@@ -808,7 +922,7 @@ fun ImportWalletScreen(
                             shape = RoundedCornerShape(8.dp),
                             placeholder = {
                                 Text(
-                                    "BIP39 seed, Electrum seed, WIF private key, xpub/zpub, descriptor, or address",
+                                    stringResource(R.string.loc_f986ec47),
                                     color = TextSecondary.copy(alpha = 0.5f),
                                 )
                             },
@@ -836,7 +950,7 @@ fun ImportWalletScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.QrCodeScanner,
-                            contentDescription = "Scan QR Code",
+                            contentDescription = stringResource(R.string.loc_59b2cdc5),
                             tint = BitcoinOrange,
                             modifier = Modifier.size(24.dp),
                         )
@@ -864,16 +978,39 @@ fun ImportWalletScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         when {
+                            isMultisigConfig -> {
+                                val multisig = requireNotNull(multisigConfig)
+                                Column {
+                                    Text(
+                                        text =
+                                            stringResource(
+                                                R.string.import_multisig_policy_line,
+                                                multisig.policyLabel,
+                                            ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = AccentTeal,
+                                    )
+                                    Text(
+                                        text =
+                                            stringResource(
+                                                R.string.import_wallet_cosigners_line,
+                                                multisig.totalCosigners,
+                                            ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary,
+                                    )
+                                }
+                            }
                             isJsonFormat -> {
                                 Text(
-                                    text = "JSON wallet export detected",
+                                    text = stringResource(R.string.loc_d5fabbff),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = AccentTeal,
                                 )
                             }
                             looksLikeLiquidDescriptorInput -> {
                                 Text(
-                                    text = "Liquid CT descriptor detected",
+                                    text = stringResource(R.string.loc_c43dbb42),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = AccentTeal,
                                 )
@@ -881,18 +1018,20 @@ fun ImportWalletScreen(
                             isOutputDescriptor -> {
                                 Text(
                                     text =
-                                        if (hasEmbeddedFingerprint) {
-                                            "Output descriptor with key origin"
-                                        } else {
-                                            "Output descriptor detected"
-                                        },
+                                        stringResource(
+                                            if (hasEmbeddedFingerprint) {
+                                                R.string.loc_26b5e032
+                                            } else {
+                                                R.string.loc_c329d1ef
+                                            },
+                                        ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = AccentTeal,
                                 )
                             }
                             isOriginPrefixed -> {
                                 Text(
-                                    text = "Watch-only with key origin",
+                                    text = stringResource(R.string.loc_c8579cd6),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = AccentTeal,
                                 )
@@ -900,14 +1039,14 @@ fun ImportWalletScreen(
                             isWatchOnly -> {
                                 Column {
                                     Text(
-                                        text = "Watch-only wallet",
+                                        text = stringResource(R.string.loc_9dec0f67),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = AccentTeal,
                                     )
                                     Spacer(modifier = Modifier.height(2.dp))
                                     if (isExtendedKey && !hasEmbeddedFingerprint) {
                                         Text(
-                                            text = "Some hardware wallets do not support PSBT signing without a master fingerprint — your hardware wallet should provide one alongside the xpub/zpub.",
+                                            text = stringResource(R.string.loc_daea11b1),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = BitcoinOrange,
                                         )
@@ -916,43 +1055,48 @@ fun ImportWalletScreen(
                             }
                             isWifKey -> {
                                 Text(
-                                    text = "WIF private key detected",
+                                    text = stringResource(R.string.loc_517ece75),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SuccessGreen,
                                 )
                             }
                             isBitcoinAddress -> {
                                 Text(
-                                    text = "Watch address (${detectedAddressType?.displayName ?: ""})",
+                                    text = stringResource(R.string.loc_541ee340),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = AccentTeal,
                                 )
                             }
                             isExtendedKey && !isWatchOnly -> {
                                 Text(
-                                    text = "Extended private key",
+                                    text = stringResource(R.string.loc_85e5fba3),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = BitcoinOrange,
                                 )
                             }
                             mnemonicValidation is MnemonicValidation.ValidElectrum -> {
-                                val seedLabel = mnemonicValidation.seedType.label
+                                val seedLabel = mnemonicValidation.seedType.seedVariantLabel()
                                 Text(
-                                    text = "Electrum $seedLabel seed ($wordCount words)",
+                                    text =
+                                        stringResource(
+                                            R.string.common_electrum_seed_format,
+                                            seedLabel,
+                                            wordCount,
+                                        ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SuccessGreen,
                                 )
                             }
                             isValidMnemonic -> {
                                 Text(
-                                    text = "Valid BIP39 seed phrase",
+                                    text = stringResource(R.string.loc_e7f0104f),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = SuccessGreen,
                                 )
                             }
                             isValidWordCount && mnemonicValidation is MnemonicValidation.Invalid -> {
                                 Text(
-                                    text = mnemonicValidation.error,
+                                    text = stringResource(R.string.loc_964abaa1),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = ErrorRed,
                                 )
@@ -960,9 +1104,126 @@ fun ImportWalletScreen(
                         }
                         derivedFingerprint?.let { fp ->
                             Text(
-                                text = "Fingerprint: $fp",
+                                text = stringResource(R.string.common_fingerprint_format, fp),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = BitcoinOrange,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (isMultisigConfig) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkCard),
+            ) {
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.loc_9589b41e),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = stringResource(R.string.loc_b848af0e),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = multisigLocalCosignerField,
+                        onValueChange = { multisigLocalCosignerField = it },
+                        label = { Text(stringResource(R.string.loc_7a4499bf)) },
+                        placeholder = {
+                            Text(
+                                stringResource(R.string.loc_796b4a85),
+                                color = TextSecondary.copy(alpha = 0.5f),
+                            )
+                        },
+                        minLines = 2,
+                        isError = multisigLocalCosignerField.isNotBlank() && !multisigLocalCosignerValid,
+                        supportingText = {
+                            val attached =
+                                manualMultisigLocalCosignerMaterial != null ||
+                                    importedMultisigLocalCosignerMaterial != null ||
+                                    keyMaterial.contains("prv", ignoreCase = true)
+                            Text(
+                                text =
+                                    when {
+                                        multisigLocalCosignerField.isNotBlank() && !multisigLocalCosignerValid ->
+                                            stringResource(R.string.loc_c6354927)
+                                        attached -> stringResource(R.string.loc_cc38eb35)
+                                        else -> stringResource(R.string.loc_711aadc6)
+                                    },
+                                color =
+                                    when {
+                                        multisigLocalCosignerField.isNotBlank() && !multisigLocalCosignerValid -> ErrorRed
+                                        attached -> SuccessGreen
+                                        else -> TextSecondary
+                                    },
+                            )
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                cursorColor = BitcoinOrange,
+                            ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+
+                    AnimatedVisibility(
+                        visible = multisigLocalCosignerField.trim().split("\\s+".toRegex()).size in 12..24,
+                    ) {
+                        Column {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = multisigLocalCosignerPassphrase,
+                                onValueChange = { multisigLocalCosignerPassphrase = it },
+                                label = { Text(stringResource(R.string.loc_d271ea89)) },
+                                singleLine = true,
+                                visualTransformation =
+                                    if (showMultisigLocalCosignerPassphrase) {
+                                        VisualTransformation.None
+                                    } else {
+                                        PasswordVisualTransformation()
+                                    },
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = {
+                                            showMultisigLocalCosignerPassphrase = !showMultisigLocalCosignerPassphrase
+                                        },
+                                    ) {
+                                        Icon(
+                                            imageVector =
+                                                if (showMultisigLocalCosignerPassphrase) {
+                                                    Icons.Default.VisibilityOff
+                                                } else {
+                                                    Icons.Default.Visibility
+                                                },
+                                            contentDescription = null,
+                                            tint = TextSecondary,
+                                        )
+                                    }
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                colors =
+                                    OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = BitcoinOrange,
+                                        unfocusedBorderColor = BorderColor,
+                                        cursorColor = BitcoinOrange,
+                                    ),
+                                modifier = Modifier.fillMaxWidth(),
                             )
                         }
                     }
@@ -996,7 +1257,7 @@ fun ImportWalletScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Advanced Options",
+                            text = stringResource(R.string.loc_20a1d916),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -1007,7 +1268,12 @@ fun ImportWalletScreen(
                                 } else {
                                     Icons.Default.KeyboardArrowDown
                                 },
-                            contentDescription = if (showAdvancedOptions) "Collapse" else "Expand",
+                            contentDescription =
+                                if (showAdvancedOptions) {
+                                    stringResource(R.string.loc_729b34d2)
+                                } else {
+                                    stringResource(R.string.loc_b47e7391)
+                                },
                             tint = TextSecondary,
                         )
                     }
@@ -1058,7 +1324,7 @@ fun ImportWalletScreen(
                                             ),
                                     )
                                     Text(
-                                        text = "Set Master Fingerprint",
+                                        text = stringResource(R.string.loc_a7557fbf),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onBackground,
                                     )
@@ -1085,7 +1351,7 @@ fun ImportWalletScreen(
                                                     .padding(start = 12.dp),
                                             placeholder = {
                                                 Text(
-                                                    "00000000",
+                                                    stringResource(R.string.loc_70352f41),
                                                     color = TextSecondary.copy(alpha = 0.5f),
                                                 )
                                             },
@@ -1103,7 +1369,7 @@ fun ImportWalletScreen(
                                         )
                                         if (masterFingerprint.isNotEmpty() && masterFingerprint.length != 8) {
                                             Text(
-                                                text = "Must be exactly 8 hex characters",
+                                                text = stringResource(R.string.loc_161165a5),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = ErrorRed,
                                                 modifier = Modifier.padding(start = 12.dp),
@@ -1135,7 +1401,7 @@ fun ImportWalletScreen(
                                 enabled = !isExtendedKey,
                             )
                             Text(
-                                text = "BIP39 Passphrase",
+                                text = stringResource(R.string.loc_75923525),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color =
                                     if (isExtendedKey) {
@@ -1163,7 +1429,7 @@ fun ImportWalletScreen(
                                             .padding(start = 12.dp),
                                     placeholder = {
                                         Text(
-                                            "Enter passphrase",
+                                            stringResource(R.string.loc_e8a4f395),
                                             color = TextSecondary.copy(alpha = 0.5f),
                                         )
                                     },
@@ -1226,7 +1492,7 @@ fun ImportWalletScreen(
                                     ),
                             )
                             Text(
-                                text = "Custom Derivation Path",
+                                text = stringResource(R.string.loc_01fca34c),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
@@ -1266,7 +1532,11 @@ fun ImportWalletScreen(
                                 )
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Default: ${selectedAddressType.defaultPath}",
+                                    text =
+                                        stringResource(
+                                            R.string.common_default_format,
+                                            selectedAddressType.defaultPath,
+                                        ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary.copy(alpha = 0.7f),
                                     modifier = Modifier.padding(start = 12.dp),
@@ -1294,7 +1564,7 @@ fun ImportWalletScreen(
                                     ),
                             )
                             Text(
-                                text = "Custom Gap Limit",
+                                text = stringResource(R.string.loc_894dedef),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
@@ -1331,7 +1601,7 @@ fun ImportWalletScreen(
                                     isError = gapLimitText.isNotEmpty() && !gapLimitValid,
                                     supportingText = {
                                         Text(
-                                            "Default: ${StoredWallet.DEFAULT_GAP_LIMIT}. Scan limit for empty addresses (1–10000)",
+                                            stringResource(R.string.loc_87c9f231),
                                             color = TextSecondary.copy(alpha = 0.5f),
                                         )
                                     },
@@ -1423,6 +1693,15 @@ fun ImportWalletScreen(
                         masterFingerprint = fingerprintValue,
                         seedFormat = seedFormat,
                         gapLimit = customGapLimit,
+                        multisigConfig = multisigConfig,
+                        localCosignerKeyMaterial =
+                            manualMultisigLocalCosignerMaterial
+                                ?: importedMultisigLocalCosignerMaterial
+                                ?: if (isMultisigConfig && keyMaterial.contains("prv", ignoreCase = true)) {
+                                keyMaterial.trim()
+                            } else {
+                                null
+                            },
                     )
                 onImport(config)
             },
@@ -1446,12 +1725,75 @@ fun ImportWalletScreen(
                 )
             } else {
                 Text(
-                    text = when {
-                        isLiquidCtDescriptor -> "Import Liquid Watch-Only"
-                        isBitcoinAddress -> "Watch Address"
-                        isWifKey -> "Import Key"
-                        else -> "Import Wallet"
-                    },
+                    text =
+                        when {
+                            isMultisigConfig -> stringResource(R.string.loc_638eb802)
+                            isLiquidCtDescriptor -> stringResource(R.string.loc_a016ef65)
+                            isBitcoinAddress -> stringResource(R.string.loc_fd030147)
+                            isWifKey -> stringResource(R.string.loc_5ab1fed3)
+                            else -> stringResource(R.string.loc_aeabc606)
+                        },
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Text(
+            text = stringResource(R.string.loc_255d09fd),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = stringResource(R.string.loc_7999830a),
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IbisButton(
+                onClick = { showManualMultisigDialog = true },
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .height(48.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Key,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.multisig_manual_option),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+
+            IbisButton(
+                onClick = { walletConfigFilePickerLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .height(48.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.FolderOpen,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.multisig_config_file_option),
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
@@ -1469,7 +1811,7 @@ fun ImportWalletScreen(
                 color = BorderColor,
             )
             Text(
-                text = "or",
+                text = stringResource(R.string.loc_1db77587),
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -1484,7 +1826,7 @@ fun ImportWalletScreen(
 
         // Restore from Backup Section
         Text(
-            text = "Restore Wallet File",
+            text = stringResource(R.string.loc_0e42bd4f),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -1492,7 +1834,7 @@ fun ImportWalletScreen(
         Spacer(modifier = Modifier.height(4.dp))
 
         Text(
-            text = "Import an Ibis wallet backup file",
+            text = stringResource(R.string.loc_0eeb7864),
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
         )
@@ -1513,7 +1855,7 @@ fun ImportWalletScreen(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = backupFileName ?: "Select backup file",
+                text = backupFileName ?: stringResource(R.string.loc_e4783294),
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1528,7 +1870,12 @@ fun ImportWalletScreen(
                 enabled = !isParsingBackup,
             ) {
                 Text(
-                    text = if (isParsingBackup) "Reading backup file..." else "Review selected backup",
+                    text =
+                        if (isParsingBackup) {
+                            stringResource(R.string.loc_5bc64b9b)
+                        } else {
+                            stringResource(R.string.loc_ab6580da)
+                        },
                     color = BitcoinOrange,
                 )
             }
@@ -1546,7 +1893,7 @@ fun ImportWalletScreen(
                 color = BorderColor,
             )
             Text(
-                text = "or",
+                text = stringResource(R.string.loc_1db77587),
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -1561,7 +1908,7 @@ fun ImportWalletScreen(
 
         // Sweep Section
         Text(
-            text = "Sweep Private Key",
+            text = stringResource(R.string.loc_380cec3b),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
         )
@@ -1582,7 +1929,7 @@ fun ImportWalletScreen(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Input WIF Key",
+                text = stringResource(R.string.loc_ba4c3466),
                 style = MaterialTheme.typography.titleMedium,
             )
         }
@@ -1631,7 +1978,7 @@ private fun AddressTypeButton(
             modifier = Modifier.fillMaxSize(),
         ) {
             Text(
-                text = addressType.displayName,
+                text = addressType.titleText(),
                 style = MaterialTheme.typography.labelLarge,
                 color = contentColor,
             )
@@ -1664,6 +2011,8 @@ private fun BackupRestoreDialog(
     val labelsObj = backupParsedJson?.optJSONObject("labels")
     val serverSettingsObj = backupParsedJson?.optJSONObject("serverSettings")
     val hasServerSettings = serverSettingsObj != null
+    val unknownName = stringResource(R.string.loc_629b9e5b)
+    val watchOnlySuffix = stringResource(R.string.loc_25d748f3)
 
     Dialog(
         onDismissRequest = {
@@ -1699,7 +2048,7 @@ private fun BackupRestoreDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Restore Wallet File",
+                        text = stringResource(R.string.loc_0e42bd4f),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
@@ -1709,7 +2058,7 @@ private fun BackupRestoreDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.loc_d2c0aec0),
                             tint = if (canDismiss) TextSecondary else TextSecondary.copy(alpha = 0.4f),
                         )
                     }
@@ -1735,7 +2084,7 @@ private fun BackupRestoreDialog(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Reading backup file...",
+                                text = stringResource(R.string.loc_5bc64b9b),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
@@ -1755,20 +2104,36 @@ private fun BackupRestoreDialog(
                                 modifier = Modifier.padding(12.dp),
                             ) {
                                 Text(
-                                    text = "Backup ready to restore",
+                                    text = stringResource(R.string.loc_3de64ebf),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = SuccessGreen,
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Name: ${walletObj?.optString("name", "Unknown")}",
+                                    text =
+                                        stringResource(
+                                            R.string.loc_a422f393,
+                                            walletObj?.optString("name")?.takeIf { it.isNotBlank() }
+                                                ?: unknownName,
+                                        ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary,
                                 )
-                                val addressType = walletObj?.optString("addressType", "")
+                                val addressType = walletObj?.optString("addressType", "") ?: ""
                                 val isWatchOnly = walletObj?.optBoolean("isWatchOnly", false) == true
+                                val resolvedAddressType =
+                                    addressType.takeIf { it.isNotBlank() } ?: unknownName
                                 Text(
-                                    text = "Type: $addressType${if (isWatchOnly) " (Watch Only)" else ""}",
+                                    text =
+                                        if (isWatchOnly) {
+                                            stringResource(
+                                                R.string.import_wallet_address_line_watch,
+                                                resolvedAddressType,
+                                                watchOnlySuffix,
+                                            )
+                                        } else {
+                                            resolvedAddressType
+                                        },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary,
                                 )
@@ -1776,8 +2141,25 @@ private fun BackupRestoreDialog(
                                 labelsObj?.let {
                                     val addressCount = it.optJSONObject("addresses")?.length() ?: 0
                                     val transactionCount = it.optJSONObject("transactions")?.length() ?: 0
+                                    val addrPart =
+                                        pluralStringResource(
+                                            R.plurals.import_backup_label_address_count,
+                                            addressCount,
+                                            addressCount,
+                                        )
+                                    val txPart =
+                                        pluralStringResource(
+                                            R.plurals.import_backup_label_transaction_count,
+                                            transactionCount,
+                                            transactionCount,
+                                        )
                                     Text(
-                                        text = "Labels: $addressCount address, $transactionCount transaction",
+                                        text =
+                                            stringResource(
+                                                R.string.import_backup_labels_line,
+                                                addrPart,
+                                                txPart,
+                                            ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TextSecondary,
                                     )
@@ -1797,27 +2179,47 @@ private fun BackupRestoreDialog(
                                         it.has("liquidTorEnabled") ||
                                             it.has("liquidAutoSwitch") ||
                                             it.has("liquidServerSelectedByUser")
+                                    val blockExplorerLabel = stringResource(R.string.loc_929a5c05)
+                                    val feeSourceLabel = stringResource(R.string.loc_90799139)
+                                    val liquidExplorerLabel = stringResource(R.string.loc_52640f61)
+                                    val liquidConnectivityLabel = stringResource(R.string.loc_b61cfdd3)
                                     val parts = mutableListOf<String>()
                                     if (serverCount > 0) {
-                                        parts.add("$serverCount Electrum server${if (serverCount != 1) "s" else ""}")
+                                        parts.add(
+                                            pluralStringResource(
+                                                R.plurals.import_backup_electrum_servers,
+                                                serverCount,
+                                                serverCount,
+                                            ),
+                                        )
                                     }
                                     if (liquidServerCount > 0) {
-                                        parts.add("$liquidServerCount Liquid server${if (liquidServerCount != 1) "s" else ""}")
+                                        parts.add(
+                                            pluralStringResource(
+                                                R.plurals.import_backup_liquid_servers,
+                                                liquidServerCount,
+                                                liquidServerCount,
+                                            ),
+                                        )
                                     }
                                     if (hasExplorerUrl) {
-                                        parts.add("block explorer")
+                                        parts.add(blockExplorerLabel)
                                     }
                                     if (hasFeeUrl) {
-                                        parts.add("fee source")
+                                        parts.add(feeSourceLabel)
                                     }
                                     if (hasLiquidExplorer) {
-                                        parts.add("Liquid explorer")
+                                        parts.add(liquidExplorerLabel)
                                     }
                                     if (hasLiquidConnectivity) {
-                                        parts.add("Liquid connectivity")
+                                        parts.add(liquidConnectivityLabel)
                                     }
                                     Text(
-                                        text = "Server settings: ${parts.joinToString(", ")}",
+                                        text =
+                                            stringResource(
+                                                R.string.import_backup_server_settings_line,
+                                                parts.joinToString(", "),
+                                            ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TextSecondary,
                                     )
@@ -1839,12 +2241,12 @@ private fun BackupRestoreDialog(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "Import Server Settings",
+                                        text = stringResource(R.string.loc_82807e0f),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onBackground,
                                     )
                                     Text(
-                                        text = "Electrum servers and external services",
+                                        text = stringResource(R.string.loc_997e26df),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TextSecondary,
                                     )
@@ -1867,7 +2269,7 @@ private fun BackupRestoreDialog(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Encrypted backup",
+                                text = stringResource(R.string.loc_867cb15f),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = BitcoinOrange,
                             )
@@ -1876,7 +2278,7 @@ private fun BackupRestoreDialog(
                         Spacer(modifier = Modifier.height(8.dp))
 
                         Text(
-                            text = "Enter the password to decrypt and review this backup.",
+                            text = stringResource(R.string.loc_bf01e3a2),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -1887,7 +2289,7 @@ private fun BackupRestoreDialog(
                             value = backupPassword,
                             onValueChange = onBackupPasswordChange,
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Backup Password", color = TextSecondary) },
+                            label = { Text(stringResource(R.string.loc_1cdedba2), color = TextSecondary) },
                             singleLine = true,
                             visualTransformation =
                                 if (showBackupPassword) {
@@ -1968,7 +2370,7 @@ private fun BackupRestoreDialog(
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "Restore Wallet",
+                                    text = stringResource(R.string.loc_7a2478a8),
                                     style = MaterialTheme.typography.titleMedium,
                                 )
                             }
@@ -1985,7 +2387,7 @@ private fun BackupRestoreDialog(
                             enabled = backupPassword.isNotEmpty(),
                         ) {
                             Text(
-                                text = "Decrypt Backup",
+                                text = stringResource(R.string.loc_f73683e2),
                                 style = MaterialTheme.typography.titleMedium,
                             )
                         }
@@ -2000,10 +2402,14 @@ private fun BackupRestoreDialog(
                     enabled = !isLoading && !isParsingBackup,
                 ) {
                     Text(
-                        text = "Choose Different File",
+                        text = stringResource(R.string.loc_e18f112a),
                         color = BitcoinOrange,
                     )
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
+                Spacer(modifier = Modifier.height(8.dp))
 
                 IbisButton(
                     onClick = onDismiss,
@@ -2012,7 +2418,7 @@ private fun BackupRestoreDialog(
                         .height(48.dp),
                     enabled = canDismiss,
                 ) {
-                    Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
@@ -2035,6 +2441,438 @@ private fun getDisplayNameFromUri(
     }.getOrNull()
 }
 
+@Composable
+private fun ManualMultisigDialog(
+    existingWalletName: String,
+    onDismiss: () -> Unit,
+    onApply: (name: String, bsmsText: String, localCosignerMaterial: String?) -> Unit,
+) {
+    var name by remember { mutableStateOf(existingWalletName.ifBlank { "Multisig" }) }
+    var threshold by remember { mutableStateOf("2") }
+    var derivationPath by remember { mutableStateOf("m/48'/0'/0'/2'") }
+    var localCosignerKey by remember { mutableStateOf("") }
+    var localCosignerPassphrase by remember { mutableStateOf("") }
+    var showLocalCosignerPassphrase by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
+    var cosigners by remember {
+        mutableStateOf(
+            """
+            aaaaaaaa: xpub...
+            bbbbbbbb: xpub...
+            cccccccc: xpub...
+            """.trimIndent(),
+        )
+    }
+
+    val cosignerLines =
+        cosigners.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .toList()
+    val thresholdInt = threshold.toIntOrNull()
+    val fingerprintRegex = Regex("""^[0-9a-fA-F]{8}\s*:\s*[xyz]pub.+""")
+    val hasValidCosigners = cosignerLines.size >= 2 && cosignerLines.all { it.matches(fingerprintRegex) }
+    val localCosignerMaterial =
+        remember(threshold, derivationPath, localCosignerKey, localCosignerPassphrase, cosigners) {
+            buildManualMultisigLocalCosignerMaterial(
+                threshold = thresholdInt ?: 1,
+                derivationPath = derivationPath,
+                cosignerLines = cosignerLines,
+                localCosignerKey = localCosignerKey,
+                localCosignerPassphrase = localCosignerPassphrase,
+            )
+        }
+    val localCosignerValid = localCosignerKey.isBlank() || localCosignerMaterial != null
+    val canApply =
+        name.isNotBlank() &&
+            thresholdInt != null &&
+            thresholdInt in 1..cosignerLines.size &&
+            hasValidCosigners &&
+            localCosignerValid
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
+        ) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 720.dp)
+                        .verticalScroll(scrollState)
+                        .padding(16.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.loc_68a4806d),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(stringResource(R.string.loc_fe11d138)) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BitcoinOrange,
+                            unfocusedBorderColor = BorderColor,
+                            cursorColor = BitcoinOrange,
+                        ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = threshold,
+                        onValueChange = { value ->
+                            if (value.isEmpty() || value.all(Char::isDigit)) {
+                                threshold = value
+                            }
+                        },
+                        label = { Text(stringResource(R.string.loc_698ba835)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                cursorColor = BitcoinOrange,
+                            ),
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = derivationPath,
+                        onValueChange = { derivationPath = it },
+                        label = { Text(stringResource(R.string.loc_ab662431)) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                cursorColor = BitcoinOrange,
+                            ),
+                        modifier = Modifier.weight(2f),
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = cosigners,
+                    onValueChange = { cosigners = it },
+                    label = { Text(stringResource(R.string.loc_9054140b)) },
+                    placeholder = { Text(stringResource(R.string.loc_2a428c88), color = TextSecondary.copy(alpha = 0.5f)) },
+                    minLines = 4,
+                    isError = cosigners.isNotBlank() && !hasValidCosigners,
+                    supportingText = {
+                        Text(
+                            text = stringResource(R.string.loc_810fe008),
+                            color = if (hasValidCosigners) TextSecondary else ErrorRed,
+                        )
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BitcoinOrange,
+                            unfocusedBorderColor = BorderColor,
+                            cursorColor = BitcoinOrange,
+                        ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = localCosignerKey,
+                    onValueChange = { localCosignerKey = it },
+                    label = { Text(stringResource(R.string.loc_7db8bd23)) },
+                    placeholder = {
+                        Text(
+                            stringResource(R.string.loc_d44eca4c),
+                            color = TextSecondary.copy(alpha = 0.5f),
+                        )
+                    },
+                    minLines = 2,
+                    isError = localCosignerKey.isNotBlank() && !localCosignerValid,
+                    supportingText = {
+                        Text(
+                            text = stringResource(R.string.loc_5237cff5),
+                            color = if (localCosignerValid) TextSecondary else ErrorRed,
+                        )
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BitcoinOrange,
+                            unfocusedBorderColor = BorderColor,
+                            cursorColor = BitcoinOrange,
+                        ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                AnimatedVisibility(visible = localCosignerKey.trim().split("\\s+".toRegex()).size in 12..24) {
+                    Column {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = localCosignerPassphrase,
+                            onValueChange = { localCosignerPassphrase = it },
+                            label = { Text(stringResource(R.string.loc_d271ea89)) },
+                            singleLine = true,
+                            visualTransformation =
+                                if (showLocalCosignerPassphrase) {
+                                    VisualTransformation.None
+                                } else {
+                                    PasswordVisualTransformation()
+                                },
+                            trailingIcon = {
+                                IconButton(onClick = { showLocalCosignerPassphrase = !showLocalCosignerPassphrase }) {
+                                    Icon(
+                                        imageVector =
+                                            if (showLocalCosignerPassphrase) {
+                                                Icons.Default.VisibilityOff
+                                            } else {
+                                                Icons.Default.Visibility
+                                            },
+                                        contentDescription = null,
+                                        tint = TextSecondary,
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            colors =
+                                OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = BitcoinOrange,
+                                    unfocusedBorderColor = BorderColor,
+                                    cursorColor = BitcoinOrange,
+                                ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                    }
+                    TextButton(
+                        onClick = {
+                            onApply(
+                                name.trim(),
+                                buildManualMultisigBsms(
+                                    name = name.trim(),
+                                    threshold = thresholdInt ?: 1,
+                                    derivationPath = derivationPath.trim(),
+                                    cosignerLines = cosignerLines,
+                                ),
+                                localCosignerMaterial,
+                            )
+                        },
+                        enabled = canApply,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.loc_acfc8aab),
+                            color = if (canApply) BitcoinOrange else TextSecondary.copy(alpha = 0.4f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun buildManualMultisigBsms(
+    name: String,
+    threshold: Int,
+    derivationPath: String,
+    cosignerLines: List<String>,
+): String =
+    buildString {
+        appendLine("BSMS 1.0")
+        appendLine("Name: $name")
+        appendLine("Policy: $threshold of ${cosignerLines.size}")
+        appendLine("Derivation: $derivationPath")
+        appendLine("Format: P2WSH")
+        cosignerLines.forEach { appendLine(it) }
+    }.trimEnd()
+
+private fun buildManualMultisigLocalCosignerMaterial(
+    threshold: Int,
+    derivationPath: String,
+    cosignerLines: List<String>,
+    localCosignerKey: String,
+    localCosignerPassphrase: String,
+): String? {
+    val trimmedKey = localCosignerKey.trim()
+    if (trimmedKey.isBlank()) return null
+    if (MultisigWalletParser.looksLikeMultisig(trimmedKey)) {
+        return trimmedKey
+    }
+
+    val localMatch = Regex("""^\[([0-9a-fA-F]{8})/(.+?)](xprv[1-9A-HJ-NP-Za-km-z]+)$""")
+        .find(trimmedKey)
+    val normalizedPath = derivationPath.trim()
+    val localKey =
+        if (localMatch != null) {
+            ManualMultisigLocalKey(
+                fingerprint = localMatch.groupValues[1].lowercase(),
+                path = localMatch.groupValues[2].trim(),
+                xprv = localMatch.groupValues[3].trim(),
+            )
+        } else {
+            try {
+                Mnemonic.fromString(trimmedKey)
+                val seed =
+                    ElectrumSeedUtil.bip39MnemonicToSeed(
+                        trimmedKey,
+                        localCosignerPassphrase.takeIf { it.isNotBlank() },
+                    )
+                ManualMultisigLocalKey(
+                    fingerprint = ElectrumSeedUtil.computeMasterFingerprint(seed),
+                    path = normalizedPath.removePrefix("m/").removePrefix("/"),
+                    xprv = ElectrumSeedUtil.deriveXprv(seed, normalizedPath),
+                )
+            } catch (_: Exception) {
+                return null
+            }
+        }
+    val cosignerRegex = Regex("""^\s*([0-9a-fA-F]{8})\s*:\s*([xyz]pub[1-9A-HJ-NP-Za-km-z]+)\s*$""")
+    val parsedCosigners =
+        cosignerLines.map { line ->
+            val match = cosignerRegex.find(line) ?: return null
+            match.groupValues[1].lowercase() to match.groupValues[2]
+        }
+    if (parsedCosigners.none { it.first == localKey.fingerprint }) return null
+
+    fun keyExpression(
+        fingerprint: String,
+        xpub: String,
+        branch: Int,
+    ): String =
+        if (fingerprint == localKey.fingerprint) {
+            "[${localKey.fingerprint}/${localKey.path}]${localKey.xprv}/$branch/*"
+        } else {
+            "[$fingerprint/${normalizedPath.removePrefix("m/").removePrefix("/")}]$xpub/$branch/*"
+        }
+
+    fun descriptor(branch: Int): String {
+        val keys = parsedCosigners.joinToString(",") { (fingerprint, xpub) ->
+            keyExpression(fingerprint, xpub, branch)
+        }
+        return "wsh(sortedmulti($threshold,$keys))"
+    }
+
+    return "${descriptor(0)}\n${descriptor(1)}"
+}
+
+private fun buildMultisigLocalCosignerMaterial(
+    config: MultisigWalletConfig,
+    localCosignerKey: String,
+    localCosignerPassphrase: String,
+): String? {
+    val trimmedKey = localCosignerKey.trim()
+    if (trimmedKey.isBlank()) return null
+    if (MultisigWalletParser.looksLikeMultisig(trimmedKey)) {
+        return trimmedKey.takeIf { privateMultisigDescriptorMatchesConfig(it, config) }
+    }
+
+    val originXprvMatch = Regex("""^\[([0-9a-fA-F]{8})/(.+?)](xprv[1-9A-HJ-NP-Za-km-z]+)$""")
+        .find(trimmedKey)
+    val localKey =
+        if (originXprvMatch != null) {
+            ManualMultisigLocalKey(
+                fingerprint = originXprvMatch.groupValues[1].lowercase(),
+                path = originXprvMatch.groupValues[2].trim(),
+                xprv = originXprvMatch.groupValues[3].trim(),
+            )
+        } else {
+            try {
+                Mnemonic.fromString(trimmedKey)
+                val seed =
+                    ElectrumSeedUtil.bip39MnemonicToSeed(
+                        trimmedKey,
+                        localCosignerPassphrase.takeIf { it.isNotBlank() },
+                    )
+                val fingerprint = ElectrumSeedUtil.computeMasterFingerprint(seed)
+                val cosigner = config.cosigners.firstOrNull { it.fingerprint.equals(fingerprint, ignoreCase = true) }
+                    ?: return null
+                val path = cosigner.derivationPath.removePrefix("m/").removePrefix("/")
+                ManualMultisigLocalKey(
+                    fingerprint = fingerprint,
+                    path = path,
+                    xprv = ElectrumSeedUtil.deriveXprv(seed, "m/$path"),
+                )
+            } catch (_: Exception) {
+                return null
+            }
+        }
+    if (config.cosigners.none { it.fingerprint.equals(localKey.fingerprint, ignoreCase = true) }) return null
+
+    fun keyExpression(
+        fingerprint: String,
+        derivationPath: String,
+        xpub: String,
+        branch: Int,
+    ): String {
+        val normalizedPath = derivationPath.removePrefix("m/").removePrefix("/")
+        return if (fingerprint.equals(localKey.fingerprint, ignoreCase = true)) {
+            "[${localKey.fingerprint}/${localKey.path}]${localKey.xprv}/$branch/*"
+        } else {
+            "[${fingerprint.lowercase()}/$normalizedPath]${BitcoinUtils.convertToXpub(xpub)}/$branch/*"
+        }
+    }
+
+    fun descriptor(branch: Int): String {
+        val functionName = if (config.isSorted) "sortedmulti" else "multi"
+        val keys = config.cosigners.joinToString(",") { cosigner ->
+            keyExpression(
+                fingerprint = cosigner.fingerprint,
+                derivationPath = cosigner.derivationPath,
+                xpub = cosigner.xpub,
+                branch = branch,
+            )
+        }
+        val inner = "$functionName(${config.threshold},$keys)"
+        return when (config.scriptType) {
+            MultisigScriptType.P2WSH -> "wsh($inner)"
+            MultisigScriptType.P2SH_P2WSH -> "sh(wsh($inner))"
+        }
+    }
+
+    return "${descriptor(0)}\n${descriptor(1)}"
+}
+
+private fun privateMultisigDescriptorMatchesConfig(
+    descriptor: String,
+    config: MultisigWalletConfig,
+): Boolean {
+    val localConfig = MultisigWalletParser.parse(descriptor) ?: return false
+    if (localConfig.threshold != config.threshold) return false
+    if (localConfig.totalCosigners != config.totalCosigners) return false
+    if (localConfig.scriptType != config.scriptType) return false
+    val expectedFingerprints = config.cosigners.map { it.fingerprint.lowercase() }.toSet()
+    val localFingerprints = localConfig.cosigners.map { it.fingerprint.lowercase() }.toSet()
+    return expectedFingerprints == localFingerprints
+}
+
+private data class ManualMultisigLocalKey(
+    val fingerprint: String,
+    val path: String,
+    val xprv: String,
+)
+
 /**
  * Mnemonic validation state
  */
@@ -2047,5 +2885,5 @@ private sealed class MnemonicValidation {
     /** Valid Electrum native seed phrase */
     data class ValidElectrum(val seedType: ElectrumSeedUtil.ElectrumSeedType) : MnemonicValidation()
 
-    data class Invalid(val error: String) : MnemonicValidation()
+    data object Invalid : MnemonicValidation()
 }

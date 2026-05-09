@@ -18,7 +18,7 @@ object BitcoinUtils {
         "Only Bitcoin mainnet is supported."
 
     private const val BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-    private val supportedDescriptorPrefixes = listOf("pkh(", "wpkh(", "tr(")
+    private val supportedDescriptorPrefixes = listOf("pkh(", "wpkh(", "tr(", "wsh(", "sh(wsh(")
     private val liquidDescriptorBranchRegex = Regex("""/([01])/\*(\)+)$""")
 
     fun parseSupportedAddressType(
@@ -152,6 +152,7 @@ object BitcoinUtils {
         return when {
             trimmed.startsWith("pkh(") -> AddressType.LEGACY
             trimmed.startsWith("wpkh(") -> AddressType.SEGWIT
+            trimmed.startsWith("wsh(") || trimmed.startsWith("sh(wsh(") -> AddressType.SEGWIT
             trimmed.startsWith("tr(") -> AddressType.TAPROOT
             else -> null
         }
@@ -197,7 +198,7 @@ object BitcoinUtils {
         if (supportedDescriptorPrefixes.any { trimmed.lowercase().startsWith(it) }) {
             val hasPublicKey =
                 trimmed.contains("xpub") || trimmed.contains("zpub")
-            val hasPrivateKey = trimmed.contains("xprv")
+            val hasPrivateKey = trimmed.contains("xprv") || trimmed.contains("zprv")
             return hasPublicKey && !hasPrivateKey
         }
 

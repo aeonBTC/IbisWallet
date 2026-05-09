@@ -10,6 +10,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,7 +35,6 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -82,6 +82,7 @@ import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import androidx.compose.material3.Text
 
 @Composable
 fun ReceiveScreen(
@@ -97,6 +98,10 @@ fun ReceiveScreen(
     onToggleDenomination: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val copyReceiveToast = stringResource(R.string.loc_b6b10bfe)
+    val receiveShareRequestTitle = stringResource(R.string.receive_share_request_title)
+    val receiveNoShareAppMessage = stringResource(R.string.receive_no_share_app)
+    val labelSavedToast = stringResource(R.string.loc_171555e8)
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
 
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -152,6 +157,12 @@ fun ReceiveScreen(
                 }
             }
         }
+    val copyReceiveRequest: () -> Unit = {
+        qrContent?.let { content ->
+            SecureClipboard.copyAndScheduleClear(context, content)
+            Toast.makeText(context, copyReceiveToast, Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // Generate QR code when content changes
     LaunchedEffect(qrContent) {
@@ -229,7 +240,7 @@ fun ReceiveScreen(
                     ) {
                         Image(
                             bitmap = qrBitmap!!.asImageBitmap(),
-                            contentDescription = "Enlarged QR Code",
+                            contentDescription = stringResource(R.string.loc_ef73e5ab),
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit,
                         )
@@ -238,7 +249,7 @@ fun ReceiveScreen(
                     Spacer(modifier = Modifier.height(24.dp))
 
                     Text(
-                        text = "Tap anywhere to close",
+                        text = stringResource(R.string.loc_e1041b50),
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary,
                     )
@@ -272,7 +283,7 @@ fun ReceiveScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "Receive Bitcoin",
+                    text = stringResource(R.string.loc_4126d5db),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.fillMaxWidth(),
@@ -310,21 +321,28 @@ fun ReceiveScreen(
                             .size(220.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color.White)
-                            .clickable(
+                            .combinedClickable(
                                 enabled = walletState.currentAddress != null,
-                            ) { showEnlargedQr = true },
+                                onClick = { showEnlargedQr = true },
+                                onLongClick = copyReceiveRequest,
+                            ),
                     contentAlignment = Alignment.Center,
                 ) {
                     if (qrBitmap != null && walletState.currentAddress != null) {
                         Image(
                             bitmap = qrBitmap!!.asImageBitmap(),
-                            contentDescription = "QR Code - Tap to enlarge",
+                            contentDescription = stringResource(R.string.loc_416323aa),
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit,
                         )
                     } else {
                         Text(
-                            text = if (walletState.isInitialized) "Generating..." else "No wallet",
+                            text =
+                                if (walletState.isInitialized) {
+                                    stringResource(R.string.loc_da2e3020)
+                                } else {
+                                    stringResource(R.string.loc_fb85740c)
+                                },
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary,
                         )
@@ -349,6 +367,7 @@ fun ReceiveScreen(
                     modifier =
                         Modifier
                             .fillMaxWidth()
+                            .clickable(enabled = qrContent != null, onClick = copyReceiveRequest)
                             .padding(horizontal = 8.dp),
                 )
 
@@ -360,20 +379,15 @@ fun ReceiveScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     ReceiveActionButton(
-                        text = "Copy",
+                        text = stringResource(R.string.loc_ed8814bc),
                         icon = Icons.Default.ContentCopy,
                         tint = BitcoinOrange,
-                        onClick = {
-                            qrContent?.let { content ->
-                                SecureClipboard.copyAndScheduleClear(context, "Address", content)
-                                Toast.makeText(context, "Address copied", Toast.LENGTH_SHORT).show()
-                            }
-                        },
+                        onClick = copyReceiveRequest,
                         enabled = walletState.currentAddress != null,
                         iconSize = 17.dp,
                     )
                     ReceiveActionButton(
-                        text = "New",
+                        text = stringResource(R.string.loc_53ae02a5),
                         icon = Icons.Default.Refresh,
                         tint = BitcoinOrange,
                         onClick = onGenerateAddress,
@@ -381,7 +395,7 @@ fun ReceiveScreen(
                         iconSize = 20.dp,
                     )
                     ReceiveActionButton(
-                        text = "Share",
+                        text = stringResource(R.string.loc_2ec7b25e),
                         icon = Icons.Default.Share,
                         tint = BitcoinOrange,
                         onClick = {
@@ -393,10 +407,18 @@ fun ReceiveScreen(
                                     }
                                 runCatching {
                                     context.startActivity(
-                                        Intent.createChooser(shareIntent, "Share receive request"),
+                                        Intent.createChooser(
+                                            shareIntent,
+                                            receiveShareRequestTitle,
+                                        ),
                                     )
                                 }.onFailure {
-                                    Toast.makeText(context, "No app available to share", Toast.LENGTH_SHORT).show()
+                                    Toast
+                                        .makeText(
+                                            context,
+                                            receiveNoShareAppMessage,
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
                                 }
                             }
                         },
@@ -418,7 +440,7 @@ fun ReceiveScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Amount",
+                            text = stringResource(R.string.loc_890d7574),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -572,7 +594,7 @@ fun ReceiveScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Label",
+                            text = stringResource(R.string.loc_cf667fec),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -588,7 +610,7 @@ fun ReceiveScreen(
                             OutlinedTextField(
                                 value = labelText,
                                 onValueChange = { labelText = it },
-                                placeholder = { Text("e.g. Payment from Alice") },
+                                placeholder = { Text(stringResource(R.string.loc_c5ff4e34)) },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(8.dp),
@@ -604,10 +626,10 @@ fun ReceiveScreen(
                                         androidx.compose.material3.TextButton(
                                             onClick = {
                                                 onSaveLabel(walletState.currentAddress, labelText)
-                                                Toast.makeText(context, "Label saved", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, labelSavedToast, Toast.LENGTH_SHORT).show()
                                             },
                                         ) {
-                                            Text("Save", color = BitcoinOrange)
+                                            Text(stringResource(R.string.loc_f55495e0), color = BitcoinOrange)
                                         }
                                     }
                                 },
@@ -621,7 +643,7 @@ fun ReceiveScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "Embed in QR",
+                                    text = stringResource(R.string.loc_2b196e9d),
                                     style = MaterialTheme.typography.labelMedium,
                                     color = TextSecondary,
                                     modifier = Modifier.padding(end = 8.dp),
@@ -656,7 +678,7 @@ fun ReceiveScreen(
                 enabled = walletState.isInitialized,
             ) {
                 Text(
-                    text = "All Addresses",
+                    text = stringResource(R.string.loc_5c96cb11),
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
@@ -667,7 +689,7 @@ fun ReceiveScreen(
                 enabled = walletState.isInitialized,
             ) {
                 Text(
-                    text = "All UTXOs",
+                    text = stringResource(R.string.loc_8bc041b3),
                     style = MaterialTheme.typography.titleMedium,
                 )
             }

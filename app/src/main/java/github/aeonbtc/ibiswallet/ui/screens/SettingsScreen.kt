@@ -14,7 +14,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CurrencyBitcoin
@@ -33,12 +32,17 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.BtcPriceService
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.tor.TorStatus
+import github.aeonbtc.ibiswallet.ui.components.CompactDropdownField
+import github.aeonbtc.ibiswallet.ui.components.DropdownOptionText
+import github.aeonbtc.ibiswallet.ui.components.LanguageDropdown
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.*
+import github.aeonbtc.ibiswallet.util.ServerUrlValidator
 import github.aeonbtc.ibiswallet.util.WalletNotificationDeliveryState
 import kotlinx.coroutines.delay
 
@@ -47,6 +51,8 @@ import kotlinx.coroutines.delay
 fun SettingsScreen(
     currentDenomination: String = SecureStorage.DENOMINATION_BTC,
     onDenominationChange: (String) -> Unit = {},
+    currentAppLocale: AppLocale = AppLocale.ENGLISH,
+    onAppLocaleChange: (AppLocale) -> Unit = {},
     spendUnconfirmed: Boolean = true,
     onSpendUnconfirmedChange: (Boolean) -> Unit = {},
     walletNotificationsEnabled: Boolean = false,
@@ -68,6 +74,8 @@ fun SettingsScreen(
     onPriceSourceChange: (String) -> Unit = {},
     currentPriceCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     onPriceCurrencyChange: (String) -> Unit = {},
+    historicalTxFiatEnabled: Boolean = false,
+    onHistoricalTxFiatEnabledChange: (Boolean) -> Unit = {},
     currentMempoolServer: String = SecureStorage.MEMPOOL_SPACE,
     onMempoolServerChange: (String) -> Unit = {},
     customMempoolUrl: String = "",
@@ -92,24 +100,24 @@ fun SettingsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Settings",
+                text = stringResource(R.string.loc_1c33c293),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         // ── Card 1: General ──
         Card(
@@ -124,7 +132,7 @@ fun SettingsScreen(
                         .padding(16.dp),
             ) {
                 Text(
-                    text = "General",
+                    text = stringResource(R.string.loc_01940fd6),
                     style = MaterialTheme.typography.titleMedium,
                     color = BitcoinOrange,
                 )
@@ -161,11 +169,11 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         ToggleOptionText(
-                            title = if (isSats) "Sats" else "BTC",
+                            title = if (isSats) stringResource(R.string.loc_33b64233) else "BTC",
                             subtitle = if (isSats) {
-                                "Wallet amounts shown in satoshis"
+                                stringResource(R.string.loc_d654b827)
                             } else {
-                                "Wallet amounts shown in bitcoin"
+                                stringResource(R.string.loc_781eebac)
                             },
                         )
                     }
@@ -191,10 +199,10 @@ fun SettingsScreen(
 
                 val nfcSubtitle =
                     when {
-                        !hasNfcHardware -> "Not available on this device"
-                        !isSystemNfcEnabled -> "Turn on NFC in Android settings"
-                        !supportsNfcBroadcast -> "Enable NFC read only"
-                        else -> "Enable NFC read + share"
+                        !hasNfcHardware -> stringResource(R.string.loc_3e2ca137)
+                        !isSystemNfcEnabled -> stringResource(R.string.loc_e762ab0b)
+                        !supportsNfcBroadcast -> stringResource(R.string.loc_03cc7c45)
+                        else -> stringResource(R.string.loc_7e8f0b30)
                     }
 
                 Row(
@@ -218,8 +226,8 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         ToggleOptionText(
-                            title = "Spend Unconfirmed",
-                            subtitle = "Allow spending unconfirmed UTXOs",
+                            title = stringResource(R.string.loc_0708218f),
+                            subtitle = stringResource(R.string.loc_35cb0c66),
                         )
                     }
                     SquareToggle(
@@ -341,7 +349,7 @@ fun SettingsScreen(
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         ToggleOptionText(
-                            title = "NFC",
+                            title = stringResource(R.string.loc_ccb38171),
                             subtitle = nfcSubtitle,
                             titleColor = if (hasNfcHardware) {
                                 MaterialTheme.colorScheme.onBackground
@@ -368,7 +376,7 @@ fun SettingsScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Swipe Navigation",
+                        text = stringResource(R.string.loc_db88d4ce),
                         style = MaterialTheme.typography.titleMedium,
                         color = TextSecondary,
                     )
@@ -380,6 +388,30 @@ fun SettingsScreen(
                     currentMode = currentSwipeMode,
                     onModeSelected = onSwipeModeChange,
                     isLiquidAvailable = isLiquidAvailable,
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.settings_language_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextSecondary,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                LanguageDropdown(
+                    currentLocale = currentAppLocale,
+                    onLocaleSelected = onAppLocaleChange,
                 )
             }
         }
@@ -399,7 +431,7 @@ fun SettingsScreen(
                         .padding(16.dp),
             ) {
                 Text(
-                    text = "External Services",
+                    text = stringResource(R.string.loc_64f10f32),
                     style = MaterialTheme.typography.titleMedium,
                     color = BitcoinOrange,
                 )
@@ -416,7 +448,7 @@ fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Fee Rate Source",
+                    text = stringResource(R.string.loc_31ab2a4e),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
                 )
@@ -467,11 +499,11 @@ fun SettingsScreen(
                     }
                 val torStatusText =
                     when (torStatus) {
-                        TorStatus.CONNECTED -> "Tor connected"
-                        TorStatus.CONNECTING -> "Tor connecting..."
-                        TorStatus.STARTING -> "Tor starting..."
-                        TorStatus.ERROR -> "Tor error"
-                        TorStatus.DISCONNECTED, TorStatus.STOPPING -> "Tor will start automatically"
+                        TorStatus.CONNECTED -> stringResource(R.string.loc_892c0ce5)
+                        TorStatus.CONNECTING -> stringResource(R.string.loc_1a2bbf31)
+                        TorStatus.STARTING -> stringResource(R.string.loc_a4c47a71)
+                        TorStatus.ERROR -> stringResource(R.string.loc_27d8399b)
+                        TorStatus.DISCONNECTED, TorStatus.STOPPING -> stringResource(R.string.loc_d6353c61)
                     }
 
                 CompactTextFieldWithSave(
@@ -482,17 +514,19 @@ fun SettingsScreen(
                         feeUrlSaved = null
                     },
                     onSave = {
-                        val error = validateServerUrl(feeUrlDraft)
+                        val error = ServerUrlValidator.validate(feeUrlDraft)
                         if (error != null) {
                             feeUrlError = error
                             feeUrlSaved = null
                         } else {
+                            val normalizedUrl = ServerUrlValidator.normalize(feeUrlDraft)
                             feeUrlError = null
-                            onCustomFeeSourceUrlSave(feeUrlDraft)
-                            feeUrlSaved = "Server saved"
+                            feeUrlDraft = normalizedUrl
+                            onCustomFeeSourceUrlSave(normalizedUrl)
+                            feeUrlSaved = "saved"
                         }
                     },
-                    placeholder = "http://192.168... or http://...onion",
+                    placeholder = stringResource(R.string.settings_custom_server_placeholder),
                     errorMessage = feeUrlError,
                     successMessage = feeUrlSaved,
                     torStatusText = if (isOnionUrl) torStatusText else null,
@@ -513,7 +547,7 @@ fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Block Explorer",
+                    text = stringResource(R.string.loc_a688468b),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
                 )
@@ -543,17 +577,19 @@ fun SettingsScreen(
                         mempoolUrlSaved = null
                     },
                     onSave = {
-                        val error = validateServerUrl(mempoolUrlDraft)
+                        val error = ServerUrlValidator.validate(mempoolUrlDraft)
                         if (error != null) {
                             mempoolUrlError = error
                             mempoolUrlSaved = null
                         } else {
+                            val normalizedUrl = ServerUrlValidator.normalize(mempoolUrlDraft)
                             mempoolUrlError = null
-                            onCustomMempoolUrlSave(mempoolUrlDraft)
-                            mempoolUrlSaved = "Server saved"
+                            mempoolUrlDraft = normalizedUrl
+                            onCustomMempoolUrlSave(normalizedUrl)
+                            mempoolUrlSaved = "saved"
                         }
                     },
-                    placeholder = "http://192.168... or http://...onion",
+                    placeholder = stringResource(R.string.settings_custom_server_placeholder),
                     errorMessage = mempoolUrlError,
                     successMessage = mempoolUrlSaved,
                     modifier = Modifier.padding(start = 24.dp),
@@ -572,7 +608,7 @@ fun SettingsScreen(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Fiat Price Source",
+                    text = stringResource(R.string.loc_00a426f8),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
                 )
@@ -585,6 +621,10 @@ fun SettingsScreen(
                 onSourceSelected = onPriceSourceChange,
             )
 
+            val historicalTxFiatSupported =
+                currentPriceSource == SecureStorage.PRICE_SOURCE_MEMPOOL ||
+                    currentPriceSource == SecureStorage.PRICE_SOURCE_MEMPOOL_ONION
+
             if (currentPriceSource != SecureStorage.PRICE_SOURCE_OFF) {
                 Spacer(modifier = Modifier.height(6.dp))
 
@@ -593,6 +633,30 @@ fun SettingsScreen(
                     currentCurrency = currentPriceCurrency,
                     onCurrencySelected = onPriceCurrencyChange,
                 )
+
+                if (historicalTxFiatSupported) {
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onHistoricalTxFiatEnabledChange(!historicalTxFiatEnabled) },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ToggleOptionText(
+                            title = stringResource(R.string.historical_tx_fiat_title),
+                            subtitle = stringResource(R.string.historical_tx_fiat_subtitle),
+                            modifier = Modifier.weight(1f),
+                        )
+                        SquareToggle(
+                            checked = historicalTxFiatEnabled,
+                            onCheckedChange = onHistoricalTxFiatEnabledChange,
+                        )
+                    }
+                }
             }
 
             if (currentPriceSource == SecureStorage.PRICE_SOURCE_MEMPOOL_ONION) {
@@ -615,7 +679,7 @@ fun SettingsScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Bitcoin Electrum Server",
+                    text = stringResource(R.string.loc_a39dd5c6),
                     style = TextStyle(fontSize = 15.sp),
                     color = TextPrimary,
                     modifier = Modifier
@@ -631,7 +695,7 @@ fun SettingsScreen(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = "Open Bitcoin Electrum settings",
+                        contentDescription = stringResource(R.string.loc_2a54f889),
                         tint = BitcoinOrange,
                         modifier = Modifier.size(20.dp),
                     )
@@ -648,8 +712,10 @@ fun SettingsScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun Layer2OptionsScreen(
-    layer2Enabled: Boolean = false,
-    onLayer2EnabledChange: (Boolean) -> Unit = {},
+    liquidEnabled: Boolean = false,
+    onLiquidEnabledChange: (Boolean) -> Unit = {},
+    sparkEnabled: Boolean = false,
+    onSparkEnabledChange: (Boolean) -> Unit = {},
     currentDenomination: String = SecureStorage.DENOMINATION_BTC,
     onDenominationChange: (String) -> Unit = {},
     currentBoltzApiSource: String = SecureStorage.BOLTZ_API_DISABLED,
@@ -664,6 +730,7 @@ fun Layer2OptionsScreen(
     onOpenLiquidElectrum: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
+    val layer2Enabled = liquidEnabled || sparkEnabled
     Column(
         modifier =
             Modifier
@@ -676,28 +743,30 @@ fun Layer2OptionsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Layer 2",
+                text = stringResource(R.string.loc_2f73501f),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
         Layer2OptionsCard(
-            layer2Enabled = layer2Enabled,
-            onLayer2EnabledChange = onLayer2EnabledChange,
+            liquidEnabled = liquidEnabled,
+            onLiquidEnabledChange = onLiquidEnabledChange,
+            sparkEnabled = sparkEnabled,
+            onSparkEnabledChange = onSparkEnabledChange,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -708,7 +777,7 @@ fun Layer2OptionsScreen(
             onDenominationChange = onDenominationChange,
         )
 
-        if (layer2Enabled) {
+        if (liquidEnabled) {
             Spacer(modifier = Modifier.height(8.dp))
 
             Layer2ExternalServicesCard(
@@ -731,8 +800,10 @@ fun Layer2OptionsScreen(
 
 @Composable
 private fun Layer2OptionsCard(
-    layer2Enabled: Boolean,
-    onLayer2EnabledChange: (Boolean) -> Unit,
+    liquidEnabled: Boolean,
+    onLiquidEnabledChange: (Boolean) -> Unit,
+    sparkEnabled: Boolean,
+    onSparkEnabledChange: (Boolean) -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -746,7 +817,7 @@ private fun Layer2OptionsCard(
                     .padding(16.dp),
         ) {
             Text(
-                text = "Layer 2 Options",
+                text = stringResource(R.string.loc_56d9acd0),
                 style = MaterialTheme.typography.titleMedium,
                 color = BitcoinOrange,
             )
@@ -759,14 +830,15 @@ private fun Layer2OptionsCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ToggleOptionText(
-                    title = "Liquid w/Lightning swaps",
-                    subtitle = "Trusted federation sidechain",
+                    title = stringResource(R.string.loc_22236665),
+                    subtitle = stringResource(R.string.loc_f1af1b9c),
                     titleColor = TextPrimary,
                     modifier = Modifier.weight(1f),
                 )
                 SquareToggle(
-                    checked = layer2Enabled,
-                    onCheckedChange = onLayer2EnabledChange,
+                    checked = liquidEnabled,
+                    onCheckedChange = onLiquidEnabledChange,
+                    checkedColor = LiquidTeal,
                 )
             }
 
@@ -778,16 +850,16 @@ private fun Layer2OptionsCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ToggleOptionText(
-                    title = "Ark w/Lightning swaps",
-                    subtitle = "Trustless L2 protocol (Coming soon)",
-                    titleColor = TextTertiary,
-                    subtitleColor = TextTertiary,
+                    title = stringResource(R.string.loc_85f5955f),
+                    subtitle = stringResource(R.string.settings_spark_subtitle),
+                    titleColor = TextPrimary,
+                    subtitleColor = TextSecondary,
                     modifier = Modifier.weight(1f),
                 )
                 SquareToggle(
-                    checked = false,
-                    onCheckedChange = { /* disabled */ },
-                    enabled = false,
+                    checked = sparkEnabled,
+                    onCheckedChange = onSparkEnabledChange,
+                    checkedColor = SparkPurple,
                 )
             }
         }
@@ -814,7 +886,7 @@ private fun Layer2DisplayCard(
                     .padding(16.dp),
         ) {
             Text(
-                text = "General",
+                text = stringResource(R.string.loc_01940fd6),
                 style = MaterialTheme.typography.titleMedium,
                 color = BitcoinOrange,
             )
@@ -856,11 +928,11 @@ private fun Layer2DisplayCard(
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     ToggleOptionText(
-                        title = if (isSats) "Sats" else "BTC",
+                        title = if (isSats) stringResource(R.string.loc_33b64233) else "BTC",
                         subtitle = if (isSats) {
-                            "Layer 2 amounts shown in satoshis"
+                            stringResource(R.string.loc_eda2a508)
                         } else {
-                            "Layer 2 amounts shown in bitcoin"
+                            stringResource(R.string.loc_e0230c8c)
                         },
                     )
                 }
@@ -911,7 +983,7 @@ private fun Layer2ExternalServicesCard(
                     .padding(16.dp),
         ) {
             Text(
-                text = "External Services",
+                text = stringResource(R.string.loc_64f10f32),
                 style = MaterialTheme.typography.titleMedium,
                 color = BitcoinOrange,
             )
@@ -927,7 +999,7 @@ private fun Layer2ExternalServicesCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Boltz API",
+                    text = stringResource(R.string.loc_14b0f0b9),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
                 )
@@ -958,7 +1030,7 @@ private fun Layer2ExternalServicesCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "SideSwap API",
+                    text = stringResource(R.string.loc_799c4cd6),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
                 )
@@ -989,7 +1061,7 @@ private fun Layer2ExternalServicesCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Block Explorer",
+                    text = stringResource(R.string.loc_a688468b),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextSecondary,
                 )
@@ -1019,17 +1091,19 @@ private fun Layer2ExternalServicesCard(
                         liquidExplorerUrlSaved = null
                     },
                     onSave = {
-                        val error = validateServerUrl(liquidExplorerUrlDraft)
+                        val error = ServerUrlValidator.validate(liquidExplorerUrlDraft)
                         if (error != null) {
                             liquidExplorerUrlError = error
                             liquidExplorerUrlSaved = null
                         } else {
+                            val normalizedUrl = ServerUrlValidator.normalize(liquidExplorerUrlDraft)
                             liquidExplorerUrlError = null
-                            onCustomLiquidExplorerUrlSave(liquidExplorerUrlDraft)
-                            liquidExplorerUrlSaved = "Server saved"
+                            liquidExplorerUrlDraft = normalizedUrl
+                            onCustomLiquidExplorerUrlSave(normalizedUrl)
+                            liquidExplorerUrlSaved = "saved"
                         }
                     },
-                    placeholder = "http://192.168... or http://...onion",
+                    placeholder = stringResource(R.string.settings_custom_server_placeholder),
                     errorMessage = liquidExplorerUrlError,
                     successMessage = liquidExplorerUrlSaved,
                     modifier = Modifier.padding(start = 24.dp),
@@ -1049,7 +1123,7 @@ private fun Layer2ExternalServicesCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Liquid Electrum Server",
+                    text = stringResource(R.string.loc_c7185189),
                     style = TextStyle(fontSize = 15.sp),
                     color = TextPrimary,
                     modifier = Modifier
@@ -1065,7 +1139,7 @@ private fun Layer2ExternalServicesCard(
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = "Open Liquid Electrum settings",
+                        contentDescription = stringResource(R.string.loc_1c1151e0),
                         tint = BitcoinOrange,
                         modifier = Modifier.size(20.dp),
                     )
@@ -1084,9 +1158,6 @@ private data class MempoolServerOption(
     val description: String,
 )
 
-/**
- * Dropdown for selecting mempool server
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MempoolServerDropdown(
@@ -1099,23 +1170,23 @@ private fun MempoolServerDropdown(
         listOf(
             MempoolServerOption(
                 id = SecureStorage.MEMPOOL_DISABLED,
-                name = "Disabled",
-                description = "No Liquid explorer links",
+                name = stringResource(R.string.loc_7d880cb5),
+                description = stringResource(R.string.loc_64d3e427),
             ),
             MempoolServerOption(
                 id = SecureStorage.MEMPOOL_SPACE,
                 name = "mempool.space",
-                description = "Clearnet",
+                description = stringResource(R.string.loc_bed05818),
             ),
             MempoolServerOption(
                 id = SecureStorage.MEMPOOL_ONION,
-                name = "mempool.space (Onion)",
-                description = "Onion via Tor Browser",
+                name = stringResource(R.string.loc_e70effb6),
+                description = stringResource(R.string.loc_c49a3480),
             ),
             MempoolServerOption(
                 id = SecureStorage.MEMPOOL_CUSTOM,
-                name = "Custom Server",
-                description = "Custom URL",
+                name = stringResource(R.string.loc_c032eff3),
+                description = stringResource(R.string.loc_b3694f7f),
             ),
         )
 
@@ -1156,7 +1227,7 @@ private fun MempoolServerDropdown(
                         if (option.id == currentServer) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
@@ -1186,30 +1257,30 @@ private fun SwipeModeDropdown(
         add(
             SwipeModeOption(
                 id = SecureStorage.SWIPE_MODE_DISABLED,
-                name = "Disabled",
-                description = "No swipe gestures",
+                name = stringResource(R.string.loc_7d880cb5),
+                description = stringResource(R.string.loc_1ddabd37),
             ),
         )
         add(
             SwipeModeOption(
                 id = SecureStorage.SWIPE_MODE_WALLETS,
-                name = "Wallets",
-                description = "Swipe between wallets",
+                name = stringResource(R.string.loc_59c793f0),
+                description = stringResource(R.string.loc_ff9f65eb),
             ),
         )
         add(
             SwipeModeOption(
                 id = SecureStorage.SWIPE_MODE_SEND_RECEIVE,
-                name = "Send / Receive",
-                description = "Swipe between balance, send, and receive",
+                name = stringResource(R.string.loc_6ea25f47),
+                description = stringResource(R.string.loc_6e8be5a6),
             ),
         )
         if (isLiquidAvailable) {
             add(
                 SwipeModeOption(
                     id = SecureStorage.SWIPE_MODE_LAYERS,
-                    name = "Layers",
-                    description = "Swipe between layer 1 and layer 2",
+                    name = stringResource(R.string.loc_e124e866),
+                    description = stringResource(R.string.loc_62840d26),
                 ),
             )
         }
@@ -1252,7 +1323,7 @@ private fun SwipeModeDropdown(
                         if (option.id == currentMode) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
@@ -1287,28 +1358,28 @@ private fun FeeSourceDropdown(
         listOf(
             FeeSourceOption(
                 id = SecureStorage.FEE_SOURCE_OFF,
-                name = "Disabled",
-                description = "No fee rate fetching",
+                name = stringResource(R.string.loc_7d880cb5),
+                description = stringResource(R.string.loc_ff1867f2),
             ),
             FeeSourceOption(
                 id = SecureStorage.FEE_SOURCE_MEMPOOL,
                 name = "mempool.space",
-                description = "Clearnet",
+                description = stringResource(R.string.loc_bed05818),
             ),
             FeeSourceOption(
                 id = SecureStorage.FEE_SOURCE_MEMPOOL_ONION,
-                name = "mempool.space (Onion)",
-                description = "Onion via Tor",
+                name = stringResource(R.string.loc_e70effb6),
+                description = stringResource(R.string.loc_a1b0d97e),
             ),
             FeeSourceOption(
                 id = SecureStorage.FEE_SOURCE_ELECTRUM,
-                name = "Electrum Server",
-                description = "Connected server",
+                name = stringResource(R.string.loc_aab4007b),
+                description = stringResource(R.string.loc_aeca6ac4),
             ),
             FeeSourceOption(
                 id = SecureStorage.FEE_SOURCE_CUSTOM,
-                name = "Custom Server",
-                description = "Custom URL",
+                name = stringResource(R.string.loc_c032eff3),
+                description = stringResource(R.string.loc_b3694f7f),
             ),
         )
 
@@ -1349,7 +1420,7 @@ private fun FeeSourceDropdown(
                         if (option.id == currentSource) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
@@ -1384,23 +1455,23 @@ private fun PriceSourceDropdown(
         listOf(
             PriceSourceOption(
                 id = SecureStorage.PRICE_SOURCE_OFF,
-                name = "Disabled",
-                description = "No fiat prices",
+                name = stringResource(R.string.loc_7d880cb5),
+                description = stringResource(R.string.loc_060e830f),
             ),
             PriceSourceOption(
                 id = SecureStorage.PRICE_SOURCE_MEMPOOL,
                 name = "mempool.space",
-                description = "Clearnet",
+                description = stringResource(R.string.loc_bed05818),
             ),
             PriceSourceOption(
                 id = SecureStorage.PRICE_SOURCE_MEMPOOL_ONION,
-                name = "mempool.space (Onion)",
-                description = "Onion via Tor",
+                name = stringResource(R.string.loc_e70effb6),
+                description = stringResource(R.string.loc_a1b0d97e),
             ),
             PriceSourceOption(
                 id = SecureStorage.PRICE_SOURCE_COINGECKO,
                 name = "CoinGecko",
-                description = "Clearnet",
+                description = stringResource(R.string.loc_bed05818),
             ),
         )
 
@@ -1441,7 +1512,7 @@ private fun PriceSourceDropdown(
                         if (option.id == currentSource) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
@@ -1502,7 +1573,7 @@ private fun PriceCurrencyDropdown(
                         if (option.code == currentCurrency) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
@@ -1530,18 +1601,18 @@ private fun BoltzApiSourceDropdown(
         listOf(
             Layer2ApiSourceOption(
                 id = SecureStorage.BOLTZ_API_DISABLED,
-                name = "Disabled",
-                description = "No Boltz swaps or lightning functionality",
+                name = stringResource(R.string.loc_7d880cb5),
+                description = stringResource(R.string.loc_c519cf9f),
             ),
             Layer2ApiSourceOption(
                 id = SecureStorage.BOLTZ_API_CLEARNET,
                 name = "Boltz",
-                description = "Clearnet",
+                description = stringResource(R.string.loc_bed05818),
             ),
             Layer2ApiSourceOption(
                 id = SecureStorage.BOLTZ_API_TOR,
-                name = "Boltz (Onion)",
-                description = "Onion via Tor",
+                name = stringResource(R.string.loc_29c377a4),
+                description = stringResource(R.string.loc_a1b0d97e),
             ),
         )
     val selectedOption = options.find { it.id == currentSource } ?: options.first()
@@ -1578,7 +1649,7 @@ private fun BoltzApiSourceDropdown(
                         if (option.id == currentSource) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
@@ -1600,18 +1671,18 @@ private fun SideSwapApiSourceDropdown(
         listOf(
             Layer2ApiSourceOption(
                 id = SecureStorage.SIDESWAP_API_DISABLED,
-                name = "Disabled",
-                description = "No SideSwap swaps",
+                name = stringResource(R.string.loc_7d880cb5),
+                description = stringResource(R.string.loc_e4e0f733),
             ),
             Layer2ApiSourceOption(
                 id = SecureStorage.SIDESWAP_API_CLEARNET,
                 name = "SideSwap",
-                description = "Clearnet",
+                description = stringResource(R.string.loc_bed05818),
             ),
             Layer2ApiSourceOption(
                 id = SecureStorage.SIDESWAP_API_TOR,
-                name = "SideSwap (Tor)",
-                description = "Clearnet via Tor",
+                name = stringResource(R.string.loc_91ea3f60),
+                description = stringResource(R.string.loc_0d01317f),
             ),
         )
     val selectedOption = options.find { it.id == currentSource } ?: options.first()
@@ -1648,7 +1719,7 @@ private fun SideSwapApiSourceDropdown(
                         if (option.id == currentSource) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
@@ -1676,28 +1747,28 @@ private fun LiquidExplorerDropdown(
         listOf(
             LiquidExplorerOption(
                 id = SecureStorage.LIQUID_EXPLORER_DISABLED,
-                name = "Disabled",
-                description = "No block explorer links",
+                name = stringResource(R.string.loc_7d880cb5),
+                description = stringResource(R.string.loc_bcc5378e),
             ),
             LiquidExplorerOption(
                 id = SecureStorage.LIQUID_EXPLORER_LIQUID_NETWORK,
                 name = "liquid.network",
-                description = "Clearnet",
+                description = stringResource(R.string.loc_bed05818),
             ),
             LiquidExplorerOption(
                 id = SecureStorage.LIQUID_EXPLORER_LIQUID_NETWORK_ONION,
-                name = "liquid.network (Onion)",
-                description = "Onion via Tor Browser",
+                name = stringResource(R.string.loc_1129520d),
+                description = stringResource(R.string.loc_c49a3480),
             ),
             LiquidExplorerOption(
                 id = SecureStorage.LIQUID_EXPLORER_BLOCKSTREAM,
                 name = "Blockstream",
-                description = "Clearnet",
+                description = stringResource(R.string.loc_bed05818),
             ),
             LiquidExplorerOption(
                 id = SecureStorage.LIQUID_EXPLORER_CUSTOM,
-                name = "Custom Server",
-                description = "Custom URL",
+                name = stringResource(R.string.loc_c032eff3),
+                description = stringResource(R.string.loc_b3694f7f),
             ),
         )
     val selectedOption = options.find { it.id == currentExplorer } ?: options.first()
@@ -1734,67 +1805,13 @@ private fun LiquidExplorerDropdown(
                         if (option.id == currentExplorer) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Selected",
+                                contentDescription = stringResource(R.string.common_selected),
                                 tint = BitcoinOrange,
                             )
                         }
                     },
                 )
             }
-        }
-    }
-}
-
-/**
- * Compact read-only dropdown field with proper text alignment (no clipping).
- */
-@Composable
-private fun CompactDropdownField(
-    value: String,
-    expanded: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .border(1.dp, if (expanded) BitcoinOrange else BorderColor, RoundedCornerShape(8.dp))
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = value,
-            style = TextStyle(fontSize = 14.5.sp),
-            color = MaterialTheme.colorScheme.onBackground,
-            modifier = Modifier.weight(1f),
-        )
-        Icon(
-            imageVector = Icons.Default.ArrowDropDown,
-            contentDescription = null,
-            tint = TextSecondary,
-            modifier = Modifier.size(20.dp),
-        )
-    }
-}
-
-@Composable
-private fun DropdownOptionText(
-    title: String,
-    subtitle: String,
-    selected: Boolean,
-) {
-    Column {
-        Text(
-            text = title,
-            style = TextStyle(fontSize = 14.5.sp),
-            color = if (selected) BitcoinOrange else MaterialTheme.colorScheme.onBackground,
-        )
-        if (subtitle.isNotBlank()) {
-            Text(
-                text = subtitle,
-                style = TextStyle(fontSize = 12.5.sp),
-                color = TextSecondary,
-            )
         }
     }
 }
@@ -1822,18 +1839,6 @@ private fun ToggleOptionText(
 }
 
 /**
- * Validates a server URL. Returns an error message if invalid, null if valid.
- */
-private fun validateServerUrl(url: String): String? {
-    val trimmed = url.trim()
-    if (trimmed.isEmpty()) return "URL cannot be empty"
-    val lower = trimmed.lowercase()
-    val hasScheme = lower.startsWith("http://") || lower.startsWith("https://")
-    if (!hasScheme) return "URL must start with http:// or https://"
-    return null
-}
-
-/**
  * Compact editable text field with a right-aligned Save button and optional error message.
  */
 /**
@@ -1854,11 +1859,11 @@ private fun TorStatusIndicator(
         }
     val torStatusText =
         when (torStatus) {
-            TorStatus.CONNECTED -> "Tor connected"
-            TorStatus.CONNECTING -> "Tor connecting..."
-            TorStatus.STARTING -> "Tor starting..."
-            TorStatus.ERROR -> "Tor error"
-            TorStatus.DISCONNECTED, TorStatus.STOPPING -> "Tor will start automatically"
+            TorStatus.CONNECTED -> stringResource(R.string.loc_892c0ce5)
+            TorStatus.CONNECTING -> stringResource(R.string.loc_1a2bbf31)
+            TorStatus.STARTING -> stringResource(R.string.loc_a4c47a71)
+            TorStatus.ERROR -> stringResource(R.string.loc_27d8399b)
+            TorStatus.DISCONNECTED, TorStatus.STOPPING -> stringResource(R.string.loc_d6353c61)
         }
 
     Row(
@@ -1942,7 +1947,7 @@ private fun CompactTextFieldWithSave(
             )
 
             Text(
-                text = if (successMessage != null) "Saved" else "Save",
+                text = if (successMessage != null) stringResource(R.string.loc_3822fc21) else stringResource(R.string.loc_f55495e0),
                 style = TextStyle(fontSize = 13.sp),
                 color = if (successMessage != null) SuccessGreen else BitcoinOrange,
                 modifier =

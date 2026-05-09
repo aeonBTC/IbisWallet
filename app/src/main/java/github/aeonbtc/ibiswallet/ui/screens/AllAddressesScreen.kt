@@ -42,7 +42,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -77,15 +76,19 @@ import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
-import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.pow
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
+import androidx.compose.material3.Text
 
 private const val ADDRESS_DISPLAY_LIMIT = 20
 
@@ -114,7 +117,10 @@ fun AllAddressesScreen(
     var searchQuery by remember { mutableStateOf("") }
     var receiveDisplayCount by remember { mutableIntStateOf(ADDRESS_DISPLAY_LIMIT) }
     var changeDisplayCount by remember { mutableIntStateOf(ADDRESS_DISPLAY_LIMIT) }
-    val tabs = listOf("Receive", "Change", "Used")
+    val tabReceive = stringResource(R.string.loc_a0ce08ad)
+    val tabChange = stringResource(R.string.loc_47fbfb16)
+    val tabUsed = stringResource(R.string.loc_d975cc26)
+    val tabs = listOf(tabReceive, tabChange, tabUsed)
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
 
     val assetBalancesByAddress = remember(assetUtxos) {
@@ -135,8 +141,12 @@ fun AllAddressesScreen(
 
     // Generate QR code when showing
     LaunchedEffect(showQrForAddress) {
+        qrBitmap = null
         showQrForAddress?.let { address ->
-            qrBitmap = generateQrBitmap(address)
+            qrBitmap =
+                withContext(Dispatchers.Default) {
+                    generateQrBitmap(address)
+                }
         }
     }
 
@@ -152,12 +162,12 @@ fun AllAddressesScreen(
                     showQrForAddress = null
                     qrBitmap = null
                 }) {
-                    Text("Close", color = accentColor)
+                    Text(stringResource(R.string.loc_d2c0aec0), color = accentColor)
                 }
             },
             title = {
                 Text(
-                    text = "Address QR Code",
+                    text = stringResource(R.string.loc_c87ab105),
                     style = MaterialTheme.typography.titleMedium,
                 )
             },
@@ -177,7 +187,7 @@ fun AllAddressesScreen(
                         qrBitmap?.let { bitmap ->
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "QR Code",
+                                contentDescription = stringResource(R.string.loc_6e2afb3f),
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -323,7 +333,7 @@ fun AllAddressesScreen(
         OutlinedTextField(
             value = searchQuery,
             onValueChange = { searchQuery = it },
-            placeholder = { Text("Search address or label") },
+            placeholder = { Text(stringResource(R.string.loc_03a0fd9e)) },
             leadingIcon = {
                 Icon(
                     imageVector = Icons.Default.Search,
@@ -336,7 +346,7 @@ fun AllAddressesScreen(
                     IconButton(onClick = { searchQuery = "" }) {
                         Icon(
                             imageVector = Icons.Default.Clear,
-                            contentDescription = "Clear",
+                            contentDescription = stringResource(R.string.loc_2470de02),
                             tint = TextSecondary,
                         )
                     }
@@ -381,9 +391,9 @@ fun AllAddressesScreen(
                 Text(
                     text =
                         when {
-                            searchQuery.isNotBlank() -> "No matching addresses"
+                            searchQuery.isNotBlank() -> stringResource(R.string.loc_e3f2267c)
                             selectedTab == 1 && !emptyChangeMessage.isNullOrBlank() -> emptyChangeMessage
-                            else -> "No addresses"
+                            else -> stringResource(R.string.loc_a735a217)
                         },
                     style = MaterialTheme.typography.bodyLarge,
                     color = TextSecondary,
@@ -424,7 +434,7 @@ fun AllAddressesScreen(
                             contentPadding = PaddingValues(top = 0.dp, bottom = 8.dp),
                         ) {
                             Text(
-                                text = "Show 20 more",
+                                text = stringResource(R.string.loc_c72e1beb),
                                 color = accentColor,
                             )
                         }
@@ -440,7 +450,7 @@ fun AllAddressesScreen(
                             contentPadding = PaddingValues(top = 0.dp, bottom = 8.dp),
                         ) {
                             Text(
-                                text = "Show 20 more",
+                                text = stringResource(R.string.loc_c72e1beb),
                                 color = accentColor,
                             )
                         }
@@ -456,7 +466,11 @@ fun AllAddressesScreen(
                             contentPadding = PaddingValues(top = 0.dp, bottom = 8.dp),
                         ) {
                             Text(
-                                text = "Show All (${filteredUsedAddresses.size - ADDRESS_DISPLAY_LIMIT} more)",
+                                text =
+                                    stringResource(
+                                        R.string.common_show_all_remaining_format,
+                                        filteredUsedAddresses.size - ADDRESS_DISPLAY_LIMIT,
+                                    ),
                                 color = accentColor,
                             )
                         }
@@ -504,7 +518,9 @@ private fun AddressCard(
         if (isEditingLabel) focusRequester.requestFocus()
     }
 
-    val typeName = if (address.keychain == KeychainType.EXTERNAL) "Receive" else "Change"
+    val receiveLabel = stringResource(R.string.loc_a0ce08ad)
+    val changeLabel = stringResource(R.string.loc_47fbfb16)
+    val typeName = if (address.keychain == KeychainType.EXTERNAL) receiveLabel else changeLabel
     val hasAnyBalance = address.balanceSats > 0UL || !addressAssetBalances.isNullOrEmpty()
     val displayAddress = remember(address.address, addressEdgeCharacters, useMultilineTruncatedAddress) {
         formatDisplayedAddress(
@@ -553,7 +569,12 @@ private fun AddressCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
-                        text = "$typeName #${address.index + 1u}",
+                        text =
+                            stringResource(
+                                R.string.all_addresses_keychain_index_format,
+                                typeName,
+                                (address.index + 1u).toInt(),
+                            ),
                         style = MaterialTheme.typography.labelMedium,
                         color = accentColor,
                     )
@@ -612,7 +633,7 @@ private fun AddressCard(
                                 ) {
                                     if (labelDraft.isEmpty()) {
                                         Text(
-                                            text = "Enter label",
+                                            text = stringResource(R.string.loc_822c6f45),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = TextSecondary.copy(alpha = 0.5f),
                                         )
@@ -641,7 +662,7 @@ private fun AddressCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Check,
-                                contentDescription = "Save",
+                                contentDescription = stringResource(R.string.loc_f55495e0),
                                 tint = SuccessGreen,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -692,7 +713,7 @@ private fun AddressCard(
                 ) {
                     Icon(
                         imageVector = Icons.Default.QrCode,
-                        contentDescription = "Show QR",
+                        contentDescription = stringResource(R.string.loc_98f4c3f7),
                         tint = TextSecondary,
                         modifier = Modifier.size(16.dp),
                     )
@@ -708,14 +729,17 @@ private fun AddressCard(
                             .clip(RoundedCornerShape(6.dp))
                             .background(DarkSurfaceVariant)
                             .clickable {
-                                SecureClipboard.copyAndScheduleClear(context, "Address", address.address)
+                                SecureClipboard.copyAndScheduleClear(
+                                    context,
+                                    address.address,
+                                )
                                 showCopied = true
                                 onCopy()
                             },
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,
-                        contentDescription = "Copy",
+                        contentDescription = stringResource(R.string.loc_ed8814bc),
                         tint = if (showCopied) accentColor else TextSecondary,
                         modifier = Modifier.size(16.dp),
                     )
@@ -724,7 +748,7 @@ private fun AddressCard(
 
             if (showCopied) {
                 Text(
-                    text = "Copied to clipboard!",
+                    text = stringResource(R.string.loc_e287255d),
                     style = MaterialTheme.typography.bodySmall,
                     color = accentColor,
                 )
@@ -739,7 +763,7 @@ private fun AddressCard(
             ) {
                 Column {
                     Text(
-                        text = "Balance",
+                        text = stringResource(R.string.loc_63492662),
                         style = MaterialTheme.typography.labelSmall,
                         color = TextSecondary,
                     )
@@ -763,7 +787,7 @@ private fun AddressCard(
 
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "Transactions",
+                        text = stringResource(R.string.loc_f299c1b4),
                         style = MaterialTheme.typography.labelSmall,
                         color = TextSecondary,
                     )

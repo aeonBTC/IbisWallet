@@ -272,6 +272,28 @@ object ElectrumSeedUtil {
         return publicKeyFromPrivate(currentKey)
     }
 
+    /**
+     * Derive a 32-byte private key at the provided BIP32 path.
+     */
+    fun derivePrivateKey(seed: ByteArray, path: String): ByteArray {
+        val (masterKey, masterChainCode) = masterKeyFromSeed(seed)
+        val segments = parsePath(path)
+        var currentKey = masterKey
+        var currentChainCode = masterChainCode
+
+        for (segment in segments) {
+            val (childKey, childChainCode) = if (segment >= 0x80000000L) {
+                deriveHardenedChild(currentKey, currentChainCode, segment)
+            } else {
+                deriveNormalChild(currentKey, currentChainCode, segment)
+            }
+            currentKey = childKey
+            currentChainCode = childChainCode
+        }
+
+        return currentKey
+    }
+
     fun deriveCompressedPublicKeyHex(seed: ByteArray, path: String): String {
         return deriveCompressedPublicKey(seed, path).toHexString()
     }

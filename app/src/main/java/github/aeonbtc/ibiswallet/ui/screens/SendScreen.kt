@@ -44,9 +44,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -76,12 +76,13 @@ import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.WalletState
+import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
-import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -92,12 +93,11 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
+import github.aeonbtc.ibiswallet.util.SilentPayment
 import github.aeonbtc.ibiswallet.util.canOpenBitcoinSendReview
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
-import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
-import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import java.util.Locale
 import kotlin.math.roundToLong
 
@@ -301,10 +301,11 @@ fun SendScreen(
     // Address validation
     val addressValidationError = remember(recipientAddress) { validateBitcoinAddress(recipientAddress) }
     val isAddressValid = recipientAddress.isNotBlank() && addressValidationError == null
-    val isSelfTransfer = isAddressValid && isRecipientSelfTransfer
+    val isSilentPaymentRecipient = remember(recipientAddress) { SilentPayment.isSilentPaymentAddress(recipientAddress) }
+    val isSelfTransfer = isAddressValid && !isSilentPaymentRecipient && isRecipientSelfTransfer
 
     LaunchedEffect(recipientAddress, isAddressValid, walletState.activeWallet?.id) {
-        if (isAddressValid) {
+        if (isAddressValid && !isSilentPaymentRecipient) {
             onCheckSelfTransferAddress(recipientAddress)
         } else {
             onCheckSelfTransferAddress("")
@@ -590,7 +591,6 @@ fun SendScreen(
             // Multi-recipient confirmation
             MultiRecipientConfirmationDialog(
                 recipients = multiRecipientList,
-                feeRate = feeRate,
                 useSats = useSats,
                 btcPrice = btcPrice,
                 fiatCurrency = fiatCurrency,
@@ -618,7 +618,6 @@ fun SendScreen(
             SendConfirmationDialog(
                 recipientAddress = recipientAddress,
                 amountSats = amountSats.roundToLong().toULong(),
-                feeRate = feeRate,
                 selectedUtxos = utxoSelection,
                 useSats = useSats,
                 btcPrice = btcPrice,
@@ -678,7 +677,7 @@ fun SendScreen(
                 ) {
                     Column {
                         Text(
-                            text = "Send Bitcoin",
+                            text = stringResource(R.string.loc_a274c658),
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
@@ -725,9 +724,9 @@ fun SendScreen(
                         Text(
                             text =
                                 if (isActive) {
-                                    "UTXOs (${selectedUtxos.size})"
+                                    "${stringResource(R.string.send_utxos_selected_prefix)} (${selectedUtxos.size})"
                                 } else {
-                                    "Coin Control"
+                                    stringResource(R.string.loc_002b1ce2)
                                 },
                             style = MaterialTheme.typography.labelMedium,
                             color = if (isActive) BitcoinOrange else if (hasUtxos) TextSecondary else TextSecondary.copy(alpha = 0.5f),
@@ -745,7 +744,7 @@ fun SendScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Recipient",
+                        text = stringResource(R.string.loc_eaf579ea),
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
@@ -779,7 +778,12 @@ fun SendScreen(
                         border = BorderStroke(1.dp, if (isMultiMode) BitcoinOrange else BorderColor),
                     ) {
                         Text(
-                            text = if (isMultiMode) "Multiple (${multiRecipientList.size})" else "Multiple",
+                            text =
+                                if (isMultiMode) {
+                                    "${stringResource(R.string.loc_fcc11f52)} (${multiRecipientList.size})"
+                                } else {
+                                    stringResource(R.string.loc_fcc11f52)
+                                },
                             style = MaterialTheme.typography.labelMedium,
                             color = if (isMultiMode) BitcoinOrange else TextSecondary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -808,7 +812,7 @@ fun SendScreen(
                         ) {
                             if (multiRecipientList.isEmpty()) {
                                 Text(
-                                    text = "Tap to add recipients",
+                                    text = stringResource(R.string.loc_2e7d2d6a),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary.copy(alpha = 0.5f),
                                 )
@@ -841,7 +845,11 @@ fun SendScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                 ) {
                                     Text(
-                                        text = "Total (${multiRecipientList.size} recipients)",
+                                        text =
+                                            stringResource(
+                                                R.string.send_total_recipients_format,
+                                                multiRecipientList.size,
+                                            ),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontWeight = FontWeight.Bold,
                                         color = TextSecondary,
@@ -859,7 +867,7 @@ fun SendScreen(
 
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Tap to edit recipients",
+                        text = stringResource(R.string.loc_d98e9517),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary.copy(alpha = 0.6f),
                     )
@@ -889,7 +897,7 @@ fun SendScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "Available",
+                            text = stringResource(R.string.loc_277e2626),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -909,7 +917,13 @@ fun SendScreen(
                             )
                             if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                                 Text(
-                                    text = " · ${formatFiat((availableSats.toDouble() / 100_000_000.0) * btcPrice, fiatCurrency)}",
+                                    text =
+                                        " · ${
+                                            formatFiat(
+                                                (availableSats.toDouble() / 100_000_000.0) * btcPrice,
+                                                fiatCurrency,
+                                            )
+                                        }",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary.copy(alpha = 0.7f),
                                 )
@@ -925,7 +939,7 @@ fun SendScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                text = "Est. fee",
+                                text = stringResource(R.string.loc_fea7157d),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                             )
@@ -945,7 +959,11 @@ fun SendScreen(
                                 )
                                 if (estimatedVBytes != null) {
                                     Text(
-                                        text = " (${formatVBytes(estimatedVBytes)} vB)",
+                                        text =
+                                            stringResource(
+                                                R.string.send_estimated_vbytes_format,
+                                                formatVBytes(estimatedVBytes),
+                                            ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TextSecondary.copy(alpha = 0.7f),
                                     )
@@ -962,7 +980,7 @@ fun SendScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                text = "Remaining",
+                                text = stringResource(R.string.loc_2b1af52a),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                             )
@@ -1017,7 +1035,7 @@ fun SendScreen(
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = {
                             Text(
-                                "Bitcoin address",
+                                stringResource(R.string.loc_a18fd453),
                                 color = TextSecondary.copy(alpha = 0.5f),
                             )
                         },
@@ -1025,7 +1043,7 @@ fun SendScreen(
                             IconButton(onClick = { showQrScanner = true }) {
                                 Icon(
                                     imageVector = Icons.Default.QrCodeScanner,
-                                    contentDescription = "Scan QR Code",
+                                    contentDescription = stringResource(R.string.loc_59b2cdc5),
                                     tint = BitcoinOrange,
                                     modifier = Modifier.size(22.dp),
                                 )
@@ -1245,7 +1263,7 @@ fun SendScreen(
                         horizontalArrangement = Arrangement.Start,
                     ) {
                         Text(
-                            text = "Available",
+                            text = stringResource(R.string.loc_277e2626),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -1306,7 +1324,7 @@ fun SendScreen(
                             border = BorderStroke(1.dp, if (isMaxMode) BitcoinOrange else BorderColor),
                         ) {
                             Text(
-                                text = "Max",
+                                text = stringResource(R.string.loc_a53b6469),
                                 style = MaterialTheme.typography.labelMedium,
                                 color =
                                     if (isMaxMode) {
@@ -1355,7 +1373,7 @@ fun SendScreen(
                             ),
                     ) {
                         Text(
-                            text = "Label",
+                            text = stringResource(R.string.loc_cf667fec),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (showLabelField || labelText.isNotBlank()) BitcoinOrange else TextSecondary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -1372,7 +1390,7 @@ fun SendScreen(
                                     .padding(start = 8.dp),
                             placeholder = {
                                 Text(
-                                    "e.g. Payment to Alice",
+                                    stringResource(R.string.loc_642fdbfc),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary.copy(alpha = 0.5f),
                                 )
@@ -1428,7 +1446,7 @@ fun SendScreen(
                     ),
             ) {
                 Text(
-                    text = "Connect to an Electrum server to send transactions",
+                    text = stringResource(R.string.loc_0165575b),
                     style = MaterialTheme.typography.bodySmall,
                     color = WarningYellow,
                     modifier = Modifier.padding(16.dp),
@@ -1449,7 +1467,7 @@ fun SendScreen(
                     ),
             ) {
                 Text(
-                    text = "Add a wallet first to send Bitcoin",
+                    text = stringResource(R.string.loc_905c0d07),
                     style = MaterialTheme.typography.bodySmall,
                     color = WarningYellow,
                     modifier = Modifier.padding(16.dp),
@@ -1485,7 +1503,12 @@ fun SendScreen(
                 )
             } else {
                 Text(
-                    text = if (isWatchOnly) "Review PSBT" else "Review Transaction",
+                    text =
+                        if (isWatchOnly) {
+                            stringResource(R.string.loc_35504dec)
+                        } else {
+                            stringResource(R.string.loc_81f5c0cf)
+                        },
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
@@ -1502,7 +1525,7 @@ fun SendScreen(
                 color = BorderColor,
             )
             Text(
-                text = "or",
+                text = stringResource(R.string.loc_1db77587),
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
                 modifier = Modifier.padding(horizontal = 12.dp),
@@ -1523,7 +1546,7 @@ fun SendScreen(
                     .height(48.dp),
         ) {
             Text(
-                text = "Manual Broadcast",
+                text = stringResource(R.string.loc_89bab973),
                 style = MaterialTheme.typography.titleMedium,
             )
         }
@@ -1574,7 +1597,7 @@ private fun CoinControlDialog(
                         .padding(16.dp),
             ) {
                 Text(
-                    text = "Coin Control",
+                    text = stringResource(R.string.loc_002b1ce2),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -1585,12 +1608,19 @@ private fun CoinControlDialog(
                 val totalSelectedText =
                     if (selectedUtxos.isNotEmpty()) {
                         if (privacyMode) {
-                            "${selectedUtxos.size} selected • $HIDDEN_AMOUNT"
+                            stringResource(
+                                R.string.coin_control_selected_summary_format,
+                                selectedUtxos.size,
+                                HIDDEN_AMOUNT,
+                            )
                         } else {
-                            val baseText = "${selectedUtxos.size} selected • ${formatAmount(
-                                totalSelected,
-                                useSats,
-                            )} ${if (useSats) "sats" else "BTC"}"
+                            val amountPart = formatAmount(totalSelected, useSats, includeUnit = true)
+                            val baseText =
+                                stringResource(
+                                    R.string.coin_control_selected_summary_format,
+                                    selectedUtxos.size,
+                                    amountPart,
+                                )
                             if (btcPrice != null && btcPrice > 0) {
                                 val usdValue = (totalSelected.toDouble() / 100_000_000.0) * btcPrice
                                 "$baseText · ${formatFiat(usdValue, fiatCurrency)}"
@@ -1599,7 +1629,7 @@ private fun CoinControlDialog(
                             }
                         }
                     } else {
-                        "Select UTXOs to spend from"
+                        stringResource(R.string.loc_2944f33c)
                     }
                 Text(
                     text = totalSelectedText,
@@ -1617,7 +1647,7 @@ private fun CoinControlDialog(
                         onClick = onSelectAll,
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Select All", color = BitcoinOrange)
+                        Text(stringResource(R.string.loc_27833d8a), color = BitcoinOrange)
                     }
                     TextButton(
                         onClick = onClearAll,
@@ -1625,7 +1655,7 @@ private fun CoinControlDialog(
                         enabled = selectedUtxos.isNotEmpty(),
                     ) {
                         Text(
-                            "Clear All",
+                            stringResource(R.string.loc_4340d39b),
                             color = if (selectedUtxos.isNotEmpty()) TextSecondary else TextSecondary.copy(alpha = 0.5f),
                         )
                     }
@@ -1686,7 +1716,12 @@ private fun CoinControlDialog(
                                         } else {
                                             Icons.Default.RadioButtonUnchecked
                                         },
-                                    contentDescription = if (isSelected) "Selected" else "Not selected",
+                                    contentDescription =
+                                        if (isSelected) {
+                                            stringResource(R.string.common_selected)
+                                        } else {
+                                            stringResource(R.string.loc_e17307d1)
+                                        },
                                     tint =
                                         when {
                                             isDisabled -> TextSecondary.copy(alpha = 0.3f)
@@ -1701,7 +1736,12 @@ private fun CoinControlDialog(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
                                         Text(
-                                            text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(utxo.amountSats, useSats) + if (useSats) " sats" else " BTC",
+                                            text =
+                                                if (privacyMode) {
+                                                    HIDDEN_AMOUNT
+                                                } else {
+                                                    formatAmount(utxo.amountSats, useSats, includeUnit = true)
+                                                },
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.Medium,
                                             color =
@@ -1731,7 +1771,7 @@ private fun CoinControlDialog(
                                     }
 
                                     Text(
-                                        text = "${utxo.address.take(12)}...${utxo.address.takeLast(8)}",
+                                        text = abbreviateReviewAddress(utxo.address),
                                         style = MaterialTheme.typography.bodySmall,
                                         fontFamily = FontFamily.Monospace,
                                         color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
@@ -1746,6 +1786,14 @@ private fun CoinControlDialog(
                                             color = if (isDisabled) AccentTeal.copy(alpha = 0.4f) else AccentTeal,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+
+                                    if (isDisabled) {
+                                        Text(
+                                            text = stringResource(R.string.loc_bdedd2ce),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = WarningYellow,
                                         )
                                     }
                                 }
@@ -1764,7 +1812,12 @@ private fun CoinControlDialog(
                                             .padding(horizontal = 6.dp, vertical = 2.dp),
                                 ) {
                                     Text(
-                                        text = if (utxo.isConfirmed) "Confirmed" else "Pending",
+                                        text =
+                                            if (utxo.isConfirmed) {
+                                                stringResource(R.string.loc_4ab75d7f)
+                                            } else {
+                                                stringResource(R.string.loc_1b684325)
+                                            },
                                         style = MaterialTheme.typography.labelSmall,
                                         color =
                                             if (utxo.isConfirmed) {
@@ -1794,7 +1847,7 @@ private fun CoinControlDialog(
                         ),
                 ) {
                     Text(
-                        text = "Done",
+                        text = stringResource(R.string.loc_b01f4f95),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -1810,7 +1863,6 @@ private fun CoinControlDialog(
 private fun SendConfirmationDialog(
     recipientAddress: String,
     amountSats: ULong,
-    feeRate: Double,
     selectedUtxos: List<UtxoInfo>?,
     useSats: Boolean,
     btcPrice: Double? = null,
@@ -1828,7 +1880,6 @@ private fun SendConfirmationDialog(
 ) {
     val isPreviewReady = dryRunResult != null && !dryRunResult.isError
     val estimatedFeeSats = dryRunResult?.feeSats ?: 0L
-    val estimatedVBytes = dryRunResult?.txVBytes ?: 0.0
     val actualChangeSats = dryRunResult?.changeSats ?: 0L
     val changeAddress = dryRunResult?.changeAddress
     val hasChange = dryRunResult?.hasChange ?: false
@@ -1869,7 +1920,12 @@ private fun SendConfirmationDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isWatchOnly) "Build PSBT" else "Send Bitcoin",
+                    text =
+                        if (isWatchOnly) {
+                            stringResource(R.string.loc_1959e119)
+                        } else {
+                            stringResource(R.string.loc_a274c658)
+                        },
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -1886,7 +1942,9 @@ private fun SendConfirmationDialog(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = BorderColor)
+            Spacer(modifier = Modifier.height(8.dp))
 
             IbisButton(
                 onClick = onDismiss,
@@ -1896,12 +1954,17 @@ private fun SendConfirmationDialog(
                         .height(48.dp),
                 enabled = !isSending,
             ) {
-                Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
             }
         },
     ) {
                 Text(
-                    text = if (isWatchOnly) "Review PSBT" else "Review Transaction",
+                    text =
+                        if (isWatchOnly) {
+                            stringResource(R.string.loc_35504dec)
+                        } else {
+                            stringResource(R.string.loc_81f5c0cf)
+                        },
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -1914,14 +1977,19 @@ private fun SendConfirmationDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = if (isSelfTransfer) "Destination" else "Sending To",
+                        text =
+                            if (isSelfTransfer) {
+                                stringResource(R.string.loc_b85ab17d)
+                            } else {
+                                stringResource(R.string.loc_895ab1d4)
+                            },
                         style = MaterialTheme.typography.bodyLarge,
                         color = TextSecondary,
                     )
                     if (isSelfTransfer) {
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "(Self-transfer)",
+                            text = stringResource(R.string.loc_1a2e163b),
                             style = MaterialTheme.typography.bodyLarge,
                             color = BorderColor,
                         )
@@ -1939,7 +2007,7 @@ private fun SendConfirmationDialog(
                 if (!label.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Label",
+                        text = stringResource(R.string.loc_cf667fec),
                         style = MaterialTheme.typography.bodyLarge,
                         color = TextSecondary,
                     )
@@ -1971,7 +2039,7 @@ private fun SendConfirmationDialog(
                 ) {
                     Column {
                         Text(
-                            text = "Sending:",
+                            text = stringResource(R.string.loc_d19e8dd8),
                                 style = MaterialTheme.typography.bodyLarge,
                             color = TextSecondary,
                         )
@@ -2011,7 +2079,7 @@ private fun SendConfirmationDialog(
                                 strokeWidth = 2.dp,
                             )
                             Text(
-                                text = "Calculating fee, inputs, and change...",
+                                text = stringResource(R.string.loc_8ffa41a4),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
@@ -2032,7 +2100,7 @@ private fun SendConfirmationDialog(
                             ) {
                                 Column {
                                     Text(
-                                        text = "Change:",
+                                        text = stringResource(R.string.loc_e09d7895),
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = TextSecondary,
                                     )
@@ -2066,12 +2134,12 @@ private fun SendConfirmationDialog(
                         ) {
                             Column {
                                 Text(
-                                    text = "Bitcoin Miner Fee:",
+                                    text = stringResource(R.string.loc_a870ad41),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = TextSecondary,
                                 )
                                 Text(
-                                    text = "${formatFeeRate(feeRate)} sat/vB • ${formatVBytes(estimatedVBytes)} vB",
+                                    text = stringResource(R.string.loc_1dcfbd01),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary.copy(alpha = 0.7f),
                                 )
@@ -2107,7 +2175,7 @@ private fun SendConfirmationDialog(
                         ) {
                             Column {
                                 Text(
-                                    text = "Total",
+                                    text = stringResource(R.string.loc_03eece5a),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onBackground,
@@ -2138,7 +2206,12 @@ private fun SendConfirmationDialog(
                         if (selectedUtxos != null && selectedUtxos.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "Spending from ${selectedUtxos.size} selected UTXO${if (selectedUtxos.size > 1) "s" else ""}",
+                                text =
+                                    stringResource(
+                                        R.string.loc_485306ed,
+                                        selectedUtxos.size,
+                                        if (selectedUtxos.size > 1) "s" else "",
+                                    ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
@@ -2266,6 +2339,9 @@ private fun validateBitcoinAddress(address: String): String? {
     val trimmed = address.trim()
 
     return when {
+        // Silent payment address (BIP-352)
+        trimmed.lowercase().startsWith("sp1") ->
+            if (SilentPayment.isSilentPaymentAddress(trimmed)) null else "Invalid silent payment address"
         // Legacy P2PKH (starts with 1)
         trimmed.startsWith("1") -> validateBase58CheckAddress(trimmed)
         // Legacy P2SH (starts with 3)
@@ -2488,13 +2564,13 @@ private fun MultiRecipientDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Recipients (${recipients.size})",
+                        text = stringResource(R.string.send_recipients_title_format, recipients.size),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     TextButton(onClick = onDone) {
-                        Text("Done", color = BitcoinOrange)
+                        Text(stringResource(R.string.loc_b01f4f95), color = BitcoinOrange)
                     }
                 }
 
@@ -2526,7 +2602,7 @@ private fun MultiRecipientDialog(
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(
-                                        text = "#${index + 1}",
+                                        text = stringResource(R.string.send_recipient_number_format, index + 1),
                                         style = MaterialTheme.typography.labelMedium,
                                         fontWeight = FontWeight.Bold,
                                         color = TextSecondary,
@@ -2537,7 +2613,7 @@ private fun MultiRecipientDialog(
                                             contentPadding = PaddingValues(0.dp),
                                         ) {
                                             Text(
-                                                "Remove",
+                                                stringResource(R.string.loc_6f2c1806),
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = AccentRed,
                                             )
@@ -2551,12 +2627,12 @@ private fun MultiRecipientDialog(
                                     value = addr,
                                     onValueChange = { recipients[index] = Pair(it, amt) },
                                     modifier = Modifier.fillMaxWidth(),
-                                    placeholder = { Text("Bitcoin address", color = TextSecondary.copy(alpha = 0.5f)) },
+                                    placeholder = { Text(stringResource(R.string.loc_a18fd453), color = TextSecondary.copy(alpha = 0.5f)) },
                                     trailingIcon = {
                                         IconButton(onClick = { qrScanRecipientIndex = index }) {
                                             Icon(
                                                 imageVector = Icons.Default.QrCodeScanner,
-                                                contentDescription = "Scan QR Code",
+                                                contentDescription = stringResource(R.string.loc_59b2cdc5),
                                                 tint = BitcoinOrange,
                                                 modifier = Modifier.size(20.dp),
                                             )
@@ -2592,9 +2668,9 @@ private fun MultiRecipientDialog(
                                     placeholder = {
                                         Text(
                                             when {
-                                                isUsdMode -> "Amount ($fiatCurrency)"
-                                                useSats -> "Amount (sats)"
-                                                else -> "Amount (BTC)"
+                                                isUsdMode -> "${stringResource(R.string.loc_890d7574)} ($fiatCurrency)"
+                                                useSats -> stringResource(R.string.loc_ba974c5f)
+                                                else -> stringResource(R.string.loc_399e8a9a)
                                             },
                                             color = TextSecondary.copy(alpha = 0.5f),
                                         )
@@ -2649,7 +2725,7 @@ private fun MultiRecipientDialog(
                     contentPadding = PaddingValues(vertical = 10.dp),
                 ) {
                     Text(
-                        text = "+ Add Recipient",
+                        text = stringResource(R.string.loc_a4657728),
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
@@ -2688,7 +2764,7 @@ private fun MultiRecipientDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "Sending ($validRecipientCount recipients)",
+                            text = stringResource(R.string.send_sending_recipients_format, validRecipientCount),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -2709,7 +2785,7 @@ private fun MultiRecipientDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
                         Text(
-                            text = "Est. fee",
+                            text = stringResource(R.string.loc_fea7157d),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -2728,7 +2804,7 @@ private fun MultiRecipientDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "Available",
+                        text = stringResource(R.string.loc_277e2626),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                     )
@@ -2746,7 +2822,7 @@ private fun MultiRecipientDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "Remaining",
+                        text = stringResource(R.string.loc_2b1af52a),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Bold,
                         color = TextSecondary,
@@ -2763,10 +2839,12 @@ private fun MultiRecipientDialog(
                 if (overBudget) {
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Total exceeds available balance by ${formatAmount(
-                            (-remaining).toULong(),
-                            useSats,
-                        )} ${if (useSats) "sats" else "BTC"}",
+                        text =
+                            stringResource(
+                                R.string.loc_92b7b061,
+                                formatAmount((-remaining).toULong(), useSats),
+                                if (useSats) "sats" else "BTC",
+                            ),
                         style = MaterialTheme.typography.bodySmall,
                         color = AccentRed,
                     )
@@ -2782,7 +2860,6 @@ private fun MultiRecipientDialog(
 @Composable
 private fun MultiRecipientConfirmationDialog(
     recipients: List<Recipient>,
-    feeRate: Double,
     useSats: Boolean,
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
@@ -2799,7 +2876,6 @@ private fun MultiRecipientConfirmationDialog(
 ) {
     val isPreviewReady = dryRunResult != null && !dryRunResult.isError
     val feeSats = dryRunResult?.feeSats ?: 0L
-    val estimatedVBytes = dryRunResult?.txVBytes ?: 0.0
     val changeSats = dryRunResult?.changeSats ?: 0L
     val changeAddress = dryRunResult?.changeAddress
     val hasChange = dryRunResult?.hasChange ?: false
@@ -2841,7 +2917,12 @@ private fun MultiRecipientConfirmationDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (isWatchOnly) "Create PSBT" else "Send Bitcoin",
+                        text =
+                            if (isWatchOnly) {
+                                stringResource(R.string.loc_56459d9d)
+                            } else {
+                                stringResource(R.string.loc_a274c658)
+                            },
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -2858,7 +2939,9 @@ private fun MultiRecipientConfirmationDialog(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = BorderColor)
+            Spacer(modifier = Modifier.height(8.dp))
 
             IbisButton(
                 onClick = onDismiss,
@@ -2868,12 +2951,17 @@ private fun MultiRecipientConfirmationDialog(
                         .height(48.dp),
                 enabled = !isSending,
             ) {
-                Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
             }
         },
     ) {
                 Text(
-                    text = if (isWatchOnly) "Confirm PSBT" else "Confirm Transaction",
+                    text =
+                        if (isWatchOnly) {
+                            stringResource(R.string.loc_d515634f)
+                        } else {
+                            stringResource(R.string.loc_8c7cfb7b)
+                        },
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
@@ -2883,7 +2971,7 @@ private fun MultiRecipientConfirmationDialog(
 
                 // Sending To
                 Text(
-                    text = "Sending To (${recipients.size} recipients)",
+                    text = stringResource(R.string.send_sending_to_recipients_format, recipients.size),
                     style = MaterialTheme.typography.bodyLarge,
                     color = TextSecondary,
                 )
@@ -2914,7 +3002,7 @@ private fun MultiRecipientConfirmationDialog(
                 if (!label.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "Label",
+                        text = stringResource(R.string.loc_cf667fec),
                         style = MaterialTheme.typography.bodyLarge,
                         color = TextSecondary,
                     )
@@ -2947,7 +3035,7 @@ private fun MultiRecipientConfirmationDialog(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Sending:",
+                                text = stringResource(R.string.loc_d19e8dd8),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = TextSecondary,
                             )
@@ -2987,7 +3075,7 @@ private fun MultiRecipientConfirmationDialog(
                                 strokeWidth = 2.dp,
                             )
                             Text(
-                                text = "Calculating fee, inputs, and change...",
+                                text = stringResource(R.string.loc_8ffa41a4),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                             )
@@ -3008,7 +3096,7 @@ private fun MultiRecipientConfirmationDialog(
                             ) {
                                 Column {
                                     Text(
-                                        text = "Change:",
+                                        text = stringResource(R.string.loc_e09d7895),
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = TextSecondary,
                                     )
@@ -3042,12 +3130,12 @@ private fun MultiRecipientConfirmationDialog(
                         ) {
                             Column {
                                 Text(
-                                    text = "Bitcoin Miner Fee:",
+                                    text = stringResource(R.string.loc_a870ad41),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                 )
                                 Text(
-                                    text = "${formatFeeRate(feeRate)} sat/vB • ${formatVBytes(estimatedVBytes)} vB",
+                                    text = stringResource(R.string.loc_1dcfbd01),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary.copy(alpha = 0.7f),
                                 )
@@ -3084,7 +3172,7 @@ private fun MultiRecipientConfirmationDialog(
                             horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
                             Text(
-                                text = "Total",
+                                text = stringResource(R.string.loc_03eece5a),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onBackground,
@@ -3108,7 +3196,12 @@ private fun MultiRecipientConfirmationDialog(
                         if (selectedUtxos != null && selectedUtxos.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "Spending from ${selectedUtxos.size} selected UTXO${if (selectedUtxos.size > 1) "s" else ""}",
+                                text =
+                                    stringResource(
+                                        R.string.loc_485306ed,
+                                        selectedUtxos.size,
+                                        if (selectedUtxos.size > 1) "s" else "",
+                                    ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,
                             )

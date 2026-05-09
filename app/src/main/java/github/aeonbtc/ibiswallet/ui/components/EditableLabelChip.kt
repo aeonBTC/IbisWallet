@@ -20,9 +20,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
@@ -57,7 +59,7 @@ fun EditableLabelChip(
             border = BorderStroke(1.dp, if (hasLabel) accentColor else BorderColor),
         ) {
             Text(
-                text = label ?: "+ Label",
+                text = label ?: stringResource(R.string.editable_label_chip_add),
                 style = MaterialTheme.typography.labelMedium,
                 color = if (hasLabel) accentColor else TextSecondary,
                 maxLines = 1,
@@ -78,7 +80,7 @@ fun EditableLabelChip(
             ) {
                 Icon(
                     imageVector = Icons.Default.Close,
-                    contentDescription = "Remove label",
+                    contentDescription = stringResource(R.string.loc_514da0a5),
                     tint = ErrorRed,
                     modifier = Modifier.size(20.dp),
                 )

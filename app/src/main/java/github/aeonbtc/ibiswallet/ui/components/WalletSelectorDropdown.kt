@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
@@ -40,7 +41,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -53,11 +53,13 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -65,11 +67,13 @@ import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
+import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.material3.Text
 
 /**
  * Wallet name + chevron that sits inside the TopAppBar title slot.
@@ -134,9 +138,13 @@ fun WalletSelectorPanel(
     syncingWalletId: String? = null,
     lastFullSyncTimes: Map<String, Long?> = emptyMap(),
     layer2Enabled: Boolean = false,
+    liquidLayer2Enabled: Boolean = layer2Enabled,
+    sparkLayer2Enabled: Boolean = layer2Enabled,
     isLiquidEnabledForWallet: (String) -> Boolean = { false },
+    isSparkEnabledForWallet: (String) -> Boolean = { false },
     isLiquidWatchOnlyForWallet: (String) -> Boolean = { false },
     onSetLiquidEnabledForWallet: (String, Boolean) -> Unit = { _, _ -> },
+    onSetSparkEnabledForWallet: (String, Boolean) -> Unit = { _, _ -> },
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (String, Boolean) -> Unit = { _, _ -> },
 ) {
@@ -236,7 +244,10 @@ fun WalletSelectorPanel(
                                 isSyncing = syncingWalletId == wallet.id,
                                 lastFullSyncTime = lastFullSyncTimes[wallet.id],
                                 layer2Enabled = layer2Enabled,
+                                liquidLayer2Enabled = liquidLayer2Enabled,
+                                sparkLayer2Enabled = sparkLayer2Enabled,
                                 isLiquidEnabled = isLiquidEnabledForWallet(wallet.id),
+                                isSparkEnabled = isSparkEnabledForWallet(wallet.id),
                                 isLiquidWatchOnly = isLiquidWatchOnlyForWallet(wallet.id),
                                 isWalletLockAvailable = isWalletLockAvailable,
                                 onClick = {
@@ -248,6 +259,9 @@ fun WalletSelectorPanel(
                                 onSync = { onFullSync(wallet) },
                                 onSetLiquidEnabled = { enabled ->
                                     onSetLiquidEnabledForWallet(wallet.id, enabled)
+                                },
+                                onSetSparkEnabled = { enabled ->
+                                    onSetSparkEnabledForWallet(wallet.id, enabled)
                                 },
                                 onSetWalletLocked = { locked ->
                                     onSetWalletLocked(wallet.id, locked)
@@ -281,7 +295,7 @@ fun WalletSelectorPanel(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "Manage Wallets",
+                            text = stringResource(R.string.loc_bcb6fe62),
                             style = MaterialTheme.typography.bodyLarge,
                             color = BitcoinOrange,
                         )
@@ -305,16 +319,22 @@ private fun WalletPanelItem(
     isSyncing: Boolean = false,
     lastFullSyncTime: Long? = null,
     layer2Enabled: Boolean = false,
+    liquidLayer2Enabled: Boolean = layer2Enabled,
+    sparkLayer2Enabled: Boolean = layer2Enabled,
     isLiquidEnabled: Boolean = false,
+    isSparkEnabled: Boolean = false,
     isLiquidWatchOnly: Boolean = false,
     isWalletLockAvailable: Boolean = false,
     onClick: () -> Unit,
     onSync: () -> Unit = {},
     onSetLiquidEnabled: (Boolean) -> Unit = {},
+    onSetSparkEnabled: (Boolean) -> Unit = {},
     onSetWalletLocked: (Boolean) -> Unit = {},
 ) {
     val liquidToggleEnabled = !wallet.isLocked && !isLiquidWatchOnly
     val liquidChecked = isLiquidWatchOnly || isLiquidEnabled
+    val sparkToggleEnabled = !wallet.isLocked
+    val showWalletLockButton = isWalletLockAvailable || wallet.isLocked
     val lockedPrimaryTextColor = ErrorRed.copy(alpha = 0.85f)
     val lockedSecondaryTextColor = ErrorRed.copy(alpha = 0.6f)
     Row(
@@ -336,6 +356,35 @@ private fun WalletPanelItem(
 
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (showWalletLockButton) {
+                    Box(
+                        modifier = Modifier.size(24.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Icon(
+                            imageVector = if (wallet.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                            contentDescription =
+                                if (wallet.isLocked) {
+                                    stringResource(R.string.loc_6d48b5d9)
+                                } else {
+                                    stringResource(R.string.loc_27bd3430)
+                                },
+                            tint =
+                                if (wallet.isLocked) {
+                                    lockedPrimaryTextColor
+                                } else {
+                                    TextSecondary.copy(alpha = if (isWalletLockAvailable) 0.8f else 0.45f)
+                                },
+                            modifier =
+                                Modifier
+                                    .size(20.dp)
+                                    .clickable(enabled = isWalletLockAvailable) {
+                                        onSetWalletLocked(!wallet.isLocked)
+                                    },
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(2.dp))
+                }
                 Text(
                     text = wallet.name,
                     style =
@@ -353,15 +402,6 @@ private fun WalletPanelItem(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (wallet.isLocked) {
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Locked wallet",
-                        tint = lockedPrimaryTextColor,
-                        modifier = Modifier.size(14.dp),
-                    )
-                }
                 Spacer(modifier = Modifier.width(6.dp))
                 val isWatchAddress = wallet.derivationPath == "single" && wallet.isWatchOnly
                 val isPrivateKey = wallet.derivationPath == "single" && !wallet.isWatchOnly
@@ -402,7 +442,7 @@ private fun WalletPanelItem(
                 else -> "Seed Phrase"
             }
             Text(
-                text = "${wallet.addressType.displayName}  -  $walletKind",
+                text = "${wallet.addressType.displayName} - $walletKind",
                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
                 color =
                     if (wallet.isLocked) {
@@ -427,21 +467,29 @@ private fun WalletPanelItem(
                         },
                 )
             }
+            val syncDateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
             val syncText =
                 if (lastFullSyncTime != null) {
-                    val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                    "Last full sync: ${formatter.format(Date(lastFullSyncTime))}"
+                    stringResource(
+                        R.string.wallet_last_full_sync_format,
+                        syncDateFormatter.format(Date(lastFullSyncTime)),
+                    )
                 } else {
                     "Never fully synced"
                 }
             val showLiquidToggle =
                 isLiquidWatchOnly ||
                     (
-                        layer2Enabled &&
+                        liquidLayer2Enabled &&
                             !wallet.isWatchOnly &&
                             wallet.derivationPath != "single" &&
                             wallet.seedFormat == SeedFormat.BIP39
                     )
+            val showSparkToggle =
+                sparkLayer2Enabled &&
+                    !wallet.isWatchOnly &&
+                    wallet.derivationPath != "single" &&
+                    wallet.seedFormat == SeedFormat.BIP39
             Text(
                 text = syncText,
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
@@ -454,34 +502,20 @@ private fun WalletPanelItem(
                         TextTertiary
                     },
             )
-            if (isWalletLockAvailable || showLiquidToggle) {
+            if (showWalletLockButton || showLiquidToggle || showSparkToggle) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (isWalletLockAvailable) {
-                        Text(
-                            text = "Lock",
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                            color = if (wallet.isLocked) lockedPrimaryTextColor else TextSecondary.copy(alpha = 0.8f),
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        SquareToggle(
-                            checked = wallet.isLocked,
-                            onCheckedChange = onSetWalletLocked,
-                            checkedColor = BitcoinOrange,
-                            trackWidth = 36.dp,
-                            trackHeight = 20.dp,
-                            thumbSize = 14.dp,
-                            thumbPadding = 3.dp,
-                        )
-                    }
-                    if (isWalletLockAvailable && showLiquidToggle) {
-                        Spacer(modifier = Modifier.width(16.dp))
-                    }
                     if (showLiquidToggle) {
                         Text(
-                            text = "Liquid",
+                            text = stringResource(R.string.loc_22236665),
+                            modifier =
+                                Modifier.clickable(enabled = liquidToggleEnabled) {
+                                    if (!isLiquidWatchOnly) {
+                                        onSetLiquidEnabled(!liquidChecked)
+                                    }
+                                },
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                             color =
                                 if (liquidChecked) {
@@ -509,6 +543,38 @@ private fun WalletPanelItem(
                             thumbPadding = 3.dp,
                         )
                     }
+                    if (showLiquidToggle && showSparkToggle) {
+                        Spacer(modifier = Modifier.width(16.dp))
+                    }
+                    if (showSparkToggle) {
+                        Text(
+                            text = stringResource(R.string.loc_85f5955f),
+                            modifier =
+                                Modifier.clickable(enabled = sparkToggleEnabled) {
+                                    onSetSparkEnabled(!isSparkEnabled)
+                                },
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                            color =
+                                if (wallet.isLocked) {
+                                    lockedSecondaryTextColor
+                                } else if (isSparkEnabled) {
+                                    SparkPurple
+                                } else {
+                                    TextSecondary.copy(alpha = 0.8f)
+                                },
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        SquareToggle(
+                            checked = isSparkEnabled,
+                            onCheckedChange = onSetSparkEnabled,
+                            enabled = sparkToggleEnabled,
+                            checkedColor = SparkPurple,
+                            trackWidth = 36.dp,
+                            trackHeight = 20.dp,
+                            thumbSize = 14.dp,
+                            thumbPadding = 3.dp,
+                        )
+                    }
                 }
             }
         }
@@ -527,7 +593,7 @@ private fun WalletPanelItem(
                     .padding(horizontal = 10.dp),
         ) {
             Text(
-                text = "Full Sync",
+                text = stringResource(R.string.loc_f08db23b),
                 style = MaterialTheme.typography.labelMedium,
                 color = if (isSyncing) TextSecondary.copy(alpha = 0.7f) else TextSecondary,
             )
@@ -541,7 +607,7 @@ private fun WalletPanelItem(
             } else {
                 Icon(
                     imageVector = Icons.Default.Sync,
-                    contentDescription = "Full Sync",
+                    contentDescription = stringResource(R.string.loc_f08db23b),
                     tint = TextSecondary,
                     modifier = Modifier.size(18.dp),
                 )

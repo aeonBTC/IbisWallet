@@ -28,14 +28,11 @@ object SecureClipboard {
      */
     fun copyAndScheduleClear(
         context: Context,
-        label: String,
         text: String,
     ) {
         val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        // Use generic label on Android < 13 to avoid leaking content type
-        // to clipboard managers. On 13+ the EXTRA_IS_SENSITIVE flag hides previews.
-        val safeLabel = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) label else "Text"
-        val clipData = ClipData.newPlainText(safeLabel, text)
+        // Keep the clip label generic too; labels can be exposed by clipboard UIs.
+        val clipData = ClipData.newPlainText("Text", text)
 
         // Mark as sensitive on Android 13+ to hide from clipboard preview
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

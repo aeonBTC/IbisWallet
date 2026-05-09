@@ -6,9 +6,6 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -37,12 +34,13 @@ import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
@@ -59,6 +57,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -72,11 +71,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -84,9 +85,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -95,9 +95,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
+import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.data.model.MultisigWalletConfig
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
+import github.aeonbtc.ibiswallet.data.model.WalletResult
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -107,6 +111,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
+import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
@@ -114,6 +119,10 @@ import github.aeonbtc.ibiswallet.util.Bip329LabelCounts
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -131,6 +140,7 @@ data class WalletInfo(
     val isLocked: Boolean = false,
     val isWatchAddress: Boolean = false,
     val isPrivateKey: Boolean = false,
+    val isMultisig: Boolean = false,
     val lastFullSyncTime: Long? = null,
     val masterFingerprint: String? = null,
     val gapLimit: Int = 20,
@@ -152,6 +162,8 @@ data class KeyMaterialInfo(
     val privateKey: String? = null, // WIF private key (single-key wallets)
     val watchAddress: String? = null, // Single watched address
     val liquidDescriptor: String? = null, // Liquid CT descriptor for Liquid-enabled wallets
+    val multisigConfig: MultisigWalletConfig? = null,
+    val localCosignerKeyMaterial: String? = null,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -164,7 +176,10 @@ fun ManageWalletsScreen(
     onViewWallet: (WalletInfo) -> KeyMaterialInfo?,
     onDeleteWallet: (WalletInfo) -> Unit,
     onSelectWallet: (WalletInfo) -> Unit,
-    onExportWallet: (walletId: String, uri: Uri, includeLabels: Boolean, includeServerSettings: Boolean, password: String?) -> Unit = { _, _, _, _, _ -> },
+    onSignMessage: (walletId: String, address: String, message: String) -> WalletResult<String> =
+        { _, _, _ -> WalletResult.Error("Message signing unavailable") },
+    onVerifyMessage: (address: String, message: String, signature: String) -> WalletResult<Boolean> =
+        { _, _, _ -> WalletResult.Error("Message verification unavailable") },
     onEditWallet: (walletId: String, newName: String, newGapLimit: Int, newFingerprint: String?) -> Unit = { _, _, _, _ -> },
     onReorderWallets: (List<String>) -> Unit = {},
     onFullSync: (WalletInfo) -> Unit = {},
@@ -176,8 +191,12 @@ fun ManageWalletsScreen(
     onGetLabelCounts: (walletId: String) -> Bip329LabelCounts = { Bip329LabelCounts() },
     // Layer 2 (Liquid)
     layer2Enabled: Boolean = false,
+    liquidLayer2Enabled: Boolean = layer2Enabled,
+    sparkLayer2Enabled: Boolean = layer2Enabled,
     isLiquidEnabledForWallet: (walletId: String) -> Boolean = { false },
     onSetLiquidEnabledForWallet: (walletId: String, Boolean) -> Unit = { _, _ -> },
+    isSparkEnabledForWallet: (walletId: String) -> Boolean = { false },
+    onSetSparkEnabledForWallet: (walletId: String, Boolean) -> Unit = { _, _ -> },
     onEditLiquidGapLimit: (walletId: String, newGapLimit: Int) -> Unit = { _, _ -> },
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (walletId: String, Boolean) -> Unit = { _, _ -> },
@@ -185,9 +204,9 @@ fun ManageWalletsScreen(
     var walletToDelete by remember { mutableStateOf<WalletInfo?>(null) }
     var walletToView by remember { mutableStateOf<WalletInfo?>(null) }
     var walletToSync by remember { mutableStateOf<WalletInfo?>(null) }
-    var walletToExport by remember { mutableStateOf<WalletInfo?>(null) }
     var walletToEdit by remember { mutableStateOf<WalletInfo?>(null) }
     var walletForLabels by remember { mutableStateOf<WalletInfo?>(null) }
+    var walletForMessages by remember { mutableStateOf<WalletInfo?>(null) }
     var showWarningDialog by remember { mutableStateOf(false) }
     var keyMaterialInfo by remember { mutableStateOf<KeyMaterialInfo?>(null) }
     var showKeyMaterial by remember { mutableStateOf(false) }
@@ -195,14 +214,32 @@ fun ManageWalletsScreen(
     // Delete confirmation dialog
     if (walletToDelete != null) {
         val isWatchOnly = walletToDelete?.isWatchOnly == true
+        val walletDeleteMessage =
+            if (isWatchOnly) {
+                stringResource(R.string.wallet_delete_watch_only_message, walletToDelete?.name.orEmpty())
+            } else {
+                stringResource(R.string.wallet_delete_irreversible_message, walletToDelete?.name.orEmpty())
+            }
+        val confirmCheckboxText =
+            if (isWatchOnly) {
+                stringResource(R.string.wallet_delete_confirm_removal_label)
+            } else {
+                stringResource(R.string.wallet_delete_irreversible_ack_label)
+            }
         var confirmChecked by remember { mutableStateOf(false) }
         IbisConfirmDialog(
             onDismissRequest = {
                 walletToDelete = null
                 confirmChecked = false
             },
-            title = if (isWatchOnly) "Remove Watch-Only Wallet" else "Delete Wallet",
-            confirmText = if (isWatchOnly) "Remove" else "Delete",
+            title =
+                stringResource(
+                    if (isWatchOnly) R.string.loc_b6f847eb else R.string.loc_9f4e5e7c,
+                ),
+            confirmText =
+                stringResource(
+                    if (isWatchOnly) R.string.loc_6f2c1806 else R.string.loc_3dbe79b1,
+                ),
             confirmColor = if (isWatchOnly) BitcoinOrange else ErrorRed,
             confirmEnabled = confirmChecked,
             onConfirm = {
@@ -217,11 +254,7 @@ fun ManageWalletsScreen(
             body = {
                 Column {
                     Text(
-                        if (isWatchOnly) {
-                            "Remove \"${walletToDelete?.name}\"? You can re-import it later with the same xpub."
-                        } else {
-                            "Are you sure you want to delete \"${walletToDelete?.name}\"? This action cannot be undone. Make sure you have backed up your recovery phrase."
-                        },
+                        walletDeleteMessage,
                         color = TextSecondary,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -245,7 +278,7 @@ fun ManageWalletsScreen(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            if (isWatchOnly) "Confirm removal" else "I understand this cannot be undone",
+                            confirmCheckboxText,
                             color =
                                 if (confirmChecked) {
                                     if (isWatchOnly) BitcoinOrange else ErrorRed
@@ -301,7 +334,7 @@ fun ManageWalletsScreen(
             onDismissRequest = { walletToEdit = null },
             title = {
                 Text(
-                    "Wallet Settings",
+                    stringResource(R.string.loc_4f49447d),
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             },
@@ -311,7 +344,7 @@ fun ManageWalletsScreen(
                     OutlinedTextField(
                         value = editName,
                         onValueChange = { editName = it },
-                        label = { Text("Name") },
+                        label = { Text(stringResource(R.string.loc_fe11d138)) },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
                         colors =
@@ -354,17 +387,17 @@ fun ManageWalletsScreen(
                                     editFingerprint = value
                                 }
                             },
-                            label = { Text("Master Fingerprint") },
-                            placeholder = { Text("e.g. 73c5da0a", color = TextSecondary.copy(alpha = 0.4f)) },
+                            label = { Text(stringResource(R.string.loc_7b07ecad)) },
+                            placeholder = { Text(stringResource(R.string.loc_aea21c85), color = TextSecondary.copy(alpha = 0.4f)) },
                             singleLine = true,
                             isError = editFingerprint.isNotBlank() && !fingerprintValid,
                             supportingText =
                                 if (editFingerprint.isNotBlank() && !fingerprintValid) {
-                                    { Text("Must be 8 hex characters", color = ErrorRed) }
+                                    { Text(stringResource(R.string.loc_39921dc5), color = ErrorRed) }
                                 } else {
                                     {
                                         Text(
-                                            "8 hex characters",
+                                            stringResource(R.string.loc_37540690),
                                             color = TextSecondary.copy(alpha = 0.5f),
                                         )
                                     }
@@ -389,7 +422,7 @@ fun ManageWalletsScreen(
                                     editLiquidGapLimit = value
                                 }
                             },
-                            label = { Text("Liquid Gap Limit") },
+                            label = { Text(stringResource(R.string.loc_aeb83a33)) },
                             singleLine = true,
                             isError = editLiquidGapLimit.isNotEmpty() && !liquidGapLimitValid,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -425,14 +458,14 @@ fun ManageWalletsScreen(
                     enabled = canSave,
                 ) {
                     Text(
-                        "Save",
+                        stringResource(R.string.loc_f55495e0),
                         color = if (canSave) BitcoinOrange else TextSecondary.copy(alpha = 0.4f),
                     )
                 }
             },
             dismissButton = {
                 TextButton(onClick = { walletToEdit = null }) {
-                    Text("Cancel", color = TextSecondary)
+                    Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
                 }
             },
             containerColor = DarkSurface,
@@ -441,6 +474,13 @@ fun ManageWalletsScreen(
 
     // Warning dialog before showing seed phrase
     if (showWarningDialog && walletToView != null) {
+        val warningTitle = stringResource(R.string.loc_80575606)
+        val warningIntro =
+            stringResource(R.string.wallet_view_sensitive_info_message, walletToView?.name.orEmpty())
+        val warningRecovery = stringResource(R.string.loc_f9a99af0)
+        val warningPrivacy = stringResource(R.string.loc_79618ad9)
+        val warningConfirm = stringResource(R.string.loc_f2415d81)
+        val warningCancel = stringResource(R.string.loc_51bac044)
         ScrollableAlertDialog(
             onDismissRequest = {
                 showWarningDialog = false
@@ -456,7 +496,7 @@ fun ManageWalletsScreen(
             },
             title = {
                 Text(
-                    "Security Warning",
+                    warningTitle,
                     color = MaterialTheme.colorScheme.onBackground,
                     textAlign = TextAlign.Center,
                 )
@@ -464,17 +504,17 @@ fun ManageWalletsScreen(
             text = {
                 Column {
                     Text(
-                        "You are about to view sensitive information for \"${walletToView?.name}\".",
+                        warningIntro,
                         color = TextSecondary,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        "Your seed phrase is the ONLY way to recover your wallet. Anyone with access to it can steal your funds.",
+                        warningRecovery,
                         color = ErrorRed,
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        "Make sure no one is watching your screen and never share this information with anyone.",
+                        warningPrivacy,
                         color = TextSecondary,
                     )
                 }
@@ -501,7 +541,7 @@ fun ManageWalletsScreen(
                             containerColor = BitcoinOrange,
                         ),
                 ) {
-                    Text("I Understand")
+                    Text(warningConfirm)
                 }
             },
             dismissButton = {
@@ -511,7 +551,7 @@ fun ManageWalletsScreen(
                         walletToView = null
                     },
                 ) {
-                    Text("Cancel", color = TextSecondary)
+                    Text(warningCancel, color = TextSecondary)
                 }
             },
             containerColor = DarkSurface,
@@ -522,9 +562,9 @@ fun ManageWalletsScreen(
     if (walletToSync != null) {
         IbisConfirmDialog(
             onDismissRequest = { walletToSync = null },
-            title = "Full Sync",
-            message = "This will rescan all addresses for transactions. Use this if missing transactions or after backup restore.",
-            confirmText = "Full Sync",
+            title = stringResource(R.string.loc_f08db23b),
+            message = stringResource(R.string.loc_b5f801e0),
+            confirmText = stringResource(R.string.loc_f08db23b),
             onConfirm = {
                 walletToSync?.let { onFullSync(it) }
                 walletToSync = null
@@ -550,6 +590,9 @@ fun ManageWalletsScreen(
             walletSupportsLiquid = layer2Enabled &&
                 walletForLabels?.isWatchOnly == false &&
                 isLiquidEnabledForWallet(walletForLabels!!.id),
+            walletSupportsSpark = layer2Enabled &&
+                walletForLabels?.isWatchOnly == false &&
+                isSparkEnabledForWallet(walletForLabels!!.id),
             onDismiss = { walletForLabels = null },
             onExportToFile = { walletId, uri, scope ->
                 onExportBip329Labels(walletId, uri, scope)
@@ -568,17 +611,12 @@ fun ManageWalletsScreen(
         )
     }
 
-    // Export wallet dialog
-    if (walletToExport != null) {
-        ExportWalletDialog(
-            wallet = walletToExport!!,
-            onDismiss = { walletToExport = null },
-            onExport = { uri, includeLabels, includeServerSettings, password ->
-                walletToExport?.let { wallet ->
-                    onExportWallet(wallet.id, uri, includeLabels, includeServerSettings, password)
-                }
-                walletToExport = null
-            },
+    if (walletForMessages != null) {
+        SignVerifyMessageDialog(
+            wallet = walletForMessages!!,
+            onDismiss = { walletForMessages = null },
+            onSignMessage = onSignMessage,
+            onVerifyMessage = onVerifyMessage,
         )
     }
 
@@ -645,18 +683,18 @@ fun ManageWalletsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
+                    .padding(vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = "Manage Wallets",
+                text = stringResource(R.string.loc_bcb6fe62),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
             )
@@ -681,7 +719,7 @@ fun ManageWalletsScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Generate",
+                        text = stringResource(R.string.loc_027001ed),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -697,10 +735,11 @@ fun ManageWalletsScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Import",
+                        text = stringResource(R.string.loc_9ae2cb2b),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
+
             }
 
             Spacer(modifier = Modifier.height(6.dp))
@@ -718,13 +757,13 @@ fun ManageWalletsScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Text(
-                        text = "No Wallets",
+                        text = stringResource(R.string.loc_ddfe3fc8),
                         style = MaterialTheme.typography.titleLarge,
                         color = TextSecondary,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Add a wallet to get started",
+                        text = stringResource(R.string.loc_2311c49c),
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextSecondary.copy(alpha = 0.7f),
                     )
@@ -819,7 +858,7 @@ fun ManageWalletsScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Generate",
+                                text = stringResource(R.string.loc_027001ed),
                                 style = MaterialTheme.typography.titleMedium,
                             )
                         }
@@ -835,10 +874,11 @@ fun ManageWalletsScreen(
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = "Import",
+                                text = stringResource(R.string.loc_9ae2cb2b),
                                 style = MaterialTheme.typography.titleMedium,
                             )
                         }
+
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
@@ -892,7 +932,7 @@ fun ManageWalletsScreen(
                                     showWarningDialog = true
                                 },
                                 onDelete = { walletToDelete = wallet },
-                                onExport = { walletToExport = wallet },
+                                onMessages = { walletForMessages = wallet },
                                 onEdit = { walletToEdit = wallet },
                                 onClick = {
                                     if (draggedIndex == null) onSelectWallet(wallet)
@@ -905,9 +945,15 @@ fun ManageWalletsScreen(
                                     measuredHeights[index] = heightPx
                                 },
                                 layer2Enabled = layer2Enabled,
+                                liquidLayer2Enabled = liquidLayer2Enabled,
+                                sparkLayer2Enabled = sparkLayer2Enabled,
                                 isLiquidEnabled = isLiquidEnabledForWallet(wallet.id),
                                 onSetLiquidEnabled = { enabled ->
                                     onSetLiquidEnabledForWallet(wallet.id, enabled)
+                                },
+                                isSparkEnabled = isSparkEnabledForWallet(wallet.id),
+                                onSetSparkEnabled = { enabled ->
+                                    onSetSparkEnabledForWallet(wallet.id, enabled)
                                 },
                                 isWalletLockAvailable = isWalletLockAvailable,
                                 onSetWalletLocked = { locked ->
@@ -935,233 +981,147 @@ private enum class KeyViewType {
     PRIVATE_KEY,
     WATCH_ADDRESS,
     LIQUID_DESCRIPTOR,
+    MULTISIG_DESCRIPTOR,
+    LOCAL_COSIGNER,
+}
+
+// ==================== BIP 329 Labels Dialog ====================
+
+@Composable
+private fun Bip329ScopeChoiceButton(
+    label: String,
+    scope: Bip329LabelScope,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.heightIn(min = 44.dp),
+        shape = RoundedCornerShape(8.dp),
+        border =
+            BorderStroke(
+                1.dp,
+                if (isSelected) {
+                    when (scope) {
+                        Bip329LabelScope.BITCOIN -> BitcoinOrange
+                        Bip329LabelScope.LIQUID -> LiquidTeal
+                        Bip329LabelScope.SPARK, Bip329LabelScope.BOTH -> SparkPurple
+                    }
+                } else {
+                    BorderColor
+                },
+            ),
+        colors =
+            ButtonDefaults.outlinedButtonColors(
+                contentColor =
+                    if (isSelected) {
+                        when (scope) {
+                            Bip329LabelScope.BITCOIN -> BitcoinOrange
+                            Bip329LabelScope.LIQUID -> LiquidTeal
+                            Bip329LabelScope.SPARK, Bip329LabelScope.BOTH -> SparkPurple
+                        }
+                    } else {
+                        TextSecondary
+                    },
+            ),
+    ) {
+        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
 }
 
 @Composable
-private fun ExportWalletDialog(
+private fun Bip329LabelCountTally(
+    count: Int,
+    caption: String,
+    numberColor: Color,
+) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = count.toString(),
+            style = MaterialTheme.typography.titleMedium,
+            color = numberColor,
+        )
+        Text(
+            text = caption,
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+        )
+    }
+}
+
+@Composable
+private fun SignVerifyMessageDialog(
     wallet: WalletInfo,
     onDismiss: () -> Unit,
-    onExport: (uri: Uri, includeLabels: Boolean, includeServerSettings: Boolean, password: String?) -> Unit,
+    onSignMessage: (walletId: String, address: String, message: String) -> WalletResult<String>,
+    onVerifyMessage: (address: String, message: String, signature: String) -> WalletResult<Boolean>,
 ) {
     val context = LocalContext.current
-    var includeLabels by remember { mutableStateOf(true) }
-    var includeServerSettings by remember { mutableStateOf(true) }
-    var encryptBackup by remember { mutableStateOf(false) }
-    var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-    var showPassword by remember { mutableStateOf(false) }
-    var exportUri by remember { mutableStateOf<Uri?>(null) }
-    var exportFileName by remember { mutableStateOf<String?>(null) }
-    var showExportConfirmation by remember { mutableStateOf(false) }
+    val verifySuccessText = stringResource(R.string.loc_b137008)
+    val verifyFailureText = stringResource(R.string.loc_b137009)
+    val scope = rememberCoroutineScope()
+    val signSupported =
+        !wallet.isWatchOnly &&
+            !wallet.isWatchAddress &&
+            !wallet.isMultisig &&
+            !wallet.isLiquidWatchOnly &&
+            !wallet.typeDescription.contains("Taproot", ignoreCase = true) &&
+            !wallet.derivationPath.contains("86'")
+    var isSignMode by remember(wallet.id) { mutableStateOf(signSupported) }
+    var signAddress by remember(wallet.id) { mutableStateOf("") }
+    var signMessage by remember(wallet.id) { mutableStateOf("") }
+    var signature by remember(wallet.id) { mutableStateOf("") }
+    var signError by remember(wallet.id) { mutableStateOf<String?>(null) }
+    var verifyAddress by remember(wallet.id) { mutableStateOf("") }
+    var verifyMessage by remember(wallet.id) { mutableStateOf("") }
+    var verifySignature by remember(wallet.id) { mutableStateOf("") }
+    var verifyResult by remember(wallet.id) { mutableStateOf<String?>(null) }
+    var isWorking by remember(wallet.id) { mutableStateOf(false) }
+    var showSignAddressQrScanner by remember(wallet.id) { mutableStateOf(false) }
+    var showVerifyAddressQrScanner by remember(wallet.id) { mutableStateOf(false) }
+    var signSignatureCopied by remember(wallet.id) { mutableStateOf(false) }
 
-    val dateStr = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
-    val safeName = wallet.name.replace(Regex("[^a-zA-Z0-9_-]"), "_").lowercase()
-    val suggestedFileName = "ibis-backup-$safeName-$dateStr.json"
+    LaunchedEffect(signSignatureCopied) {
+        if (!signSignatureCopied) return@LaunchedEffect
+        delay(1_500)
+        signSignatureCopied = false
+    }
 
-    val filePickerLauncher =
-        rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.CreateDocument("application/json"),
-        ) { uri: Uri? ->
-            if (uri != null) {
-                exportUri = uri
-                // Query the real display name from the content resolver
-                exportFileName =
-                    try {
-                        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                            if (cursor.moveToFirst()) {
-                                val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                                if (idx >= 0) cursor.getString(idx) else null
-                            } else {
-                                null
-                            }
-                        }
-                    } catch (_: Exception) {
-                        null
-                    } ?: suggestedFileName
-                showExportConfirmation = true
+    fun runMessageAction(action: () -> Unit) {
+        if (isWorking) return
+        isWorking = true
+        scope.launch {
+            try {
+                action()
+            } finally {
+                isWorking = false
             }
         }
+    }
 
-    val passwordsMatch = password == confirmPassword
-    val passwordLongEnough = password.length >= 8
-    val encryptionValid = !encryptBackup || (passwordLongEnough && passwordsMatch)
-    val canCompleteExport = exportUri != null && encryptionValid
-    val canChooseLocation = !encryptBackup || encryptionValid
-
-    if (showExportConfirmation && exportUri != null) {
-        Dialog(
-            onDismissRequest = {
-                showExportConfirmation = false
-                exportUri = null
-                exportFileName = null
+    if (showSignAddressQrScanner) {
+        QrScannerDialog(
+            onCodeScanned = { code ->
+                signAddress = parseBip21Uri(code).address
+                signError = null
+                showSignAddressQrScanner = false
             },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-        ) {
-            Surface(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp),
-                shape = RoundedCornerShape(20.dp),
-                color = DarkSurface,
-            ) {
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .padding(20.dp),
-                ) {
-                    Text(
-                        text = "Confirm Export",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Review the backup details before exporting.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary,
-                    )
+            onDismiss = { showSignAddressQrScanner = false },
+        )
+    }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = BorderColor.copy(alpha = 0.18f)),
-                    ) {
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.FolderOpen,
-                                contentDescription = null,
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Save location",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary,
-                                )
-                                Text(
-                                    text = exportFileName ?: suggestedFileName,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onBackground,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = BorderColor.copy(alpha = 0.14f)),
-                    ) {
-                        Column(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            ExportConfirmationRow(
-                                label = "Wallet",
-                                value = wallet.name,
-                            )
-                            ExportConfirmationRow(
-                                label = "Labels",
-                                value = if (includeLabels) "Included" else "Excluded",
-                                valueColor = if (includeLabels) SuccessGreen else ErrorRed,
-                            )
-                            ExportConfirmationRow(
-                                label = "Server settings",
-                                value = if (includeServerSettings) "Included" else "Excluded",
-                                valueColor = if (includeServerSettings) SuccessGreen else ErrorRed,
-                            )
-                            ExportConfirmationRow(
-                                label = "Encryption",
-                                value = if (encryptBackup) "Enabled" else "Off",
-                                valueColor = if (encryptBackup) SuccessGreen else ErrorRed,
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-
-                    if (!encryptionValid) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = if (!passwordLongEnough) {
-                                "Password must be at least 8 characters."
-                            } else {
-                                "Passwords do not match."
-                            },
-                            color = ErrorRed,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    ) {
-                        OutlinedButton(
-                            onClick = {
-                                showExportConfirmation = false
-                                exportUri = null
-                                exportFileName = null
-                            },
-                            modifier =
-                                Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, BorderColor),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
-                        ) {
-                            Text("Back")
-                        }
-                        Button(
-                            onClick = {
-                                exportUri?.let { uri ->
-                                    onExport(
-                                        uri,
-                                        includeLabels,
-                                        includeServerSettings,
-                                        if (encryptBackup) password else null,
-                                    )
-                                }
-                            },
-                            enabled = canCompleteExport,
-                            modifier =
-                                Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 48.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            colors =
-                                ButtonDefaults.buttonColors(
-                                    containerColor = BitcoinOrange,
-                                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
-                                ),
-                        ) {
-                            Text("Export")
-                        }
-                    }
-                }
-            }
-        }
+    if (showVerifyAddressQrScanner) {
+        QrScannerDialog(
+            onCodeScanned = { code ->
+                verifyAddress = parseBip21Uri(code).address
+                verifyResult = null
+                showVerifyAddressQrScanner = false
+            },
+            onDismiss = { showVerifyAddressQrScanner = false },
+        )
     }
 
     Dialog(
@@ -1173,24 +1133,24 @@ private fun ExportWalletDialog(
                 Modifier
                     .fillMaxWidth()
                     .padding(16.dp),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(16.dp),
             color = DarkSurface,
         ) {
             Column(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
             ) {
-                // Header
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Export Wallet",
-                        style = MaterialTheme.typography.titleMedium,
+                        text = stringResource(R.string.loc_b137001),
+                        style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     IconButton(
@@ -1199,7 +1159,7 @@ private fun ExportWalletDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.loc_d2c0aec0),
                             tint = TextSecondary,
                             modifier = Modifier.size(20.dp),
                         )
@@ -1209,290 +1169,218 @@ private fun ExportWalletDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = "Exporting \"${wallet.name}\"",
+                    text = "\"${wallet.name}\"",
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
-                androidx.compose.material3.HorizontalDivider(
-                    color = BorderColor,
-                    thickness = 1.dp,
-                )
-
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Include Labels toggle
                 Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { includeLabels = !includeLabels },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Include Labels",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        Text(
-                            text = "Address and transaction labels",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                        )
-                    }
-                    SquareToggle(
-                        checked = includeLabels,
-                        onCheckedChange = { includeLabels = it },
+                    SignVerifyModeButton(
+                        label = stringResource(R.string.loc_b137002),
+                        selected = isSignMode,
+                        enabled = signSupported && !isWorking,
+                        onClick = { isSignMode = true },
+                        modifier = Modifier.weight(1f),
+                    )
+                    SignVerifyModeButton(
+                        label = stringResource(R.string.loc_b137003),
+                        selected = !isSignMode,
+                        enabled = !isWorking,
+                        onClick = { isSignMode = false },
+                        modifier = Modifier.weight(1f),
                     )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Include Server Settings toggle
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { includeServerSettings = !includeServerSettings },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Include Server Settings",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        Text(
-                            text = "Electrum servers and external services",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                        )
-                    }
-                    SquareToggle(
-                        checked = includeServerSettings,
-                        onCheckedChange = { includeServerSettings = it },
+                if (isSignMode) {
+                    MessageTextField(
+                        value = signAddress,
+                        onValueChange = {
+                            signAddress = it
+                            signError = null
+                        },
+                        label = stringResource(R.string.loc_c2f3561d),
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = { showSignAddressQrScanner = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCode,
+                                    contentDescription = stringResource(R.string.loc_59b2cdc5),
+                                    tint = TextSecondary,
+                                )
+                            }
+                        },
                     )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Encrypt Backup toggle
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { encryptBackup = !encryptBackup },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = if (encryptBackup) BitcoinOrange else TextSecondary,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "Encrypt Backup",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                        }
-                        Text(
-                            text = "AES-256 password protection",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                        )
-                    }
-                    SquareToggle(
-                        checked = encryptBackup,
-                        onCheckedChange = { encryptBackup = it },
+                    Spacer(modifier = Modifier.height(8.dp))
+                    MessageTextField(
+                        value = signMessage,
+                        onValueChange = {
+                            signMessage = it
+                            signError = null
+                        },
+                        label = stringResource(R.string.loc_b137005),
+                        minLines = 4,
                     )
-                }
-
-                if (!encryptBackup) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors =
-                            CardDefaults.cardColors(
-                                containerColor = ErrorRed.copy(alpha = 0.1f),
-                            ),
+                    Spacer(modifier = Modifier.height(8.dp))
+                    IbisButton(
+                        onClick = {
+                            runMessageAction {
+                                when (val result = onSignMessage(wallet.id, signAddress, signMessage)) {
+                                    is WalletResult.Success -> {
+                                        signature = result.data
+                                        signError = null
+                                        verifyAddress = signAddress
+                                        verifyMessage = signMessage
+                                        verifySignature = result.data
+                                    }
+                                    is WalletResult.Error -> {
+                                        signature = ""
+                                        signError = result.message
+                                    }
+                                }
+                            }
+                        },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp),
+                        enabled = signSupported && !isWorking,
                     ) {
-                        Row(
-                            modifier = Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.Top,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = null,
-                                tint = ErrorRed,
-                                modifier = Modifier.size(18.dp),
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text =
-                                    if (wallet.isWatchOnly) {
-                                        "This backup is not encrypted."
-                                    } else {
-                                        "This backup is not encrypted."
-                                    },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = ErrorRed,
-                            )
-                        }
+                        Text(stringResource(R.string.loc_b137002))
                     }
-                }
 
-                // Password fields (animated)
-                AnimatedVisibility(
-                    visible = encryptBackup,
-                    enter = expandVertically(),
-                    exit = shrinkVertically(),
-                ) {
-                    Column {
-                        Spacer(modifier = Modifier.height(12.dp))
+                    if (signError != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(signError!!, style = MaterialTheme.typography.bodySmall, color = ErrorRed)
+                    }
 
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Password", color = TextSecondary) },
-                            singleLine = true,
-                            visualTransformation =
-                                if (showPassword) {
-                                    VisualTransformation.None
-                                } else {
-                                    PasswordVisualTransformation()
-                                },
-                            keyboardOptions =
-                                KeyboardOptions(
-                                    autoCorrectEnabled = false,
-                                    keyboardType = KeyboardType.Password,
-                                ),
-                            trailingIcon = {
-                                IconButton(onClick = { showPassword = !showPassword }) {
+                    if (signature.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        MessageTextField(
+                            value = signature,
+                            onValueChange = { signature = it },
+                            label = stringResource(R.string.loc_b137007),
+                            minLines = 3,
+                            bottomEndIcon = {
+                                IconButton(
+                                    onClick = {
+                                        SecureClipboard.copyAndScheduleClear(context, signature)
+                                        signSignatureCopied = true
+                                    },
+                                    enabled = signature.isNotBlank(),
+                                ) {
                                     Icon(
-                                        imageVector =
-                                            if (showPassword) {
-                                                Icons.Default.Visibility
-                                            } else {
-                                                Icons.Default.VisibilityOff
-                                            },
-                                        contentDescription = null,
-                                        tint = TextSecondary,
+                                        imageVector = Icons.Default.ContentCopy,
+                                        contentDescription = stringResource(R.string.loc_ed8814bc),
+                                        tint = if (signSignatureCopied) SuccessGreen else TextSecondary,
                                     )
                                 }
                             },
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = BitcoinOrange,
-                                    unfocusedBorderColor = BorderColor,
-                                    cursorColor = BitcoinOrange,
-                                ),
                         )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedTextField(
-                            value = confirmPassword,
-                            onValueChange = { confirmPassword = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Confirm Password", color = TextSecondary) },
-                            singleLine = true,
-                            visualTransformation =
-                                if (showPassword) {
-                                    VisualTransformation.None
-                                } else {
-                                    PasswordVisualTransformation()
-                                },
-                            keyboardOptions =
-                                KeyboardOptions(
-                                    autoCorrectEnabled = false,
-                                    keyboardType = KeyboardType.Password,
-                                ),
-                            isError = confirmPassword.isNotEmpty() && !passwordsMatch,
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = BitcoinOrange,
-                                    unfocusedBorderColor = BorderColor,
-                                    cursorColor = BitcoinOrange,
-                                    errorBorderColor = ErrorRed,
-                                ),
-                        )
-
-                        // Validation hints
-                        if (password.isNotEmpty() && !passwordLongEnough) {
+                        if (signSignatureCopied) {
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Minimum 8 characters",
+                                text = stringResource(R.string.loc_ad35e265),
                                 style = MaterialTheme.typography.bodySmall,
-                                color = ErrorRed,
-                                modifier = Modifier.padding(top = 4.dp),
-                            )
-                        } else if (confirmPassword.isNotEmpty() && !passwordsMatch) {
-                            Text(
-                                text = "Passwords don't match",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = ErrorRed,
-                                modifier = Modifier.padding(top = 4.dp),
+                                color = SuccessGreen,
                             )
                         }
                     }
+                } else {
+                    MessageTextField(
+                        value = verifyAddress,
+                        onValueChange = {
+                            verifyAddress = it
+                            verifyResult = null
+                        },
+                        label = stringResource(R.string.loc_c2f3561d),
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = { showVerifyAddressQrScanner = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCode,
+                                    contentDescription = stringResource(R.string.loc_59b2cdc5),
+                                    tint = TextSecondary,
+                                )
+                            }
+                        },
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    MessageTextField(
+                        value = verifyMessage,
+                        onValueChange = {
+                            verifyMessage = it
+                            verifyResult = null
+                        },
+                        label = stringResource(R.string.loc_b137005),
+                        minLines = 4,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    MessageTextField(
+                        value = verifySignature,
+                        onValueChange = {
+                            verifySignature = it
+                            verifyResult = null
+                        },
+                        label = stringResource(R.string.loc_b137007),
+                        minLines = 3,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    IbisButton(
+                        onClick = {
+                            runMessageAction {
+                                verifyResult = when (val result = onVerifyMessage(verifyAddress, verifyMessage, verifySignature)) {
+                                    is WalletResult.Success ->
+                                        if (result.data) {
+                                            verifySuccessText
+                                        } else {
+                                            verifyFailureText
+                                        }
+                                    is WalletResult.Error -> result.message
+                                }
+                            }
+                        },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp),
+                        enabled = !isWorking,
+                    ) {
+                        Text(stringResource(R.string.loc_b137003))
+                    }
+                    if (verifyResult != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = verifyResult!!,
+                            style = MaterialTheme.typography.bodySmall,
+                            color =
+                                if (verifyResult == verifySuccessText) {
+                                    SuccessGreen
+                                } else {
+                                    ErrorRed
+                                },
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Save Location
-                Text(
-                    text = "Save Location",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
                 Spacer(modifier = Modifier.height(8.dp))
 
-                OutlinedButton(
-                    onClick = { filePickerLauncher.launch(suggestedFileName) },
+                IbisButton(
+                    onClick = onDismiss,
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
-                    enabled = canChooseLocation,
-                    shape = RoundedCornerShape(8.dp),
-                    border =
-                        BorderStroke(
-                            1.dp,
-                            if (exportUri != null) SuccessGreen.copy(alpha = 0.5f) else BorderColor,
-                        ),
-                    colors =
-                        ButtonDefaults.outlinedButtonColors(
-                            contentColor = if (exportUri != null) SuccessGreen else TextSecondary,
-                            disabledContentColor = TextSecondary.copy(alpha = 0.5f),
-                        ),
+                            .heightIn(min = 48.dp),
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.FolderOpen,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = exportFileName ?: "Choose Location",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
@@ -1500,35 +1388,81 @@ private fun ExportWalletDialog(
 }
 
 @Composable
-private fun ExportConfirmationRow(
+private fun SignVerifyModeButton(
     label: String,
-    value: String,
-    valueColor: Color = MaterialTheme.colorScheme.onBackground,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.heightIn(min = 44.dp),
+        enabled = enabled,
+        shape = RoundedCornerShape(8.dp),
+        border =
+            BorderStroke(
+                1.dp,
+                when {
+                    selected -> BitcoinOrange
+                    else -> BorderColor
+                },
+            ),
+        colors =
+            ButtonDefaults.outlinedButtonColors(
+                contentColor = if (selected) BitcoinOrange else TextSecondary,
+                disabledContentColor = TextSecondary.copy(alpha = 0.35f),
+            ),
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodySmall,
-            color = TextSecondary,
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.bodyMedium,
-            color = valueColor,
-        )
+        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
-// ==================== BIP 329 Labels Dialog ====================
+@Composable
+private fun MessageTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    singleLine: Boolean = false,
+    minLines: Int = 1,
+    trailingIcon: (@Composable () -> Unit)? = null,
+    bottomEndIcon: (@Composable () -> Unit)? = null,
+) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = { Text(label, color = TextSecondary) },
+            singleLine = singleLine,
+            minLines = minLines,
+            trailingIcon = trailingIcon,
+            shape = RoundedCornerShape(8.dp),
+            colors =
+                OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = BitcoinOrange,
+                    unfocusedBorderColor = BorderColor,
+                    cursorColor = BitcoinOrange,
+                ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        bottomEndIcon?.let { icon ->
+            Box(
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 4.dp, bottom = 4.dp),
+            ) {
+                icon()
+            }
+        }
+    }
+}
 
 @Composable
 private fun Bip329LabelsDialog(
     wallet: WalletInfo,
     walletSupportsLiquid: Boolean,
+    walletSupportsSpark: Boolean,
     onDismiss: () -> Unit,
     onExportToFile: (walletId: String, uri: Uri, scope: Bip329LabelScope) -> Unit,
     onImportFromFile: (walletId: String, uri: Uri, scope: Bip329LabelScope) -> Unit,
@@ -1537,16 +1471,20 @@ private fun Bip329LabelsDialog(
     getLabelCounts: (walletId: String) -> Bip329LabelCounts,
 ) {
     val counts = remember(wallet.id) { getLabelCounts(wallet.id) }
-    var selectedScope by remember(wallet.id, walletSupportsLiquid) {
+    var selectedScope by remember(wallet.id, walletSupportsLiquid, walletSupportsSpark) {
         mutableStateOf(Bip329LabelScope.BITCOIN)
     }
-    val addrCount = counts.addressCount(selectedScope)
-    val txCount = counts.transactionCount(selectedScope)
+    val bitcoinLabelCount = counts.totalCount(Bip329LabelScope.BITCOIN)
+    val liquidLabelCount = counts.totalCount(Bip329LabelScope.LIQUID)
+    val sparkLabelCount = counts.totalCount(Bip329LabelScope.SPARK)
     val totalCount = counts.totalCount(selectedScope)
+    val canUseLiquidLabelScope = walletSupportsLiquid || liquidLabelCount > 0
+    val canUseSparkLabelScope = walletSupportsSpark || sparkLabelCount > 0
+    val walletSupportsLayer2Labels = canUseLiquidLabelScope || canUseSparkLabelScope
 
     // QR display state
-    var showQrExport by remember { mutableStateOf(false) }
-    var labelsBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var showQrExport by remember(wallet.id, selectedScope) { mutableStateOf(false) }
+    var labelsBytes by remember(wallet.id, selectedScope) { mutableStateOf<ByteArray?>(null) }
 
     // QR scanner state
     var showQrScanner by remember { mutableStateOf(false) }
@@ -1608,7 +1546,7 @@ private fun Bip329LabelsDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Label Import/Export",
+                        text = stringResource(R.string.loc_384d3cf0),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
@@ -1618,7 +1556,7 @@ private fun Bip329LabelsDialog(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
-                            contentDescription = "Close",
+                            contentDescription = stringResource(R.string.loc_d2c0aec0),
                             tint = TextSecondary,
                             modifier = Modifier.size(20.dp),
                         )
@@ -1635,9 +1573,9 @@ private fun Bip329LabelsDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                if (walletSupportsLiquid) {
+                if (walletSupportsLayer2Labels) {
                     Text(
-                        text = "Scope",
+                        text = stringResource(R.string.loc_c16e7ad7),
                         style = MaterialTheme.typography.titleSmall,
                         color = TextSecondary,
                     )
@@ -1648,100 +1586,119 @@ private fun Bip329LabelsDialog(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        listOf(
-                            Bip329LabelScope.BITCOIN to "Bitcoin",
-                            Bip329LabelScope.LIQUID to "Liquid",
-                            Bip329LabelScope.BOTH to "Both",
-                        ).forEach { (scope, label) ->
-                            val isSelected = selectedScope == scope
-                            OutlinedButton(
-                                onClick = { selectedScope = scope },
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 44.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isSelected) {
-                                        when (scope) {
-                                            Bip329LabelScope.BITCOIN -> BitcoinOrange
-                                            Bip329LabelScope.LIQUID, Bip329LabelScope.BOTH -> LiquidTeal
-                                        }
-                                    } else {
-                                        BorderColor
-                                    },
-                                ),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = if (isSelected) {
-                                        when (scope) {
-                                            Bip329LabelScope.BITCOIN -> BitcoinOrange
-                                            Bip329LabelScope.LIQUID, Bip329LabelScope.BOTH -> LiquidTeal
-                                        }
-                                    } else {
-                                        TextSecondary
-                                    },
-                                ),
-                            ) {
-                                Text(label)
-                            }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Bip329ScopeChoiceButton(
+                                label = stringResource(R.string.loc_197cebf2),
+                                scope = Bip329LabelScope.BITCOIN,
+                                isSelected = selectedScope == Bip329LabelScope.BITCOIN,
+                                onClick = { selectedScope = Bip329LabelScope.BITCOIN },
+                                modifier = Modifier.weight(1f),
+                            )
+                            Bip329ScopeChoiceButton(
+                                label = stringResource(R.string.loc_22236665),
+                                scope = Bip329LabelScope.LIQUID,
+                                isSelected = selectedScope == Bip329LabelScope.LIQUID,
+                                onClick = { selectedScope = Bip329LabelScope.LIQUID },
+                                modifier = Modifier.weight(1f),
+                                enabled = canUseLiquidLabelScope,
+                            )
+                            Bip329ScopeChoiceButton(
+                                label = stringResource(R.string.loc_85f5955f),
+                                scope = Bip329LabelScope.SPARK,
+                                isSelected = selectedScope == Bip329LabelScope.SPARK,
+                                onClick = { selectedScope = Bip329LabelScope.SPARK },
+                                modifier = Modifier.weight(1f),
+                                enabled = canUseSparkLabelScope,
+                            )
                         }
+                        Bip329ScopeChoiceButton(
+                            label = stringResource(R.string.wallet_all_layers),
+                            scope = Bip329LabelScope.BOTH,
+                            isSelected = selectedScope == Bip329LabelScope.BOTH,
+                            onClick = { selectedScope = Bip329LabelScope.BOTH },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))
                 }
 
-                // Label counts
+                // Label counts (addr + tx records; shown as one total per network)
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     colors = CardDefaults.cardColors(containerColor = DarkCard),
                 ) {
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "$addrCount",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = if (selectedScope == Bip329LabelScope.LIQUID) LiquidTeal else BitcoinOrange,
-                            )
-                            Text(
-                                text = "Address",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                            )
+                    if (walletSupportsLayer2Labels && selectedScope == Bip329LabelScope.BOTH) {
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Bip329LabelCountTally(
+                                    count = bitcoinLabelCount,
+                                    caption = stringResource(R.string.loc_197cebf2),
+                                    numberColor = BitcoinOrange,
+                                )
+                            }
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Bip329LabelCountTally(
+                                    count = liquidLabelCount,
+                                    caption = stringResource(R.string.loc_22236665),
+                                    numberColor = LiquidTeal,
+                                )
+                            }
+                            if (canUseSparkLabelScope) {
+                                Box(
+                                    modifier = Modifier.weight(1f),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Bip329LabelCountTally(
+                                        count = sparkLabelCount,
+                                        caption = stringResource(R.string.loc_85f5955f),
+                                        numberColor = SparkPurple,
+                                    )
+                                }
+                            }
                         }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "$txCount",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = if (selectedScope == Bip329LabelScope.LIQUID) LiquidTeal else BitcoinOrange,
-                            )
-                            Text(
-                                text = "Transaction",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                            )
-                        }
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(
-                                text = "$totalCount",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                            Text(
-                                text = when (selectedScope) {
-                                    Bip329LabelScope.BITCOIN -> "Bitcoin"
-                                    Bip329LabelScope.LIQUID -> "Liquid"
-                                    Bip329LabelScope.BOTH -> "Combined"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
+                    } else {
+                        val count =
+                            when (selectedScope) {
+                                Bip329LabelScope.LIQUID -> liquidLabelCount
+                                Bip329LabelScope.SPARK -> sparkLabelCount
+                                else -> bitcoinLabelCount
+                            }
+                        val numberColor =
+                            when (selectedScope) {
+                                Bip329LabelScope.LIQUID -> LiquidTeal
+                                Bip329LabelScope.SPARK -> SparkPurple
+                                else -> BitcoinOrange
+                            }
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Bip329LabelCountTally(
+                                count = count,
+                                caption = stringResource(R.string.loc_b27d0727),
+                                numberColor = numberColor,
                             )
                         }
                     }
@@ -1751,7 +1708,7 @@ private fun Bip329LabelsDialog(
 
                 // Import section
                 Text(
-                    text = "Import",
+                    text = stringResource(R.string.loc_9ae2cb2b),
                     style = MaterialTheme.typography.titleSmall,
                     color = TextSecondary,
                 )
@@ -1759,20 +1716,21 @@ private fun Bip329LabelsDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = if (selectedScope == Bip329LabelScope.LIQUID) {
-                        "BIP 329 (.jsonl) for Liquid labels"
-                    } else {
-                        "BIP 329 (.jsonl) or Electrum CSV"
-                    },
+                    text =
+                        when (selectedScope) {
+                            Bip329LabelScope.LIQUID -> "BIP 329 (.jsonl) for Liquid labels"
+                            Bip329LabelScope.SPARK -> "BIP 329 (.jsonl) for Spark labels"
+                            else -> "BIP 329 (.jsonl) or Electrum CSV"
+                        },
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary.copy(alpha = 0.7f),
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Column(
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedButton(
                         onClick = {
@@ -1789,7 +1747,7 @@ private fun Bip329LabelsDialog(
                         },
                         modifier =
                             Modifier
-                                .fillMaxWidth()
+                                .weight(1f)
                                 .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                     ) {
@@ -1799,14 +1757,14 @@ private fun Bip329LabelsDialog(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("File")
+                        Text(stringResource(R.string.loc_2cad992e), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
 
                     OutlinedButton(
                         onClick = { showQrScanner = true },
                         modifier =
                             Modifier
-                                .fillMaxWidth()
+                                .weight(1f)
                                 .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                     ) {
@@ -1816,7 +1774,7 @@ private fun Bip329LabelsDialog(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Scan QR")
+                        Text(stringResource(R.string.loc_60129540), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
 
@@ -1824,7 +1782,7 @@ private fun Bip329LabelsDialog(
 
                 // Export section
                 Text(
-                    text = "Export",
+                    text = stringResource(R.string.loc_452013a2),
                     style = MaterialTheme.typography.titleSmall,
                     color = TextSecondary,
                 )
@@ -1832,16 +1790,16 @@ private fun Bip329LabelsDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = "BIP 329 (.jsonl)",
+                    text = stringResource(R.string.loc_60c57977),
                     style = MaterialTheme.typography.bodySmall,
                     color = TextSecondary.copy(alpha = 0.7f),
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Column(
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     OutlinedButton(
                         onClick = {
@@ -1849,6 +1807,7 @@ private fun Bip329LabelsDialog(
                                 when (selectedScope) {
                                     Bip329LabelScope.BITCOIN -> "bitcoin"
                                     Bip329LabelScope.LIQUID -> "liquid"
+                                    Bip329LabelScope.SPARK -> "spark"
                                     Bip329LabelScope.BOTH -> "combined"
                                 }
                             val fileName = "${wallet.name.replace(" ", "_")}_${suffix}_labels.jsonl"
@@ -1856,7 +1815,7 @@ private fun Bip329LabelsDialog(
                         },
                         modifier =
                             Modifier
-                                .fillMaxWidth()
+                                .weight(1f)
                                 .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = totalCount > 0,
@@ -1867,7 +1826,7 @@ private fun Bip329LabelsDialog(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("File")
+                        Text(stringResource(R.string.loc_2cad992e), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
 
                     OutlinedButton(
@@ -1880,7 +1839,7 @@ private fun Bip329LabelsDialog(
                         },
                         modifier =
                             Modifier
-                                .fillMaxWidth()
+                                .weight(1f)
                                 .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = totalCount > 0,
@@ -1891,7 +1850,7 @@ private fun Bip329LabelsDialog(
                             modifier = Modifier.size(18.dp),
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Show QR")
+                        Text(stringResource(R.string.loc_98f4c3f7), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
 
@@ -1916,13 +1875,15 @@ private fun Bip329LabelsDialog(
                             Spacer(modifier = Modifier.height(8.dp))
 
                             TextButton(onClick = { showQrExport = false }) {
-                                Text("Hide QR", color = TextSecondary)
+                                Text(stringResource(R.string.loc_bbb17663), color = TextSecondary)
                             }
                         }
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // Close button
                 IbisButton(
@@ -1931,7 +1892,7 @@ private fun Bip329LabelsDialog(
                         .fillMaxWidth()
                         .heightIn(min = 48.dp),
                 ) {
-                    Text("Close", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }
@@ -1954,6 +1915,8 @@ private fun KeyMaterialDialog(
     val hasPrivateKey = keyMaterialInfo.privateKey != null
     val hasWatchAddress = keyMaterialInfo.watchAddress != null
     val hasLiquidDescriptor = keyMaterialInfo.liquidDescriptor != null
+    val hasMultisigDescriptor = keyMaterialInfo.multisigConfig != null
+    val hasLocalCosigner = keyMaterialInfo.localCosignerKeyMaterial != null
 
     // Current key material based on selection
     val currentKeyMaterial =
@@ -1964,17 +1927,12 @@ private fun KeyMaterialDialog(
             KeyViewType.WATCH_ADDRESS -> keyMaterialInfo.watchAddress
             KeyViewType.LIQUID_DESCRIPTOR ->
                 keyMaterialInfo.liquidDescriptor?.let(BitcoinUtils::formatLiquidDescriptorForDisplay)
+            KeyViewType.MULTISIG_DESCRIPTOR ->
+                keyMaterialInfo.multisigConfig?.let {
+                    listOf(it.externalDescriptor, it.internalDescriptor).joinToString("\n")
+                }
+            KeyViewType.LOCAL_COSIGNER -> keyMaterialInfo.localCosignerKeyMaterial
             null -> null
-        }
-
-    val title =
-        when (selectedViewType) {
-            KeyViewType.SEED_PHRASE -> "Seed Phrase"
-            KeyViewType.EXTENDED_PUBLIC_KEY -> "Extended Public Key"
-            KeyViewType.PRIVATE_KEY -> "Private Key"
-            KeyViewType.WATCH_ADDRESS -> "Watched Address"
-            KeyViewType.LIQUID_DESCRIPTOR -> "Liquid Descriptor"
-            null -> "View Key Material"
         }
 
     // For seed phrases, split into words
@@ -1987,15 +1945,19 @@ private fun KeyMaterialDialog(
 
     // Generate QR code when view type changes
     LaunchedEffect(selectedViewType, showQrCode) {
-        if (selectedViewType != null && currentKeyMaterial != null) {
-            qrBitmap = generateQrBitmap(currentKeyMaterial)
+        qrBitmap = null
+        if (showQrCode && selectedViewType != null && currentKeyMaterial != null) {
+            qrBitmap =
+                withContext(Dispatchers.Default) {
+                    generateQrBitmap(currentKeyMaterial)
+                }
         }
     }
 
     // Reset copied state after 3 seconds
     LaunchedEffect(copied) {
         if (copied) {
-            kotlinx.coroutines.delay(3000)
+            delay(3000)
             copied = false
         }
     }
@@ -2010,7 +1972,7 @@ private fun KeyMaterialDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                "${keyMaterialInfo.walletName} - $title",
+                stringResource(R.string.loc_0917a3e1),
                 color = MaterialTheme.colorScheme.onBackground,
                 style = MaterialTheme.typography.titleMedium,
             )
@@ -2045,7 +2007,7 @@ private fun KeyMaterialDialog(
                             Spacer(modifier = Modifier.height(16.dp))
 
                             Text(
-                                text = "What would you like to reveal?",
+                                text = stringResource(R.string.loc_f0f54738),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,
@@ -2065,7 +2027,7 @@ private fun KeyMaterialDialog(
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Seed Phrase")
+                                Text(stringResource(R.string.loc_24d8d452))
                             }
 
                             // Extended Public Key button
@@ -2080,7 +2042,7 @@ private fun KeyMaterialDialog(
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Extended Public Key")
+                                Text(stringResource(R.string.loc_66008e32))
                             }
 
                             if (hasLiquidDescriptor) {
@@ -2094,7 +2056,37 @@ private fun KeyMaterialDialog(
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Liquid Descriptor")
+                                    Text(stringResource(R.string.loc_bf0bb69f))
+                                }
+                            }
+
+                            if (hasMultisigDescriptor) {
+                                IbisButton(
+                                    onClick = { selectedViewType = KeyViewType.MULTISIG_DESCRIPTOR },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Visibility,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.loc_3e248346))
+                                }
+                            }
+
+                            if (hasLocalCosigner) {
+                                IbisButton(
+                                    onClick = { selectedViewType = KeyViewType.LOCAL_COSIGNER },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Visibility,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(stringResource(R.string.loc_9589b41e))
                                 }
                             }
 
@@ -2110,7 +2102,7 @@ private fun KeyMaterialDialog(
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Private Key (WIF)")
+                                    Text(stringResource(R.string.loc_e109877e))
                                 }
                             }
 
@@ -2126,7 +2118,7 @@ private fun KeyMaterialDialog(
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Watched Address")
+                                    Text(stringResource(R.string.loc_8ca7adae))
                                 }
                             }
                         }
@@ -2153,7 +2145,7 @@ private fun KeyMaterialDialog(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = "Master Fingerprint",
+                                    text = stringResource(R.string.loc_7b07ecad),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = TextSecondary,
                                 )
@@ -2193,7 +2185,7 @@ private fun KeyMaterialDialog(
                                     ) {
                                         Image(
                                             bitmap = qrBitmap!!.asImageBitmap(),
-                                            contentDescription = "QR Code",
+                                            contentDescription = stringResource(R.string.loc_6e2afb3f),
                                             modifier =
                                                 Modifier
                                                     .size(184.dp)
@@ -2211,15 +2203,19 @@ private fun KeyMaterialDialog(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        val qrSubtitle = when (selectedViewType) {
-                            KeyViewType.SEED_PHRASE -> "seed phrase"
-                            KeyViewType.EXTENDED_PUBLIC_KEY -> "extended public key"
-                            KeyViewType.LIQUID_DESCRIPTOR -> "Liquid descriptor"
-                            KeyViewType.PRIVATE_KEY -> "private key"
-                            else -> "address"
-                        }
+                        val localizedQrSubtitle =
+                            when (selectedViewType) {
+                                KeyViewType.SEED_PHRASE -> stringResource(R.string.loc_24d8d452)
+                                KeyViewType.EXTENDED_PUBLIC_KEY -> stringResource(R.string.loc_66008e32)
+                                KeyViewType.LIQUID_DESCRIPTOR -> stringResource(R.string.loc_bf0bb69f)
+                                KeyViewType.MULTISIG_DESCRIPTOR -> stringResource(R.string.loc_3e248346)
+                                KeyViewType.LOCAL_COSIGNER -> stringResource(R.string.loc_9589b41e)
+                                KeyViewType.PRIVATE_KEY -> stringResource(R.string.loc_c4a5346c)
+                                KeyViewType.WATCH_ADDRESS -> stringResource(R.string.loc_0d4e6f81)
+                                else -> stringResource(R.string.loc_0d4e6f81)
+                            }
                         Text(
-                            text = "Scan this QR code to import the $qrSubtitle",
+                            text = stringResource(R.string.key_material_scan_qr_format, localizedQrSubtitle),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                             textAlign = TextAlign.Center,
@@ -2227,10 +2223,12 @@ private fun KeyMaterialDialog(
                         )
                     } else if ((selectedViewType == KeyViewType.EXTENDED_PUBLIC_KEY ||
                             selectedViewType == KeyViewType.LIQUID_DESCRIPTOR ||
+                            selectedViewType == KeyViewType.MULTISIG_DESCRIPTOR ||
+                            selectedViewType == KeyViewType.LOCAL_COSIGNER ||
                             selectedViewType == KeyViewType.PRIVATE_KEY ||
                             selectedViewType == KeyViewType.WATCH_ADDRESS) && currentKeyMaterial != null
                     ) {
-                        // Extended public key, Liquid descriptor, WIF private key, or watch address - show as text
+                        // Descriptor/key material views are shown as raw text for exact import/export.
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
@@ -2292,7 +2290,7 @@ private fun KeyMaterialDialog(
                         OutlinedButton(
                             onClick = {
                                 currentKeyMaterial?.let {
-                                    SecureClipboard.copyAndScheduleClear(context, "Key Material", it)
+                                    SecureClipboard.copyAndScheduleClear(context, it)
                                     copied = true
                                 }
                             },
@@ -2332,7 +2330,7 @@ private fun KeyMaterialDialog(
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "QR Code",
+                                text = stringResource(R.string.loc_6e2afb3f),
                                 color = if (showQrCode) BitcoinOrange else TextSecondary,
                             )
                         }
@@ -2346,14 +2344,14 @@ private fun KeyMaterialDialog(
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            text = "Back to Selection",
+                            text = stringResource(R.string.loc_ad04894c),
                             color = TextSecondary,
                         )
                     }
 
                     if (copied) {
                         Text(
-                            text = "Clipboard will auto-clear in 30 seconds.",
+                            text = stringResource(R.string.loc_795ed2a1),
                             style = MaterialTheme.typography.bodySmall,
                             color = ErrorRed.copy(alpha = 0.8f),
                             textAlign = TextAlign.Center,
@@ -2365,7 +2363,7 @@ private fun KeyMaterialDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("Close", color = BitcoinOrange)
+                Text(stringResource(R.string.loc_d2c0aec0), color = BitcoinOrange)
             }
         },
         containerColor = DarkSurface,
@@ -2405,7 +2403,7 @@ private fun WalletCard(
     wallet: WalletInfo,
     onView: () -> Unit,
     onDelete: () -> Unit,
-    onExport: () -> Unit,
+    onMessages: () -> Unit,
     onEdit: () -> Unit,
     onClick: () -> Unit,
     onSync: () -> Unit = {},
@@ -2414,8 +2412,12 @@ private fun WalletCard(
     showDragHandle: Boolean = false,
     onMeasured: (Float) -> Unit = {},
     layer2Enabled: Boolean = false,
+    liquidLayer2Enabled: Boolean = layer2Enabled,
+    sparkLayer2Enabled: Boolean = layer2Enabled,
     isLiquidEnabled: Boolean = false,
     onSetLiquidEnabled: (Boolean) -> Unit = {},
+    isSparkEnabled: Boolean = false,
+    onSetSparkEnabled: (Boolean) -> Unit = {},
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (Boolean) -> Unit = {},
 ) {
@@ -2438,10 +2440,13 @@ private fun WalletCard(
             !wallet.isWatchAddress &&
             !wallet.isPrivateKey &&
             wallet.seedFormat == SeedFormat.BIP39
-    val showLiquidToggle = wallet.isLiquidWatchOnly || (layer2Enabled && isBip39Wallet)
+    val showLiquidToggle = wallet.isLiquidWatchOnly || (liquidLayer2Enabled && isBip39Wallet)
+    val showSparkToggle = sparkLayer2Enabled && isBip39Wallet
     val managementActionsEnabled = !wallet.isLocked
     val liquidToggleEnabled = !wallet.isLocked && !wallet.isLiquidWatchOnly
+    val sparkToggleEnabled = !wallet.isLocked
     val liquidChecked = wallet.isLiquidWatchOnly || isLiquidEnabled
+    val showWalletLockButton = isWalletLockAvailable || wallet.isLocked
     val lockedPrimaryTextColor = ErrorRed.copy(alpha = 0.85f)
     val lockedSecondaryTextColor = ErrorRed.copy(alpha = 0.6f)
     val actionTint =
@@ -2472,6 +2477,35 @@ private fun WalletCard(
                 // Left side: wallet info text
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (showWalletLockButton) {
+                            Box(
+                                modifier = Modifier.size(24.dp),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Icon(
+                                    imageVector = if (wallet.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                    contentDescription =
+                                        if (wallet.isLocked) {
+                                            stringResource(R.string.loc_6d48b5d9)
+                                        } else {
+                                            stringResource(R.string.loc_27bd3430)
+                                        },
+                                    tint =
+                                        if (wallet.isLocked) {
+                                            lockedPrimaryTextColor
+                                        } else {
+                                            TextSecondary.copy(alpha = if (isWalletLockAvailable) 0.8f else 0.45f)
+                                        },
+                                    modifier =
+                                        Modifier
+                                            .size(20.dp)
+                                            .clickable(enabled = isWalletLockAvailable) {
+                                                onSetWalletLocked(!wallet.isLocked)
+                                            },
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(2.dp))
+                        }
                         Text(
                             text = wallet.name,
                             style = MaterialTheme.typography.titleMedium,
@@ -2479,6 +2513,12 @@ private fun WalletCard(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         when {
+                            wallet.isMultisig -> Icon(
+                                imageVector = Icons.Default.QrCode,
+                                contentDescription = stringResource(R.string.loc_6dfe3462),
+                                tint = if (wallet.isLocked) lockedPrimaryTextColor else BitcoinOrange,
+                                modifier = Modifier.size(16.dp),
+                            )
                             wallet.isWatchAddress || wallet.isWatchOnly -> Icon(
                                 imageVector = Icons.Default.Visibility,
                                 contentDescription = if (wallet.isWatchAddress) "Watch Address" else "Watch Only",
@@ -2499,7 +2539,7 @@ private fun WalletCard(
                                 color = BitcoinOrange.copy(alpha = 0.2f),
                             ) {
                                 Text(
-                                    text = "Active",
+                                    text = stringResource(R.string.loc_4cb2f934),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = BitcoinOrange,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
@@ -2510,13 +2550,16 @@ private fun WalletCard(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    Text(
-                        text = "${wallet.typeDescription}  -  ${when {
+                    val walletKind =
+                        when {
+                            wallet.isMultisig -> "Multisig"
                             wallet.isWatchAddress -> "Watch Address"
                             wallet.isPrivateKey -> "Private Key"
                             wallet.isWatchOnly -> "Watch Only"
                             else -> "Seed Phrase"
-                        }}",
+                        }
+                    Text(
+                        text = "${wallet.typeDescription} - $walletKind",
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
                         color = if (wallet.isLocked) lockedSecondaryTextColor else TextSecondary,
                     )
@@ -2525,7 +2568,7 @@ private fun WalletCard(
 
                     if (wallet.derivationPath != "single") {
                         Text(
-                            text = "Derivation Path: ${wallet.derivationPath}",
+                            text = stringResource(R.string.common_derivation_path_format, wallet.derivationPath),
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                             color = if (wallet.isLocked) lockedSecondaryTextColor else TextSecondary.copy(alpha = 0.92f),
                         )
@@ -2534,7 +2577,11 @@ private fun WalletCard(
                     if (wallet.masterFingerprint != null) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Fingerprint: ${wallet.masterFingerprint}",
+                            text =
+                                stringResource(
+                                    R.string.common_fingerprint_format,
+                                    wallet.masterFingerprint,
+                                ),
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                             color = if (wallet.isLocked) lockedSecondaryTextColor else TextSecondary.copy(alpha = 0.92f),
                         )
@@ -2542,11 +2589,13 @@ private fun WalletCard(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
+                    val lastSyncFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
                     val lastSyncText =
                         if (wallet.lastFullSyncTime != null) {
-                            val date = Date(wallet.lastFullSyncTime)
-                            val formatter = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-                            "Last full sync: ${formatter.format(date)}"
+                            stringResource(
+                                R.string.wallet_last_full_sync_format,
+                                lastSyncFormatter.format(Date(wallet.lastFullSyncTime)),
+                            )
                         } else {
                             "Never fully synced"
                         }
@@ -2555,34 +2604,20 @@ private fun WalletCard(
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                         color = if (wallet.isLocked) lockedSecondaryTextColor else TextSecondary.copy(alpha = 0.92f),
                     )
-                    if (isWalletLockAvailable || showLiquidToggle) {
+                    if (showWalletLockButton || showLiquidToggle || showSparkToggle) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            if (isWalletLockAvailable) {
-                                Text(
-                                    text = "Lock",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                                    color = if (wallet.isLocked) lockedPrimaryTextColor else TextSecondary.copy(alpha = 0.8f),
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                SquareToggle(
-                                    checked = wallet.isLocked,
-                                    onCheckedChange = onSetWalletLocked,
-                                    checkedColor = BitcoinOrange,
-                                    trackWidth = 36.dp,
-                                    trackHeight = 20.dp,
-                                    thumbSize = 14.dp,
-                                    thumbPadding = 3.dp,
-                                )
-                            }
-                            if (isWalletLockAvailable && showLiquidToggle) {
-                                Spacer(modifier = Modifier.width(16.dp))
-                            }
                             if (showLiquidToggle) {
                                 Text(
-                                    text = "Liquid",
+                                    text = stringResource(R.string.loc_22236665),
+                                    modifier =
+                                        Modifier.clickable(enabled = liquidToggleEnabled) {
+                                            if (!wallet.isLiquidWatchOnly) {
+                                                onSetLiquidEnabled(!liquidChecked)
+                                            }
+                                        },
                                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                                     color =
                                         if (liquidChecked) {
@@ -2604,6 +2639,38 @@ private fun WalletCard(
                                     enabled = liquidToggleEnabled,
                                     checkedColor = LiquidTeal,
                                     disabledCheckedColor = LiquidTeal,
+                                    trackWidth = 36.dp,
+                                    trackHeight = 20.dp,
+                                    thumbSize = 14.dp,
+                                    thumbPadding = 3.dp,
+                                )
+                            }
+                            if (showLiquidToggle && showSparkToggle) {
+                                Spacer(modifier = Modifier.width(16.dp))
+                            }
+                            if (showSparkToggle) {
+                                Text(
+                                    text = stringResource(R.string.loc_85f5955f),
+                                    modifier =
+                                        Modifier.clickable(enabled = sparkToggleEnabled) {
+                                            onSetSparkEnabled(!isSparkEnabled)
+                                        },
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                                    color =
+                                        if (wallet.isLocked) {
+                                            lockedSecondaryTextColor
+                                        } else if (isSparkEnabled) {
+                                            SparkPurple
+                                        } else {
+                                            TextSecondary.copy(alpha = if (sparkToggleEnabled) 0.8f else 0.55f)
+                                        },
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                SquareToggle(
+                                    checked = isSparkEnabled,
+                                    onCheckedChange = onSetSparkEnabled,
+                                    enabled = sparkToggleEnabled,
+                                    checkedColor = SparkPurple,
                                     trackWidth = 36.dp,
                                     trackHeight = 20.dp,
                                     thumbSize = 14.dp,
@@ -2641,7 +2708,7 @@ private fun WalletCard(
                             } else {
                                 Icon(
                                     imageVector = Icons.Default.Sync,
-                                    contentDescription = "Full Sync",
+                                    contentDescription = stringResource(R.string.loc_f08db23b),
                                     tint = actionTint,
                                     modifier = Modifier.size(16.dp),
                                 )
@@ -2658,7 +2725,7 @@ private fun WalletCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
-                                contentDescription = "Wallet Settings",
+                                contentDescription = stringResource(R.string.loc_4f49447d),
                                 tint = actionTint,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -2673,17 +2740,20 @@ private fun WalletCard(
                                     .clickable(enabled = managementActionsEnabled) { onView() },
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Visibility,
-                                contentDescription = "View Seed Phrase",
+                                imageVector = Icons.Default.Key,
+                                contentDescription = stringResource(R.string.loc_85a65da2),
                                 tint = actionTint,
-                                modifier = Modifier.size(16.dp),
+                                modifier =
+                                    Modifier
+                                        .size(16.dp)
+                                        .rotate(90f),
                             )
                         }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Bottom row: Labels, Export, Delete
+                    // Bottom row: Labels, Sign/Verify, Delete
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         Box(
                             contentAlignment = Alignment.Center,
@@ -2696,7 +2766,7 @@ private fun WalletCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Bookmark,
-                                contentDescription = "Labels (BIP 329)",
+                                contentDescription = stringResource(R.string.loc_2282451b),
                                 tint = actionTint,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -2708,11 +2778,11 @@ private fun WalletCard(
                                     .size(30.dp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurface)
-                                    .clickable(enabled = managementActionsEnabled) { onExport() },
+                                    .clickable(enabled = managementActionsEnabled) { onMessages() },
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = "Export Wallet",
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = stringResource(R.string.loc_b137001),
                                 tint = actionTint,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -2728,7 +2798,7 @@ private fun WalletCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Delete,
-                                contentDescription = "Delete",
+                                contentDescription = stringResource(R.string.loc_3dbe79b1),
                                 tint = actionTint,
                                 modifier = Modifier.size(16.dp),
                             )
@@ -2741,7 +2811,7 @@ private fun WalletCard(
             if (showDragHandle) {
                 Icon(
                     imageVector = Icons.Default.DragIndicator,
-                    contentDescription = "Drag to reorder",
+                    contentDescription = stringResource(R.string.loc_00ad5135),
                     tint = TextSecondary.copy(alpha = 0.5f),
                     modifier =
                         Modifier

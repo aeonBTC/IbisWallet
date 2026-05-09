@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -21,6 +20,9 @@ import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 @Composable
 fun AmountLabel(
@@ -34,13 +36,18 @@ fun AmountLabel(
 ) {
     if (isUsdMode || !showDenomination) {
         Text(
-            text = if (isUsdMode) "Amount ($fiatCurrency)" else "Amount",
+            text =
+                if (isUsdMode) {
+                    "${stringResource(R.string.loc_890d7574)} ($fiatCurrency)"
+                } else {
+                    stringResource(R.string.loc_890d7574)
+                },
             style = style,
             color = color,
         )
     } else {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(text = "Amount", style = style, color = color)
+            Text(text = stringResource(R.string.loc_890d7574), style = style, color = color)
             Spacer(modifier = Modifier.width(4.dp))
             Card(
                 modifier = Modifier

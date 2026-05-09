@@ -26,10 +26,10 @@ object WalletNotificationHelper {
         val channel =
             NotificationChannel(
                 CHANNEL_ID_ACTIVITY,
-                "Wallet Activity",
+                "Activity Alerts",
                 NotificationManager.IMPORTANCE_DEFAULT,
             ).apply {
-                description = ">Incoming transaction alerts"
+                description = "App activity alerts"
             }
         manager.createNotificationChannel(channel)
         val connectivityChannel =

@@ -50,7 +50,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -120,6 +119,9 @@ import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import kotlinx.coroutines.delay
 import java.text.NumberFormat
 import java.util.Locale
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
+import androidx.compose.material3.Text
 
 private const val MIN_LIQUID_SWAP_FEE_RATE = 0.1
 private const val ESTIMATED_LIQUID_SWAP_TX_VSIZE = 200
@@ -290,12 +292,38 @@ fun SwapScreen(
     }
 
     val isPegIn = direction == SwapDirection.BTC_TO_LBTC
+    val layer1Label = stringResource(R.string.loc_b67a01a5)
+    val layer2Label = stringResource(R.string.loc_2f73501f)
+    val boltzLabel = stringResource(R.string.loc_3d1a0df5)
+    val sideSwapLabel = stringResource(R.string.loc_c6f76248)
+    val atomicSwapLabel = stringResource(R.string.loc_bebd07bb)
+    val trustedPegLabel = stringResource(R.string.loc_e2c90bcd)
+    val providerDisabledLabel = stringResource(R.string.loc_cd053ef4)
+    val liquidAddressLabel = stringResource(R.string.loc_4622d13c)
+    val bitcoinAddressLabel = stringResource(R.string.loc_a18fd453)
+    val swapLiquidDestinationHint = stringResource(R.string.loc_6f9cca87)
+    val swapBitcoinDestinationHint = stringResource(R.string.loc_955fce50)
+    val invalidBitcoinAddressLabel = stringResource(R.string.loc_04536bb4)
+    val invalidLiquidAddressLabel = stringResource(R.string.loc_90285d1b)
+    val bitcoinFeeRateLabel = stringResource(R.string.loc_a509369c)
+    val liquidFeeRateLabel = stringResource(R.string.loc_78e3e750)
+    val leaveBlankDefaultEstimateLabel = stringResource(R.string.loc_43525120)
+    val enterValidFeeRateLabel = stringResource(R.string.loc_857c8623)
+    val enterFeeRateAboveZeroLabel = stringResource(R.string.loc_f2b5f4d4)
+    val feeDetailsLoadingLabel = stringResource(R.string.loc_8a098662)
+    val feeDetailsUnavailableLabel = stringResource(R.string.loc_e8f8806d)
+    val nonCustodialSwapLabel = stringResource(R.string.loc_f572fd2a)
+    val custodialSwapLabel = stringResource(R.string.loc_5675a8d7)
+    val layer1DefaultFeeLabel = stringResource(
+        R.string.common_default_format,
+        "${formatFeeRate(MIN_LIQUID_SWAP_FEE_RATE)} sat/vB",
+    )
     val fromLabel = if (isPegIn) "BTC" else "L-BTC"
     val toLabel = if (isPegIn) "L-BTC" else "BTC"
     val fromColor = if (isPegIn) BitcoinOrange else LiquidTeal
     val toColor = if (isPegIn) LiquidTeal else BitcoinOrange
-    val fromLayerLabel = if (isPegIn) "Layer 1" else "Layer 2"
-    val toLayerLabel = if (isPegIn) "Layer 2" else "Layer 1"
+    val fromLayerLabel = if (isPegIn) layer1Label else layer2Label
+    val toLayerLabel = if (isPegIn) layer2Label else layer1Label
     val spendableBitcoinUtxos = remember(btcUtxos) { btcUtxos.filter { !it.isFrozen } }
     val spendableLiquidUtxos =
         remember(liquidUtxos) {
@@ -320,24 +348,38 @@ fun SwapScreen(
         listOf(
             SwapProviderOption(
                 service = SwapService.BOLTZ,
-                label = "Boltz",
-                description = "Atomic Swap",
+                label = boltzLabel,
+                description = atomicSwapLabel,
                 feeDetailText = if (boltzEnabled) {
-                    providerFeeDetailText(boltzLimits, SwapService.BOLTZ)
+                    providerFeeDetailText(
+                        limits = boltzLimits,
+                        service = SwapService.BOLTZ,
+                        loadingText = feeDetailsLoadingLabel,
+                        unavailableText = feeDetailsUnavailableLabel,
+                        boltzText = nonCustodialSwapLabel,
+                        sideSwapText = custodialSwapLabel,
+                    )
                 } else {
-                    "Provider disabled"
+                    providerDisabledLabel
                 },
                 accentColor = AccentBlue,
                 enabled = boltzEnabled,
             ),
             SwapProviderOption(
                 service = SwapService.SIDESWAP,
-                label = "SideSwap",
-                description = "Trusted Peg",
+                label = sideSwapLabel,
+                description = trustedPegLabel,
                 feeDetailText = if (sideSwapEnabled) {
-                    providerFeeDetailText(sideSwapLimits, SwapService.SIDESWAP)
+                    providerFeeDetailText(
+                        limits = sideSwapLimits,
+                        service = SwapService.SIDESWAP,
+                        loadingText = feeDetailsLoadingLabel,
+                        unavailableText = feeDetailsUnavailableLabel,
+                        boltzText = nonCustodialSwapLabel,
+                        sideSwapText = custodialSwapLabel,
+                    )
                 } else {
-                    "Provider disabled"
+                    providerDisabledLabel
                 },
                 accentColor = LiquidTeal,
                 enabled = sideSwapEnabled,
@@ -355,13 +397,13 @@ fun SwapScreen(
         remember(customBitcoinFeeOptionName) {
             runCatching { FeeRateOption.valueOf(customBitcoinFeeOptionName) }.getOrDefault(FeeRateOption.HALF_HOUR)
         }
-    val destinationPlaceholder = if (isPegIn) "Liquid address" else "Bitcoin address"
-    val destinationEmptyPrompt = if (isPegIn) "Swap will go to this Liquid address." else "Swap will go to this Bitcoin address."
+    val destinationPlaceholder = if (isPegIn) liquidAddressLabel else bitcoinAddressLabel
+    val destinationEmptyPrompt = if (isPegIn) swapLiquidDestinationHint else swapBitcoinDestinationHint
     val destinationHelperText =
         if (isPegIn) {
-            "Swap will go to this Liquid address."
+            swapLiquidDestinationHint
         } else {
-            "Swap will go to this Bitcoin address."
+            swapBitcoinDestinationHint
         }
     val destinationValidationError =
         remember(effectiveCustomDestination, isPegIn) {
@@ -374,25 +416,25 @@ fun SwapScreen(
                         if (isPegIn) {
                             null
                         } else {
-                            "Invalid Bitcoin address"
+                            invalidBitcoinAddressLabel
                         }
                     is ParsedSendRecipient.Bitcoin ->
                         if (isPegIn) {
-                            "Invalid Liquid address"
+                            invalidLiquidAddressLabel
                         } else {
                             null
                         }
                     is ParsedSendRecipient.Unknown -> parsed.errorMessage
-                    else -> if (isPegIn) "Invalid Liquid address" else "Invalid Bitcoin address"
+                    else -> if (isPegIn) invalidLiquidAddressLabel else invalidBitcoinAddressLabel
                 }
             }
         }
-    val fundingFeeFieldLabel = if (isPegIn) "Bitcoin fee rate" else "Liquid fee rate"
+    val fundingFeeFieldLabel = if (isPegIn) bitcoinFeeRateLabel else liquidFeeRateLabel
     val fundingFeeAccentColor = if (isPegIn) BitcoinOrange else LiquidTeal
     val fundingFeeDefaultText = if (isPegIn) {
-        "Leave blank for default estimate"
+        leaveBlankDefaultEstimateLabel
     } else {
-        "Default: ${formatFeeRate(MIN_LIQUID_SWAP_FEE_RATE)} sat/vB"
+        layer1DefaultFeeLabel
     }
     val fundingFeeRateValidationError =
         remember(currentFundingFeeRateInput, fundingFeeOptionEnabled, isPegIn) {
@@ -402,8 +444,8 @@ fun SwapScreen(
                 val parsed = currentFundingFeeRateInput.toDoubleOrNull()
                 when {
                     currentFundingFeeRateInput.isBlank() -> null
-                    parsed == null -> "Enter a valid fee rate"
-                    parsed <= 0.0 -> "Enter a fee rate above 0"
+                    parsed == null -> enterValidFeeRateLabel
+                    parsed <= 0.0 -> enterFeeRateAboveZeroLabel
                     else -> null
                 }
             }
@@ -481,6 +523,7 @@ fun SwapScreen(
             else -> null
         }
     }
+    val amountWarnings = listOfNotNull(balanceWarning, limitWarning)
     val canRequestQuote =
         !isSwapLocked &&
             amountSats != null &&
@@ -602,7 +645,7 @@ fun SwapScreen(
 
     if (showCoinControl) {
         SwapCoinControlDialog(
-            title = if (isPegIn) "Bitcoin Coin Control" else "Liquid Coin Control",
+            title = stringResource(if (isPegIn) R.string.loc_abb2f6d2 else R.string.loc_47914d64),
             accentColor = if (isPegIn) BitcoinOrange else LiquidTeal,
             utxos = selectableFundingUtxos,
             selectedUtxos = selectedFundingUtxos,
@@ -686,7 +729,7 @@ fun SwapScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Swap Setup",
+                        text = stringResource(R.string.loc_f0100030),
                         style = MaterialTheme.typography.titleLarge,
                         color = TextPrimary,
                         fontWeight = FontWeight.SemiBold,
@@ -711,7 +754,15 @@ fun SwapScreen(
                         border = BorderStroke(1.dp, if (coinControlActive) fromColor else BorderColor),
                     ) {
                         Text(
-                            text = if (coinControlActive) "UTXOs (${selectedFundingUtxos.size})" else "Coin Control",
+                            text =
+                                if (coinControlActive) {
+                                    stringResource(
+                                        R.string.swap_coin_control_utxo_badge_format,
+                                        selectedFundingUtxos.size,
+                                    )
+                                } else {
+                                    stringResource(if (isPegIn) R.string.loc_abb2f6d2 else R.string.loc_47914d64)
+                                },
                             style = MaterialTheme.typography.labelMedium,
                             color =
                                 if (coinControlActive) {
@@ -754,7 +805,7 @@ fun SwapScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "From",
+                                text = stringResource(R.string.loc_19280e4e),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextTertiary,
                             )
@@ -784,7 +835,7 @@ fun SwapScreen(
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = "Swap direction",
+                            contentDescription = stringResource(R.string.loc_979d5904),
                             tint = toColor,
                             modifier = Modifier.size(24.dp),
                         )
@@ -805,7 +856,7 @@ fun SwapScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "To",
+                                text = stringResource(R.string.loc_4203f666),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextTertiary,
                             )
@@ -968,6 +1019,21 @@ fun SwapScreen(
                     ),
                 )
 
+                if (amountWarnings.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        amountWarnings.forEach { warning ->
+                            Text(
+                                text = warning,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ErrorRed,
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
@@ -976,7 +1042,7 @@ fun SwapScreen(
                     horizontalArrangement = Arrangement.Start,
                 ) {
                     Text(
-                        text = "Available:",
+                        text = stringResource(R.string.loc_c624cde4),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                     )
@@ -991,9 +1057,8 @@ fun SwapScreen(
                         color = fromColor,
                     )
                     if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                        val availableUsd = sourceAvailableBalance * btcPrice / 100_000_000.0
                         Text(
-                            text = " · ${formatFiat(availableUsd, fiatCurrency)}",
+                            text = stringResource(R.string.loc_054cdf00),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary.copy(alpha = 0.7f),
                         )
@@ -1027,7 +1092,7 @@ fun SwapScreen(
                         border = BorderStroke(1.dp, if (isMaxMode) LiquidTeal else BorderColor),
                     ) {
                         Text(
-                            text = "Max",
+                            text = stringResource(R.string.loc_a53b6469),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (isMaxMode) {
                                 LiquidTeal
@@ -1064,7 +1129,7 @@ fun SwapScreen(
                         border = BorderStroke(1.dp, if (showLabelField || labelText.isNotBlank()) LiquidTeal else BorderColor),
                     ) {
                         Text(
-                            text = "Label",
+                            text = stringResource(R.string.loc_cf667fec),
                             style = MaterialTheme.typography.labelMedium,
                             color = if (showLabelField || labelText.isNotBlank()) LiquidTeal else TextSecondary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
@@ -1080,7 +1145,7 @@ fun SwapScreen(
                                 .padding(start = 8.dp),
                             placeholder = {
                                 Text(
-                                    "e.g. Wallet rebalance",
+                                    stringResource(R.string.loc_dde5d7d1),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary.copy(alpha = 0.5f),
                                 )
@@ -1100,19 +1165,10 @@ fun SwapScreen(
                     }
                 }
 
-                balanceWarning?.let {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ErrorRed,
-                    )
-                }
-
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "Swap Provider",
+                    text = stringResource(R.string.loc_0094f526),
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -1139,25 +1195,27 @@ fun SwapScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Min: ${
-                            when {
-                                swapLimits?.error != null -> "Error"
-                                swapLimits == null || swapLimits.isLoading -> "..."
-                                else -> "${formatAmt(swapLimits.minAmount, useSats)} $unit"
-                            }
-                        }",
+                        text =
+                            "Min: ${
+                                when {
+                                    swapLimits?.error != null -> "Error"
+                                    swapLimits == null || swapLimits.isLoading -> "..."
+                                    else -> "${formatAmt(swapLimits.minAmount, useSats)} $unit"
+                                }
+                            }",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (swapLimits?.error != null) ErrorRed else TextSecondary,
                     )
                     Text(
-                        text = "Max: ${
-                            when {
-                                swapLimits?.error != null -> "Error"
-                                swapLimits == null || swapLimits.isLoading -> "..."
-                                swapLimits.maxAmount > 0 -> "${formatAmt(swapLimits.maxAmount, useSats)} $unit"
-                                else -> "None"
-                            }
-                        }",
+                        text =
+                            "Max: ${
+                                when {
+                                    swapLimits?.error != null -> "Error"
+                                    swapLimits == null || swapLimits.isLoading -> "..."
+                                    swapLimits.maxAmount > 0 -> "${formatAmt(swapLimits.maxAmount, useSats)} $unit"
+                                    else -> "None"
+                                }
+                            }",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (swapLimits?.error != null) ErrorRed else TextSecondary,
                     )
@@ -1166,21 +1224,12 @@ fun SwapScreen(
                 if (swapLimits?.error != null) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Retry",
+                        text = stringResource(R.string.loc_ef217ee7),
                         style = MaterialTheme.typography.bodySmall,
                         color = LiquidTeal,
                         modifier = Modifier.clickable(enabled = !isSwapLocked) {
                             onFetchLimits(direction, selectedService)
                         },
-                    )
-                }
-
-                limitWarning?.let {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ErrorRed,
                     )
                 }
 
@@ -1200,14 +1249,19 @@ fun SwapScreen(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Advanced Options",
+                            text = stringResource(R.string.loc_20a1d916),
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                     }
                     Icon(
                         imageVector = if (showAdvancedOptions) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = if (showAdvancedOptions) "Collapse advanced options" else "Expand advanced options",
+                        contentDescription =
+                            if (showAdvancedOptions) {
+                                stringResource(R.string.loc_2d4a03c5)
+                            } else {
+                                stringResource(R.string.loc_f5276b4c)
+                            },
                         tint = TextSecondary,
                     )
                 }
@@ -1227,7 +1281,7 @@ fun SwapScreen(
                         HorizontalDivider(color = BorderColor)
                         Spacer(modifier = Modifier.height(8.dp))
                         SwapAdvancedToggleRow(
-                            label = "Custom destination address",
+                            label = stringResource(R.string.loc_ee7df965),
                             checked = destinationOptionEnabled,
                             enabled = !isSwapLocked,
                             accentColor = destinationOptionAccentColor,
@@ -1313,7 +1367,7 @@ fun SwapScreen(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         SwapAdvancedToggleRow(
-                            label = "Custom funding fee rate",
+                            label = stringResource(R.string.spark_transfer_custom_fee_rate),
                             checked = fundingFeeOptionEnabled,
                             enabled = !isSwapLocked,
                             accentColor = fundingFeeAccentColor,
@@ -1424,7 +1478,12 @@ fun SwapScreen(
                         ),
                 ) {
                     Text(
-                        text = if (broadcastingSwapId != null) "Broadcasting swap..." else "Review Swap",
+                        text =
+                            if (broadcastingSwapId != null) {
+                                stringResource(R.string.loc_52f64443)
+                            } else {
+                                stringResource(R.string.loc_9a0b9f8e)
+                            },
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -1452,7 +1511,12 @@ fun SwapScreen(
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            text = if (broadcastingSwapId != null) "Broadcasting swap..." else "Preparing swap...",
+                            text =
+                                if (broadcastingSwapId != null) {
+                                    stringResource(R.string.loc_52f64443)
+                                } else {
+                                    stringResource(R.string.loc_9ff7bb31)
+                                },
                             color = TextSecondary,
                         )
                     }
@@ -1468,7 +1532,7 @@ fun SwapScreen(
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
                 ) {
-                    Text("Review Actual Order", color = TextPrimary)
+                    Text(stringResource(R.string.loc_1b4f82ec), color = TextPrimary)
                 }
             }
 
@@ -1491,7 +1555,7 @@ fun SwapScreen(
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "Swap in progress",
+                            text = stringResource(R.string.loc_020518a4),
                             style = MaterialTheme.typography.titleMedium,
                             color = TextPrimary,
                         )
@@ -1525,7 +1589,7 @@ fun SwapScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            text = "Swap Complete",
+                            text = stringResource(R.string.loc_d0375699),
                             style = MaterialTheme.typography.titleMedium,
                             color = SuccessGreen,
                             fontWeight = FontWeight.SemiBold,
@@ -1562,7 +1626,7 @@ fun SwapScreen(
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
                 ) {
-                    Text("New Swap", color = TextPrimary)
+                    Text(stringResource(R.string.loc_f3b88bca), color = TextPrimary)
                 }
             }
 
@@ -1585,7 +1649,7 @@ fun SwapScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            text = "Swap Failed",
+                            text = stringResource(R.string.loc_9e5eae21),
                             style = MaterialTheme.typography.titleMedium,
                             color = ErrorRed,
                             fontWeight = FontWeight.SemiBold,
@@ -1626,16 +1690,16 @@ fun SwapScreen(
                                     HorizontalDivider(color = BorderColor)
                                     Spacer(modifier = Modifier.height(8.dp))
 
-                                    CopyableDetailRow("Swap ID", failedSwap.swapId, context)
-                                    CopyableDetailRow("Deposit Address", failedSwap.depositAddress, context)
+                                    CopyableDetailRow(stringResource(R.string.loc_3e5cd869), failedSwap.swapId, context)
+                                    CopyableDetailRow(stringResource(R.string.loc_3e8c11e4), failedSwap.depositAddress, context)
                                     failedSwap.refundAddress?.let {
-                                        CopyableDetailRow("Refund Address", it, context)
+                                        CopyableDetailRow(stringResource(R.string.loc_245027bd), it, context)
                                     }
                                     failedSwap.receiveAddress?.let {
-                                        CopyableDetailRow("Destination Address", it, context)
+                                        CopyableDetailRow(stringResource(R.string.loc_ff3e9c4d), it, context)
                                     }
                                     failedSwap.fundingTxid?.let {
-                                        CopyableDetailRow("Funding Txid", it, context)
+                                        CopyableDetailRow(stringResource(R.string.loc_c52f86d9), it, context)
                                     }
                                 }
                             }
@@ -1658,7 +1722,7 @@ fun SwapScreen(
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = DarkSurfaceVariant),
                         ) {
-                            Text("Dismiss", color = TextSecondary)
+                            Text(stringResource(R.string.loc_fff59f5b), color = TextSecondary)
                         }
                         Button(
                             onClick = { onResetSwap() },
@@ -1668,7 +1732,7 @@ fun SwapScreen(
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
                         ) {
-                            Text("Retry", color = TextPrimary)
+                            Text(stringResource(R.string.loc_ef217ee7), color = TextPrimary)
                         }
                     }
                 } else {
@@ -1680,7 +1744,7 @@ fun SwapScreen(
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
                     ) {
-                        Text("Try Again", color = TextPrimary)
+                        Text(stringResource(R.string.loc_cddc8112), color = TextPrimary)
                     }
                 }
             }
@@ -1759,7 +1823,7 @@ private fun CopyableDetailRow(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable {
-                    SecureClipboard.copyAndScheduleClear(context, label, value)
+                    SecureClipboard.copyAndScheduleClear(context, value)
                     copied = true
                 },
         ) {
@@ -1771,7 +1835,7 @@ private fun CopyableDetailRow(
             )
             if (copied) {
                 Text(
-                    text = "Copied",
+                    text = stringResource(R.string.loc_5d00536d),
                     style = MaterialTheme.typography.labelSmall,
                     color = LiquidTeal,
                 )
@@ -1816,21 +1880,26 @@ private fun PendingSwapsCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "Pending Swaps",
+                    text = stringResource(R.string.loc_36c054ad),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = "${pendingSwaps.size} active",
+                    text = stringResource(R.string.loc_2abb5095),
                     style = MaterialTheme.typography.labelMedium,
                     color = TextSecondary,
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Icon(
                     imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = if (expanded) "Collapse pending swaps" else "Expand pending swaps",
+                    contentDescription =
+                        if (expanded) {
+                            stringResource(R.string.loc_6e01dd8a)
+                        } else {
+                            stringResource(R.string.loc_0a0d0a98)
+                        },
                     tint = LiquidTeal,
                 )
             }
@@ -1880,7 +1949,12 @@ private fun PendingSwapRow(
     val receiveAsset = if (pendingSwap.direction == SwapDirection.BTC_TO_LBTC) "L-BTC" else "BTC"
     val sendAccent = if (isPegIn) BitcoinOrange else LiquidTeal
     val receiveAccent = if (isPegIn) LiquidTeal else BitcoinOrange
-    val idLabel = if (pendingSwap.service == SwapService.BOLTZ) "Boltz Swap ID" else "SideSwap Order ID"
+    val idLabel =
+        if (pendingSwap.service == SwapService.BOLTZ) {
+            stringResource(R.string.loc_12c49c0c)
+        } else {
+            stringResource(R.string.loc_1598922a)
+        }
     val sendAmountText = pendingSwapDisplayAmount(pendingSwap.sendAmount, useSats, unit, privacyMode)
     val showRescueKeyDialogState = rememberSaveable(pendingSwap.swapId) { mutableStateOf(false) }
     val showRescueKeyDialog = showRescueKeyDialogState.value
@@ -1935,7 +2009,12 @@ private fun PendingSwapRow(
                 ) {
                     Icon(
                         imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = if (expanded) "Collapse pending swap" else "Expand pending swap",
+                        contentDescription =
+                            if (expanded) {
+                                stringResource(R.string.loc_65b11dc2)
+                            } else {
+                                stringResource(R.string.loc_02cecfdb)
+                            },
                         tint = TextSecondary,
                     )
                 }
@@ -1976,14 +2055,12 @@ private fun PendingSwapRow(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    val progressValue = pendingSwapProgressValue(pendingSwap = pendingSwap)
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.Bottom,
                     ) {
                         Text(
-                            text = "Status: $progressValue",
+                            text = stringResource(R.string.loc_20fccd71),
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary,
                             modifier = Modifier.weight(1f),
@@ -2002,7 +2079,7 @@ private fun PendingSwapRow(
 
                     PendingSwapDetailRow(idLabel, pendingSwap.swapId)
                     pendingSwap.label?.takeIf { it.isNotBlank() }?.let {
-                        PendingSwapDetailRow("Label", it)
+                        PendingSwapDetailRow(stringResource(R.string.loc_cf667fec), it)
                     }
                     PendingSwapDetailRow("Deposit Address", pendingSwap.depositAddress)
                     pendingSwap.receiveAddress?.let { PendingSwapDetailRow("Destination Address", it) }
@@ -2098,7 +2175,7 @@ private fun PendingSwapDirectionBadge(
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            text = "->",
+            text = stringResource(R.string.loc_6b8bdd37),
             style = MaterialTheme.typography.labelMedium,
             color = TextSecondary,
             fontWeight = FontWeight.SemiBold,
@@ -2151,7 +2228,7 @@ private fun PendingSwapDetailRow(
             Spacer(modifier = Modifier.width(8.dp))
             IconButton(
                 onClick = {
-                    SecureClipboard.copyAndScheduleClear(context, label, value)
+                    SecureClipboard.copyAndScheduleClear(context, value)
                     showCopied = true
                 },
                 modifier = Modifier.size(36.dp),
@@ -2167,7 +2244,7 @@ private fun PendingSwapDetailRow(
         if (showCopied) {
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Copied to clipboard!",
+                text = stringResource(R.string.loc_e287255d),
                 style = MaterialTheme.typography.bodySmall,
                 color = LiquidTeal,
             )
@@ -2274,7 +2351,7 @@ private fun SwapProviderDropdown(
                 Spacer(modifier = Modifier.width(8.dp))
                 Icon(
                     imageVector = Icons.Default.KeyboardArrowDown,
-                    contentDescription = "Select swap provider",
+                    contentDescription = stringResource(R.string.loc_4818a44f),
                     tint = if (enabled) TextSecondary else TextSecondary.copy(alpha = 0.5f),
                 )
             }
@@ -2440,15 +2517,19 @@ private fun SwapCoinControlDialog(
                 Text(
                     text =
                         if (selectedUtxos.isNotEmpty()) {
-                            val amountText =
+                            val amountPart =
                                 if (privacyMode) {
                                     hiddenAmount
                                 } else {
-                                    formatAmt(totalSelected, useSats)
+                                    formatAmount(totalSelected.toULong(), useSats, includeUnit = true)
                                 }
-                            "${selectedUtxos.size} selected • $amountText"
+                            stringResource(
+                                R.string.coin_control_selected_summary_format,
+                                selectedUtxos.size,
+                                amountPart,
+                            )
                         } else {
-                            "Select specific UTXOs for this swap"
+                            stringResource(R.string.loc_cfe01156)
                         },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (selectedUtxos.isNotEmpty()) accentColor else TextSecondary,
@@ -2464,7 +2545,7 @@ private fun SwapCoinControlDialog(
                         onClick = onSelectAll,
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Select All", color = accentColor)
+                        Text(stringResource(R.string.loc_27833d8a), color = accentColor)
                     }
                     TextButton(
                         onClick = onClearAll,
@@ -2472,7 +2553,7 @@ private fun SwapCoinControlDialog(
                         enabled = selectedUtxos.isNotEmpty(),
                     ) {
                         Text(
-                            text = "Clear All",
+                            text = stringResource(R.string.loc_4340d39b),
                             color = if (selectedUtxos.isNotEmpty()) TextSecondary else TextSecondary.copy(alpha = 0.5f),
                         )
                     }
@@ -2533,7 +2614,12 @@ private fun SwapCoinControlDialog(
                                         } else {
                                             Icons.Default.RadioButtonUnchecked
                                         },
-                                    contentDescription = if (isSelected) "Selected" else "Not selected",
+                                    contentDescription =
+                                        if (isSelected) {
+                                            stringResource(R.string.common_selected)
+                                        } else {
+                                            stringResource(R.string.loc_e17307d1)
+                                        },
                                     tint =
                                         when {
                                             isDisabled -> TextSecondary.copy(alpha = 0.3f)
@@ -2552,7 +2638,7 @@ private fun SwapCoinControlDialog(
                                                 if (privacyMode) {
                                                     hiddenAmount
                                                 } else {
-                                                    formatAmt(utxo.amountSats.toLong(), useSats)
+                                                    formatAmount(utxo.amountSats, useSats, includeUnit = true)
                                                 },
                                             style = MaterialTheme.typography.bodyLarge,
                                             fontWeight = FontWeight.Medium,
@@ -2569,7 +2655,7 @@ private fun SwapCoinControlDialog(
                                     }
 
                                     Text(
-                                        text = "${utxo.address.take(12)}...${utxo.address.takeLast(8)}",
+                                        text = utxo.address,
                                         style = MaterialTheme.typography.bodySmall,
                                         fontFamily = FontFamily.Monospace,
                                         color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
@@ -2589,7 +2675,7 @@ private fun SwapCoinControlDialog(
 
                                     if (isDisabled) {
                                         Text(
-                                            text = "Unconfirmed UTXOs are disabled in settings",
+                                            text = stringResource(R.string.loc_bdedd2ce),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = WarningYellow,
                                         )
@@ -2610,7 +2696,12 @@ private fun SwapCoinControlDialog(
                                             .padding(horizontal = 6.dp, vertical = 2.dp),
                                 ) {
                                     Text(
-                                        text = if (utxo.isConfirmed) "Confirmed" else "Pending",
+                                        text =
+                                            if (utxo.isConfirmed) {
+                                                stringResource(R.string.loc_4ab75d7f)
+                                            } else {
+                                                stringResource(R.string.loc_1b684325)
+                                            },
                                         style = MaterialTheme.typography.labelSmall,
                                         color =
                                             if (utxo.isConfirmed) {
@@ -2630,9 +2721,9 @@ private fun SwapCoinControlDialog(
                     Text(
                         text =
                             if (isLiquid) {
-                                "Selected L-BTC UTXOs will fund this swap."
+                                stringResource(R.string.loc_6ff3adfb)
                             } else {
-                                "Selected Bitcoin UTXOs will fund this swap."
+                                stringResource(R.string.loc_cce909f4)
                             },
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
@@ -2655,7 +2746,7 @@ private fun SwapCoinControlDialog(
                         ),
                 ) {
                     Text(
-                        text = "Done",
+                        text = stringResource(R.string.loc_b01f4f95),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -2667,17 +2758,21 @@ private fun SwapCoinControlDialog(
 private fun providerFeeDetailText(
     limits: SwapLimits?,
     service: SwapService,
+    loadingText: String,
+    unavailableText: String,
+    boltzText: String,
+    sideSwapText: String,
 ): String {
     if (limits == null || limits.isLoading) {
-        return "Fee details loading"
+        return loadingText
     }
     if (limits.error != null) {
-        return "Fee details unavailable"
+        return unavailableText
     }
 
     return when (service) {
-        SwapService.BOLTZ -> "Non-custodial swap, higher fees"
-        SwapService.SIDESWAP -> "Custodial swap, lower fees"
+        SwapService.BOLTZ -> boltzText
+        SwapService.SIDESWAP -> sideSwapText
     }
 }
 
@@ -2744,6 +2839,7 @@ private fun AddressRow(
 ) {
     val displayValue = truncateAddress(value)
     var showCopied by remember { mutableStateOf(false) }
+    val copyLabelContentDescription = stringResource(R.string.common_copy_with_label, label)
 
     LaunchedEffect(showCopied, value) {
         if (!showCopied) return@LaunchedEffect
@@ -2774,7 +2870,6 @@ private fun AddressRow(
                 onClick = {
                     SecureClipboard.copyAndScheduleClear(
                         context = context,
-                        label = label,
                         text = value,
                     )
                     showCopied = true
@@ -2783,7 +2878,7 @@ private fun AddressRow(
             ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
-                    contentDescription = "Copy $label",
+                    contentDescription = copyLabelContentDescription,
                     tint = LiquidTeal,
                     modifier = Modifier.size(18.dp),
                 )
@@ -2792,7 +2887,7 @@ private fun AddressRow(
         if (showCopied) {
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Copied to clipboard!",
+                text = stringResource(R.string.loc_e287255d),
                 style = MaterialTheme.typography.bodySmall,
                 color = LiquidTeal,
             )
@@ -2821,14 +2916,32 @@ private fun SwapReviewDialog(
     val serviceAccent = if (pendingSwap.service == SwapService.BOLTZ) AccentBlue else LiquidTeal
     val sendAccent = if (isPegIn) BitcoinOrange else LiquidTeal
     val receiveAccent = if (isPegIn) LiquidTeal else BitcoinOrange
-    val sendLayerLabel = if (isPegIn) "Layer 1" else "Layer 2"
-    val receiveLayerLabel = if (isPegIn) "Layer 2" else "Layer 1"
+    val sendLayerLabel = if (isPegIn) stringResource(R.string.loc_b67a01a5) else stringResource(R.string.loc_2f73501f)
+    val receiveLayerLabel = if (isPegIn) stringResource(R.string.loc_2f73501f) else stringResource(R.string.loc_b67a01a5)
+    val copySwapIdLabel = stringResource(R.string.loc_c0b66d5a)
     val orderId = pendingSwap.swapId
     val fundingNetworkFee = estimated.fundingNetworkFeeFor(pendingSwap.direction)
     val payoutNetworkFee = estimated.payoutNetworkFeeFor(pendingSwap.direction)
-    fun feeRateText(rate: Double): String? =
-        if (rate > 0.0) {
-            "≈ ${String.format(Locale.US, "%.1f", rate)} sat/vB"
+    val satVbUnit = stringResource(R.string.loc_aedd48eb)
+    val fundingRate = estimated.fundingFeeRateFor(pendingSwap.direction)
+    val fundingFeeRateText =
+        if (fundingRate > 0.0) {
+            stringResource(
+                R.string.swap_review_approx_fee_rate,
+                String.format(Locale.US, "%.1f", fundingRate),
+                satVbUnit,
+            )
+        } else {
+            null
+        }
+    val payoutRate = estimated.payoutFeeRateFor(pendingSwap.direction)
+    val payoutFeeRateText =
+        if (payoutRate > 0.0) {
+            stringResource(
+                R.string.swap_review_approx_fee_rate,
+                String.format(Locale.US, "%.1f", payoutRate),
+                satVbUnit,
+            )
         } else {
             null
         }
@@ -2836,37 +2949,42 @@ private fun SwapReviewDialog(
         pendingSwap.sendAmount.takeIf { it > 0 }?.let {
             "${String.format(Locale.US, "%.2f", estimated.serviceFee * 100.0 / it).trimEnd('0').trimEnd('.') }%"
         }
-    val fundingFeeRateText = feeRateText(estimated.fundingFeeRateFor(pendingSwap.direction))
-    val payoutFeeRateText = feeRateText(estimated.payoutFeeRateFor(pendingSwap.direction))
-    val fundingFeeLabel = if (isPegIn) "Bitcoin funding fee" else "Liquid funding fee"
-    val payoutFeeLabel = if (isPegIn) "Liquid claim fee" else "Bitcoin claim fee"
+    val fundingFeeLabel =
+        if (isPegIn) stringResource(R.string.loc_85a9e0cb) else stringResource(R.string.loc_c5e0700a)
+    val payoutFeeLabel =
+        if (isPegIn) stringResource(R.string.loc_d3b3a18f) else stringResource(R.string.loc_41bcc5c5)
     data class ReviewFeeLine(
         val label: String,
         val value: Long,
         val subtext: String? = null,
     )
-    val feeLines = buildList {
-        val serviceLabel = when (pendingSwap.service) {
-            SwapService.BOLTZ -> "Boltz service fee"
-            SwapService.SIDESWAP -> "SideSwap service fee"
+    val serviceLabel =
+        when (pendingSwap.service) {
+            SwapService.BOLTZ -> stringResource(R.string.loc_776ee9d4)
+            SwapService.SIDESWAP -> stringResource(R.string.loc_88bc08a6)
         }
+    val providerTransferFeesLabel = stringResource(R.string.loc_6203b65d)
+    val estimatedByBoltzText = stringResource(R.string.loc_9283713e)
+    val estimatedBySideSwapText = stringResource(R.string.loc_5154065c)
+    val feeLines = buildList {
         if (fundingNetworkFee > 0L) {
             add(ReviewFeeLine(fundingFeeLabel, fundingNetworkFee, fundingFeeRateText))
         }
         add(ReviewFeeLine(serviceLabel, estimated.serviceFee, serviceFeePercentText))
         if (estimated.providerMinerFee > 0L) {
-            val providerSubtext = when (pendingSwap.service) {
-                SwapService.BOLTZ -> "Estimated by Boltz"
-                SwapService.SIDESWAP -> "Estimated by SideSwap"
-            }
-            add(ReviewFeeLine("Provider transfer fees", estimated.providerMinerFee, providerSubtext))
+            val providerSubtext =
+                when (pendingSwap.service) {
+                    SwapService.BOLTZ -> estimatedByBoltzText
+                    SwapService.SIDESWAP -> estimatedBySideSwapText
+                }
+            add(ReviewFeeLine(providerTransferFeesLabel, estimated.providerMinerFee, providerSubtext))
         }
         if (payoutNetworkFee > 0L) {
             add(ReviewFeeLine(payoutFeeLabel, payoutNetworkFee, payoutFeeRateText))
         }
     }
-    val feesCardTitle = "Fees"
-    val totalFeeLabel = "Total Fees (est.)"
+    val feesCardTitle = stringResource(R.string.loc_00a16e52)
+    val totalFeeLabel = stringResource(R.string.loc_7d9effcf)
     val totalFeeSats =
         if (pendingSwap.service == SwapService.BOLTZ) {
             estimated.totalSwapDeductionsFor(pendingSwap.direction)
@@ -2928,7 +3046,10 @@ private fun SwapReviewDialog(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
-                Text(if (isExecuting) "Sending Swap..." else "Confirm Swap", color = TextPrimary)
+                Text(
+                    if (isExecuting) stringResource(R.string.loc_94bea00f) else stringResource(R.string.loc_7a4eb12d),
+                    color = TextPrimary,
+                )
             }
 
             if (isExecuting && !executionStatus.isNullOrBlank()) {
@@ -2942,6 +3063,8 @@ private fun SwapReviewDialog(
                 )
             }
 
+            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(color = BorderColor)
             Spacer(modifier = Modifier.height(8.dp))
 
             IbisButton(
@@ -2952,12 +3075,12 @@ private fun SwapReviewDialog(
                         .fillMaxWidth()
                         .height(48.dp),
             ) {
-                Text("Cancel", style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
             }
         },
     ) {
                 Text(
-                    text = "Swap Overview",
+                    text = stringResource(R.string.loc_75935701),
                     style = MaterialTheme.typography.titleLarge,
                     color = TextPrimary,
                     fontWeight = FontWeight.SemiBold,
@@ -2991,7 +3114,7 @@ private fun SwapReviewDialog(
                             .padding(16.dp),
                     ) {
                         Text(
-                            text = "Swapping",
+                            text = stringResource(R.string.loc_a9af1b38),
                             style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary,
                             modifier = Modifier.fillMaxWidth(),
@@ -3034,7 +3157,7 @@ private fun SwapReviewDialog(
                                 color = BorderColor.copy(alpha = 0.3f),
                             )
                             Text(
-                                text = "to (est.)",
+                                text = stringResource(R.string.loc_54da2c24),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = TextTertiary,
                                 modifier = Modifier
@@ -3078,7 +3201,12 @@ private fun SwapReviewDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = if (pendingSwap.service == SwapService.SIDESWAP) "SideSwap Order ID" else "Boltz Swap ID",
+                                    text =
+                                        if (pendingSwap.service == SwapService.SIDESWAP) {
+                                            stringResource(R.string.loc_1598922a)
+                                        } else {
+                                            stringResource(R.string.loc_12c49c0c)
+                                        },
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = TextSecondary,
                                 )
@@ -3100,7 +3228,6 @@ private fun SwapReviewDialog(
                                         .clickable {
                                             SecureClipboard.copyAndScheduleClear(
                                                 context = context,
-                                                label = "Swap ID",
                                                 text = orderId,
                                             )
                                             showSwapIdCopied = true
@@ -3108,7 +3235,7 @@ private fun SwapReviewDialog(
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = "Copy swap ID",
+                                    contentDescription = copySwapIdLabel,
                                     tint = if (showSwapIdCopied) LiquidTeal else TextSecondary,
                                     modifier = Modifier.size(18.dp),
                                 )
@@ -3117,7 +3244,7 @@ private fun SwapReviewDialog(
                         if (showSwapIdCopied) {
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "Copied to clipboard!",
+                                text = stringResource(R.string.loc_e287255d),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = LiquidTeal,
                             )
@@ -3128,7 +3255,7 @@ private fun SwapReviewDialog(
                             HorizontalDivider(color = BorderColor.copy(alpha = 0.3f))
                             Spacer(modifier = Modifier.height(14.dp))
                             Text(
-                                text = "Label",
+                                text = stringResource(R.string.loc_cf667fec),
                                 style = MaterialTheme.typography.bodyLarge,
                                 color = TextSecondary,
                             )
@@ -3162,14 +3289,19 @@ private fun SwapReviewDialog(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = "Addresses",
+                                text = stringResource(R.string.loc_ed3bf7b5),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = TextPrimary,
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Icon(
                                 imageVector = if (addressesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                contentDescription = if (addressesExpanded) "Collapse addresses" else "Expand addresses",
+                                contentDescription =
+                                    if (addressesExpanded) {
+                                        stringResource(R.string.loc_0430ad11)
+                                    } else {
+                                        stringResource(R.string.loc_afb3fec8)
+                                    },
                                 tint = LiquidTeal,
                             )
                         }
@@ -3181,14 +3313,14 @@ private fun SwapReviewDialog(
                                     .padding(top = 12.dp),
                             ) {
                                 AddressRow(
-                                    label = "Swap address",
+                                    label = stringResource(R.string.loc_40fb77d1),
                                     value = pendingSwap.depositAddress,
                                     context = context,
                                 )
                                 pendingSwap.receiveAddress?.takeIf { it.isNotBlank() }?.let { receiveAddress ->
                                     Spacer(modifier = Modifier.height(10.dp))
                                     AddressRow(
-                                        label = "Destination address",
+                                        label = stringResource(R.string.loc_3083a5d1),
                                         value = receiveAddress,
                                         context = context,
                                     )
@@ -3196,7 +3328,7 @@ private fun SwapReviewDialog(
                                 pendingSwap.refundAddress?.takeIf { it.isNotBlank() }?.let { refundAddress ->
                                     Spacer(modifier = Modifier.height(10.dp))
                                     AddressRow(
-                                        label = "Refund address",
+                                        label = stringResource(R.string.loc_245027bd),
                                         value = refundAddress,
                                         context = context,
                                     )
@@ -3255,7 +3387,12 @@ private fun SwapReviewDialog(
                                 }
                                 Icon(
                                     imageVector = if (feesExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                                    contentDescription = if (feesExpanded) "Collapse fees" else "Expand fees",
+                                    contentDescription =
+                                        if (feesExpanded) {
+                                            stringResource(R.string.loc_e607c9c3)
+                                        } else {
+                                            stringResource(R.string.loc_cd1ee95d)
+                                        },
                                     tint = LiquidTeal,
                                 )
                             }
@@ -3352,7 +3489,7 @@ private fun SwapFundingFeeRateField(
             enabled = enabled,
             suffix = {
                 Text(
-                    text = "sat/vB",
+                    text = stringResource(R.string.loc_aedd48eb),
                     color = TextSecondary.copy(alpha = 0.7f),
                 )
             },

@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet.util
 
 import github.aeonbtc.ibiswallet.data.model.WalletLayer
+import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import java.math.BigDecimal
 import java.net.URLDecoder
@@ -30,6 +31,13 @@ internal sealed interface ParsedSendRecipient {
         val label: String? = null,
         val message: String? = null,
         val assetId: String? = null,
+    ) : ParsedSendRecipient
+
+    data class Spark(
+        override val rawInput: String,
+        val paymentRequest: String,
+        val amountSats: Long? = null,
+        val label: String? = null,
     ) : ParsedSendRecipient
 
     data class Lightning(
@@ -72,6 +80,7 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
         return ParsedSendRecipient.Empty()
     }
     val bip353Address = normalizedBip353Address(trimmed)
+    parseSilentPaymentRecipient(trimmed)?.let { return it }
 
     BitcoinUtils.unsupportedNonMainnetReason(trimmed)?.let {
         return ParsedSendRecipient.Unknown(
@@ -88,10 +97,12 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
     }
 
     val queryParams = parseUriQueryParameters(trimmed)
+    parseSilentPaymentUri(trimmed, queryParams)?.let { return it }
     val payment = parsePayment(trimmed)
 
     if (payment == null) {
         parseOpaqueLiquidRecipient(trimmed, queryParams)?.let { return it }
+        parseSparkRecipient(trimmed, queryParams)?.let { return it }
         if (bip353Address != null) {
             return ParsedSendRecipient.Lightning(
                 rawInput = trimmed,
@@ -265,6 +276,14 @@ internal fun resolveSendRoute(
                 recipient = parsed,
             )
         }
+        is ParsedSendRecipient.Spark -> {
+            val route = if (isLiquidAvailable) WalletLayer.LAYER2 else WalletLayer.LAYER1
+            SendRouteResolution(
+                route = route,
+                draft = if (route == WalletLayer.LAYER2) parsed.toLayer2Draft(layer2UseSats) else SendScreenDraft(recipientAddress = parsed.rawInput),
+                recipient = parsed,
+            )
+        }
         is ParsedSendRecipient.UnsupportedLightning -> {
             if (isLiquidAvailable) {
                 SendRouteResolution(
@@ -302,6 +321,7 @@ internal fun isRecognizedSendInput(input: String): Boolean {
     return when (parseSendRecipient(input)) {
         is ParsedSendRecipient.Bitcoin,
         is ParsedSendRecipient.Liquid,
+        is ParsedSendRecipient.Spark,
         is ParsedSendRecipient.Lightning,
         is ParsedSendRecipient.UnsupportedLightning,
         -> true
@@ -312,9 +332,27 @@ internal fun isRecognizedSendInput(input: String): Boolean {
 internal fun resolveLayer2SendDraft(
     input: String,
     layer2UseSats: Boolean,
+    provider: Layer2Provider? = null,
 ): SendScreenDraft {
     return when (val parsed = parseSendRecipient(input)) {
-        is ParsedSendRecipient.Liquid -> parsed.toLayer2Draft(layer2UseSats)
+        is ParsedSendRecipient.Bitcoin ->
+            if (provider == Layer2Provider.SPARK) {
+                parsed.toSparkDraft(layer2UseSats)
+            } else {
+                unsupportedLayer2Draft(parsed.rawInput)
+            }
+        is ParsedSendRecipient.Liquid ->
+            if (provider == null || provider == Layer2Provider.LIQUID) {
+                parsed.toLayer2Draft(layer2UseSats)
+            } else {
+                unsupportedLayer2Draft(parsed.rawInput)
+            }
+        is ParsedSendRecipient.Spark ->
+            if (provider == null || provider == Layer2Provider.SPARK) {
+                parsed.toLayer2Draft(layer2UseSats)
+            } else {
+                unsupportedLayer2Draft(parsed.rawInput)
+            }
         is ParsedSendRecipient.Lightning -> parsed.toLayer2Draft(layer2UseSats)
         is ParsedSendRecipient.UnsupportedLightning ->
             SendScreenDraft(
@@ -323,25 +361,47 @@ internal fun resolveLayer2SendDraft(
             )
         is ParsedSendRecipient.Empty -> SendScreenDraft(feeRate = LAYER2_DEFAULT_FEE_RATE)
         else ->
-            SendScreenDraft(
-                recipientAddress = parsed.rawInput,
-                feeRate = LAYER2_DEFAULT_FEE_RATE,
-            )
+            unsupportedLayer2Draft(parsed.rawInput)
     }
 }
 
-internal fun layer2RecipientValidationError(parsed: ParsedSendRecipient): String? {
+internal fun layer2RecipientValidationError(
+    parsed: ParsedSendRecipient,
+    provider: Layer2Provider? = null,
+): String? {
     return when (parsed) {
         is ParsedSendRecipient.Empty -> null
-        is ParsedSendRecipient.Liquid -> null
+        is ParsedSendRecipient.Bitcoin ->
+            if (provider == Layer2Provider.SPARK) {
+                null
+            } else {
+                "Bitcoin addresses are not supported on Liquid send"
+            }
+        is ParsedSendRecipient.Liquid ->
+            if (provider == null || provider == Layer2Provider.LIQUID) {
+                null
+            } else {
+                "Liquid requests are not supported on Spark send"
+            }
+        is ParsedSendRecipient.Spark ->
+            if (provider == null || provider == Layer2Provider.SPARK) {
+                null
+            } else {
+                "Spark requests are not supported on Liquid send"
+            }
         is ParsedSendRecipient.Lightning ->
             when {
-                parsed.kind == LightningKind.BOLT11 && parsed.amountSats == null ->
+                provider != Layer2Provider.SPARK && parsed.kind == LightningKind.BOLT11 && parsed.amountSats == null ->
                     "Amountless Lightning invoices are not supported"
                 else -> null
             }
         is ParsedSendRecipient.UnsupportedLightning -> parsed.errorMessage
-        else -> "Enter a Liquid address, LN invoice, BOLT12 offer, or Lightning Address"
+        else ->
+            when (provider) {
+                Layer2Provider.LIQUID -> "Enter a Liquid, BOLT 11/12, or LN Address"
+                Layer2Provider.SPARK -> "Enter a Spark, BOLT 11, LNURL, or Bitcoin address"
+                else -> "Enter a Liquid, Spark, BOLT 11/12, or LN Address"
+            }
     }
 }
 
@@ -353,6 +413,21 @@ private fun ParsedSendRecipient.Bitcoin.toLayer1Draft(useSats: Boolean): SendScr
     )
 }
 
+private fun ParsedSendRecipient.Bitcoin.toSparkDraft(useSats: Boolean): SendScreenDraft {
+    return SendScreenDraft(
+        recipientAddress = address,
+        amountInput = amountSats?.let { formatSatsForDraft(it, useSats) }.orEmpty(),
+        label = label.orEmpty(),
+        feeRate = LAYER2_DEFAULT_FEE_RATE,
+    )
+}
+
+private fun unsupportedLayer2Draft(rawInput: String): SendScreenDraft =
+    SendScreenDraft(
+        recipientAddress = rawInput,
+        feeRate = LAYER2_DEFAULT_FEE_RATE,
+    )
+
 private fun ParsedSendRecipient.Liquid.toLayer2Draft(useSats: Boolean): SendScreenDraft {
     return SendScreenDraft(
         recipientAddress = address,
@@ -360,6 +435,15 @@ private fun ParsedSendRecipient.Liquid.toLayer2Draft(useSats: Boolean): SendScre
         label = label.orEmpty(),
         feeRate = LAYER2_DEFAULT_FEE_RATE,
         assetId = assetId,
+    )
+}
+
+private fun ParsedSendRecipient.Spark.toLayer2Draft(useSats: Boolean): SendScreenDraft {
+    return SendScreenDraft(
+        recipientAddress = paymentRequest,
+        amountInput = amountSats?.let { formatSatsForDraft(it, useSats) }.orEmpty(),
+        label = label.orEmpty(),
+        feeRate = LAYER2_DEFAULT_FEE_RATE,
     )
 }
 
@@ -395,9 +479,44 @@ private fun parsePayment(input: String): Payment? {
     return null
 }
 
+private fun parseSilentPaymentRecipient(input: String): ParsedSendRecipient.Bitcoin? {
+    if (!input.lowercase(Locale.US).startsWith("sp1")) {
+        return null
+    }
+    return if (SilentPayment.isSilentPaymentAddress(input)) {
+        ParsedSendRecipient.Bitcoin(
+            rawInput = input,
+            address = input.trim(),
+        )
+    } else {
+        null
+    }
+}
+
+private fun parseSilentPaymentUri(
+    input: String,
+    queryParams: Map<String, String>,
+): ParsedSendRecipient.Bitcoin? {
+    if (!input.startsWith("bitcoin:", ignoreCase = true)) {
+        return null
+    }
+    val address = input.substringAfter(':').substringBefore('?').trim()
+    if (!address.lowercase(Locale.US).startsWith("sp1") || !SilentPayment.isSilentPaymentAddress(address)) {
+        return null
+    }
+    return ParsedSendRecipient.Bitcoin(
+        rawInput = input,
+        address = address,
+        amountSats = queryParams["amount"]?.let(::parseBitcoinAmountToSats),
+        label = queryParams["label"]?.takeIf { it.isNotBlank() },
+        message = queryParams["message"]?.takeIf { it.isNotBlank() },
+    )
+}
+
 private fun isValidBitcoinAddress(input: String): Boolean {
     val trimmed = input.trim()
     return when {
+        SilentPayment.isSilentPaymentAddress(trimmed) -> true
         trimmed.startsWith("1") ||
             trimmed.startsWith("3") -> isValidBase58Address(trimmed)
         else -> false
@@ -476,6 +595,25 @@ private fun parseOpaqueLiquidRecipient(
     )
 }
 
+private fun parseSparkRecipient(
+    input: String,
+    queryParams: Map<String, String>,
+): ParsedSendRecipient.Spark? {
+    val lower = input.lowercase(Locale.US)
+    val looksLikeSpark =
+        lower.startsWith("spark1") ||
+            lower.startsWith("spark:") ||
+            lower.startsWith("sparkinvoice")
+    if (!looksLikeSpark) return null
+
+    return ParsedSendRecipient.Spark(
+        rawInput = input,
+        paymentRequest = input,
+        amountSats = queryParams["amount"]?.let(::parseBitcoinAmountToSats),
+        label = queryParams["label"]?.takeIf { it.isNotBlank() },
+    )
+}
+
 private fun parseLiquidAmountToSats(amountText: String): Long? {
     return runCatching {
         BigDecimal(amountText)
@@ -483,6 +621,9 @@ private fun parseLiquidAmountToSats(amountText: String): Long? {
             .longValueExact()
     }.getOrNull()
 }
+
+private fun parseBitcoinAmountToSats(amountText: String): Long? =
+    parseLiquidAmountToSats(amountText)
 
 private fun msatsToRoundedSats(amountMsats: ULong): Long {
     val value = amountMsats.toLong()

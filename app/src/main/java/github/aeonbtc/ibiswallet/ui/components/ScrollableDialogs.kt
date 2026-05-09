@@ -21,7 +21,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,9 +29,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
 
 @Composable
 fun ScrollableDialogSurface(
@@ -50,39 +53,41 @@ fun ScrollableDialogSurface(
         onDismissRequest = onDismissRequest,
         properties = properties,
     ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center,
-        ) {
-            Surface(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .widthIn(max = 560.dp)
-                        .padding(16.dp)
-                        .heightIn(max = 720.dp)
-                        .then(modifier),
-                shape = shape,
-                color = containerColor,
+        ProvideLocalizedResources {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
             ) {
-                Column(
+                Surface(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .padding(contentPadding),
+                            .widthIn(max = 560.dp)
+                            .padding(16.dp)
+                            .heightIn(max = 720.dp)
+                            .then(modifier),
+                    shape = shape,
+                    color = containerColor,
                 ) {
                     Column(
                         modifier =
                             Modifier
-                                .weight(1f, fill = false)
-                                .verticalScroll(rememberScrollState()),
+                                .fillMaxWidth()
+                                .padding(contentPadding),
                     ) {
-                        content()
-                    }
+                        Column(
+                            modifier =
+                                Modifier
+                                    .weight(1f, fill = false)
+                                    .verticalScroll(rememberScrollState()),
+                        ) {
+                            content()
+                        }
 
-                    if (actions != null) {
-                        Spacer(modifier = Modifier.height(bottomSpacing))
-                        actions()
+                        if (actions != null) {
+                            Spacer(modifier = Modifier.height(bottomSpacing))
+                            actions()
+                        }
                     }
                 }
             }
@@ -152,13 +157,20 @@ fun IbisConfirmDialog(
     containerColor: Color = DarkSurface,
     shape: Shape = RoundedCornerShape(12.dp),
     message: String? = null,
-    dismissText: String? = "Cancel",
+    dismissText: String? = null,
+    showDismissButton: Boolean = true,
     onDismissAction: (() -> Unit)? = onDismissRequest,
     confirmEnabled: Boolean = true,
     confirmColor: Color = BitcoinOrange,
     icon: (@Composable () -> Unit)? = null,
     body: (@Composable ColumnScope.() -> Unit)? = null,
 ) {
+    val resolvedDismissText =
+        when {
+            !showDismissButton -> null
+            dismissText != null -> dismissText
+            else -> stringResource(R.string.loc_51bac044)
+        }
     ScrollableDialogSurface(
         onDismissRequest = onDismissRequest,
         modifier = modifier,
@@ -171,14 +183,14 @@ fun IbisConfirmDialog(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (dismissText != null && onDismissAction != null) {
+                if (resolvedDismissText != null && onDismissAction != null) {
                     IbisButton(
                         onClick = onDismissAction,
                         modifier = Modifier.widthIn(min = 84.dp),
                         activeColor = TextSecondary,
                     ) {
                         Text(
-                            text = dismissText,
+                            text = resolvedDismissText,
                             style = MaterialTheme.typography.titleMedium,
                         )
                     }

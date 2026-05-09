@@ -2,6 +2,7 @@ package github.aeonbtc.ibiswallet.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,26 +15,31 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidTxType
+import github.aeonbtc.ibiswallet.ui.screens.formatFiat
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
@@ -58,6 +64,8 @@ fun LiquidTransactionItem(
     tx: LiquidTransaction,
     denomination: String,
     btcPrice: Double?,
+    fiatCurrency: String,
+    historicalBtcPrice: Double?,
     privacyMode: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -84,6 +92,11 @@ fun LiquidTransactionItem(
     val iconBackground = if (isReceive) AccentGreen.copy(alpha = 0.1f) else AccentRed.copy(alpha = 0.1f)
     val amountColor = if (isReceive) AccentGreen else AccentRed
     val networkBadge = networkBadge(tx.source)
+    val defaultTitleRes = defaultTransactionTitleRes(tx, isReceive)
+    val formattedTimestamp =
+        remember(tx.timestamp) {
+            tx.timestamp?.let { formatTimestamp(it) }.orEmpty()
+        }
     val nonLbtcDelta = tx.assetDeltas.entries.firstOrNull { !LiquidAsset.isPolicyAsset(it.key) && it.value != 0L }
     val nonLbtcAsset = nonLbtcDelta?.let { LiquidAsset.resolve(it.key) }
     val hideNativeLiquidBadgeForUsdt =
@@ -115,7 +128,12 @@ fun LiquidTransactionItem(
             ) {
                 Icon(
                     imageVector = icon,
-                    contentDescription = if (isReceive) "Received" else "Sent",
+                    contentDescription =
+                        if (isReceive) {
+                            stringResource(R.string.loc_301a5b91)
+                        } else {
+                            stringResource(R.string.loc_1af68597)
+                        },
                     tint = iconTint,
                     modifier = Modifier.size(24.dp),
                 )
@@ -129,7 +147,7 @@ fun LiquidTransactionItem(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = defaultTransactionTitle(tx, isReceive),
+                        text = stringResource(defaultTitleRes),
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
@@ -145,7 +163,7 @@ fun LiquidTransactionItem(
                                     .padding(horizontal = 5.dp, vertical = 2.dp),
                         ) {
                             Text(
-                                text = networkBadge.label,
+                                text = stringResource(networkBadge.labelRes),
                                 style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
                                 color = networkBadge.color,
                                 fontWeight = FontWeight.SemiBold,
@@ -182,7 +200,7 @@ fun LiquidTransactionItem(
                     )
                 }
                 Text(
-                    text = tx.timestamp?.let { formatTimestamp(it) } ?: "",
+                    text = formattedTimestamp,
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                     color = TextSecondary,
                 )
@@ -224,22 +242,25 @@ fun LiquidTransactionItem(
                 }
 
                 val fiatText =
-                    if (!privacyMode && btcPrice != null && nonLbtcDelta == null) {
-                        "$%.2f".format(displayAmountSats / 100_000_000.0 * btcPrice)
+                    if (!privacyMode && nonLbtcDelta == null) {
+                        val effectiveBtcPrice = historicalBtcPrice ?: btcPrice
+                        effectiveBtcPrice
+                            ?.takeIf { it > 0.0 }
+                            ?.let { price ->
+                                formatFiat(displayAmountSats / 100_000_000.0 * price, fiatCurrency)
+                            }
                     } else {
                         null
                     }
                 fiatText?.let {
-                    Text(
+                    HistoricalFiatText(
                         text = it,
-                        color = TextSecondary,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                        textAlign = TextAlign.End,
+                        isHistorical = historicalBtcPrice != null && historicalBtcPrice > 0,
                     )
                 }
                 if (tx.height == null) {
                     StatusBadge(
-                        label = "Pending",
+                        label = stringResource(R.string.loc_1b684325),
                         color = BitcoinOrange,
                         modifier = Modifier.align(Alignment.End),
                     )
@@ -249,43 +270,85 @@ fun LiquidTransactionItem(
     }
 }
 
-private fun defaultTransactionTitle(
+@Composable
+private fun HistoricalFiatText(
+    text: String,
+    isHistorical: Boolean,
+    large: Boolean = false,
+) {
+    val style =
+        if (large) {
+            MaterialTheme.typography.titleMedium.copy(
+                fontSize = 18.sp,
+                lineHeight = 26.sp,
+                fontWeight = FontWeight.Normal,
+            )
+        } else {
+            MaterialTheme.typography.bodyMedium.copy(fontSize = 16.sp, lineHeight = 22.sp)
+        }
+    val iconSize = if (large) 15.dp else 13.dp
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        if (isHistorical) {
+            Icon(
+                imageVector = Icons.Default.Schedule,
+                contentDescription = null,
+                tint = BitcoinOrange,
+                modifier = Modifier.size(iconSize),
+            )
+        }
+        Text(
+            text = text,
+            color = TextSecondary,
+            style = style,
+            textAlign = TextAlign.End,
+        )
+    }
+}
+
+private fun defaultTransactionTitleRes(
     tx: LiquidTransaction,
     isReceive: Boolean,
-): String =
+): Int =
     when {
-        tx.source == LiquidTxSource.CHAIN_SWAP -> if (isReceive) "Received" else "Sent"
-        tx.balanceSatoshi >= 0 -> "Received"
-        tx.type == LiquidTxType.SEND -> "Sent"
-        else -> if (isReceive) "Received" else "Sent"
+        tx.source == LiquidTxSource.CHAIN_SWAP -> if (isReceive) R.string.loc_301a5b91 else R.string.loc_1af68597
+        tx.balanceSatoshi >= 0 -> R.string.loc_301a5b91
+        tx.type == LiquidTxType.SEND -> R.string.loc_1af68597
+        else -> if (isReceive) R.string.loc_301a5b91 else R.string.loc_1af68597
     }
 
 private data class TransactionNetworkBadge(
-    val label: String,
+    val labelRes: Int,
     val color: Color,
 )
 
 private fun networkBadge(source: LiquidTxSource): TransactionNetworkBadge =
     when (source) {
         LiquidTxSource.CHAIN_SWAP -> TransactionNetworkBadge(
-            label = "Swap",
+            labelRes = R.string.loc_85a12a5f,
             color = BitcoinOrange,
         )
         LiquidTxSource.LIGHTNING_RECEIVE_SWAP,
         LiquidTxSource.LIGHTNING_SEND_SWAP,
         -> TransactionNetworkBadge(
-            label = "Lightning",
+            labelRes = R.string.loc_03b82433,
             color = LightningYellow,
         )
         LiquidTxSource.NATIVE -> TransactionNetworkBadge(
-            label = "Liquid",
+            labelRes = R.string.loc_22236665,
             color = LiquidTeal,
         )
     }
 
 private fun formatTimestamp(epochSeconds: Long): String {
     return try {
-        val sdf = SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
-        sdf.format(Date(epochSeconds * 1000))
+        liquidDateTimeFormatter.get()?.format(Date(epochSeconds * 1000)).orEmpty()
     } catch (_: Exception) { "" }
 }
+
+private val liquidDateTimeFormatter: ThreadLocal<SimpleDateFormat> =
+    ThreadLocal.withInitial {
+        SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
+    }

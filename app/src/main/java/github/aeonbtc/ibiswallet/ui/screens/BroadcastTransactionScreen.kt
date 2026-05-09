@@ -29,7 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.TextButton
@@ -61,6 +60,9 @@ import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
 import github.aeonbtc.ibiswallet.viewmodel.ManualBroadcastState
+import androidx.compose.ui.res.stringResource
+import github.aeonbtc.ibiswallet.R
+import androidx.compose.material3.Text
 
 /**
  * Screen for manually broadcasting a signed transaction.
@@ -123,7 +125,7 @@ fun BroadcastTransactionScreen(
             TopAppBar(
                 title = {
                     Text(
-                        "Manual Broadcast",
+                        stringResource(R.string.loc_89bab973),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                     )
@@ -191,7 +193,7 @@ fun BroadcastTransactionScreen(
                                     .height(180.dp),
                             placeholder = {
                                 Text(
-                                    "Paste signed transaction hex or PSBT base64",
+                                    stringResource(R.string.loc_7177b2f3),
                                     color = TextSecondary.copy(alpha = 0.6f),
                                 )
                             },
@@ -220,6 +222,16 @@ fun BroadcastTransactionScreen(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text =
+                            stringResource(R.string.loc_e1614c61) +
+                                "Use the original PSBT flow when available.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
 
                     // Format detection indicator
                     if (trimmedInput.isNotEmpty()) {
@@ -253,7 +265,7 @@ fun BroadcastTransactionScreen(
                                 .height(48.dp),
                     ) {
                         Text(
-                            text = "Load File",
+                            text = stringResource(R.string.loc_a5e83581),
                             style = MaterialTheme.typography.titleMedium,
                         )
                     }
@@ -273,7 +285,7 @@ fun BroadcastTransactionScreen(
                         ),
                 ) {
                     Text(
-                        text = "Connect to an Electrum server to broadcast",
+                        text = stringResource(R.string.loc_d893f956),
                         style = MaterialTheme.typography.bodySmall,
                         color = WarningYellow,
                         modifier = Modifier.padding(16.dp),
@@ -311,7 +323,7 @@ fun BroadcastTransactionScreen(
                     )
                 } else {
                     Text(
-                        text = "Broadcast",
+                        text = stringResource(R.string.loc_1900fe56),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -344,7 +356,7 @@ fun BroadcastTransactionScreen(
                         modifier = Modifier.padding(16.dp),
                     ) {
                         Text(
-                            text = "Transaction Broadcast",
+                            text = stringResource(R.string.loc_caad9ed8),
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             color = SuccessGreen,
@@ -367,13 +379,12 @@ fun BroadcastTransactionScreen(
                             onClick = {
                                 SecureClipboard.copyAndScheduleClear(
                                     context,
-                                    "txid",
                                     broadcastState.txid,
                                 )
                             },
                         ) {
                             Text(
-                                "Copy Txid",
+                                stringResource(R.string.loc_e934eeef),
                                 color = SuccessGreen,
                             )
                         }

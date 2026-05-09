@@ -50,7 +50,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -92,6 +91,8 @@ import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
+import androidx.compose.ui.res.stringResource
+import androidx.compose.material3.Text
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -170,9 +171,9 @@ fun ElectrumConfigScreen(
                 @Suppress("AssignedValueIsNeverRead")
                 serverToDelete = null
             },
-            title = "Delete Server",
-            message = "Are you sure you want to delete \"${server.displayName()}\"?",
-            confirmText = "Delete",
+            title = stringResource(R.string.loc_b94b1995),
+            message = stringResource(R.string.server_delete_confirmation_format, server.displayName()),
+            confirmText = stringResource(R.string.loc_3dbe79b1),
             confirmColor = ErrorRed,
             onConfirm = {
                 server.id?.let { onDeleteServer(it) }
@@ -202,12 +203,12 @@ fun ElectrumConfigScreen(
                     IconButton(onClick = onBack) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
+                            contentDescription = stringResource(R.string.loc_cdfc6e09),
                         )
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Electrum Server",
+                        text = stringResource(R.string.loc_aab4007b),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
@@ -310,7 +311,7 @@ fun ElectrumConfigScreen(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Saved Servers",
+                                text = stringResource(R.string.loc_cc38cb35),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
@@ -472,12 +473,12 @@ fun ElectrumConfigScreen(
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
-                                            text = "Auto-switch on disconnect",
+                                            text = stringResource(R.string.loc_98016440),
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onBackground,
                                         )
                                         Text(
-                                            text = "Try next server if connection drops",
+                                            text = stringResource(R.string.loc_e43bcbe8),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = TextSecondary,
                                         )
@@ -569,7 +570,7 @@ fun ElectrumConfigScreen(
         ) {
             Icon(
                 imageVector = Icons.Default.Add,
-                contentDescription = "Add Server",
+                contentDescription = stringResource(R.string.loc_e46232fe),
             )
         }
     }
@@ -606,7 +607,7 @@ private fun TorBadge() {
         border = BorderStroke(1.dp, purple.copy(alpha = 0.4f)),
     ) {
         Text(
-            text = "Tor",
+            text = stringResource(R.string.loc_c89a3806),
             style = MaterialTheme.typography.labelSmall,
             color = purple,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -657,7 +658,7 @@ fun CurrentServerCard(
     blockHeight: UInt? = null,
     torState: TorState = TorState(),
     isOnionServer: Boolean = false,
-    headerTitle: String = "Current Server",
+    headerTitle: String? = null,
     headerLeadingContent: (@Composable () -> Unit)? = null,
     headerTrailingContent: (@Composable () -> Unit)? = null,
     onConnect: () -> Unit = {},
@@ -711,7 +712,7 @@ fun CurrentServerCard(
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = headerTitle,
+                        text = headerTitle ?: stringResource(R.string.loc_8d4cd2b4),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
@@ -770,10 +771,10 @@ fun CurrentServerCard(
                             Text(
                                 text =
                                     when {
-                                        isTorBootstrapping -> "Starting Tor"
-                                        isConnecting -> "Connecting"
-                                        isConnected -> "Connected"
-                                        else -> "Connect"
+                                        isTorBootstrapping -> stringResource(R.string.loc_268af6fe)
+                                        isConnecting -> stringResource(R.string.loc_066df953)
+                                        isConnected -> stringResource(R.string.loc_98469a16)
+                                        else -> stringResource(R.string.loc_bb72c083)
                                     },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = statusColor,
@@ -801,7 +802,12 @@ fun CurrentServerCard(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Close,
-                                contentDescription = if (isConnecting) "Cancel" else "Disconnect",
+                                contentDescription =
+                                    if (isConnecting) {
+                                        stringResource(R.string.loc_51bac044)
+                                    } else {
+                                        stringResource(R.string.loc_4f674841)
+                                    },
                                 modifier = Modifier.size(18.dp),
                                 tint = MaterialTheme.colorScheme.onError,
                             )
@@ -854,7 +860,7 @@ fun CurrentServerCard(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            text = "Name:",
+                            text = stringResource(R.string.loc_3cf29f70),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                             modifier = Modifier.width(72.dp),
@@ -878,7 +884,7 @@ fun CurrentServerCard(
                             Spacer(modifier = Modifier.width(4.dp))
                             Icon(
                                 imageVector = Icons.Default.Edit,
-                                contentDescription = "Edit server",
+                                contentDescription = stringResource(R.string.loc_e85c4517),
                                 tint = TextSecondary,
                                 modifier =
                                     Modifier
@@ -889,27 +895,27 @@ fun CurrentServerCard(
                     }
                     // Address
                     ServerDetailRow(
-                        label = "Address:",
+                        label = stringResource(R.string.loc_77caa9b0),
                         value = server.cleanUrl(),
                         monospace = true,
                     )
                     // Port
                     ServerDetailRow(
-                        label = "Port:",
+                        label = stringResource(R.string.loc_475e06fd),
                         value = server.port.toString(),
                         monospace = true,
                     )
                     // Software (only when connected)
                     if (isConnected && serverVersion != null) {
                         ServerDetailRow(
-                            label = "Software:",
+                            label = stringResource(R.string.loc_9d53bbd5),
                             value = serverVersion,
                         )
                     }
                     // Block height (only when connected)
                     if (isConnected && blockHeight != null && blockHeight > 0u) {
                         ServerDetailRow(
-                            label = "Block:",
+                            label = stringResource(R.string.loc_c641697a),
                             value = "%,d".format(blockHeight.toInt()),
                         )
                     }
@@ -919,7 +925,7 @@ fun CurrentServerCard(
                 if (error != null && !isConnecting && !isConnected) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = error,
+                        text = stringResource(R.string.loc_11c5bc85),
                         style = MaterialTheme.typography.bodySmall,
                         color = ErrorRed,
                     )
@@ -945,7 +951,7 @@ fun CurrentServerCard(
                         modifier = Modifier.size(18.dp),
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Configure server")
+                    Text(stringResource(R.string.loc_aad3c3b2))
                 }
             }
         }
@@ -1001,7 +1007,7 @@ private fun SavedServerItem(
             if (showDragHandle) {
                 Icon(
                     imageVector = Icons.Default.DragIndicator,
-                    contentDescription = "Drag to reorder",
+                    contentDescription = stringResource(R.string.loc_00ad5135),
                     tint = TextSecondary.copy(alpha = 0.5f),
                     modifier = Modifier.size(18.dp),
                 )
@@ -1031,7 +1037,7 @@ private fun SavedServerItem(
                             color = if (isConnected) SuccessGreen else BitcoinOrange,
                         ) {
                             Text(
-                                text = if (isConnected) "Active" else "Selected",
+                                text = if (isConnected) stringResource(R.string.loc_4cb2f934) else stringResource(R.string.common_selected),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = DarkBackground,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -1073,7 +1079,7 @@ private fun SavedServerItem(
             ) {
                 Icon(
                     imageVector = Icons.Default.Edit,
-                    contentDescription = "Edit",
+                    contentDescription = stringResource(R.string.loc_21077124),
                     tint = TextSecondary,
                     modifier = Modifier.size(16.dp),
                 )
@@ -1092,7 +1098,7 @@ private fun SavedServerItem(
             ) {
                 Icon(
                     imageVector = Icons.Default.Delete,
-                    contentDescription = "Delete",
+                    contentDescription = stringResource(R.string.loc_3dbe79b1),
                     tint = TextSecondary,
                     modifier = Modifier.size(16.dp),
                 )
@@ -1123,14 +1129,14 @@ private fun TorStatusCard(
     val statusText =
         if (isTorActive) {
             when (torState.status) {
-                TorStatus.CONNECTED -> "Active"
-                TorStatus.CONNECTING -> "Bootstrapping"
-                TorStatus.STARTING -> "Bootstrapping"
-                TorStatus.ERROR -> "Error"
-                TorStatus.DISCONNECTED, TorStatus.STOPPING -> "Standby"
+                TorStatus.CONNECTED -> stringResource(R.string.loc_4cb2f934)
+                TorStatus.CONNECTING -> stringResource(R.string.loc_10c5a9ae)
+                TorStatus.STARTING -> stringResource(R.string.loc_10c5a9ae)
+                TorStatus.ERROR -> stringResource(R.string.loc_9c1c9375)
+                TorStatus.DISCONNECTED, TorStatus.STOPPING -> stringResource(R.string.loc_51851e0f)
             }
         } else {
-            "Standby"
+            stringResource(R.string.loc_51851e0f)
         }
 
     val accentColor = if (isTorActive) TorPurple else TextSecondary.copy(alpha = 0.4f)
@@ -1164,12 +1170,12 @@ private fun TorStatusCard(
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Tor",
+                        text = stringResource(R.string.loc_c89a3806),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     Text(
-                        text = "Auto-managed",
+                        text = stringResource(R.string.loc_d2f190c7),
                         style = MaterialTheme.typography.bodySmall,
                         color = TextSecondary,
                     )
@@ -1240,7 +1246,7 @@ private fun ServerConfigDialog(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = if (isEditMode) "Edit Server" else "Add Server",
+                    text = if (isEditMode) stringResource(R.string.loc_eff04021) else stringResource(R.string.loc_e46232fe),
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
@@ -1252,7 +1258,7 @@ private fun ServerConfigDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    text = "Name",
+                    text = stringResource(R.string.loc_fe11d138),
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -1263,7 +1269,7 @@ private fun ServerConfigDialog(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text(
-                            "My Server",
+                            stringResource(R.string.loc_597532ba),
                             color = TextSecondary.copy(alpha = 0.5f),
                         )
                     },
@@ -1280,7 +1286,7 @@ private fun ServerConfigDialog(
                 )
 
                 Text(
-                    text = "Server Address",
+                    text = stringResource(R.string.loc_0899b645),
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -1291,7 +1297,7 @@ private fun ServerConfigDialog(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text(
-                            "electrum.example.com",
+                            stringResource(R.string.loc_0db390f1),
                             color = TextSecondary.copy(alpha = 0.5f),
                         )
                     },
@@ -1299,7 +1305,7 @@ private fun ServerConfigDialog(
                         IconButton(onClick = onScanQr) {
                             Icon(
                                 imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR Code",
+                                contentDescription = stringResource(R.string.loc_59b2cdc5),
                                 tint = BitcoinOrange,
                                 modifier = Modifier.size(20.dp),
                             )
@@ -1318,7 +1324,7 @@ private fun ServerConfigDialog(
                 )
 
                 Text(
-                    text = "Port",
+                    text = stringResource(R.string.loc_e3a3f2f2),
                     style = MaterialTheme.typography.labelLarge,
                     color = TextSecondary,
                 )
@@ -1329,7 +1335,7 @@ private fun ServerConfigDialog(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text(
-                            "50001",
+                            stringResource(R.string.loc_b1b16491),
                             color = TextSecondary.copy(alpha = 0.5f),
                         )
                     },
@@ -1350,7 +1356,7 @@ private fun ServerConfigDialog(
                 if (serverPort.isNotBlank() && !isValidPort) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Port must be between 1 and 65535",
+                        text = stringResource(R.string.loc_d83b7198),
                         style = MaterialTheme.typography.bodySmall,
                         color = ErrorRed,
                     )
@@ -1367,12 +1373,12 @@ private fun ServerConfigDialog(
                 ) {
                     Column {
                         Text(
-                            text = "Use SSL/TLS",
+                            text = stringResource(R.string.loc_a8fc5dd4),
                             style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                         Text(
-                            text = "Encrypt connection",
+                            text = stringResource(R.string.loc_209e3dd7),
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
                         )
@@ -1401,17 +1407,22 @@ private fun ServerConfigDialog(
                     ),
             ) {
                 Text(
-                    text = if (isEditMode) "Update" else "Save",
+                    text = if (isEditMode) stringResource(R.string.loc_9f89304e) else stringResource(R.string.loc_f55495e0),
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
         },
         dismissButton = {
-            TextButton(
-                onClick = onCancel,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Cancel", color = TextSecondary)
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = BorderColor)
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                }
             }
         },
     )
