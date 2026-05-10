@@ -29,9 +29,9 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Built with** [BDK](https://bitcoindevkit.org/)
 
 ### Layer 2 — Liquid & Spark (Ark coming soon)
-- **Modular Integration** - Enable or disable supported Layer 2 wallets for each wallet
-- **Liquid** - Full Liquid wallet with doconfidential transactions
-- **Spark** - Spark wallet integration with Lightning and on-chain send and receive
+- **Modular Integration** - Choose which Layer 2 to enable for each wallet
+- **Liquid** - Full Liquid wallet with doconfidential transactions (Built with [LWK](https://github.com/Blockstream/lwk))
+- **Spark** - Spark wallet integration with Lightning and on-chain send and receive (Built with [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Lightning Payments** - Pay Bolt 11 and Bolt 12 invoices, or Lightning addresses via Boltz submarine swaps
 - **Lightning Invoices** - Generate Bolt 11 invoices via Boltz reverse swaps
 - **Watch-only Liquid Wallets** - Import Liquid watch-only wallets using SLIP77 descriptors
@@ -39,7 +39,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Chain Swaps** - BTC ↔ L-BTC atomic swaps via Boltz or SideSwap
 - **Coin Control** - Select specific UTXOs for swaps and Lightning payments
 - **BIP329 Labels** - Label support for Liquid and Spark transactions
-- **Built with** [LWK](https://github.com/Blockstream/lwk)
+
 
 ### Privacy & Security
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
