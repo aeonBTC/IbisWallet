@@ -60,8 +60,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Languages** - English, Russian, Spanish, and Portuguese (Brazil)
 
 ### Backup & Restore
-- **Full App Backup** - Backup and restore the entire app state including wallets, settings, and labels
-- **Encrypted Backups** - Back up wallets with AES-256 encryption 
+- **Full Encrypted Backups** - Backup and restore the entire app state including wallets, settings, and labels
 
 ## Building
 
@@ -82,4 +81,4 @@ Open source. See [LICENSE](LICENSE) for details.
 
 ## Disclaimer
 
-Ibis is vibecoded and audited by the most current frontier AI models.
+Ibis is coded and audited by the most current frontier AI models.
