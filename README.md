@@ -26,22 +26,23 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Message Signing** - Sign and verify messages with BIP137
 - **BIP329 Labels** - Industry-standard wallet labels for transactions and addresses
 - **Transaction Search** - Search transaction history by date, amount, address, or label
-- **Built with** [BDK](https://bitcoindevkit.org/)
+- **Built on** [BDK](https://bitcoindevkit.org/)
 
 ### Layer 2 — Liquid & Spark (Ark coming soon)
 - **Modular Integration** - Choose which Layer 2 to enable for each wallet
-- **Liquid** - Full Liquid wallet with doconfidential transactions (Built with [LWK](https://github.com/Blockstream/lwk))
-- **Spark** - Spark wallet integration with Lightning and on-chain send and receive (Built with [Breez-SDK](https://github.com/breez/spark-sdk))
-- **Lightning Payments** - Pay Bolt 11 and Bolt 12 invoices, or Lightning addresses via Boltz submarine swaps
-- **Lightning Invoices** - Generate Bolt 11 invoices via Boltz reverse swaps
+- **Liquid** - Full Liquid wallet with doconfidential transactions (Built on [LWK](https://github.com/Blockstream/lwk))
+- **Spark** - Spark wallet integration with Lightning and on-chain send and receive (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Lightning Payments** - Pay Bolt 11 and Bolt 12 invoices, or Lightning addresses
+- **Lightning Invoices** - Generate Bolt 11 invoices
 - **Watch-only Liquid Wallets** - Import Liquid watch-only wallets using SLIP77 descriptors
 - **Liquid USDt** - Hold and transact USDt on Liquid
-- **Chain Swaps** - BTC ↔ L-BTC atomic swaps via Boltz or SideSwap
-- **Coin Control** - Select specific UTXOs for swaps and Lightning payments
+- **Chain Swaps** - Easily swap between L1 and L2
+- **Coin Control** - Select specific UTXOs for swaps and payments
 - **BIP329 Labels** - Label support for Liquid and Spark transactions
 
 
 ### Privacy & Security
+- **Offline by Default** - App launches with zero external connections
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
 - **PIN & Biometrics** - With configurable lock timing
 - **Privacy Toggle** - Hide all wallet amounts and balances
@@ -75,10 +76,14 @@ Requires Android Studio with JDK 17.
 
 **Min SDK:** 26 (Android 8.0) | **Target SDK:** 35 | **ARM only** (armeabi-v7a, arm64-v8a)
 
-## License
+## Bug Bounty
 
-Open source. See [LICENSE](LICENSE) for details.
+Offering $1000 paid in BTC to any major bugs found in Ibis Wallet.
 
 ## Disclaimer
 
 Ibis is coded and audited by the most current frontier AI models.
+
+## License
+
+Open source. See [LICENSE](LICENSE) for details.
