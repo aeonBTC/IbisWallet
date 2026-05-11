@@ -1886,14 +1886,14 @@ private fun PendingSwapsCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = pendingSwaps.size.toString(),
+                    text = stringResource(R.string.loc_36c054ad),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = stringResource(R.string.loc_2abb5095),
+                    text = pendingSwaps.size.toString(),
                     style = MaterialTheme.typography.labelMedium,
                     color = TextSecondary,
                 )
