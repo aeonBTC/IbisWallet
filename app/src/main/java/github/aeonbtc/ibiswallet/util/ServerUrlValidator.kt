@@ -54,6 +54,27 @@ object ServerUrlValidator {
 
     fun normalize(url: String): String = url.trim()
 
+    /**
+     * Validate a bare host (no scheme) and optional port. Used for Electrum and
+     * Liquid Electrum servers, which are persisted as host + port pairs rather
+     * than full URLs.
+     *
+     * Returns null on success, otherwise a short error string. Accepts
+     * IPv4/IPv6 literals, DNS hostnames, and v2/v3 .onion addresses. Rejects
+     * whitespace, control characters, embedded credentials, and ports outside
+     * 1..65535.
+     */
+    fun validateHostAndPort(host: String, port: Int): String? {
+        val trimmed = host.trim()
+        if (trimmed.isEmpty()) return "Host cannot be empty"
+        if (port !in 1..MAX_PORT) return "Port is invalid"
+        if (trimmed.any { it.isWhitespace() || it.isISOControl() }) return "Host contains invalid characters"
+        if (trimmed.contains('/') || trimmed.contains('@') || trimmed.contains('\\') || trimmed.contains('?') || trimmed.contains('#')) {
+            return "Host must not contain path, credentials, or query"
+        }
+        return if (isValidHost(trimmed)) null else "Host is invalid"
+    }
+
     private fun isValidHost(host: String): Boolean {
         val normalized = host.trim().removeSurrounding("[", "]").removeSuffix(".")
         if (normalized.isEmpty()) return false

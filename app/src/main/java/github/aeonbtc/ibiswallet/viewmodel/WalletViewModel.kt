@@ -46,6 +46,8 @@ import github.aeonbtc.ibiswallet.util.CertificateFirstUseException
 import github.aeonbtc.ibiswallet.util.CertificateInfo
 import github.aeonbtc.ibiswallet.util.CertificateMismatchException
 import github.aeonbtc.ibiswallet.util.CryptoUtils
+import github.aeonbtc.ibiswallet.util.SecureLog
+import github.aeonbtc.ibiswallet.util.ServerUrlValidator
 import github.aeonbtc.ibiswallet.util.BitcoinSendPreparationCacheKey
 import github.aeonbtc.ibiswallet.util.BitcoinSendPreparationState
 import github.aeonbtc.ibiswallet.util.buildMultiBitcoinSendPreparationKey
@@ -2218,12 +2220,45 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * Decode a manual-broadcast payload (raw tx hex or signed PSBT base64) and
+     * cache the structured preview in [manualBroadcastState]. The UI requires
+     * the user to look at this preview (outputs + ownership) before the
+     * Broadcast button actually fires, so a malicious paste cannot push funds
+     * out without an on-screen review.
+     */
+    fun previewManualBroadcast(data: String) {
+        viewModelScope.launch {
+            val preview = repository.decodeManualBroadcastPreview(data)
+            _manualBroadcastState.value =
+                _manualBroadcastState.value.copy(
+                    preview = preview,
+                    previewInput = data.trim(),
+                    error = null,
+                )
+        }
+    }
+
+    /**
      * Broadcast a manually provided signed transaction (raw hex or signed PSBT).
      * Standalone — the transaction may not belong to any loaded wallet.
+     *
+     * Callers must have already populated [ManualBroadcastState.preview] for
+     * exactly this input via [previewManualBroadcast]; otherwise the broadcast
+     * is refused so the user cannot bypass the on-screen output review.
      */
     fun broadcastManualTransaction(data: String) {
         viewModelScope.launch {
-            _manualBroadcastState.value = ManualBroadcastState(isBroadcasting = true)
+            val current = _manualBroadcastState.value
+            val trimmed = data.trim()
+            if (current.preview == null || current.previewInput != trimmed) {
+                _manualBroadcastState.value =
+                    current.copy(
+                        error = "Review the decoded outputs before broadcasting.",
+                    )
+                return@launch
+            }
+            _manualBroadcastState.value =
+                current.copy(isBroadcasting = true, error = null, broadcastStatus = null)
             val result =
                 repository.broadcastManualData(data) { status ->
                     _manualBroadcastState.value =
@@ -2236,7 +2271,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     _manualBroadcastState.value = ManualBroadcastState(txid = result.data)
                 }
                 is WalletResult.Error -> {
-                    _manualBroadcastState.value = ManualBroadcastState(error = result.message)
+                    _manualBroadcastState.value =
+                        _manualBroadcastState.value.copy(
+                            isBroadcasting = false,
+                            broadcastStatus = null,
+                            error = result.message,
+                        )
                 }
             }
         }
@@ -3308,6 +3348,29 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             val obj = serversArray.getJSONObject(i)
             val url = obj.getString("url")
             val port = obj.optInt("port", 995)
+            val useSsl = obj.optBoolean("useSsl", true)
+            val useTor = obj.optBoolean("useTor", false)
+
+            // Reject malformed hosts/ports — a backup is not a trusted source.
+            if (ServerUrlValidator.validateHostAndPort(url, port) != null) {
+                SecureLog.w(
+                    TAG,
+                    "Skipping Liquid server from backup with invalid host/port",
+                    releaseMessage = "Backup contained an invalid Liquid server",
+                )
+                continue
+            }
+            // Fail closed on plaintext + clearnet servers from backup. A user can
+            // re-add a LAN-only plaintext server through the UI if they really
+            // need it; we will not silently take that risk on restore.
+            if (!useSsl && !useTor) {
+                SecureLog.w(
+                    TAG,
+                    "Skipping Liquid server from backup that uses neither SSL nor Tor",
+                    releaseMessage = "Backup contained an untrusted Liquid server",
+                )
+                continue
+            }
             val key = "${github.aeonbtc.ibiswallet.data.model.LiquidElectrumConfig(url = url, port = port).cleanUrl()}:$port"
 
             if (key in existingKeys) continue
@@ -3316,8 +3379,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 name = obj.optString("name", ""),
                 url = url,
                 port = port,
-                useSsl = obj.optBoolean("useSsl", true),
-                useTor = obj.optBoolean("useTor", false),
+                useSsl = useSsl,
+                useTor = useTor,
             )
             repository.saveLiquidServer(config)
             if (obj.optBoolean("isActive", false) && activeLiquidId == null) {
@@ -3367,11 +3430,31 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         settings.optString("mempoolServer", "").takeIf { it.isNotBlank() }
             ?.let { repository.setMempoolServer(it) }
         settings.optString("mempoolCustomUrl", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setCustomMempoolUrl(it) }
+            ?.let { value ->
+                if (ServerUrlValidator.validate(value) == null) {
+                    repository.setCustomMempoolUrl(value)
+                } else {
+                    SecureLog.w(
+                        TAG,
+                        "Skipping mempoolCustomUrl from backup app settings: failed validation",
+                        releaseMessage = "Backup contained an invalid mempool URL",
+                    )
+                }
+            }
         settings.optString("feeSource", "").takeIf { it.isNotBlank() }
             ?.let { repository.setFeeSource(it) }
         settings.optString("feeSourceCustomUrl", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setCustomFeeSourceUrl(it) }
+            ?.let { value ->
+                if (ServerUrlValidator.validate(value) == null) {
+                    repository.setCustomFeeSourceUrl(value)
+                } else {
+                    SecureLog.w(
+                        TAG,
+                        "Skipping feeSourceCustomUrl from backup app settings: failed validation",
+                        releaseMessage = "Backup contained an invalid fee source URL",
+                    )
+                }
+            }
         settings.optString("priceSource", "").takeIf { it.isNotBlank() }
             ?.let { repository.setPriceSource(it) }
         settings.optString("priceCurrency", "").takeIf { it.isNotBlank() }
@@ -3708,6 +3791,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     val serverObj = serversArray.getJSONObject(i)
                     val url = serverObj.getString("url")
                     val port = serverObj.optInt("port", 50001)
+                    val useSsl = serverObj.optBoolean("useSsl", false)
+                    val useTor = serverObj.optBoolean("useTor", false)
                     val key = "${ElectrumConfig(url = url).cleanUrl()}:$port"
 
                     if (key in existingKeys) {
@@ -3720,12 +3805,34 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         continue
                     }
 
+                    // Reject malformed hosts/ports — backups are not trusted input.
+                    if (ServerUrlValidator.validateHostAndPort(url, port) != null) {
+                        SecureLog.w(
+                            TAG,
+                            "Skipping Electrum server from backup with invalid host/port",
+                            releaseMessage = "Backup contained an invalid Electrum server",
+                        )
+                        continue
+                    }
+                    // Refuse to silently add a plaintext + non-Tor server from
+                    // backup. Auto-switch could later promote such a server to
+                    // active and the user would have no awareness of the trust
+                    // downgrade. A determined user can re-add it manually.
+                    if (!useSsl && !useTor) {
+                        SecureLog.w(
+                            TAG,
+                            "Skipping Electrum server from backup that uses neither SSL nor Tor",
+                            releaseMessage = "Backup contained an untrusted Electrum server",
+                        )
+                        continue
+                    }
+
                     val newConfig = ElectrumConfig(
                         name = serverObj.optString("name", "").ifBlank { null },
                         url = url,
                         port = port,
-                        useSsl = serverObj.optBoolean("useSsl", false),
-                        useTor = serverObj.optBoolean("useTor", false),
+                        useSsl = useSsl,
+                        useTor = useTor,
                     )
                     val saved = repository.saveElectrumServer(newConfig)
                     if (serverObj.optBoolean("isActive", false)) {
@@ -3761,7 +3868,15 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             if (explorerObj != null) {
                 val customUrl = explorerObj.optString("customUrl", "")
                 if (customUrl.isNotBlank()) {
-                    repository.setCustomMempoolUrl(customUrl)
+                    if (ServerUrlValidator.validate(customUrl) == null) {
+                        repository.setCustomMempoolUrl(customUrl)
+                    } else {
+                        SecureLog.w(
+                            TAG,
+                            "Skipping custom mempool URL from backup: failed validation",
+                            releaseMessage = "Backup contained an invalid block explorer URL",
+                        )
+                    }
                 }
             }
 
@@ -3770,7 +3885,15 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             if (feeObj != null) {
                 val customUrl = feeObj.optString("customUrl", "")
                 if (customUrl.isNotBlank()) {
-                    repository.setCustomFeeSourceUrl(customUrl)
+                    if (ServerUrlValidator.validate(customUrl) == null) {
+                        repository.setCustomFeeSourceUrl(customUrl)
+                    } else {
+                        SecureLog.w(
+                            TAG,
+                            "Skipping custom fee source URL from backup: failed validation",
+                            releaseMessage = "Backup contained an invalid fee source URL",
+                        )
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -4704,8 +4827,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Wipe all wallet data. Called when auto-wipe threshold is reached.
      * Clears clipboard, stops Tor and deletes its data, and asks the repository
      * to wipe wallet databases, preferences, and the Electrum cache database.
+     *
+     * Runs the repository wipe twice if the first pass reports residue, then
+     * hands the final [WalletRepository.WipeResult] to [onComplete]. The caller
+     * is responsible for what to do on partial failure (typically: log and
+     * still kill the process so a half-functional wallet is not reachable).
      */
-    fun wipeAllData(onComplete: () -> Unit = {}) {
+    fun wipeAllData(onComplete: (WalletRepository.WipeResult) -> Unit = {}) {
         viewModelScope.launch {
             val app = getApplication<Application>()
 
@@ -4730,10 +4858,16 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             } catch (_: Exception) {
             }
 
-            // Wipe all wallet data (BDK/LWK databases, preferences, Electrum cache DB, in-memory state)
-            repository.wipeAllData()
+            // First pass: best-effort destructive wipe + verification.
+            var result = repository.wipeAllData()
+            if (!result.success) {
+                // Retry once. Some filesystems or Keystore aliases need a second
+                // pass after handles are released; this materially reduces the
+                // odds of leaving recoverable residue without blocking forever.
+                result = repository.wipeAllData()
+            }
 
-            onComplete()
+            onComplete(result)
         }
     }
 
@@ -4848,6 +4982,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     companion object {
+        private const val TAG = "WalletViewModel"
         private const val CONNECTION_TIMEOUT_CLEARNET_MS = 15_000L
         private const val CONNECTION_TIMEOUT_TOR_MS = 30_000L
         private const val TOR_BOOTSTRAP_TIMEOUT_MS = 60_000L
@@ -5010,6 +5145,8 @@ data class ManualBroadcastState(
     val broadcastStatus: String? = null,
     val txid: String? = null,
     val error: String? = null,
+    val preview: WalletRepository.ManualBroadcastPreview? = null,
+    val previewInput: String? = null,
 )
 
 /**

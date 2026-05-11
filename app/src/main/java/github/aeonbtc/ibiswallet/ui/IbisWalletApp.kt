@@ -4086,6 +4086,9 @@ fun IbisWalletApp(
                         BroadcastTransactionScreen(
                             broadcastState = manualBroadcastState,
                             isConnected = uiState.isConnected,
+                            onPreview = { data ->
+                                viewModel.previewManualBroadcast(data)
+                            },
                             onBroadcast = { data ->
                                 viewModel.broadcastManualTransaction(data)
                             },

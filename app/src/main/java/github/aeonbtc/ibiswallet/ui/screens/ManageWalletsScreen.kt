@@ -1105,7 +1105,14 @@ private fun SignVerifyMessageDialog(
     if (showSignAddressQrScanner) {
         QrScannerDialog(
             onCodeScanned = { code ->
-                signAddress = parseBip21Uri(code).address
+                signAddress =
+                    try {
+                        parseBip21Uri(code).address
+                    } catch (_: IllegalArgumentException) {
+                        // Duplicate keys in BIP21 URI — fall back to the raw
+                        // input so the address validator rejects it.
+                        code
+                    }
                 signError = null
                 showSignAddressQrScanner = false
             },
@@ -1116,7 +1123,12 @@ private fun SignVerifyMessageDialog(
     if (showVerifyAddressQrScanner) {
         QrScannerDialog(
             onCodeScanned = { code ->
-                verifyAddress = parseBip21Uri(code).address
+                verifyAddress =
+                    try {
+                        parseBip21Uri(code).address
+                    } catch (_: IllegalArgumentException) {
+                        code
+                    }
                 verifyResult = null
                 showVerifyAddressQrScanner = false
             },

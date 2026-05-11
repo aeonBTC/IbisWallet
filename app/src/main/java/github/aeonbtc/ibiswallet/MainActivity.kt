@@ -619,9 +619,17 @@ class MainActivity : FragmentActivity() {
                                             lifecycleScope.launch {
                                                 liquidViewModel.prepareForFullWipe()
                                                 sparkViewModel.prepareForFullWipe()
-                                                walletViewModel.wipeAllData {
-                                                    // Kill the process to simulate a crash — no restart,
-                                                    // no fresh state visible. The app simply vanishes.
+                                                walletViewModel.wipeAllData { result ->
+                                                    // Always kill the process even on partial wipe — leaving
+                                                    // a half-functional wallet reachable on the unlock screen
+                                                    // is worse than terminating with logged residue. The
+                                                    // repository already logs failed steps via SecureLog.
+                                                    if (!result.success && BuildConfig.DEBUG) {
+                                                        android.util.Log.w(
+                                                            "MainActivity",
+                                                            "Auto-wipe completed with residue: ${result.failedSteps}",
+                                                        )
+                                                    }
                                                     android.os.Process.killProcess(android.os.Process.myPid())
                                                 }
                                             }
@@ -900,7 +908,7 @@ class MainActivity : FragmentActivity() {
      */
     private fun getBiometricCipher(): Cipher {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        val keyAlias = "ibis_biometric_key"
+        val keyAlias = SecureStorage.BIOMETRIC_KEY_ALIAS
 
         if (!keyStore.containsAlias(keyAlias)) {
             val keyGen =

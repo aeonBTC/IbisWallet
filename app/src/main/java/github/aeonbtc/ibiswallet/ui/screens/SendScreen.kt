@@ -539,7 +539,17 @@ fun SendScreen(
                     return@QrScannerDialog
                 }
 
-                val bip21 = parseBip21Uri(normalizedCode)
+                val bip21 =
+                    try {
+                        parseBip21Uri(normalizedCode)
+                    } catch (_: IllegalArgumentException) {
+                        // BIP21 had duplicate parameter keys — fall back to the
+                        // raw input so the address validator rejects it and
+                        // does not auto-populate amount/label from a tampered URI.
+                        recipientAddress = normalizedCode
+                        showQrScanner = false
+                        return@QrScannerDialog
+                    }
                 recipientAddress = bip21.address
 
                 // Set amount if present in URI
@@ -1010,23 +1020,33 @@ fun SendScreen(
                                 return@OutlinedTextField
                             }
                             if (normalizedInput.lowercase().startsWith("bitcoin:")) {
-                                val bip21 = parseBip21Uri(normalizedInput)
-                                recipientAddress = bip21.address
-                                bip21.amount?.let { btcAmount ->
-                                    isMaxMode = false
-                                    amountInput = when {
-                                        isUsdMode && btcPrice != null && btcPrice > 0 ->
-                                            String.format(Locale.US, "%.2f", btcAmount * btcPrice)
-                                        useSats ->
-                                            (btcAmount * 100_000_000).toLong().toString()
-                                        else ->
-                                            String.format(Locale.US, "%.8f", btcAmount)
-                                                .trimEnd('0').trimEnd('.')
+                                val bip21 =
+                                    try {
+                                        parseBip21Uri(normalizedInput)
+                                    } catch (_: IllegalArgumentException) {
+                                        // Duplicate keys: leave the raw input so
+                                        // address validation flags it as invalid.
+                                        recipientAddress = normalizedInput
+                                        null
                                     }
-                                }
-                                bip21.label?.let { label ->
-                                    labelText = label
-                                    showLabelField = true
+                                if (bip21 != null) {
+                                    recipientAddress = bip21.address
+                                    bip21.amount?.let { btcAmount ->
+                                        isMaxMode = false
+                                        amountInput = when {
+                                            isUsdMode && btcPrice != null && btcPrice > 0 ->
+                                                String.format(Locale.US, "%.2f", btcAmount * btcPrice)
+                                            useSats ->
+                                                (btcAmount * 100_000_000).toLong().toString()
+                                            else ->
+                                                String.format(Locale.US, "%.8f", btcAmount)
+                                                    .trimEnd('0').trimEnd('.')
+                                        }
+                                    }
+                                    bip21.label?.let { label ->
+                                        labelText = label
+                                        showLabelField = true
+                                    }
                                 }
                             } else {
                                 recipientAddress = input
@@ -2282,8 +2302,17 @@ internal data class Bip21Uri(
 )
 
 /**
- * Parse a BIP21 URI or plain Bitcoin address
- * Format: bitcoin:<address>[?amount=<amount>][&label=<label>][&message=<message>]
+ * Parse a BIP21 URI or plain Bitcoin address.
+ *
+ * Format: `bitcoin:<address>[?amount=<amount>][&label=<label>][&message=<message>]`
+ *
+ * Throws [IllegalArgumentException] when the URI has a duplicated parameter
+ * key (for example `amount=0.001&amount=10`). Silently accepting the
+ * last-value-wins shape is a known QR/NFC tampering vector: a malicious QR can
+ * embed a benign-looking visible amount followed by a much larger one and the
+ * naive parser would route the bigger amount into the send screen. Callers
+ * should catch this and either re-prompt the user or fall back to a plain
+ * address path that fails the downstream address validation.
  */
 internal fun parseBip21Uri(input: String): Bip21Uri {
     val trimmed = input.trim()
@@ -2306,20 +2335,26 @@ internal fun parseBip21Uri(input: String): Bip21Uri {
         return Bip21Uri(address = address)
     }
 
-    // Parse query parameters
+    // Parse query parameters and reject duplicates before they can be silently
+    // collapsed to a single value.
     val queryString = parts[1]
-    val params =
-        queryString.split("&").associate { param ->
-            val keyValue = param.split("=", limit = 2)
-            val key = keyValue[0].lowercase()
-            val value =
-                if (keyValue.size > 1) {
-                    java.net.URLDecoder.decode(keyValue[1], "UTF-8")
-                } else {
-                    ""
-                }
-            key to value
+    val params = mutableMapOf<String, String>()
+    for (param in queryString.split("&")) {
+        if (param.isEmpty()) continue
+        val keyValue = param.split("=", limit = 2)
+        val key = keyValue[0].lowercase()
+        if (key.isEmpty()) continue
+        val value =
+            if (keyValue.size > 1) {
+                java.net.URLDecoder.decode(keyValue[1], "UTF-8")
+            } else {
+                ""
+            }
+        if (params.containsKey(key)) {
+            throw IllegalArgumentException("Duplicate '$key' parameter in BIP21 URI")
         }
+        params[key] = value
+    }
 
     return Bip21Uri(
         address = address,
@@ -2515,8 +2550,20 @@ private fun MultiRecipientDialog(
     if (qrScanRecipientIndex >= 0) {
         QrScannerDialog(
             onCodeScanned = { code ->
-                val bip21 = parseBip21Uri(code)
                 val index = qrScanRecipientIndex
+                val bip21 =
+                    try {
+                        parseBip21Uri(code)
+                    } catch (_: IllegalArgumentException) {
+                        // Tampered URI with duplicate params — stuff the raw
+                        // string into the address field and let validation
+                        // surface the failure.
+                        if (index in recipients.indices) {
+                            recipients[index] = Pair(code, recipients[index].second)
+                        }
+                        qrScanRecipientIndex = -1
+                        return@QrScannerDialog
+                    }
                 if (index in recipients.indices) {
                     val currentAmt = recipients[index].second
                     recipients[index] = Pair(bip21.address, currentAmt)

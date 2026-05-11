@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -21,6 +22,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -63,6 +66,7 @@ import github.aeonbtc.ibiswallet.viewmodel.ManualBroadcastState
 import androidx.compose.ui.res.stringResource
 import github.aeonbtc.ibiswallet.R
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 
 /**
  * Screen for manually broadcasting a signed transaction.
@@ -74,6 +78,7 @@ import androidx.compose.material3.Text
 fun BroadcastTransactionScreen(
     broadcastState: ManualBroadcastState,
     isConnected: Boolean,
+    onPreview: (String) -> Unit,
     onBroadcast: (String) -> Unit,
     onClear: () -> Unit,
     onBack: () -> Unit,
@@ -119,6 +124,21 @@ fun BroadcastTransactionScreen(
         remember(trimmedInput) {
             detectFormat(trimmedInput)
         }
+
+    // Recompute decoded outputs whenever the input changes so the on-screen
+    // review reflects exactly what the broadcast will commit.
+    LaunchedEffect(trimmedInput, detectedFormat) {
+        if (trimmedInput.isNotEmpty() && detectedFormat != InputFormat.INVALID) {
+            onPreview(trimmedInput)
+        }
+    }
+
+    // Reset the user's "I have reviewed" acknowledgement whenever the input
+    // or its decoded preview changes so a fresh paste cannot inherit a prior
+    // confirmation.
+    var reviewed by remember(trimmedInput, broadcastState.previewInput) {
+        mutableStateOf(false)
+    }
 
     Scaffold(
         topBar = {
@@ -274,6 +294,130 @@ fun BroadcastTransactionScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // --- Decoded outputs review ---
+            val preview = broadcastState.preview
+            val previewMatchesInput =
+                preview != null && broadcastState.previewInput == trimmedInput
+            if (previewMatchesInput && preview != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = DarkCard,
+                        ),
+                ) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                    ) {
+                        Text(
+                            text = "Review decoded outputs",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Txid: ${preview.txid}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                            fontFamily = FontFamily.Monospace,
+                            overflow = TextOverflow.Ellipsis,
+                            maxLines = 1,
+                        )
+                        if (!preview.isFromLoadedWallet) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Inputs are not from the loaded wallet.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = WarningYellow,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        preview.outputs.forEachIndexed { index, output ->
+                            val tag =
+                                if (output.ownedByLoadedWallet) "[own]" else "[external]"
+                            val tagColor =
+                                if (output.ownedByLoadedWallet) SuccessGreen else WarningYellow
+                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                Text(
+                                    text = "#$index  ${output.amountSats} sats  $tag",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = tagColor,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = output.address ?: "<unparseable scriptPubKey>",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                    fontFamily = FontFamily.Monospace,
+                                    overflow = TextOverflow.Ellipsis,
+                                    maxLines = 2,
+                                )
+                            }
+                        }
+                        if (preview.anyOutputUnowned) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text =
+                                    "At least one output is not owned by the loaded wallet — " +
+                                        "double-check the destination(s) before broadcasting.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = WarningYellow,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Checkbox(
+                                checked = reviewed,
+                                onCheckedChange = { reviewed = it },
+                                colors =
+                                    CheckboxDefaults.colors(
+                                        checkedColor = BitcoinOrange,
+                                        uncheckedColor = TextSecondary,
+                                    ),
+                            )
+                            Text(
+                                text = "I have reviewed the decoded outputs",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            } else if (trimmedInput.isNotEmpty() &&
+                detectedFormat != InputFormat.INVALID &&
+                broadcastState.previewInput == trimmedInput &&
+                preview == null
+            ) {
+                // The repo could not decode the payload at all even though the
+                // surface-level format check passed (e.g. PSBT body bytes are
+                // malformed). Surface this loudly so the user does not bypass
+                // the review by checking a stale "reviewed" box.
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors =
+                        CardDefaults.cardColors(
+                            containerColor = WarningYellow.copy(alpha = 0.1f),
+                        ),
+                ) {
+                    Text(
+                        text = "Could not decode this payload. Broadcast disabled.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = WarningYellow,
+                        modifier = Modifier.padding(16.dp),
+                    )
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
             // --- Not connected warning ---
             if (!isConnected) {
                 Card(
@@ -299,7 +443,10 @@ fun BroadcastTransactionScreen(
                 trimmedInput.isNotEmpty() &&
                     detectedFormat != InputFormat.INVALID &&
                     isConnected &&
-                    !broadcastState.isBroadcasting
+                    !broadcastState.isBroadcasting &&
+                    previewMatchesInput &&
+                    preview != null &&
+                    reviewed
 
             Button(
                 onClick = { onBroadcast(trimmedInput) },

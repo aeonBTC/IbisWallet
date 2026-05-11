@@ -765,17 +765,61 @@ object BitcoinUtils {
     )
 
     /**
-     * Parse a mempool.space fee estimation JSON string into fee estimates.
-     * Both /api/v1/fees/precise and /api/v1/fees/recommended use the same field names.
-     * Defaults to 1.0 sat/vB for any missing field.
+     * Parse a mempool.space-compatible fee estimation JSON string.
+     *
+     * Both `/api/v1/fees/precise` and `/api/v1/fees/recommended` use the
+     * same field names. Throws [IllegalArgumentException] when the response
+     * is structurally invalid (missing required buckets, non-numeric values,
+     * non-finite numbers, or implausible rates) so the caller can fall back
+     * instead of presenting attacker-controlled fees as legitimate quick-pick
+     * values.
+     *
+     * Buckets are coerced to a monotonically non-increasing series
+     * (fastestFee >= halfHourFee >= hourFee >= minimumFee) and clamped to a
+     * sanity ceiling.
      */
     fun parseFeeEstimatesJson(jsonString: String): ParsedFeeEstimates {
-        val json = org.json.JSONObject(jsonString)
+        val json =
+            try {
+                org.json.JSONObject(jsonString)
+            } catch (e: Exception) {
+                throw IllegalArgumentException("Fee response is not valid JSON", e)
+            }
+
+        fun required(name: String): Double {
+            if (!json.has(name)) {
+                throw IllegalArgumentException("Fee response missing required field: $name")
+            }
+            val value = json.optDouble(name, Double.NaN)
+            if (value.isNaN() || value.isInfinite()) {
+                throw IllegalArgumentException("Fee response has non-numeric $name")
+            }
+            if (value <= 0.0 || value > MAX_FEE_RATE_SAT_VB) {
+                throw IllegalArgumentException("Fee response has out-of-range $name: $value")
+            }
+            return value
+        }
+
+        val fastest = required("fastestFee")
+        val halfHour = required("halfHourFee")
+        val hour = required("hourFee")
+        val minimum = required("minimumFee")
+
+        // Coerce to a non-increasing series. Some misbehaving providers return
+        // hourFee > fastestFee; the wallet UI cannot make sense of that and the
+        // safe interpretation is "use the higher rate" rather than letting the
+        // user pick a 'cheap' bucket that is actually higher than fastest.
+        val normalizedHalfHour = halfHour.coerceAtMost(fastest)
+        val normalizedHour = hour.coerceAtMost(normalizedHalfHour)
+        val normalizedMinimum = minimum.coerceAtMost(normalizedHour)
+
         return ParsedFeeEstimates(
-            fastestFee = json.optDouble("fastestFee", 1.0),
-            halfHourFee = json.optDouble("halfHourFee", 1.0),
-            hourFee = json.optDouble("hourFee", 1.0),
-            minimumFee = json.optDouble("minimumFee", 1.0),
+            fastestFee = fastest,
+            halfHourFee = normalizedHalfHour,
+            hourFee = normalizedHour,
+            minimumFee = normalizedMinimum,
         )
     }
+
+    private const val MAX_FEE_RATE_SAT_VB = 10_000.0
 }
