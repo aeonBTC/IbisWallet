@@ -61,6 +61,7 @@ class AppUpdateService(
 
                     val tagName = release.optString("tag_name").trim()
                     val version = AppVersion.parse(tagName) ?: continue
+                    if (release.optBoolean("prerelease") || !version.isStable) continue
 
                     val htmlUrl = release.optString("html_url").trim().ifBlank { DEFAULT_RELEASES_PAGE_URL }
                     add(
