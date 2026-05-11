@@ -96,8 +96,6 @@ fun AllUtxosScreen(
     onDeleteLabel: (address: String) -> Unit = {},
 ) {
     val context = LocalContext.current
-    val utxoFrozenMessage = stringResource(R.string.loc_f1076a8d)
-    val utxoUnfrozenMessage = stringResource(R.string.loc_e1b46fb6)
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     var searchQuery by remember { mutableStateOf("") }
 
@@ -326,9 +324,9 @@ fun AllUtxosScreen(
                                 // Show feedback
                                 val message =
                                     if (newFrozenState) {
-                                        utxoFrozenMessage
+                                        context.getString(R.string.loc_f1076a8d)
                                     } else {
-                                        utxoUnfrozenMessage
+                                        context.getString(R.string.loc_e1b46fb6)
                                     }
                                 Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                             }
