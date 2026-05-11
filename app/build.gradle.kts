@@ -1,8 +1,17 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     jacoco
+}
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) {
+        file.inputStream().use { stream -> load(stream) }
+    }
 }
 
 android {
@@ -11,6 +20,7 @@ android {
     val sparkApiKey = providers
         .gradleProperty("SPARK_API_KEY")
         .orElse(providers.environmentVariable("SPARK_API_KEY"))
+        .orElse(localProperties.getProperty("SPARK_API_KEY").orEmpty())
         .orElse("")
 
     defaultConfig {

@@ -36,23 +36,55 @@
 -keepclassmembers enum github.aeonbtc.ibiswallet.data.local.SecureStorage$LockTiming { *; }
 
 # ==================== BDK (Bitcoin Dev Kit) ====================
-# BDK uses generated UniFFI/JNA bindings. JNA inspects callback signatures and
-# NativeMapped value types reflectively during static initialization, so keep
-# the binding package intact in minified release builds.
--keep class org.bitcoindevkit.** { *; }
--keep interface org.bitcoindevkit.** { *; }
+# BDK uses UniFFI/JNA. Preserve only the bridge pieces that JNA/native code
+# resolves by name; regular API/data classes may still be optimized.
+-keep class org.bitcoindevkit.UniffiLib { *; }
+-keep class org.bitcoindevkit.IntegrityCheckingUniffiLib { *; }
+-keep class org.bitcoindevkit.RustBuffer { public *; }
+-keep class org.bitcoindevkit.RustBuffer$ByReference { public *; }
+-keep class org.bitcoindevkit.RustBuffer$ByValue { public *; }
+-keep class org.bitcoindevkit.UniffiRustCallStatus { public *; }
+-keep class org.bitcoindevkit.UniffiRustCallStatus$ByValue { public *; }
+-keep class org.bitcoindevkit.UniffiForeignFuture* { public *; }
+-keep class org.bitcoindevkit.UniffiVTable* { public *; }
+-keep class org.bitcoindevkit.UniffiCallback* { *; }
+-keep class org.bitcoindevkit.uniffiCallback* { *; }
+-keep class org.bitcoindevkit.* implements com.sun.jna.Library { *; }
+-keep interface org.bitcoindevkit.* extends com.sun.jna.Library { *; }
+-keep class org.bitcoindevkit.* implements com.sun.jna.Callback { *; }
+-keep interface org.bitcoindevkit.* extends com.sun.jna.Callback { *; }
 
 # ==================== LWK (Liquid Wallet Kit) ====================
 # LWK's generated Android bindings live in the `lwk` package, not
-# `com.blockstream.lwk`. Keep the full binding package intact.
--keep class lwk.** { *; }
--keep interface lwk.** { *; }
+# `com.blockstream.lwk`. Keep the UniFFI/JNA bridge names used reflectively.
+-keep class lwk.UniffiLib { *; }
+-keep class lwk.RustBuffer* { public *; }
+-keep class lwk.UniffiRust* { public *; }
+-keep class lwk.UniffiForeignFuture* { public *; }
+-keep class lwk.UniffiVTable* { public *; }
+-keep class lwk.UniffiCallback* { *; }
+-keep class lwk.uniffiCallback* { *; }
+-keep class lwk.* implements com.sun.jna.Library { *; }
+-keep interface lwk.* extends com.sun.jna.Library { *; }
+-keep class lwk.* implements com.sun.jna.Callback { *; }
+-keep interface lwk.* extends com.sun.jna.Callback { *; }
 
 # ==================== Spark SDK ====================
 # Breez Spark's generated Android bindings live in the `breez_sdk_spark`
-# package and uses generated UniFFI/JNA bindings. Keep it intact.
--keep class breez_sdk_spark.** { *; }
--keep interface breez_sdk_spark.** { *; }
+# package and use UniFFI/JNA. Preserve bridge names without freezing every
+# generated data/API class.
+-keep class breez_sdk_spark.UniffiLib { *; }
+-keep class breez_sdk_spark.IntegrityCheckingUniffiLib { *; }
+-keep class breez_sdk_spark.bindings.UniffiLib { *; }
+-keep class breez_sdk_spark.bindings.IntegrityCheckingUniffiLib { *; }
+-keep class breez_sdk_spark.**.UniffiLib { *; }
+-keep class breez_sdk_spark.**.IntegrityCheckingUniffiLib { *; }
+-keep class breez_sdk_spark.**.RustBuffer* { public *; }
+-keep class breez_sdk_spark.**.UniffiRust* { public *; }
+-keep class breez_sdk_spark.**.UniffiForeignFuture* { public *; }
+-keep class breez_sdk_spark.**.UniffiVTable* { public *; }
+-keep class breez_sdk_spark.**.UniffiCallback* { *; }
+-keep class breez_sdk_spark.**.uniffiCallback* { *; }
 
 # ==================== Layer 2 enums persisted via .name/valueOf() ====================
 -keepclassmembers enum github.aeonbtc.ibiswallet.data.model.WalletLayer { *; }
@@ -62,8 +94,8 @@
 # ==================== JNA (used by BDK via UniFFI) ====================
 # BDK's native code accesses JNA fields/classes via JNI reflection (e.g.
 # Pointer.peer). R8 must not rename or strip them.
--keep class com.sun.jna.** { *; }
--keepclassmembers class com.sun.jna.** { *; }
+-keep class com.sun.jna.* { *; }
+-keepclassmembers class com.sun.jna.* { *; }
 -keep class * extends com.sun.jna.Structure { *; }
 -keep class * implements com.sun.jna.Structure$ByValue { *; }
 -keep class * implements com.sun.jna.Structure$ByReference { *; }
