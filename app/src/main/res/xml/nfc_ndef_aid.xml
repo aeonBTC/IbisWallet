@@ -1,6 +1,6 @@
 <host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/nfc_service_description"
-    android:requireDeviceUnlock="false">
+    android:requireDeviceUnlock="true">
     <!-- NDEF Tag Application AID (NFC Forum Type 4 Tag) -->
     <aid-group
         android:category="other"
