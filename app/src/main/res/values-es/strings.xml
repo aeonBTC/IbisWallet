@@ -66,6 +66,8 @@
     <string name="liquid_enable_info_title">Layer 2 es modular</string>
     <string name="liquid_enable_info_message">Abre la pantalla de gestión de billeteras para activar Liquid en las billeteras que quieras.\n\n*Liquid solo se puede activar en billeteras BIP39.</string>
     <string name="liquid_enable_info_confirm">Entendido</string>
+    <string name="privacy_mode_hint_title">Modo de privacidad activado</string>
+    <string name="privacy_mode_hint_message">Los saldos están ocultos. Mantén pulsado el icono de privacidad para desactivarlo.</string>
     <string name="common_copy_with_label">Copiar %1$s</string>
     <string name="common_show_all_remaining_format">Mostrar todo (%1$d restantes)</string>
     <string name="editable_label_chip_add" formatted="false">+ Etiqueta</string>

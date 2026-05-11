@@ -67,6 +67,8 @@
     <string name="liquid_enable_info_title">A camada 2 é modular</string>
     <string name="liquid_enable_info_message">Abra a tela de gerenciamento de carteira para ativar o Liquid nas carteiras desejadas.\n\n*O Liquid só pode ser ativado em carteiras BIP39.</string>
     <string name="liquid_enable_info_confirm">Entendido</string>
+    <string name="privacy_mode_hint_title">Modo de privacidade ativado</string>
+    <string name="privacy_mode_hint_message">Os saldos estão ocultos. Toque e segure o ícone de privacidade para desativar.</string>
     <string name="common_copy_with_label">Copiar %1$s</string>
     <string name="common_show_all_remaining_format">Mostrar tudo (%1$d à esquerda)</string>
     <string name="editable_label_chip_add" formatted="false">+ Etiqueta</string>

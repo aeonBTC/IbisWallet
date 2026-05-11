@@ -66,6 +66,8 @@
     <string name="liquid_enable_info_title">Layer 2 is modular</string>
     <string name="liquid_enable_info_message">Open the Wallet Management screen to enable Liquid support for your desired wallets.\n\n*Liquid can only be enabled on BIP39 wallets.</string>
     <string name="liquid_enable_info_confirm">Got it</string>
+    <string name="privacy_mode_hint_title">Privacy mode enabled</string>
+    <string name="privacy_mode_hint_message">Balances are hidden. Tap and hold the privacy icon to disable.</string>
     <string name="common_copy_with_label">Copy %1$s</string>
     <string name="common_show_all_remaining_format">Show All (%1$d remaining)</string>
     <string name="editable_label_chip_add" formatted="false">+ Label</string>
