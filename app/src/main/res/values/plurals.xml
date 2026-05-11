@@ -17,8 +17,8 @@
         <item quantity="other">%d Liquid servers</item>
     </plurals>
     <plurals name="import_seed_invalid_title">
-        <item quantity="one">%d invalid word</item>
-        <item quantity="other">%d invalid words</item>
+        <item quantity="one">Invalid word</item>
+        <item quantity="other">Invalid words</item>
     </plurals>
     <plurals name="import_seed_invalid_more">
         <item quantity="other"> +%d more</item>

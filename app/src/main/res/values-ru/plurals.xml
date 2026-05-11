@@ -25,10 +25,10 @@
         <item quantity="other">%d серверов Liquid</item>
     </plurals>
     <plurals name="import_seed_invalid_title">
-        <item quantity="one">%d неверное слово</item>
-        <item quantity="few">%d неверные слова</item>
-        <item quantity="many">%d неверных слов</item>
-        <item quantity="other">%d неверных слов</item>
+        <item quantity="one">Неверное слово</item>
+        <item quantity="few">Неверные слова</item>
+        <item quantity="many">Неверные слова</item>
+        <item quantity="other">Неверные слова</item>
     </plurals>
     <plurals name="import_seed_invalid_more">
         <item quantity="one"> +%d ещё</item>
