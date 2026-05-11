@@ -368,6 +368,14 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    fun deleteRawTx(txid: String) {
+        try {
+            writableDatabase.delete(TABLE_TX_RAW, "$COL_TXID = ?", arrayOf(txid))
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "Failed to delete tx cache for $txid: ${e.message}")
+        }
+    }
+
     // ==================== Verbose Transaction JSON ====================
 
     /**

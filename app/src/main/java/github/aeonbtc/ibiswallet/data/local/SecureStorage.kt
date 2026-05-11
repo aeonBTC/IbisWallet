@@ -186,6 +186,25 @@ class SecureStorage private constructor(private val context: Context) {
         return (securePrefs.all.keys + regularPrefs.all.keys).filter { it.startsWith(prefix) }.toSet()
     }
 
+    private fun privateStringsWithPrefix(prefix: String): Map<String, String> = privateStringsWithPrefixes(listOf(prefix))
+
+    private fun privateStringsWithPrefixes(prefixes: Collection<String>): Map<String, String> {
+        if (prefixes.isEmpty()) return emptyMap()
+
+        val values = linkedMapOf<String, String>()
+        securePrefs.all.forEach { (key, value) ->
+            if (prefixes.any(key::startsWith)) {
+                (value as? String)?.let { values[key] = it }
+            }
+        }
+        regularPrefs.all.forEach { (key, value) ->
+            if (key !in values && prefixes.any(key::startsWith)) {
+                (value as? String)?.let { values[key] = it }
+            }
+        }
+        return values
+    }
+
     data class LiquidMetadataSnapshot(
         val txLabels: Map<String, String>,
         val txSources: Map<String, LiquidTxSource>,
@@ -1300,6 +1319,14 @@ class SecureStorage private constructor(private val context: Context) {
         regularPrefs.edit { putBoolean(KEY_PRIVACY_MODE, enabled) }
     }
 
+    fun hasSeenPrivacyModeHint(): Boolean {
+        return regularPrefs.getBoolean(KEY_HAS_SEEN_PRIVACY_MODE_HINT, false)
+    }
+
+    fun setHasSeenPrivacyModeHint(seen: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_HAS_SEEN_PRIVACY_MODE_HINT, seen) }
+    }
+
     // ==================== Mempool Server Settings ====================
 
     /**
@@ -1659,16 +1686,7 @@ class SecureStorage private constructor(private val context: Context) {
      */
     fun getAllAddressLabels(walletId: String): Map<String, String> {
         val prefix = "${KEY_ADDRESS_LABEL_PREFIX}${walletId}_"
-        val labels = mutableMapOf<String, String>()
-
-        privateKeysWithPrefix(prefix).forEach { key ->
-            getPrivateString(key, null)?.let { value ->
-                val address = key.removePrefix(prefix)
-                labels[address] = value
-            }
-        }
-
-        return labels
+        return privateStringsWithPrefix(prefix).mapKeys { (key, _) -> key.removePrefix(prefix) }
     }
 
     /**
@@ -1718,16 +1736,7 @@ class SecureStorage private constructor(private val context: Context) {
      */
     fun getAllLiquidAddressLabels(walletId: String): Map<String, String> {
         val prefix = "${KEY_LIQUID_ADDRESS_LABEL_PREFIX}${walletId}_"
-        val labels = mutableMapOf<String, String>()
-
-        privateKeysWithPrefix(prefix).forEach { key ->
-            getPrivateString(key, null)?.let { value ->
-                val address = key.removePrefix(prefix)
-                labels[address] = value
-            }
-        }
-
-        return labels
+        return privateStringsWithPrefix(prefix).mapKeys { (key, _) -> key.removePrefix(prefix) }
     }
 
     /**
@@ -1760,15 +1769,7 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun getAllSparkAddressLabels(walletId: String): Map<String, String> {
         val prefix = "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_"
-        val labels = mutableMapOf<String, String>()
-
-        privateKeysWithPrefix(prefix).forEach { key ->
-            getPrivateString(key, null)?.let { value ->
-                labels[key.removePrefix(prefix)] = value
-            }
-        }
-
-        return labels
+        return privateStringsWithPrefix(prefix).mapKeys { (key, _) -> key.removePrefix(prefix) }
     }
 
     // ==================== Transaction Labels ====================
@@ -1829,16 +1830,7 @@ class SecureStorage private constructor(private val context: Context) {
      */
     fun getAllTransactionLabels(walletId: String): Map<String, String> {
         val prefix = "${KEY_TX_LABEL_PREFIX}${walletId}_"
-        val labels = mutableMapOf<String, String>()
-
-        privateKeysWithPrefix(prefix).forEach { key ->
-            getPrivateString(key, null)?.let { value ->
-                val txid = key.removePrefix(prefix)
-                labels[txid] = value
-            }
-        }
-
-        return labels
+        return privateStringsWithPrefix(prefix).mapKeys { (key, _) -> key.removePrefix(prefix) }
     }
 
     /**
@@ -1906,15 +1898,7 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun getAllSparkTransactionLabels(walletId: String): Map<String, String> {
         val prefix = "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_"
-        val labels = mutableMapOf<String, String>()
-
-        privateKeysWithPrefix(prefix).forEach { key ->
-            getPrivateString(key, null)?.let { value ->
-                labels[key.removePrefix(prefix)] = value
-            }
-        }
-
-        return labels
+        return privateStringsWithPrefix(prefix).mapKeys { (key, _) -> key.removePrefix(prefix) }
     }
 
     fun saveSparkPaymentRecipient(
@@ -2127,12 +2111,10 @@ class SecureStorage private constructor(private val context: Context) {
     fun getAllTransactionSwapDetails(walletId: String): Map<String, LiquidSwapDetails> {
         val prefix = "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_"
         val txSwapDetails = mutableMapOf<String, LiquidSwapDetails>()
-        privateKeysWithPrefix(prefix).forEach { key ->
-            getPrivateString(key, null)?.let { value ->
-                val txid = key.removePrefix(prefix)
-                val details = parseLiquidSwapDetails(value) ?: return@forEach
-                txSwapDetails[txid] = details
-            }
+        privateStringsWithPrefix(prefix).forEach { (key, value) ->
+            val txid = key.removePrefix(prefix)
+            val details = parseLiquidSwapDetails(value) ?: return@forEach
+            txSwapDetails[txid] = details
         }
         return txSwapDetails
     }
@@ -2248,7 +2230,7 @@ class SecureStorage private constructor(private val context: Context) {
         val pendingAddresses = mutableMapOf<String, String>()
         val pendingLabels = mutableMapOf<String, String>()
 
-        val metadataKeys =
+        privateStringsWithPrefixes(
             listOf(
                 txLabelPrefix,
                 txSourcePrefix,
@@ -2257,10 +2239,8 @@ class SecureStorage private constructor(private val context: Context) {
                 txFeeDetailsPrefix,
                 pendingAddressPrefix,
                 pendingLabelPrefix,
-            ).flatMap { privateKeysWithPrefix(it) }.toSet()
-
-        metadataKeys.forEach { key ->
-            val value = getPrivateString(key, null) ?: return@forEach
+            ),
+        ).forEach { (key, value) ->
             when {
                 key.startsWith(txLabelPrefix) -> {
                     txLabels[key.removePrefix(txLabelPrefix)] = value
@@ -3773,6 +3753,7 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_DISABLE_SCREENSHOTS = "disable_screenshots"
         private const val KEY_RANDOMIZE_PIN_PAD = "randomize_pin_pad"
         private const val KEY_PRIVACY_MODE = "privacy_mode"
+        private const val KEY_HAS_SEEN_PRIVACY_MODE_HINT = "has_seen_privacy_mode_hint"
         private const val KEY_FOREGROUND_CONNECTIVITY_ENABLED = "foreground_connectivity_enabled"
         private const val KEY_APP_UPDATE_CHECK_ENABLED = "app_update_check_enabled"
         private const val KEY_HAS_SEEN_APP_UPDATE_OPT_IN_PROMPT = "has_seen_app_update_opt_in_prompt"

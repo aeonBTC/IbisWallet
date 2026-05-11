@@ -1049,6 +1049,7 @@ class WalletRepository(context: Context) {
         val mnemonic: String?,
         val extendedPublicKey: String?,
         val isWatchOnly: Boolean,
+        val passphrase: String? = null,
         val privateKey: String? = null, // WIF private key (for single-key wallets)
         val watchAddress: String? = null, // Single watched address
         val multisigConfig: MultisigWalletConfig? = null,
@@ -1057,8 +1058,9 @@ class WalletRepository(context: Context) {
         /** Redact sensitive fields to prevent accidental logging of key material. */
         override fun toString(): String =
             "WalletKeyMaterial(hasMnemonic=${mnemonic != null}, hasXpub=${extendedPublicKey != null}, " +
-                "isWatchOnly=$isWatchOnly, hasPrivateKey=${privateKey != null}, hasWatchAddress=${watchAddress != null}, " +
-                    "hasMultisig=${multisigConfig != null}, hasLocalCosigner=${localCosignerKeyMaterial != null})"
+                "isWatchOnly=$isWatchOnly, hasPassphrase=${passphrase != null}, hasPrivateKey=${privateKey != null}, " +
+                    "hasWatchAddress=${watchAddress != null}, hasMultisig=${multisigConfig != null}, " +
+                        "hasLocalCosigner=${localCosignerKeyMaterial != null})"
     }
 
     /**
@@ -1145,6 +1147,7 @@ class WalletRepository(context: Context) {
                 mnemonic = mnemonic,
                 extendedPublicKey = xpub,
                 isWatchOnly = false,
+                passphrase = secureStorage.getPassphrase(walletId),
             )
         }
 
@@ -4414,6 +4417,10 @@ class WalletRepository(context: Context) {
         return secureStorage.getAllLiquidTransactionLabels(walletId)
     }
 
+    fun getLiquidMetadataSnapshotForWallet(walletId: String): SecureStorage.LiquidMetadataSnapshot {
+        return secureStorage.getLiquidMetadataSnapshot(walletId)
+    }
+
     fun getAllSparkAddressLabelsForWallet(walletId: String): Map<String, String> {
         return secureStorage.getAllSparkAddressLabels(walletId)
     }
@@ -5696,57 +5703,8 @@ class WalletRepository(context: Context) {
                 val finalizedPsbt = finalizeResult.psbt
                 val tx = finalizedPsbt.extractTx()
 
-                // Verify signed transaction outputs match the original unsigned PSBT.
-                // Prevents a malicious hardware wallet or QR swap from altering the
-                // recipient address or amount after the user reviewed the unsigned PSBT.
-                if (unsignedPsbtBase64 != null) {
-                    try {
-                        val originalPsbt = Psbt(unsignedPsbtBase64)
-                        // Finalize the original to extract its planned transaction outputs
-                        // Use the combined PSBT's outputs since the original may not be finalizable alone
-                        val signedOutputs = tx.output()
-                        val originalTx =
-                            try {
-                                // Try to extract from the original directly (works if it was self-signed)
-                                val origFinalized = originalPsbt.finalize()
-                                if (origFinalized.couldFinalize) {
-                                    origFinalized.psbt.extractTx().output()
-                                } else {
-                                    null
-                                }
-                            } catch (_: Exception) {
-                                null
-                            }
-
-                        if (originalTx != null) {
-                            // Compare output count
-                            if (signedOutputs.size != originalTx.size) {
-                                return@withContext WalletResult.Error(
-                                    "Signed transaction has ${signedOutputs.size} outputs, expected ${originalTx.size}. " +
-                                        "The signed data may have been tampered with.",
-                                )
-                            }
-                            // Compare each output's script and amount
-                            for (i in signedOutputs.indices) {
-                                val signedOut = signedOutputs[i]
-                                val origOut = originalTx[i]
-                                val scriptMatch =
-                                    signedOut.scriptPubkey.toBytes()
-                                        .contentEquals(origOut.scriptPubkey.toBytes())
-                                if (signedOut.value.toSat() != origOut.value.toSat() || !scriptMatch) {
-                                    return@withContext WalletResult.Error(
-                                        "Signed transaction output $i does not match the original PSBT. " +
-                                            "The signed data may have been tampered with.",
-                                    )
-                                }
-                            }
-                        }
-                        // If we can't extract from original (watch-only, not finalizable), skip check.
-                        // The user already reviewed the unsigned PSBT details on screen.
-                    } catch (_: Exception) {
-                        // Non-fatal: if verification fails to parse, still allow broadcast.
-                        // The user confirmed the details on screen.
-                    }
+                unsignedPsbtBase64?.let { originalPsbt ->
+                    verifyBroadcastTransactionMatchesOriginalPsbt(tx, originalPsbt)?.let { return@withContext it }
                 }
 
                 // Insert any foreign TxOuts into the wallet's tx graph so that
@@ -5805,6 +5763,59 @@ class WalletRepository(context: Context) {
             }
         }
 
+    private fun verifyBroadcastTransactionMatchesOriginalPsbt(
+        signedTx: Transaction,
+        unsignedPsbtBase64: String,
+    ): WalletResult.Error? {
+        val originalTx =
+            try {
+                Psbt(unsignedPsbtBase64).extractTx()
+            } catch (e: Exception) {
+                return WalletResult.Error("Could not verify signed transaction against original PSBT", e)
+            }
+
+        val signedInputs = signedTx.input()
+        val originalInputs = originalTx.input()
+        if (signedInputs.size != originalInputs.size) {
+            return WalletResult.Error(
+                "Signed transaction has ${signedInputs.size} inputs, expected ${originalInputs.size}. " +
+                    "The signed data may have been tampered with.",
+            )
+        }
+        for (i in signedInputs.indices) {
+            if (signedInputs[i].previousOutput != originalInputs[i].previousOutput) {
+                return WalletResult.Error(
+                    "Signed transaction input $i does not match the original PSBT. " +
+                        "The signed data may have been tampered with.",
+                )
+            }
+        }
+
+        val signedOutputs = signedTx.output()
+        val originalOutputs = originalTx.output()
+        if (signedOutputs.size != originalOutputs.size) {
+            return WalletResult.Error(
+                "Signed transaction has ${signedOutputs.size} outputs, expected ${originalOutputs.size}. " +
+                    "The signed data may have been tampered with.",
+            )
+        }
+        for (i in signedOutputs.indices) {
+            val signedOut = signedOutputs[i]
+            val originalOut = originalOutputs[i]
+            val scriptMatch =
+                signedOut.scriptPubkey.toBytes()
+                    .contentEquals(originalOut.scriptPubkey.toBytes())
+            if (signedOut.value.toSat() != originalOut.value.toSat() || !scriptMatch) {
+                return WalletResult.Error(
+                    "Signed transaction output $i does not match the original PSBT. " +
+                        "The signed data may have been tampered with.",
+                )
+            }
+        }
+
+        return null
+    }
+
     /**
      * Broadcast a raw signed transaction hex received from an external signer.
      * @param txHex Hex-encoded signed transaction
@@ -5815,14 +5826,20 @@ class WalletRepository(context: Context) {
         txHex: String,
         pendingLabel: String? = null,
         onProgress: (String) -> Unit = {},
+        unsignedPsbtBase64: String? = null,
     ): WalletResult<String> =
         withContext(Dispatchers.IO) {
             val client = electrumClient ?: return@withContext WalletResult.Error("Not connected to Electrum server")
 
             try {
-                onProgress("Broadcasting to network...")
+                onProgress("Verifying transaction...")
                 val txBytes = txHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
                 val tx = Transaction(txBytes)
+                unsignedPsbtBase64?.let { originalPsbt ->
+                    verifyBroadcastTransactionMatchesOriginalPsbt(tx, originalPsbt)?.let { return@withContext it }
+                }
+
+                onProgress("Broadcasting to network...")
                 client.transactionBroadcast(tx)
 
                 val txid = tx.computeTxid().toString()
@@ -7274,6 +7291,14 @@ class WalletRepository(context: Context) {
      */
     fun setPrivacyMode(enabled: Boolean) {
         secureStorage.setPrivacyMode(enabled)
+    }
+
+    fun hasSeenPrivacyModeHint(): Boolean {
+        return secureStorage.hasSeenPrivacyModeHint()
+    }
+
+    fun setHasSeenPrivacyModeHint(seen: Boolean) {
+        secureStorage.setHasSeenPrivacyModeHint(seen)
     }
 
     // ==================== Mempool Server Settings ====================
