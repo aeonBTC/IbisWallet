@@ -1124,30 +1124,7 @@ class SecureStorage private constructor(private val context: Context) {
         editor: SharedPreferences.Editor,
         walletId: String,
     ) {
-        val prefixes = listOf(
-            "${KEY_ADDRESS_LABEL_PREFIX}${walletId}_",
-            "${KEY_LIQUID_ADDRESS_LABEL_PREFIX}${walletId}_",
-            "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_",
-            "${KEY_TX_LABEL_PREFIX}${walletId}_",
-            "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_",
-            "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_SOURCE_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_SWAP_DETAILS_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_RECIPIENT_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_FEE_DETAILS_PREFIX}${walletId}_",
-            "${KEY_LIQUID_SCRIPT_HASH_STATUS_ENTRY_PREFIX}${walletId}_",
-            "${KEY_PENDING_LIQUID_LIGHTNING_RECEIVE_ADDRESS_PREFIX}${walletId}_",
-            "${KEY_PENDING_LIQUID_LIGHTNING_RECEIVE_LABEL_PREFIX}${walletId}_",
-            "${KEY_PENDING_BOLTZ_LIGHTNING_INVOICE_PREFIX}${walletId}_",
-            "${KEY_PENDING_SWAP_SNAPSHOT_PREFIX}${walletId}_",
-            "${KEY_BOLTZ_CHAIN_SWAP_SNAPSHOT_PREFIX}${walletId}_",
-            "${KEY_PENDING_PSBT_LABEL_PREFIX}${walletId}_",
-            "${KEY_PSBT_SIGNING_SESSION_PREFIX}${walletId}_",
-            "${KEY_TX_FIRST_SEEN_PREFIX}${walletId}_",
-            "${KEY_PENDING_REPLACEMENT_TX_PREFIX}${walletId}_",
-            "${KEY_FROZEN_UTXOS_PREFIX}$walletId",
-        )
+        val prefixes = walletScopedPrefixes(walletId)
 
         regularPrefs.all.keys
             .filter { key -> prefixes.any(key::startsWith) }
@@ -1158,35 +1135,49 @@ class SecureStorage private constructor(private val context: Context) {
         editor: SharedPreferences.Editor,
         walletId: String,
     ) {
-        val prefixes = listOf(
-            "${KEY_ADDRESS_LABEL_PREFIX}${walletId}_",
-            "${KEY_LIQUID_ADDRESS_LABEL_PREFIX}${walletId}_",
-            "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_",
-            "${KEY_TX_LABEL_PREFIX}${walletId}_",
-            "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_",
-            "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_SOURCE_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_SWAP_DETAILS_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_RECIPIENT_PREFIX}${walletId}_",
-            "${KEY_LIQUID_TX_FEE_DETAILS_PREFIX}${walletId}_",
-            "${KEY_LIQUID_SCRIPT_HASH_STATUS_ENTRY_PREFIX}${walletId}_",
-            "${KEY_PENDING_LIQUID_LIGHTNING_RECEIVE_ADDRESS_PREFIX}${walletId}_",
-            "${KEY_PENDING_LIQUID_LIGHTNING_RECEIVE_LABEL_PREFIX}${walletId}_",
-            "${KEY_PENDING_BOLTZ_LIGHTNING_INVOICE_PREFIX}${walletId}_",
-            "${KEY_PENDING_SWAP_SNAPSHOT_PREFIX}${walletId}_",
-            "${KEY_BOLTZ_CHAIN_SWAP_SNAPSHOT_PREFIX}${walletId}_",
-            "${KEY_PENDING_PSBT_LABEL_PREFIX}${walletId}_",
-            "${KEY_PSBT_SIGNING_SESSION_PREFIX}${walletId}_",
-            "${KEY_TX_FIRST_SEEN_PREFIX}${walletId}_",
-            "${KEY_PENDING_REPLACEMENT_TX_PREFIX}${walletId}_",
-            "${KEY_FROZEN_UTXOS_PREFIX}$walletId",
-        )
+        val prefixes = walletScopedPrefixes(walletId)
 
         securePrefs.all.keys
             .filter { key -> prefixes.any(key::startsWith) }
             .forEach(editor::remove)
     }
+
+    /**
+     * The set of `<prefix><walletId>_` and `<prefix><walletId>` keys that are
+     * tied to a single wallet and must be removed on `deleteWallet`. Shared
+     * between the secure and regular prefs cleanup helpers so any future
+     * wallet-scoped key only has to be added in one place.
+     */
+    private fun walletScopedPrefixes(walletId: String): List<String> = listOf(
+        "${KEY_ADDRESS_LABEL_PREFIX}${walletId}_",
+        "${KEY_LIQUID_ADDRESS_LABEL_PREFIX}${walletId}_",
+        "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_",
+        "${KEY_TX_LABEL_PREFIX}${walletId}_",
+        "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_",
+        "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_",
+        "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_",
+        // Spark counterparty and on-chain claim metadata. Without these
+        // prefixes, deleting a wallet would leave recipient identifiers
+        // and pending Spark deposit overlays in encrypted prefs.
+        "${KEY_SPARK_PAYMENT_RECIPIENT_PREFIX}${walletId}_",
+        "${KEY_SPARK_DEPOSIT_ADDRESS_PREFIX}${walletId}_",
+        "${KEY_SPARK_PENDING_DEPOSIT_PREFIX}${walletId}_",
+        "${KEY_LIQUID_TX_SOURCE_PREFIX}${walletId}_",
+        "${KEY_LIQUID_TX_SWAP_DETAILS_PREFIX}${walletId}_",
+        "${KEY_LIQUID_TX_RECIPIENT_PREFIX}${walletId}_",
+        "${KEY_LIQUID_TX_FEE_DETAILS_PREFIX}${walletId}_",
+        "${KEY_LIQUID_SCRIPT_HASH_STATUS_ENTRY_PREFIX}${walletId}_",
+        "${KEY_PENDING_LIQUID_LIGHTNING_RECEIVE_ADDRESS_PREFIX}${walletId}_",
+        "${KEY_PENDING_LIQUID_LIGHTNING_RECEIVE_LABEL_PREFIX}${walletId}_",
+        "${KEY_PENDING_BOLTZ_LIGHTNING_INVOICE_PREFIX}${walletId}_",
+        "${KEY_PENDING_SWAP_SNAPSHOT_PREFIX}${walletId}_",
+        "${KEY_BOLTZ_CHAIN_SWAP_SNAPSHOT_PREFIX}${walletId}_",
+        "${KEY_PENDING_PSBT_LABEL_PREFIX}${walletId}_",
+        "${KEY_PSBT_SIGNING_SESSION_PREFIX}${walletId}_",
+        "${KEY_TX_FIRST_SEEN_PREFIX}${walletId}_",
+        "${KEY_PENDING_REPLACEMENT_TX_PREFIX}${walletId}_",
+        "${KEY_FROZEN_UTXOS_PREFIX}$walletId",
+    )
 
     // ==================== Sync Batch Size ====================
 
@@ -3534,11 +3525,16 @@ class SecureStorage private constructor(private val context: Context) {
     /**
      * Wipe all wallet data from secure and regular prefs.
      * Removes all mnemonics, keys, metadata, settings — everything.
-     * Also deletes the Android Keystore MasterKey to eliminate forensic artifacts.
+     * Also deletes the Android Keystore MasterKey, the biometric unlock key,
+     * and the underlying SharedPreferences files to eliminate forensic
+     * artifacts of prior wallet use.
+     *
+     * Uses synchronous `commit = true` so the writes are flushed before the
+     * caller terminates the process during auto-wipe.
      */
     fun wipeAllData() {
-        securePrefs.edit { clear() }
-        regularPrefs.edit { clear() }
+        securePrefs.edit(commit = true) { clear() }
+        regularPrefs.edit(commit = true) { clear() }
         // Delete the encrypted prefs file from disk BEFORE deleting the MasterKey.
         // If only the key is deleted, the stale Tink keyset in the prefs file causes
         // KeyPermanentlyInvalidatedException on the next EncryptedSharedPreferences.create().
@@ -3546,12 +3542,20 @@ class SecureStorage private constructor(private val context: Context) {
             context.deleteSharedPreferences(SECURE_PREFS_FILE)
         } catch (_: Exception) {
         }
+        // Delete the plaintext prefs file as well. Leaving it on disk preserves
+        // a structural fingerprint of prior wallet use even after clear().
+        try {
+            context.deleteSharedPreferences(REGULAR_PREFS_FILE)
+        } catch (_: Exception) {
+        }
         // Delete the MasterKey from Android Keystore to remove forensic evidence
-        // that EncryptedSharedPreferences was ever used
+        // that EncryptedSharedPreferences was ever used, plus the biometric
+        // unlock key so the post-wipe Keystore matches a fresh install.
         try {
             val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
             keyStore.load(null)
             keyStore.deleteEntry("_androidx_security_master_key_")
+            keyStore.deleteEntry(BIOMETRIC_KEY_ALIAS)
         } catch (_: Exception) {
         }
     }
@@ -3581,6 +3585,14 @@ class SecureStorage private constructor(private val context: Context) {
 
         private const val SECURE_PREFS_FILE = "ibis_secure_prefs"
         private const val REGULAR_PREFS_FILE = "ibis_prefs"
+
+        /**
+         * AndroidKeyStore alias used by `MainActivity` to bind biometric unlock
+         * to a cryptographic key (see [BiometricPrompt.CryptoObject]). Declared
+         * here so a wipe can delete the alias even if the calling activity is
+         * not currently in scope.
+         */
+        const val BIOMETRIC_KEY_ALIAS = "ibis_biometric_key"
 
         // Multi-wallet keys
         private const val KEY_WALLET_IDS = "wallet_ids"

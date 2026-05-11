@@ -121,7 +121,15 @@ class FeeEstimationService {
                     return Result.failure(Exception("Empty response body"))
                 }
 
-                val estimates = parseResponse(body)
+                val estimates =
+                    try {
+                        parseResponse(body)
+                    } catch (e: IllegalArgumentException) {
+                        // Reject malformed responses (missing fields, NaN, out-of-range)
+                        // rather than presenting defaulted 1.0 sat/vB values that an
+                        // attacker-controlled custom endpoint could exploit.
+                        return Result.failure(e)
+                    }
                 Result.success(estimates)
             }
         } catch (e: Exception) {
@@ -132,7 +140,8 @@ class FeeEstimationService {
 
     /**
      * Delegates JSON parsing to [BitcoinUtils.parseFeeEstimatesJson],
-     * then wraps in the app's [FeeEstimates] model.
+     * then wraps in the app's [FeeEstimates] model. May throw
+     * [IllegalArgumentException] when the response is structurally invalid.
      */
     private fun parseResponse(jsonString: String): FeeEstimates {
         val parsed = BitcoinUtils.parseFeeEstimatesJson(jsonString)

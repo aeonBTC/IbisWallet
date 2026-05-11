@@ -329,19 +329,19 @@ class LiquidRepository(
     val boltzClient: BoltzApiClient by lazy {
         BoltzApiClient(
             baseHttpClient = okHttpClient,
-            useTor = { secureStorage.getBoltzApiSource() == SecureStorage.BOLTZ_API_TOR && torManager.isReady() },
+            useTor = { requireBoltzTorWhenSelected() },
         )
     }
     private val bip353Resolver: Bip353Resolver by lazy {
         Bip353Resolver(
             baseHttpClient = okHttpClient,
-            useTor = { secureStorage.getBoltzApiSource() == SecureStorage.BOLTZ_API_TOR && torManager.isReady() },
+            useTor = { requireBoltzTorWhenSelected() },
         )
     }
     private val lnurlPayResolver: LnurlPayResolver by lazy {
         LnurlPayResolver(
             baseHttpClient = okHttpClient,
-            useTor = { secureStorage.getBoltzApiSource() == SecureStorage.BOLTZ_API_TOR && torManager.isReady() },
+            useTor = { requireBoltzTorWhenSelected() },
         )
     }
     private val bolt12OfferVerifier = Bolt12OfferVerifier()
@@ -378,7 +378,39 @@ class LiquidRepository(
     val sideSwapClient: SideSwapApiClient by lazy {
         SideSwapApiClient(
             httpClient = okHttpClient,
-            useTor = { secureStorage.getSideSwapApiSource() == SecureStorage.SIDESWAP_API_TOR && torManager.isReady() },
+            useTor = { requireSideSwapTorWhenSelected() },
+        )
+    }
+
+    /**
+     * Returns true if Boltz traffic should be routed through Tor.
+     *
+     * Fails closed: when the user has selected the Tor variant for Boltz but the
+     * Tor daemon is not bootstrapped, this throws instead of silently falling
+     * back to clearnet. Callers see an [IOException] and surface the error to
+     * the user instead of leaking swap intent and lockup addresses over the
+     * regular network path.
+     */
+    private fun requireBoltzTorWhenSelected(): Boolean {
+        val source = secureStorage.getBoltzApiSource()
+        if (source != SecureStorage.BOLTZ_API_TOR) return false
+        if (torManager.isReady()) return true
+        throw java.io.IOException(
+            "Tor is required for Boltz but is not ready. Wait for Tor to bootstrap or change the Boltz API source.",
+        )
+    }
+
+    /**
+     * Same fail-closed contract as [requireBoltzTorWhenSelected] but for the
+     * SideSwap WebSocket. Without this guard, SideSwap peg traffic could go
+     * over clearnet whenever Tor died between operations.
+     */
+    private fun requireSideSwapTorWhenSelected(): Boolean {
+        val source = secureStorage.getSideSwapApiSource()
+        if (source != SecureStorage.SIDESWAP_API_TOR) return false
+        if (torManager.isReady()) return true
+        throw java.io.IOException(
+            "Tor is required for SideSwap but is not ready. Wait for Tor to bootstrap or change the SideSwap API source.",
         )
     }
 

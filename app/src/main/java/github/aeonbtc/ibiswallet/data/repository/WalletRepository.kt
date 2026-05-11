@@ -115,6 +115,7 @@ class WalletRepository(context: Context) {
         private const val TAG = "WalletRepository"
         private const val BDK_DB_DIR = "bdk"
         private const val LWK_DB_DIR = "lwk"
+        private const val SPARK_DB_DIR = "spark"
         private const val SWEEP_TEMP_DB_DIR = "bdk_sweep_tmp"
         private const val QUICK_SYNC_TIMEOUT_MS = 60_000L
         private const val SYNC_BATCH_SIZE = 500UL
@@ -318,6 +319,7 @@ class WalletRepository(context: Context) {
     // Directory for BDK wallet databases (persistent cache)
     private val bdkDbDir: File = File(context.filesDir, BDK_DB_DIR).apply { mkdirs() }
     private val lwkDbDir: File = File(context.filesDir, LWK_DB_DIR).apply { mkdirs() }
+    private val sparkDbDir: File = File(context.filesDir, SPARK_DB_DIR)
     private val sweepTempDbDir: File = File(context.cacheDir, SWEEP_TEMP_DB_DIR).apply { mkdirs() }
 
     init {
@@ -5595,6 +5597,25 @@ class WalletRepository(context: Context) {
                         val original = Psbt(session.originalPsbtBase64)
                         original.combine(Psbt(partialPsbtBase64))
                     }
+
+                // Verify the combined PSBT's unsigned transaction still
+                // matches the session's original outputs/inputs. A
+                // BIP 174 combine should never change the unsigned tx, but
+                // a tampered partial that smuggles in a different global
+                // tx (or one assembled offline against a forged "original")
+                // must be rejected before it overwrites the session state.
+                val combinedTx =
+                    try {
+                        combined.extractTx()
+                    } catch (e: Exception) {
+                        return@withContext WalletResult.Error(
+                            "Combined PSBT could not be decoded for verification",
+                            e,
+                        )
+                    }
+                verifyBroadcastTransactionMatchesOriginalPsbt(combinedTx, session.originalPsbtBase64)
+                    ?.let { return@withContext it }
+
                 val combinedBase64 = combined.serialize()
                 val alreadyImported = partialId in session.importedPartials
                 val updatedImported =
@@ -5673,14 +5694,31 @@ class WalletRepository(context: Context) {
                 // hardware wallets strip to reduce QR code size.
                 // BIP 174 combine merges: original provides witness_utxo/non_witness_utxo,
                 // signed provides partial_sigs/final_scriptwitness.
+                //
+                // We treat a combine failure as a hard error: combining a
+                // returned signed PSBT with the reviewed unsigned PSBT is the
+                // canonical defence against a co-signer or transport layer
+                // substituting outputs. Silently falling back to the signed
+                // payload would put the broadcast-time verifier on its own,
+                // narrowing the defensive surface to a single check. If combine
+                // legitimately fails (e.g. the user pasted an unrelated PSBT),
+                // we want the user to know rather than proceeding.
                 val psbtToFinalize =
                     if (unsignedPsbtBase64 != null) {
                         try {
                             val originalPsbt = Psbt(unsignedPsbtBase64)
                             originalPsbt.combine(signedPsbt)
-                        } catch (_: Exception) {
-                            // If combine fails, fall back to using signed PSBT directly
-                            signedPsbt
+                        } catch (e: Exception) {
+                            SecureLog.w(
+                                TAG,
+                                "PSBT combine with original unsigned PSBT failed: ${e.message}",
+                                e,
+                                releaseMessage = "Could not combine signed PSBT with the reviewed unsigned PSBT",
+                            )
+                            return@withContext WalletResult.Error(
+                                "Signed PSBT does not match the reviewed unsigned PSBT. Re-import the signed PSBT or re-create the transaction.",
+                                e,
+                            )
                         }
                     } else {
                         signedPsbt
@@ -5918,6 +5956,91 @@ class WalletRepository(context: Context) {
                 WalletResult.Error(errorMsg, e)
             }
         }
+
+    /**
+     * Decoded output for a manual-broadcast preview: amount, destination
+     * address (if derivable from the scriptPubKey on this network), and a flag
+     * indicating whether the output script is owned by the currently loaded
+     * wallet. UI surfaces this so the user can sanity-check a pasted hex or
+     * PSBT before committing it to the chain.
+     */
+    data class ManualBroadcastOutput(
+        val amountSats: Long,
+        val address: String?,
+        val ownedByLoadedWallet: Boolean,
+    )
+
+    /**
+     * Structured preview of a manual-broadcast payload (raw tx hex or signed
+     * PSBT base64). Returns null if the payload cannot be parsed at all so the
+     * caller can render the existing "unrecognized format" feedback.
+     */
+    data class ManualBroadcastPreview(
+        val txid: String,
+        val outputs: List<ManualBroadcastOutput>,
+        val anyOutputUnowned: Boolean,
+        val isFromLoadedWallet: Boolean,
+    )
+
+    fun decodeManualBroadcastPreview(data: String): ManualBroadcastPreview? {
+        val trimmed = data.trim()
+        val isHex = trimmed.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+
+        val tx: Transaction =
+            try {
+                if (isHex && trimmed.length % 2 == 0 && trimmed.length > 20) {
+                    val txBytes = trimmed.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                    Transaction(txBytes)
+                } else {
+                    val psbt = Psbt(trimmed)
+                    val finalizeResult = psbt.finalize()
+                    if (finalizeResult.couldFinalize) {
+                        finalizeResult.psbt.extractTx()
+                    } else {
+                        // Unfinalized PSBT — we can still surface the global
+                        // unsigned transaction outputs to the user.
+                        psbt.extractTx()
+                    }
+                }
+            } catch (_: Exception) {
+                return null
+            }
+
+        val loadedWallet = wallet
+        val network = loadedWallet?.network() ?: Network.BITCOIN
+
+        val decodedOutputs = tx.output().map { output ->
+            val owned =
+                loadedWallet?.let {
+                    runCatching { it.isMine(output.scriptPubkey) }.getOrDefault(false)
+                } ?: false
+            val address =
+                runCatching {
+                    Address.fromScript(output.scriptPubkey, network).toString()
+                }.getOrNull()
+            ManualBroadcastOutput(
+                amountSats = output.value.toSat().toLong(),
+                address = address,
+                ownedByLoadedWallet = owned,
+            )
+        }
+
+        val isFromLoadedWallet =
+            loadedWallet?.let { w ->
+                runCatching {
+                    tx.input().all { input ->
+                        w.getUtxo(input.previousOutput) != null
+                    }
+                }.getOrDefault(false)
+            } ?: false
+
+        return ManualBroadcastPreview(
+            txid = tx.computeTxid().toString(),
+            outputs = decodedOutputs,
+            anyOutputUnowned = decodedOutputs.any { !it.ownedByLoadedWallet },
+            isFromLoadedWallet = isFromLoadedWallet,
+        )
+    }
 
     /**
      * Result of scanning a WIF key for balances across all address types.
@@ -6478,6 +6601,13 @@ class WalletRepository(context: Context) {
                     return@withContext WalletResult.Error("Transaction is not RBF-enabled")
                 }
 
+                // Evict the original tx in-memory so its inputs become spendable
+                // for the replacement build. We deliberately do NOT call
+                // `walletPersister.persist(...)`: if the user abandons the PSBT
+                // before broadcast, the next sync from the network restores the
+                // canonical view. The broadcast path (`redirectTransaction`)
+                // persists only after a successful broadcast and we mirror that
+                // contract here.
                 currentWallet.applyEvictedTxs(
                     listOf(EvictedTx(Txid.fromString(txid), (System.currentTimeMillis() / 1000).toULong())),
                 )
@@ -6485,7 +6615,23 @@ class WalletRepository(context: Context) {
                 val trimmedDestinationAddress = destinationAddress?.trim()?.takeIf { it.isNotBlank() }
                 val redirectScript =
                     if (trimmedDestinationAddress == null) {
-                        currentWallet.revealNextAddress(KeychainKind.INTERNAL).address.scriptPubkey()
+                        // Mirror `redirectTransaction`: prefer the lowest-index
+                        // unused internal (change) address instead of advancing
+                        // the derivation index. Otherwise abandoning the PSBT
+                        // flow would silently burn a derivation slot.
+                        val redirectAddress = run {
+                            val lastRevealed = currentWallet.derivationIndex(KeychainKind.INTERNAL)
+                            if (lastRevealed != null) {
+                                for (i in 0u..lastRevealed) {
+                                    val addr = currentWallet.peekAddress(KeychainKind.INTERNAL, i)
+                                    if (!isAddressUsed(addr.address.toString())) {
+                                        return@run addr
+                                    }
+                                }
+                            }
+                            currentWallet.revealNextAddress(KeychainKind.INTERNAL)
+                        }
+                        redirectAddress.address.scriptPubkey()
                     } else {
                         try {
                             Address(trimmedDestinationAddress, currentWallet.network()).scriptPubkey()
@@ -8649,47 +8795,197 @@ class WalletRepository(context: Context) {
     }
 
     /**
-     * Wipe all wallet data: delete every wallet's BDK database, clear all
-     * SharedPreferences (secure + regular), reset in-memory state, and
-     * clear the Electrum cache.
+     * Result of [wipeAllData]: which discrete steps failed.
+     *
+     * The caller may use this to decide whether to retry, log, or warn the user
+     * before continuing with process termination. Even on partial failure the
+     * caller should still consider killing the process — leaving a half-wiped
+     * app reachable is worse than a clean shutdown with logged residue.
      */
-    suspend fun wipeAllData() =
-        withContext(Dispatchers.IO) {
-            try {
-                // Disconnect from server
-                disconnect()
-                clearLoadedWallet()
+    data class WipeResult(
+        val failedSteps: List<String>,
+    ) {
+        val success: Boolean
+            get() = failedSteps.isEmpty()
+    }
 
-                // Delete all BDK database files
-                val walletIds = secureStorage.getWalletIds()
+    /**
+     * Wipe all wallet data: delete every wallet's BDK database, recursively
+     * delete BDK/LWK/Spark on-disk state, clear the Electrum cache, wipe both
+     * SharedPreferences (secure + regular), reset in-memory state, and verify
+     * that the on-disk artifacts are actually gone.
+     *
+     * Each step runs in its own try/catch so a single failure cannot mask
+     * subsequent steps. After the destructive phase a verification phase
+     * confirms the secure prefs file, encrypted master key, and the BDK/LWK/
+     * Spark directories are empty. The result lists every step that failed so
+     * the caller can decide how to react before killing the process.
+     */
+    suspend fun wipeAllData(): WipeResult =
+        withContext(Dispatchers.IO) {
+            val failures = mutableListOf<String>()
+
+            fun step(name: String, block: () -> Unit) {
+                try {
+                    block()
+                } catch (e: Exception) {
+                    failures += name
+                    SecureLog.e(
+                        TAG,
+                        "Wipe step '$name' failed: ${e.message}",
+                        e,
+                        releaseMessage = "Secure wipe step failed",
+                    )
+                }
+            }
+
+            // Capture wallet ids before any prefs are cleared.
+            val walletIds: List<String> =
+                try {
+                    secureStorage.getWalletIds()
+                } catch (e: Exception) {
+                    failures += "list-wallet-ids"
+                    SecureLog.e(
+                        TAG,
+                        "Wipe step 'list-wallet-ids' failed: ${e.message}",
+                        e,
+                        releaseMessage = "Secure wipe step failed",
+                    )
+                    emptyList()
+                }
+
+            try {
+                disconnect()
+            } catch (e: Exception) {
+                failures += "disconnect"
+                SecureLog.e(
+                    TAG,
+                    "Wipe step 'disconnect' failed: ${e.message}",
+                    e,
+                    releaseMessage = "Secure wipe step failed",
+                )
+            }
+            step("clear-loaded-wallet") { clearLoadedWallet() }
+
+            step("delete-bdk-wallet-databases") {
                 for (id in walletIds) {
                     deleteWalletDatabase(id)
                 }
-                // Recursively nuke the entire bdk directory (including subdirectories)
-                bdkDbDir.deleteRecursively()
-                bdkDbDir.mkdirs() // Recreate empty dir for potential future use
+            }
 
-                // Recursively nuke the entire lwk directory (including subdirectories)
-                lwkDbDir.deleteRecursively()
-                lwkDbDir.mkdirs() // Recreate empty dir for potential future use
-
-                if (!electrumCache.deleteDatabaseFile()) {
-                    SecureLog.e(
-                        TAG,
-                        "Failed to delete Electrum cache database during wipe",
-                        releaseMessage = "Secure wipe cleanup failed",
-                    )
+            step("delete-bdk-dir") {
+                if (bdkDbDir.exists() && !bdkDbDir.deleteRecursively()) {
+                    error("bdkDbDir.deleteRecursively returned false")
                 }
+                bdkDbDir.mkdirs()
+            }
 
-                // Wipe all preferences (secure + regular)
-                secureStorage.wipeAllData()
+            step("delete-lwk-dir") {
+                if (lwkDbDir.exists() && !lwkDbDir.deleteRecursively()) {
+                    error("lwkDbDir.deleteRecursively returned false")
+                }
+                lwkDbDir.mkdirs()
+            }
 
-                // Reset in-memory state
-                _walletState.value = WalletState()
+            step("delete-spark-dir") {
+                // Spark SDK keeps per-wallet state under filesDir/spark/<walletId>.
+                // Without this the "full wipe" leaves rich Layer-2 metadata behind.
+                if (sparkDbDir.exists() && !sparkDbDir.deleteRecursively()) {
+                    error("sparkDbDir.deleteRecursively returned false")
+                }
+            }
+
+            step("delete-sweep-temp-dir") {
+                if (!cleanupSweepTempDatabases()) {
+                    error("cleanupSweepTempDatabases returned false")
+                }
+            }
+
+            step("delete-electrum-cache") {
+                if (!electrumCache.deleteDatabaseFile()) {
+                    error("ElectrumCache.deleteDatabaseFile returned false")
+                }
+            }
+
+            step("wipe-secure-storage") { secureStorage.wipeAllData() }
+
+            step("reset-in-memory-state") { _walletState.value = WalletState() }
+
+            // Verification pass: confirm the destructive steps actually landed.
+            // Failures here are reported even when the corresponding step
+            // appeared to succeed, because file-system or Keystore races can
+            // leave residue that the destructive APIs do not surface.
+            verifyWipeResidue(walletIds).forEach { residue ->
+                if (!failures.contains(residue)) failures += residue
+            }
+
+            val result = WipeResult(failures)
+            if (!result.success) {
+                SecureLog.e(
+                    TAG,
+                    "Secure wipe finished with residue: ${result.failedSteps}",
+                    releaseMessage = "Secure wipe incomplete",
+                )
+            }
+            result
+        }
+
+    private fun verifyWipeResidue(walletIds: List<String>): List<String> {
+        val residue = mutableListOf<String>()
+        fun check(name: String, predicate: () -> Boolean) {
+            try {
+                if (predicate()) residue += name
             } catch (e: Exception) {
-                if (BuildConfig.DEBUG) Log.e(TAG, "Error during wipe: ${e.message}")
+                residue += name
+                SecureLog.e(
+                    TAG,
+                    "Wipe verification '$name' failed: ${e.message}",
+                    e,
+                    releaseMessage = "Secure wipe verification failed",
+                )
             }
         }
+
+        val secureFile =
+            File(appContext.applicationInfo.dataDir, "shared_prefs/ibis_secure_prefs.xml")
+        check("residue-secure-prefs-file") { secureFile.exists() }
+
+        val regularFile =
+            File(appContext.applicationInfo.dataDir, "shared_prefs/ibis_prefs.xml")
+        check("residue-regular-prefs-file") { regularFile.exists() }
+
+        check("residue-master-key") {
+            val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            keyStore.containsAlias("_androidx_security_master_key_")
+        }
+
+        check("residue-biometric-key") {
+            val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore")
+            keyStore.load(null)
+            keyStore.containsAlias(SecureStorage.BIOMETRIC_KEY_ALIAS)
+        }
+
+        check("residue-bdk-dir") { bdkDirHasFiles() }
+        check("residue-lwk-dir") { lwkDirHasFiles() }
+        check("residue-spark-dir") { sparkDbDir.exists() && sparkDbDir.walk().any { it.isFile } }
+
+        // Wallet ids should be unreachable after secure prefs are cleared.
+        check("residue-wallet-ids") {
+            try {
+                secureStorage.getWalletIds().any { it in walletIds }
+            } catch (_: Exception) {
+                false
+            }
+        }
+        return residue
+    }
+
+    private fun bdkDirHasFiles(): Boolean =
+        bdkDbDir.exists() && bdkDbDir.walk().any { it.isFile }
+
+    private fun lwkDirHasFiles(): Boolean =
+        lwkDbDir.exists() && lwkDbDir.walk().any { it.isFile }
 
     fun close() {
         stopNotificationCollector()
