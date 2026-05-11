@@ -5156,6 +5156,7 @@ class LiquidRepository(
             bolt12OfferVerifier.verifyFetchedInvoice(
                 offerString = lightningInput.paymentInput,
                 invoiceString = fetchedInvoice,
+                expectedAmountSats = lightningInput.requestedAmountSats,
             )
             logBoltzTrace(
                 "fetch_bolt12_success",
@@ -5647,7 +5648,7 @@ class LiquidRepository(
         try {
             val result =
                 boltzChainWorkflow.createOrRecoverDraft(
-                existingDraft = existingDraft,
+                existingDraft = null,
                 creatingDraft = creatingDraft,
                 createOrder = {
                     createBoltzChainSwapOrder(

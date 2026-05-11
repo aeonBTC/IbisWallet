@@ -1,6 +1,8 @@
 package github.aeonbtc.ibiswallet.data
 
 import github.aeonbtc.ibiswallet.util.AppVersion
+import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,7 +32,7 @@ class AppUpdateService(
                         return@withContext Result.failure(Exception("HTTP ${it.code}: ${it.message}"))
                     }
 
-                    val body = it.body.string()
+                    val body = it.body.stringWithLimit(InputLimits.MEDIUM_JSON_BYTES)
                     if (body.isBlank()) {
                         return@withContext Result.failure(Exception("Empty update response"))
                     }

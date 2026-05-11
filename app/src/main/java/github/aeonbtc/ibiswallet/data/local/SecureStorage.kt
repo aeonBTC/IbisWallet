@@ -3,6 +3,7 @@ package github.aeonbtc.ibiswallet.data.local
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Base64
+import androidx.biometric.BiometricPrompt
 import androidx.core.content.edit
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -36,12 +37,16 @@ import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.WalletPolicyType
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
 import github.aeonbtc.ibiswallet.localization.AppLocale
+import github.aeonbtc.ibiswallet.util.BiometricCrypto
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.SecureRandom
+import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
+import javax.crypto.spec.SecretKeySpec
 
 /**
  * Secure storage for sensitive wallet data using Android's EncryptedSharedPreferences
@@ -98,6 +103,8 @@ class SecureStorage private constructor(private val context: Context) {
             Context.MODE_PRIVATE,
         )
 
+    @Volatile private var spendSecretKey: ByteArray? = null
+
     private fun getPrivateString(key: String, defaultValue: String? = null): String? {
         securePrefs.getString(key, null)?.let { return it }
         val legacy = regularPrefs.getString(key, null) ?: return defaultValue
@@ -134,6 +141,243 @@ class SecureStorage private constructor(private val context: Context) {
     ) {
         securePrefs.edit(commit = commit) { remove(key) }
         regularPrefs.edit(commit = commit) { remove(key) }
+    }
+
+    fun lockSpendSecretSession() {
+        spendSecretKey?.fill(0)
+        spendSecretKey = null
+    }
+
+    fun createSpendSecretBiometricCryptoObject(): BiometricPrompt.CryptoObject {
+        val wrapped = readWrappedSecret(KEY_SPEND_MASTER_BIOMETRIC_WRAPPED)
+        return if (wrapped != null) {
+            BiometricCrypto.createCryptoObjectForDecryption(wrapped.iv)
+        } else {
+            BiometricCrypto.createCryptoObject()
+        }
+    }
+
+    fun unlockSpendSecretsWithPin(pin: String) {
+        spendSecretKey =
+            unlockOrCreateSpendMaster(
+                wrappedKey = KEY_SPEND_MASTER_PIN_WRAPPED,
+                saltKey = KEY_SPEND_MASTER_PIN_SALT,
+                pin = pin,
+            )
+        migrateLegacySpendSecrets()
+    }
+
+    fun unlockSpendSecretsWithDuressPin(pin: String) {
+        spendSecretKey =
+            unlockOrCreateSpendMaster(
+                wrappedKey = KEY_SPEND_MASTER_DURESS_WRAPPED,
+                saltKey = KEY_SPEND_MASTER_DURESS_SALT,
+                pin = pin,
+            )
+        migrateLegacySpendSecrets()
+    }
+
+    fun unlockSpendSecretsWithBiometric(cipher: Cipher) {
+        val wrapped = readWrappedSecret(KEY_SPEND_MASTER_BIOMETRIC_WRAPPED)
+        val master =
+            if (wrapped != null) {
+                cipher.doFinal(wrapped.ciphertext)
+            } else {
+                val newMaster = spendSecretKey ?: randomSpendSecretKey()
+                writeWrappedSecret(
+                    key = KEY_SPEND_MASTER_BIOMETRIC_WRAPPED,
+                    wrapped =
+                        WrappedSecret(
+                            iv = cipher.iv,
+                            ciphertext = cipher.doFinal(newMaster),
+                        ),
+                )
+                newMaster
+            }
+        spendSecretKey = master
+        migrateLegacySpendSecrets()
+    }
+
+    private fun unlockOrCreateSpendMaster(
+        wrappedKey: String,
+        saltKey: String,
+        pin: String,
+    ): ByteArray {
+        val wrappingKey = deriveSpendWrappingKey(pin, getOrCreateSpendMasterSalt(saltKey))
+        val wrapped = readWrappedSecret(wrappedKey)
+        return if (wrapped != null) {
+            decryptWithRawKey(wrapped.ciphertext, wrappingKey)
+        } else {
+            val master = spendSecretKey ?: randomSpendSecretKey()
+            writeWrappedSecret(
+                wrappedKey,
+                WrappedSecret(
+                    iv = ByteArray(0),
+                    ciphertext = encryptWithRawKey(master, wrappingKey),
+                ),
+            )
+            master
+        }
+    }
+
+    private fun getOrCreateSpendMasterSalt(key: String): ByteArray {
+        securePrefs.getString(key, null)?.let { return Base64.decode(it, Base64.NO_WRAP) }
+        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+        securePrefs.edit { putString(key, Base64.encodeToString(salt, Base64.NO_WRAP)) }
+        return salt
+    }
+
+    private fun deriveSpendWrappingKey(
+        pin: String,
+        salt: ByteArray,
+    ): ByteArray {
+        val chars = pin.toCharArray()
+        val keySpec = PBEKeySpec(chars, salt, PIN_PBKDF2_ITERATIONS, PIN_HASH_LENGTH)
+        return try {
+            SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(keySpec).encoded
+        } finally {
+            keySpec.clearPassword()
+            chars.fill('\u0000')
+        }
+    }
+
+    private data class WrappedSecret(
+        val iv: ByteArray,
+        val ciphertext: ByteArray,
+    )
+
+    private fun readWrappedSecret(key: String): WrappedSecret? {
+        val raw = securePrefs.getString(key, null) ?: return null
+        return try {
+            val json = JSONObject(raw)
+            WrappedSecret(
+                iv = Base64.decode(json.optString("iv", ""), Base64.NO_WRAP),
+                ciphertext = Base64.decode(json.getString("ciphertext"), Base64.NO_WRAP),
+            )
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun writeWrappedSecret(
+        key: String,
+        wrapped: WrappedSecret,
+    ) {
+        val json =
+            JSONObject()
+                .put("iv", Base64.encodeToString(wrapped.iv, Base64.NO_WRAP))
+                .put("ciphertext", Base64.encodeToString(wrapped.ciphertext, Base64.NO_WRAP))
+        securePrefs.edit { putString(key, json.toString()) }
+    }
+
+    private fun randomSpendSecretKey(): ByteArray =
+        ByteArray(SPEND_SECRET_KEY_BYTES).also { SecureRandom().nextBytes(it) }
+
+    private fun randomIv(): ByteArray =
+        ByteArray(SPEND_SECRET_IV_BYTES).also { SecureRandom().nextBytes(it) }
+
+    private fun encryptWithRawKey(
+        plaintext: ByteArray,
+        rawKey: ByteArray,
+    ): ByteArray {
+        val iv = randomIv()
+        val cipher = Cipher.getInstance(SPEND_SECRET_CIPHER)
+        cipher.init(
+            Cipher.ENCRYPT_MODE,
+            SecretKeySpec(rawKey, "AES"),
+            GCMParameterSpec(SPEND_SECRET_GCM_TAG_BITS, iv),
+        )
+        return iv + cipher.doFinal(plaintext)
+    }
+
+    private fun decryptWithRawKey(
+        ciphertextWithIv: ByteArray,
+        rawKey: ByteArray,
+    ): ByteArray {
+        val iv = ciphertextWithIv.copyOfRange(0, SPEND_SECRET_IV_BYTES)
+        val ciphertext = ciphertextWithIv.copyOfRange(SPEND_SECRET_IV_BYTES, ciphertextWithIv.size)
+        val cipher = Cipher.getInstance(SPEND_SECRET_CIPHER)
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            SecretKeySpec(rawKey, "AES"),
+            GCMParameterSpec(SPEND_SECRET_GCM_TAG_BITS, iv),
+        )
+        return cipher.doFinal(ciphertext)
+    }
+
+    private fun encryptSpendSecret(value: String): String {
+        val rawKey = spendSecretKey ?: return value
+        return ENCRYPTED_SPEND_SECRET_PREFIX +
+            Base64.encodeToString(encryptWithRawKey(value.toByteArray(Charsets.UTF_8), rawKey), Base64.NO_WRAP)
+    }
+
+    private fun getSpendSecret(key: String): String? {
+        val value = getPrivateString(key, null) ?: return null
+        if (!value.startsWith(ENCRYPTED_SPEND_SECRET_PREFIX)) {
+            if (spendSecretKey != null) {
+                securePrefs.edit { putString(key, encryptSpendSecret(value)) }
+            }
+            return value
+        }
+        val rawKey = spendSecretKey ?: return null
+        val payload = Base64.decode(value.removePrefix(ENCRYPTED_SPEND_SECRET_PREFIX), Base64.NO_WRAP)
+        return decryptWithRawKey(payload, rawKey).toString(Charsets.UTF_8)
+    }
+
+    private fun putSpendSecret(
+        key: String,
+        value: String,
+    ) {
+        securePrefs.edit { putString(key, encryptSpendSecret(value)) }
+        regularPrefs.edit { remove(key) }
+    }
+
+    private fun removeSpendSecret(key: String) {
+        removePrivateValue(key)
+    }
+
+    private fun migrateLegacySpendSecrets() {
+        getWalletIds().forEach { walletId ->
+            listOf(
+                "${KEY_MNEMONIC_PREFIX}$walletId",
+                "${KEY_PRIVATE_KEY_PREFIX}$walletId",
+                "${KEY_PASSPHRASE_PREFIX}$walletId",
+                "${KEY_MULTISIG_LOCAL_COSIGNER_PREFIX}$walletId",
+                "${KEY_LIQUID_DESCRIPTOR_PREFIX}$walletId",
+            ).forEach { key ->
+                val value = securePrefs.getString(key, null)
+                if (value != null && !value.startsWith(ENCRYPTED_SPEND_SECRET_PREFIX)) {
+                    securePrefs.edit { putString(key, encryptSpendSecret(value)) }
+                }
+            }
+        }
+    }
+
+    private fun migrateSpendSecretsToPlaintext() {
+        val rawKey = spendSecretKey ?: return
+        getWalletIds().forEach { walletId ->
+            listOf(
+                "${KEY_MNEMONIC_PREFIX}$walletId",
+                "${KEY_PRIVATE_KEY_PREFIX}$walletId",
+                "${KEY_PASSPHRASE_PREFIX}$walletId",
+                "${KEY_MULTISIG_LOCAL_COSIGNER_PREFIX}$walletId",
+                "${KEY_LIQUID_DESCRIPTOR_PREFIX}$walletId",
+            ).forEach { key ->
+                val value = securePrefs.getString(key, null)
+                if (value != null && value.startsWith(ENCRYPTED_SPEND_SECRET_PREFIX)) {
+                    val payload = Base64.decode(value.removePrefix(ENCRYPTED_SPEND_SECRET_PREFIX), Base64.NO_WRAP)
+                    val plaintext = decryptWithRawKey(payload, rawKey).toString(Charsets.UTF_8)
+                    securePrefs.edit { putString(key, plaintext) }
+                }
+            }
+        }
+        securePrefs.edit {
+            remove(KEY_SPEND_MASTER_PIN_WRAPPED)
+            remove(KEY_SPEND_MASTER_PIN_SALT)
+            remove(KEY_SPEND_MASTER_DURESS_WRAPPED)
+            remove(KEY_SPEND_MASTER_DURESS_SALT)
+            remove(KEY_SPEND_MASTER_BIOMETRIC_WRAPPED)
+        }
     }
 
     private fun getPrivateBoolean(
@@ -473,21 +717,21 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         mnemonic: String,
     ) {
-        securePrefs.edit { putString("${KEY_MNEMONIC_PREFIX}$walletId", mnemonic) }
+        putSpendSecret("${KEY_MNEMONIC_PREFIX}$walletId", mnemonic)
     }
 
     /**
      * Get mnemonic for a specific wallet
      */
     fun getMnemonic(walletId: String): String? {
-        return securePrefs.getString("${KEY_MNEMONIC_PREFIX}$walletId", null)
+        return getSpendSecret("${KEY_MNEMONIC_PREFIX}$walletId")
     }
 
     /**
      * Delete mnemonic for a specific wallet
      */
     fun deleteMnemonic(walletId: String) {
-        securePrefs.edit { remove("${KEY_MNEMONIC_PREFIX}$walletId") }
+        removeSpendSecret("${KEY_MNEMONIC_PREFIX}$walletId")
     }
 
     // ==================== Extended Public Key (per wallet) ====================
@@ -529,11 +773,11 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         wif: String,
     ) {
-        securePrefs.edit { putString("${KEY_PRIVATE_KEY_PREFIX}$walletId", wif) }
+        putSpendSecret("${KEY_PRIVATE_KEY_PREFIX}$walletId", wif)
     }
 
     fun getPrivateKey(walletId: String): String? {
-        return securePrefs.getString("${KEY_PRIVATE_KEY_PREFIX}$walletId", null)
+        return getSpendSecret("${KEY_PRIVATE_KEY_PREFIX}$walletId")
     }
 
     fun hasPrivateKey(walletId: String): Boolean {
@@ -541,7 +785,7 @@ class SecureStorage private constructor(private val context: Context) {
     }
 
     fun deletePrivateKey(walletId: String) {
-        securePrefs.edit { remove("${KEY_PRIVATE_KEY_PREFIX}$walletId") }
+        removeSpendSecret("${KEY_PRIVATE_KEY_PREFIX}$walletId")
     }
 
     // ==================== Watch Address Storage (per wallet - single address) ====================
@@ -591,14 +835,14 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         keyMaterial: String,
     ) {
-        securePrefs.edit { putString("${KEY_MULTISIG_LOCAL_COSIGNER_PREFIX}$walletId", keyMaterial) }
+        putSpendSecret("${KEY_MULTISIG_LOCAL_COSIGNER_PREFIX}$walletId", keyMaterial)
     }
 
     fun getLocalCosignerKeyMaterial(walletId: String): String? =
-        securePrefs.getString("${KEY_MULTISIG_LOCAL_COSIGNER_PREFIX}$walletId", null)
+        getSpendSecret("${KEY_MULTISIG_LOCAL_COSIGNER_PREFIX}$walletId")
 
     fun deleteLocalCosignerKeyMaterial(walletId: String) {
-        securePrefs.edit { remove("${KEY_MULTISIG_LOCAL_COSIGNER_PREFIX}$walletId") }
+        removeSpendSecret("${KEY_MULTISIG_LOCAL_COSIGNER_PREFIX}$walletId")
     }
 
     fun savePsbtSigningSession(session: PsbtSigningSession) {
@@ -731,21 +975,21 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         passphrase: String,
     ) {
-        securePrefs.edit { putString("${KEY_PASSPHRASE_PREFIX}$walletId", passphrase) }
+        putSpendSecret("${KEY_PASSPHRASE_PREFIX}$walletId", passphrase)
     }
 
     /**
      * Get passphrase for a specific wallet
      */
     fun getPassphrase(walletId: String): String? {
-        return securePrefs.getString("${KEY_PASSPHRASE_PREFIX}$walletId", null)
+        return getSpendSecret("${KEY_PASSPHRASE_PREFIX}$walletId")
     }
 
     /**
      * Delete passphrase for a specific wallet
      */
     fun deletePassphrase(walletId: String) {
-        securePrefs.edit { remove("${KEY_PASSPHRASE_PREFIX}$walletId") }
+        removeSpendSecret("${KEY_PASSPHRASE_PREFIX}$walletId")
     }
 
     // ==================== Network Configuration ====================
@@ -3099,6 +3343,10 @@ class SecureStorage private constructor(private val context: Context) {
      * Set the security method
      */
     fun setSecurityMethod(method: SecurityMethod) {
+        if (method == SecurityMethod.NONE) {
+            migrateSpendSecretsToPlaintext()
+            lockSpendSecretSession()
+        }
         securePrefs.edit { putString(KEY_SECURITY_METHOD, method.name) }
     }
 
@@ -3115,6 +3363,7 @@ class SecureStorage private constructor(private val context: Context) {
             remove(KEY_PIN_FAILED_ATTEMPTS)
             remove(KEY_PIN_LOCKOUT_UNTIL)
         }
+        unlockSpendSecretsWithPin(pin)
     }
 
     /**
@@ -3159,6 +3408,7 @@ class SecureStorage private constructor(private val context: Context) {
                 remove(KEY_PIN_FAILED_ATTEMPTS)
                 remove(KEY_PIN_LOCKOUT_UNTIL)
             }
+            unlockSpendSecretsWithPin(pin)
         } else {
             // Increment failed attempts and apply lockout if needed
             val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
@@ -3383,6 +3633,9 @@ class SecureStorage private constructor(private val context: Context) {
             putString(KEY_DURESS_PIN_SALT, Base64.encodeToString(salt, Base64.NO_WRAP))
             putInt(KEY_DURESS_PIN_LENGTH, pin.length)
         }
+        if (spendSecretKey != null) {
+            runCatching { unlockOrCreateSpendMaster(KEY_SPEND_MASTER_DURESS_WRAPPED, KEY_SPEND_MASTER_DURESS_SALT, pin) }
+        }
     }
 
     /**
@@ -3414,6 +3667,7 @@ class SecureStorage private constructor(private val context: Context) {
                 remove(KEY_PIN_FAILED_ATTEMPTS)
                 remove(KEY_PIN_LOCKOUT_UNTIL)
             }
+            unlockSpendSecretsWithDuressPin(pin)
         } else if (incrementFailedAttempts) {
             // Increment shared failed attempts and apply lockout if needed
             val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
@@ -3593,6 +3847,16 @@ class SecureStorage private constructor(private val context: Context) {
          * not currently in scope.
          */
         const val BIOMETRIC_KEY_ALIAS = "ibis_biometric_key"
+        private const val KEY_SPEND_MASTER_PIN_WRAPPED = "spend_master_pin_wrapped"
+        private const val KEY_SPEND_MASTER_PIN_SALT = "spend_master_pin_salt"
+        private const val KEY_SPEND_MASTER_DURESS_WRAPPED = "spend_master_duress_wrapped"
+        private const val KEY_SPEND_MASTER_DURESS_SALT = "spend_master_duress_salt"
+        private const val KEY_SPEND_MASTER_BIOMETRIC_WRAPPED = "spend_master_biometric_wrapped"
+        private const val ENCRYPTED_SPEND_SECRET_PREFIX = "enc:v1:"
+        private const val SPEND_SECRET_KEY_BYTES = 32
+        private const val SPEND_SECRET_IV_BYTES = 12
+        private const val SPEND_SECRET_GCM_TAG_BITS = 128
+        private const val SPEND_SECRET_CIPHER = "AES/GCM/NoPadding"
 
         // Multi-wallet keys
         private const val KEY_WALLET_IDS = "wallet_ids"
@@ -3910,14 +4174,14 @@ class SecureStorage private constructor(private val context: Context) {
 
     /** Liquid CT descriptor (stored in encrypted prefs) */
     fun getLiquidDescriptor(walletId: String): String? =
-        securePrefs.getString("${KEY_LIQUID_DESCRIPTOR_PREFIX}$walletId", null)
+        getSpendSecret("${KEY_LIQUID_DESCRIPTOR_PREFIX}$walletId")
 
     fun setLiquidDescriptor(walletId: String, descriptor: String) {
-        securePrefs.edit { putString("${KEY_LIQUID_DESCRIPTOR_PREFIX}$walletId", descriptor) }
+        putSpendSecret("${KEY_LIQUID_DESCRIPTOR_PREFIX}$walletId", descriptor)
     }
 
     fun removeLiquidDescriptor(walletId: String) {
-        securePrefs.edit { remove("${KEY_LIQUID_DESCRIPTOR_PREFIX}$walletId") }
+        removeSpendSecret("${KEY_LIQUID_DESCRIPTOR_PREFIX}$walletId")
     }
 
     /** Per-wallet Liquid watch-only flag (descriptor-only, no signer available) */

@@ -5,6 +5,8 @@ import github.aeonbtc.ibiswallet.data.boltz.BoltzTraceLevel
 import github.aeonbtc.ibiswallet.data.boltz.boltzElapsedMs
 import github.aeonbtc.ibiswallet.data.boltz.boltzTraceStart
 import github.aeonbtc.ibiswallet.data.boltz.logBoltzTrace
+import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -68,7 +70,7 @@ class Bip353Resolver(
                 if (!httpResponse.isSuccessful) {
                     throw Exception("Failed to resolve BIP-353 recipient")
                 }
-                val body = httpResponse.body.string()
+                val body = httpResponse.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES)
                 if (body.isBlank()) {
                     throw Exception("BIP-353 lookup returned an empty response")
                 }

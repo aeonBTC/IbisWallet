@@ -11,6 +11,8 @@ import github.aeonbtc.ibiswallet.data.model.BoltzLimits
 import github.aeonbtc.ibiswallet.data.model.BoltzPairInfo
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineResponse
 import github.aeonbtc.ibiswallet.data.model.BoltzSwapUpdate
+import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -123,7 +125,7 @@ class BoltzApiClient(
         logBoltzTrace("start", trace, "requestId" to requestId, "path" to path)
         try {
             val response = httpClient().newCall(request).executeAsync()
-            val responseBody = response.body.string()
+            val responseBody = response.body.stringWithLimit(InputLimits.MEDIUM_JSON_BYTES)
             if (!response.isSuccessful) {
                 val errorMsg = try {
                     JSONObject(responseBody).optString("error", responseBody)
@@ -182,7 +184,7 @@ class BoltzApiClient(
         logBoltzTrace("start", trace, "requestId" to requestId, "path" to path, "body" to bodySummary)
         try {
             val response = client.newCall(request).executeAsync()
-            val responseBody = response.body.string()
+            val responseBody = response.body.stringWithLimit(InputLimits.MEDIUM_JSON_BYTES)
             if (!response.isSuccessful) {
                 val errorMsg = try {
                     JSONObject(responseBody).optString("error", responseBody)

@@ -3,6 +3,8 @@ package github.aeonbtc.ibiswallet.data
 import android.util.Log
 import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -188,7 +190,7 @@ class BtcPriceService {
                         return@withContext null
                     }
 
-                    val body = it.body.string()
+                    val body = it.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES)
                     if (body.isEmpty()) {
                         if (BuildConfig.DEBUG) Log.e(TAG, "Mempool price response empty")
                         return@withContext null
@@ -234,7 +236,7 @@ class BtcPriceService {
                         return@withContext null
                     }
 
-                    val body = it.body.string()
+                    val body = it.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES)
                     if (body.isEmpty()) {
                         if (BuildConfig.DEBUG) Log.e(TAG, "Mempool onion price response empty")
                         return@withContext null
@@ -297,7 +299,7 @@ class BtcPriceService {
                         return@withContext null
                     }
 
-                    val body = it.body.string()
+                    val body = it.body.stringWithLimit(InputLimits.MEDIUM_JSON_BYTES)
                     if (body.isEmpty()) {
                         if (BuildConfig.DEBUG) Log.e(TAG, "CoinGecko price response empty")
                         return@withContext null
@@ -347,7 +349,7 @@ class BtcPriceService {
                         return@withContext emptyList()
                     }
 
-                    val body = it.body.string()
+                    val body = it.body.stringWithLimit(InputLimits.MEDIUM_JSON_BYTES)
                     if (body.isEmpty()) {
                         if (BuildConfig.DEBUG) Log.e(TAG, "$logLabel response empty")
                         return@withContext emptyList()

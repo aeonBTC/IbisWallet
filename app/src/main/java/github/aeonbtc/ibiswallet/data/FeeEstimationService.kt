@@ -4,6 +4,8 @@ import android.util.Log
 import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.model.FeeEstimates
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
+import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -116,7 +118,7 @@ class FeeEstimationService {
                     return Result.failure(Exception("HTTP ${it.code}: ${it.message}"))
                 }
 
-                val body = it.body.string()
+                val body = it.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES)
                 if (body.isEmpty()) {
                     return Result.failure(Exception("Empty response body"))
                 }
@@ -125,9 +127,9 @@ class FeeEstimationService {
                     try {
                         parseResponse(body)
                     } catch (e: IllegalArgumentException) {
-                        // Reject malformed responses (missing fields, NaN, out-of-range)
-                        // rather than presenting defaulted 1.0 sat/vB values that an
-                        // attacker-controlled custom endpoint could exploit.
+                        // Reject malformed responses (invalid JSON, NaN, negative, or
+                        // absurdly large rates). Sparse-but-valid payloads are normalized
+                        // by the parser with conservative defaults.
                         return Result.failure(e)
                     }
                 Result.success(estimates)
@@ -141,7 +143,7 @@ class FeeEstimationService {
     /**
      * Delegates JSON parsing to [BitcoinUtils.parseFeeEstimatesJson],
      * then wraps in the app's [FeeEstimates] model. May throw
-     * [IllegalArgumentException] when the response is structurally invalid.
+     * [IllegalArgumentException] when the response is malformed.
      */
     private fun parseResponse(jsonString: String): FeeEstimates {
         val parsed = BitcoinUtils.parseFeeEstimatesJson(jsonString)

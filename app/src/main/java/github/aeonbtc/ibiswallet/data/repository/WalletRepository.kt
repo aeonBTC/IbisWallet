@@ -410,6 +410,11 @@ class WalletRepository(context: Context) {
         lastIncrementalReconcileAtMs = 0L
     }
 
+    fun unloadWalletFromMemoryForLock() {
+        clearLoadedWallet()
+        _walletState.value = WalletState()
+    }
+
     private fun replaceLoadedWallet(
         loadedWallet: Wallet,
         persister: Persister,
@@ -6249,6 +6254,13 @@ class WalletRepository(context: Context) {
 
                 WalletResult.Success(txids)
             } catch (e: Exception) {
+                if (txids.isNotEmpty()) {
+                    return@withContext WalletResult.Error(
+                        "Sweep partially succeeded. Broadcast txids: ${txids.joinToString(", ")}. " +
+                            "Later sweep step failed: ${e.message}",
+                        e,
+                    )
+                }
                 WalletResult.Error("Sweep failed: ${e.message}", e)
             } finally {
                 if (!cleanupSweepTempDatabases() && BuildConfig.DEBUG) {

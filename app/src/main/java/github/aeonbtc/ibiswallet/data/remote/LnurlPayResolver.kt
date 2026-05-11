@@ -2,8 +2,13 @@ package github.aeonbtc.ibiswallet.data.remote
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.stringWithLimit
+import lwk.Payment
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONObject
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -16,6 +21,7 @@ data class LnurlPayMetadata(
     val maxSendableMsats: Long,
     val metadata: String,
     val isFixedAmount: Boolean,
+    val metadataUrl: String = "",
 ) {
     val minSendableSats: Long get() = (minSendableMsats + 999L) / 1000L
     val maxSendableSats: Long get() = maxSendableMsats / 1000L
@@ -65,8 +71,15 @@ class LnurlPayResolver(
                 "Amount exceeds the maximum of ${formatSatsDisplay(metadata.maxSendableSats)}.",
             )
         }
-        val separator = if (metadata.callback.contains("?")) "&" else "?"
-        val url = "${metadata.callback}${separator}amount=$amountMsats"
+        val metadataUrl =
+            metadata.metadataUrl.takeIf { it.isNotBlank() }
+                ?: throw Exception("LNURL metadata origin is missing")
+        val callbackUrl = validateLnurlUrl(metadata.callback, "LNURL callback")
+        val metadataOrigin = validateLnurlUrl(metadataUrl, "LNURL metadata")
+        requireSameOrigin(metadataOrigin, callbackUrl, "LNURL callback")
+        val url = callbackUrl.newBuilder()
+            .addQueryParameter("amount", amountMsats.toString())
+            .build()
         val request = Request.Builder()
             .url(url)
             .get()
@@ -75,35 +88,37 @@ class LnurlPayResolver(
         val response = httpClient().newCall(request).execute()
         response.use { httpResponse ->
             if (!httpResponse.isSuccessful) {
-                val body = runCatching { httpResponse.body.string() }.getOrNull()
+                val body = runCatching { httpResponse.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES) }.getOrNull()
                 val reason = extractErrorReason(body)
                 throw Exception(reason ?: "Failed to fetch Lightning invoice (HTTP ${httpResponse.code})")
             }
-            val body = httpResponse.body.string()
+            val body = httpResponse.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES)
             val json = JSONObject(body)
             if (json.has("status") && json.optString("status") == "ERROR") {
                 throw Exception(json.optString("reason", "LNURL service returned an error"))
             }
             val bolt11 = json.optString("pr", "").takeIf { it.isNotBlank() }
                 ?: throw Exception("LNURL service did not return a Lightning invoice")
+            verifyBolt11InvoiceAmount(bolt11, amountMsats)
             LnurlPayInvoice(bolt11 = bolt11)
         }
     }
 
     private fun fetchPayMetadata(url: String): LnurlPayMetadata {
+        val metadataUrl = validateLnurlUrl(url, "LNURL metadata")
         val request = Request.Builder()
-            .url(url)
+            .url(metadataUrl)
             .get()
             .header("Accept", "application/json")
             .build()
         val response = httpClient().newCall(request).execute()
         return response.use { httpResponse ->
             if (!httpResponse.isSuccessful) {
-                val body = runCatching { httpResponse.body.string() }.getOrNull()
+                val body = runCatching { httpResponse.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES) }.getOrNull()
                 val reason = extractErrorReason(body)
                 throw Exception(reason ?: "Failed to resolve LNURL (HTTP ${httpResponse.code})")
             }
-            val body = httpResponse.body.string()
+            val body = httpResponse.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES)
             val json = JSONObject(body)
             if (json.has("status") && json.optString("status") == "ERROR") {
                 throw Exception(json.optString("reason", "LNURL service returned an error"))
@@ -114,6 +129,8 @@ class LnurlPayResolver(
             }
             val callback = json.optString("callback", "").takeIf { it.isNotBlank() }
                 ?: throw Exception("LNURL response missing callback URL")
+            val callbackUrl = validateLnurlUrl(callback, "LNURL callback")
+            requireSameOrigin(metadataUrl, callbackUrl, "LNURL callback")
             val minSendable = json.optLong("minSendable", 0L)
             val maxSendable = json.optLong("maxSendable", 0L)
             if (minSendable <= 0L || maxSendable <= 0L) {
@@ -126,6 +143,7 @@ class LnurlPayResolver(
                 maxSendableMsats = maxSendable,
                 metadata = metadata,
                 isFixedAmount = minSendable == maxSendable,
+                metadataUrl = metadataUrl.toString(),
             )
         }
     }
@@ -137,6 +155,8 @@ class LnurlPayResolver(
             .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .callTimeout(timeoutSeconds + 5L, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
 
         if (useTor()) {
             builder.proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", torSocksPort)))
@@ -146,6 +166,81 @@ class LnurlPayResolver(
         }
 
         return builder.build()
+    }
+
+    private fun validateLnurlUrl(rawUrl: String, label: String): HttpUrl {
+        val url =
+            try {
+                rawUrl.trim().toHttpUrl()
+            } catch (e: IllegalArgumentException) {
+                throw Exception("$label URL is invalid", e)
+            }
+        val host = url.host.lowercase()
+        val isOnion = host.endsWith(".onion")
+        if (isOnion) {
+            if (!useTor()) {
+                throw Exception("$label uses an onion host but Tor is not enabled")
+            }
+            if (url.scheme != "http" && url.scheme != "https") {
+                throw Exception("$label URL must use HTTP or HTTPS")
+            }
+        } else {
+            if (url.scheme != "https") {
+                throw Exception("$label URL must use HTTPS")
+            }
+            rejectLocalOrPrivateHost(host, label)
+        }
+        return url
+    }
+
+    private fun requireSameOrigin(
+        metadataUrl: HttpUrl,
+        callbackUrl: HttpUrl,
+        label: String,
+    ) {
+        if (metadataUrl.scheme != callbackUrl.scheme ||
+            metadataUrl.host.lowercase() != callbackUrl.host.lowercase() ||
+            metadataUrl.port != callbackUrl.port
+        ) {
+            throw Exception("$label must use the same origin as LNURL metadata")
+        }
+    }
+
+    private fun rejectLocalOrPrivateHost(host: String, label: String) {
+        if (host == "localhost" || host.endsWith(".localhost")) {
+            throw Exception("$label must not target localhost")
+        }
+        val isIpLiteral = host.any { it == ':' } || host.all { it.isDigit() || it == '.' }
+        if (!isIpLiteral) return
+
+        val address =
+            runCatching { InetAddress.getByName(host) }
+                .getOrNull()
+                ?: throw Exception("$label IP address is invalid")
+        if (address.isAnyLocalAddress ||
+            address.isLoopbackAddress ||
+            address.isLinkLocalAddress ||
+            address.isSiteLocalAddress ||
+            address.isMulticastAddress
+        ) {
+            throw Exception("$label must not target local or private networks")
+        }
+    }
+
+    private fun verifyBolt11InvoiceAmount(
+        bolt11: String,
+        expectedAmountMsats: Long,
+    ) {
+        val invoice =
+            runCatching { Payment(bolt11).lightningInvoice() }
+                .getOrNull()
+                ?: throw Exception("LNURL service returned an invalid Lightning invoice")
+        val invoiceAmountMsats =
+            invoice.amountMilliSatoshis()?.toLong()
+                ?: throw Exception("LNURL invoice is missing an amount")
+        if (invoiceAmountMsats != expectedAmountMsats) {
+            throw Exception("LNURL invoice amount does not match the requested amount")
+        }
     }
 
     private fun extractErrorReason(body: String?): String? {

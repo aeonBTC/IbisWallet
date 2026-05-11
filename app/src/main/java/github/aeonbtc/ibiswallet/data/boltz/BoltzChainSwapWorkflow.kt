@@ -30,8 +30,6 @@ class BoltzChainSwapWorkflow(
         val reusableState =
             when (candidate.state) {
                 BoltzChainSwapDraftState.CREATED_UNREVIEWED,
-                BoltzChainSwapDraftState.FUNDING_BROADCAST,
-                BoltzChainSwapDraftState.IN_PROGRESS,
                 -> true
                 BoltzChainSwapDraftState.REVIEW_READY ->
                     candidate.reviewExpiresAt <= 0L || nowMs() <= candidate.reviewExpiresAt
