@@ -1,0 +1,13 @@
+- Wallet loading, Electrum sync, fee fetching, price fetching, and update checks are now gated until app unlock.
+- Spend secrets are now wrapped behind an unlocked PIN/biometric session instead of being readable from encrypted preferences alone.
+- Signed PSBTs, raw transactions, manual broadcasts, and imported partial PSBTs are now verified against reviewed transaction data before merge or broadcast.
+- Liquid swap, Lightning, and Boltz execution paths now reject review-to-execution drift and active draft reuse.
+- LNURL and BOLT12 payment resolution now enforce stricter origin, callback, redirect, invoice amount, and signer validation.
+- Full wipe and auto-wipe now delete Spark SDK state, temporary sweep databases, biometric keys, regular preferences, and verify residue before termination.
+- App-level and per-wallet biometric unlock now fail closed unless a valid Keystore-bound CryptoObject is present.
+- Boltz, SideSwap, and Tor-selected network paths now fail closed instead of silently falling back to clearnet.
+- Backups now fully round-trip imported wallet types, including passphrases, WIFs, descriptors, and single-address watch-only wallets.
+- Backup-restored server settings are now re-validated so unsafe or malformed endpoints are rejected.
+- WIF/private-key sweep input now uses sensitive keyboard handling, password masking, and redacted accessibility semantics.
+
+See full changelogs on GitHub.
