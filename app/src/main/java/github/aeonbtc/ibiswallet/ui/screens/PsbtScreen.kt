@@ -87,8 +87,10 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.Bbqr
+import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
+import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import github.aeonbtc.ibiswallet.viewmodel.PsbtState
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
 import androidx.compose.ui.res.stringResource
@@ -184,7 +186,7 @@ fun PsbtScreen(
             if (uri != null) {
                 try {
                     context.contentResolver.openInputStream(uri)?.use { stream ->
-                        val result = parseTxFileBytes(stream.readBytes())
+                        val result = parseTxFileBytes(stream.readBytesWithLimit(InputLimits.TX_FILE_BYTES))
                         if (result != null) {
                             onSignedDataReceived(result.data)
                         }

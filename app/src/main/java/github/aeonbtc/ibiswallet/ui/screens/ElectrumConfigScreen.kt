@@ -91,6 +91,7 @@ import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
+import github.aeonbtc.ibiswallet.util.ServerUrlValidator
 import androidx.compose.ui.res.stringResource
 import androidx.compose.material3.Text
 
@@ -160,9 +161,13 @@ fun ElectrumConfigScreen(
     }
 
     val isValidName = serverName.isNotBlank()
-    val isValidUrl = serverUrl.isNotBlank()
     val portNumber = serverPort.toIntOrNull()
     val isValidPort = portNumber != null && portNumber in 1..65535
+    val normalizedServerUrl = serverUrl.trim().lowercase()
+    val isValidUrl =
+        serverUrl.isNotBlank() &&
+            isValidPort &&
+            ServerUrlValidator.validateHostAndPort(normalizedServerUrl, portNumber ?: 0) == null
 
     // Delete confirmation dialog
     serverToDelete?.let { server ->
@@ -528,11 +533,11 @@ fun ElectrumConfigScreen(
                         val config =
                             ElectrumConfig(
                                 id = serverToEdit?.id,
-                                url = serverUrl.trim(),
+                                url = normalizedServerUrl,
                                 port = portNumber ?: 50001,
                                 useSsl = useSsl,
                                 name = serverName.trim(),
-                                useTor = serverUrl.trim().endsWith(".onion"),
+                                useTor = normalizedServerUrl.endsWith(".onion"),
                             )
                         onSaveServer(config)
 
@@ -1275,6 +1280,7 @@ private fun ServerConfigDialog(
                     },
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
+                    isError = serverUrl.isNotBlank() && !isValidUrl,
                     colors =
                         OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = BitcoinOrange,

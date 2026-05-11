@@ -112,8 +112,10 @@ import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
+import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.MultisigWalletParser
 import github.aeonbtc.ibiswallet.util.QrFormatParser
+import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -215,7 +217,7 @@ fun ImportWalletScreen(
                         val content =
                             withContext(Dispatchers.IO) {
                                 context.contentResolver.openInputStream(uri)?.use { stream ->
-                                    stream.readBytes().toString(Charsets.UTF_8)
+                                    stream.readBytesWithLimit(InputLimits.BACKUP_FILE_BYTES).toString(Charsets.UTF_8)
                                 }.orEmpty()
                             }
                         keyMaterialField =

@@ -14,8 +14,6 @@ import android.nfc.tech.IsoDep
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
 import android.util.Log
 import android.view.WindowManager
 import android.widget.Toast
@@ -52,6 +50,7 @@ import github.aeonbtc.ibiswallet.ui.screens.CalculatorScreen
 import github.aeonbtc.ibiswallet.ui.screens.LockScreen
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
+import github.aeonbtc.ibiswallet.util.BiometricCrypto
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.isRecognizedSendInput
 import github.aeonbtc.ibiswallet.viewmodel.LiquidViewModel
@@ -60,11 +59,6 @@ import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.security.KeyStore
-import javax.crypto.Cipher
-import javax.crypto.KeyGenerator
-import javax.crypto.SecretKey
-
 class MainActivity : FragmentActivity() {
     companion object {
         private const val TAG = "MainActivity"
@@ -517,6 +511,9 @@ class MainActivity : FragmentActivity() {
             // When cloak mode is active, stay locked so the calculator screen shows first
             val securityMethod = secureStorage.getSecurityMethod()
             isUnlocked = securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive
+            if (isUnlocked) {
+                walletViewModel.onAppUnlocked()
+            }
 
             // Setup biometric prompt
             setupBiometricPrompt()
@@ -547,7 +544,7 @@ class MainActivity : FragmentActivity() {
                     ) {
                         if (isUnlocked) {
                             IbisWalletApp(
-                                onLockApp = { isUnlocked = false },
+                                onLockApp = { lockApp() },
                                 appUnlockCounter = appUnlockCounter,
                             )
                         } else if (isCloakActive && !cloakBypassed) {
@@ -559,7 +556,7 @@ class MainActivity : FragmentActivity() {
                                     val secMethod = secureStorage.getSecurityMethod()
                                     if (secMethod == SecureStorage.SecurityMethod.NONE) {
                                         // No additional auth — go straight to wallet
-                                        isUnlocked = true
+                                        unlockApp(incrementCounter = false)
                                     }
                                     // Otherwise fall through to LockScreen on next recompose
                                 },
@@ -603,14 +600,12 @@ class MainActivity : FragmentActivity() {
                                 when {
                                     isRealPin -> {
                                         walletViewModel.exitDuressMode()
-                                        appUnlockCounter++
-                                        isUnlocked = true
+                                        unlockApp(incrementCounter = true)
                                         true
                                     }
                                     isDuressPin -> {
                                         walletViewModel.enterDuressMode()
-                                        appUnlockCounter++
-                                        isUnlocked = true
+                                        unlockApp(incrementCounter = true)
                                         true
                                     }
                                     else -> {
@@ -666,7 +661,7 @@ class MainActivity : FragmentActivity() {
 
         val securityMethod = secureStorage.getSecurityMethod()
         if (securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive) {
-            isUnlocked = true
+            unlockApp(incrementCounter = false)
             return
         }
         // Cloak mode with no PIN/biometric: nothing to re-lock via timing
@@ -689,7 +684,7 @@ class MainActivity : FragmentActivity() {
                     val lastBackgroundTime = secureStorage.getLastBackgroundTime()
                     val elapsedTime = System.currentTimeMillis() - lastBackgroundTime
                     if (elapsedTime >= lockTiming.timeoutMs) {
-                        isUnlocked = false
+                        lockApp()
                         if (isCloakActive) cloakBypassed = false
                     }
                 }
@@ -724,7 +719,7 @@ class MainActivity : FragmentActivity() {
         }
         // Cloak mode with no PIN: re-engage calculator immediately on background
         if (securityMethod == SecureStorage.SecurityMethod.NONE && isCloakActive) {
-            isUnlocked = false
+            lockApp()
             cloakBypassed = false
             return
         }
@@ -738,7 +733,7 @@ class MainActivity : FragmentActivity() {
             }
             SecureStorage.LockTiming.WHEN_MINIMIZED -> {
                 // Lock immediately and re-engage cloak
-                isUnlocked = false
+                lockApp()
                 if (isCloakActive) cloakBypassed = false
             }
             else -> {
@@ -746,6 +741,25 @@ class MainActivity : FragmentActivity() {
                 secureStorage.setLastBackgroundTime(System.currentTimeMillis())
             }
         }
+    }
+
+    private fun unlockApp(incrementCounter: Boolean) {
+        if (incrementCounter) {
+            appUnlockCounter++
+        }
+        isUnlocked = true
+        walletViewModel.onAppUnlocked()
+    }
+
+    private fun lockApp() {
+        isUnlocked = false
+        secureStorage.lockSpendSecretSession()
+        NdefHostApduService.setNdefPayload(null)
+        deactivateNfcReaderMode()
+        deactivatePreferredHceService()
+        walletViewModel.onAppLocked()
+        liquidViewModel.unloadLiquidWallet()
+        sparkViewModel.unloadSparkWallet()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -821,10 +835,19 @@ class MainActivity : FragmentActivity() {
                             ).show()
                             return
                         }
+                        runCatching {
+                            result.cryptoObject?.cipher?.let(secureStorage::unlockSpendSecretsWithBiometric)
+                        }.onFailure {
+                            Toast.makeText(
+                                this@MainActivity,
+                                getString(R.string.loc_0039435a),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            return
+                        }
                         // Biometric always opens the real wallet
                         walletViewModel.exitDuressMode()
-                        appUnlockCounter++
-                        isUnlocked = true
+                        unlockApp(incrementCounter = true)
                     }
 
                     override fun onAuthenticationError(
@@ -870,7 +893,7 @@ class MainActivity : FragmentActivity() {
             val cryptoObject =
                 withContext(Dispatchers.Default) {
                     runCatching {
-                        BiometricPrompt.CryptoObject(getBiometricCipher())
+                        secureStorage.createSpendSecretBiometricCryptoObject()
                     }.getOrNull()
                 }
 
@@ -898,43 +921,7 @@ class MainActivity : FragmentActivity() {
 
     private fun prewarmBiometricCipher() {
         lifecycleScope.launch(Dispatchers.Default) {
-            runCatching { getBiometricCipher() }
-        }
-    }
-
-    /**
-     * Get or create a KeyStore-backed AES key that requires biometric auth,
-     * and return an initialized Cipher for CryptoObject binding.
-     */
-    private fun getBiometricCipher(): Cipher {
-        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        val keyAlias = SecureStorage.BIOMETRIC_KEY_ALIAS
-
-        if (!keyStore.containsAlias(keyAlias)) {
-            val keyGen =
-                KeyGenerator.getInstance(
-                    KeyProperties.KEY_ALGORITHM_AES,
-                    "AndroidKeyStore",
-                )
-            keyGen.init(
-                KeyGenParameterSpec.Builder(
-                    keyAlias,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-                )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_CBC)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_PKCS7)
-                    .setUserAuthenticationRequired(true)
-                    .setInvalidatedByBiometricEnrollment(true)
-                    .build(),
-            )
-            keyGen.generateKey()
-        }
-
-        val secretKey = keyStore.getKey(keyAlias, null) as SecretKey
-        return Cipher.getInstance(
-            "${KeyProperties.KEY_ALGORITHM_AES}/${KeyProperties.BLOCK_MODE_CBC}/${KeyProperties.ENCRYPTION_PADDING_PKCS7}",
-        ).apply {
-            init(Cipher.ENCRYPT_MODE, secretKey)
+            runCatching { BiometricCrypto.getBiometricCipher() }
         }
     }
 }

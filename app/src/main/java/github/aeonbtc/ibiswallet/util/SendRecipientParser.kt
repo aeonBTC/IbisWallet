@@ -96,7 +96,15 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
         )
     }
 
-    val queryParams = parseUriQueryParameters(trimmed)
+    val queryParams =
+        try {
+            parseUriQueryParameters(trimmed)
+        } catch (e: IllegalArgumentException) {
+            return ParsedSendRecipient.Unknown(
+                rawInput = trimmed,
+                errorMessage = e.message ?: "Invalid payment URI",
+            )
+        }
     parseSilentPaymentUri(trimmed, queryParams)?.let { return it }
     val payment = parsePayment(trimmed)
 
@@ -556,18 +564,24 @@ private fun parseUriQueryParameters(input: String): Map<String, String> {
         return emptyMap()
     }
 
-    return input.substring(queryIndex + 1)
+    val params = mutableMapOf<String, String>()
+    input.substring(queryIndex + 1)
         .split("&")
-        .mapNotNull { entry ->
-            if (entry.isBlank()) {
-                return@mapNotNull null
-            }
+        .forEach { entry ->
+            if (entry.isBlank()) return@forEach
             val keyValue = entry.split("=", limit = 2)
             val key = keyValue[0].lowercase(Locale.US)
+            require(key.isNotBlank()) { "Payment URI has a blank query key" }
+            require(!params.containsKey(key)) { "Payment URI contains duplicate '$key' parameter" }
             val value = keyValue.getOrElse(1) { "" }
-            key to URLDecoder.decode(value, "UTF-8")
+            params[key] =
+                try {
+                    URLDecoder.decode(value, "UTF-8")
+                } catch (e: IllegalArgumentException) {
+                    throw IllegalArgumentException("Payment URI contains invalid percent encoding", e)
+                }
         }
-        .toMap()
+    return params
 }
 
 private fun parseOpaqueLiquidRecipient(

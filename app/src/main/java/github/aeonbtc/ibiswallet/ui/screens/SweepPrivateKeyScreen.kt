@@ -18,13 +18,19 @@ import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.ImportQrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
+import github.aeonbtc.ibiswallet.ui.components.SensitiveSeedIme
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
+import github.aeonbtc.ibiswallet.ui.components.sensitiveSeedKeyboardOptions
 import github.aeonbtc.ibiswallet.ui.theme.*
 import github.aeonbtc.ibiswallet.viewmodel.SweepState
 import androidx.compose.material3.Text
@@ -308,26 +314,32 @@ fun SweepPrivateKeyScreen(
         )
         Spacer(modifier = Modifier.height(6.dp))
         Box(modifier = Modifier.fillMaxWidth()) {
-            OutlinedTextField(
-                value = wifKey,
-                onValueChange = { wifKey = it },
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(80.dp),
-                shape = RoundedCornerShape(8.dp),
-                placeholder = { Text(stringResource(R.string.loc_3a47abe2), color = TextSecondary.copy(alpha = 0.5f)) },
-                keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
-                singleLine = false,
-                colors =
-                    OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = BitcoinOrange,
-                        unfocusedBorderColor = BorderColor,
-                        focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                        cursorColor = BitcoinOrange,
-                    ),
-            )
+            SensitiveSeedIme {
+                OutlinedTextField(
+                    value = wifKey,
+                    onValueChange = { wifKey = it },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(80.dp)
+                            .clearAndSetSemantics {
+                                contentDescription = "Private key input"
+                            },
+                    shape = RoundedCornerShape(8.dp),
+                    placeholder = { Text(stringResource(R.string.loc_3a47abe2), color = TextSecondary.copy(alpha = 0.5f)) },
+                    keyboardOptions = sensitiveSeedKeyboardOptions(KeyboardType.Password),
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = false,
+                    colors =
+                        OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = BitcoinOrange,
+                            unfocusedBorderColor = BorderColor,
+                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                            cursorColor = BitcoinOrange,
+                        ),
+                )
+            }
             Box(
                 contentAlignment = Alignment.Center,
                 modifier =

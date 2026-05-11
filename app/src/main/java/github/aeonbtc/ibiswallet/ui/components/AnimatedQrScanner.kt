@@ -46,6 +46,7 @@ import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.UrAccountParser
 import java.util.concurrent.Executors
 import androidx.camera.core.Preview as CameraPreview
@@ -714,6 +715,9 @@ private fun handleScannedQrData(
                     // The UR toBytes() decodes CBOR wrapper and returns the raw payload
                     // For crypto-psbt, this is the raw PSBT bytes
                     val psbtBytes = ur.toBytes()
+                    if (psbtBytes.size > InputLimits.QR_PAYLOAD_BYTES) {
+                        return
+                    }
                     val psbtBase64 =
                         android.util.Base64.encodeToString(
                             psbtBytes,

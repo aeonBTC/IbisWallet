@@ -176,12 +176,14 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
 import github.aeonbtc.ibiswallet.util.Bip329LabelCounts
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
+import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.WalletNotificationHelper
 import github.aeonbtc.ibiswallet.util.WalletNotificationPolicy
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
+import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import github.aeonbtc.ibiswallet.util.resolveLayer2SendDraft
 import github.aeonbtc.ibiswallet.util.resolveSendRoute
 import github.aeonbtc.ibiswallet.viewmodel.LiquidEvent
@@ -191,9 +193,11 @@ import github.aeonbtc.ibiswallet.viewmodel.SparkViewModel
 import github.aeonbtc.ibiswallet.viewmodel.WalletEvent
 import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
@@ -1043,6 +1047,22 @@ fun IbisWalletApp(
                 object : BiometricPrompt.AuthenticationCallback() {
                     override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                         super.onAuthenticationSucceeded(result)
+                        if (result.cryptoObject == null) {
+                            pendingWalletUnlock = null
+                            scope.launch {
+                                snackbarHostState.showSnackbar(biometricUnavailableMessage)
+                            }
+                            return
+                        }
+                        runCatching {
+                            result.cryptoObject?.cipher?.let(secureStorage::unlockSpendSecretsWithBiometric)
+                        }.onFailure {
+                            pendingWalletUnlock = null
+                            scope.launch {
+                                snackbarHostState.showSnackbar(biometricUnavailableMessage)
+                            }
+                            return
+                        }
                         pendingWalletUnlock = null
                         completeWalletAuth(request)
                     }
@@ -1060,7 +1080,16 @@ fun IbisWalletApp(
                 .setNegativeButtonText(promptCancel)
                 .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
                 .build()
-        prompt.authenticate(promptInfo)
+        val cryptoObject =
+            withContext(Dispatchers.Default) {
+                runCatching { secureStorage.createSpendSecretBiometricCryptoObject() }.getOrNull()
+            }
+        if (cryptoObject == null) {
+            pendingWalletUnlock = null
+            snackbarHostState.showSnackbar(biometricUnavailableMessage)
+            return@LaunchedEffect
+        }
+        prompt.authenticate(promptInfo, cryptoObject)
     }
 
     // Get string resources for use in event handling
@@ -3065,7 +3094,7 @@ fun IbisWalletApp(
                                         val content =
                                             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                                                 context.contentResolver.openInputStream(uri)?.use {
-                                                    it.readBytes().toString(Charsets.UTF_8)
+                                                    it.readBytesWithLimit(InputLimits.BACKUP_FILE_BYTES).toString(Charsets.UTF_8)
                                                 } ?: throw IllegalStateException("Could not read file")
                                             }
                                         val imported =

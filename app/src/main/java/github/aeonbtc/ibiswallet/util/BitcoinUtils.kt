@@ -32,7 +32,7 @@ object BitcoinUtils {
             AddressType.SEGWIT.name -> AddressType.SEGWIT
             AddressType.TAPROOT.name -> AddressType.TAPROOT
             "NESTED_SEGWIT" -> throw IllegalArgumentException(UNSUPPORTED_NESTED_SEGWIT_MESSAGE)
-            else -> default
+            else -> throw IllegalArgumentException("Unsupported address type: $rawAddressType")
         }
     }
 
@@ -45,7 +45,7 @@ object BitcoinUtils {
             null, "" -> default
             WalletNetwork.BITCOIN.name -> WalletNetwork.BITCOIN
             "TESTNET", "SIGNET", "REGTEST" -> throw IllegalArgumentException(UNSUPPORTED_NON_MAINNET_MESSAGE)
-            else -> default
+            else -> throw IllegalArgumentException("Unsupported wallet network: $rawNetwork")
         }
     }
 
@@ -768,11 +768,9 @@ object BitcoinUtils {
      * Parse a mempool.space-compatible fee estimation JSON string.
      *
      * Both `/api/v1/fees/precise` and `/api/v1/fees/recommended` use the
-     * same field names. Throws [IllegalArgumentException] when the response
-     * is structurally invalid (missing required buckets, non-numeric values,
-     * non-finite numbers, or implausible rates) so the caller can fall back
-     * instead of presenting attacker-controlled fees as legitimate quick-pick
-     * values.
+     * same field names. Missing buckets, malformed JSON, non-numeric values,
+     * non-finite numbers, non-positive values, or absurdly large rates throw
+     * [IllegalArgumentException].
      *
      * Buckets are coerced to a monotonically non-increasing series
      * (fastestFee >= halfHourFee >= hourFee >= minimumFee) and clamped to a
@@ -786,9 +784,9 @@ object BitcoinUtils {
                 throw IllegalArgumentException("Fee response is not valid JSON", e)
             }
 
-        fun required(name: String): Double {
+        fun bucket(name: String): Double {
             if (!json.has(name)) {
-                throw IllegalArgumentException("Fee response missing required field: $name")
+                throw IllegalArgumentException("Fee response is missing $name")
             }
             val value = json.optDouble(name, Double.NaN)
             if (value.isNaN() || value.isInfinite()) {
@@ -800,10 +798,10 @@ object BitcoinUtils {
             return value
         }
 
-        val fastest = required("fastestFee")
-        val halfHour = required("halfHourFee")
-        val hour = required("hourFee")
-        val minimum = required("minimumFee")
+        val fastest = bucket("fastestFee")
+        val halfHour = bucket("halfHourFee")
+        val hour = bucket("hourFee")
+        val minimum = bucket("minimumFee")
 
         // Coerce to a non-increasing series. Some misbehaving providers return
         // hourFee > fastestFee; the wallet UI cannot make sense of that and the

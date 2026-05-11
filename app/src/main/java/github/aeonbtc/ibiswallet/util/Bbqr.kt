@@ -150,6 +150,7 @@ object Bbqr {
             if (result != null) return true // already complete
 
             val trimmed = part.trim()
+            if (trimmed.length > InputLimits.QR_PART_CHARS) return false
             if (trimmed.length < HEADER_LEN) return false
             if (!(trimmed[0] == 'B' && trimmed[1] == '$')) return false
 
@@ -159,7 +160,14 @@ object Bbqr {
             val partIndex = base36ToInt(trimmed.substring(6, 8))
             val payload = trimmed.substring(8)
 
-            if (numParts < 1 || partIndex < 0 || partIndex >= numParts) return false
+            if (numParts < 1 ||
+                numParts > InputLimits.QR_PARTS ||
+                partIndex < 0 ||
+                partIndex >= numParts
+            ) {
+                return false
+            }
+            if (payload.length > InputLimits.QR_PART_CHARS) return false
 
             val prefix = trimmed.take(6)
 
@@ -176,7 +184,12 @@ object Bbqr {
 
             // Check if complete
             if (received.size == totalParts) {
-                result = joinParts(encoding, fileType, totalParts, received)
+                result =
+                    try {
+                        joinParts(encoding, fileType, totalParts, received)
+                    } catch (_: IllegalArgumentException) {
+                        return false
+                    }
             }
 
             return true
@@ -310,8 +323,12 @@ object Bbqr {
         val sb = StringBuilder()
         for (i in 0 until totalParts) {
             sb.append(parts[i] ?: "")
+            if (sb.length > InputLimits.QR_PAYLOAD_BYTES * 2) {
+                throw IllegalArgumentException("BBQr payload is too large")
+            }
         }
         val data = decodeData(sb.toString(), encoding)
+        require(data.size <= InputLimits.QR_PAYLOAD_BYTES) { "BBQr decoded payload is too large" }
         return JoinResult(data = data, fileType = fileType, encoding = encoding)
     }
 
@@ -445,6 +462,9 @@ object Bbqr {
                 val count = inflater.inflate(buf)
                 if (count == 0 && inflater.needsInput()) break
                 output.write(buf, 0, count)
+                if (output.size() > InputLimits.QR_PAYLOAD_BYTES) {
+                    throw IllegalArgumentException("BBQr decompressed payload is too large")
+                }
             }
             return output.toByteArray()
         } finally {

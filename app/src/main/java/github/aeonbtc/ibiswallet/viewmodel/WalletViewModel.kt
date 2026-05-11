@@ -46,12 +46,14 @@ import github.aeonbtc.ibiswallet.util.CertificateFirstUseException
 import github.aeonbtc.ibiswallet.util.CertificateInfo
 import github.aeonbtc.ibiswallet.util.CertificateMismatchException
 import github.aeonbtc.ibiswallet.util.CryptoUtils
+import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.ServerUrlValidator
 import github.aeonbtc.ibiswallet.util.BitcoinSendPreparationCacheKey
 import github.aeonbtc.ibiswallet.util.BitcoinSendPreparationState
 import github.aeonbtc.ibiswallet.util.buildMultiBitcoinSendPreparationKey
 import github.aeonbtc.ibiswallet.util.buildSingleBitcoinSendPreparationKey
+import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -122,6 +124,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private var heartbeatJob: Job? = null
 
     @Volatile private var isAppInBackground = false
+    @Volatile private var isAppSessionUnlocked = false
+    private var postUnlockBootstrapJob: Job? = null
 
     // Foreground-only BTC/fiat price refresh
     private var btcPriceRefreshJob: Job? = null
@@ -333,6 +337,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     context = appContext,
                     isInForeground = true,
                 )
+                if (!isAppSessionUnlocked) {
+                    return@AppLifecycleCoordinator
+                }
                 if (repository.getPriceSource() != SecureStorage.PRICE_SOURCE_OFF) {
                     fetchBtcPrice(force = true)
                     startBtcPriceRefreshLoop()
@@ -360,51 +367,95 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private fun isBackgroundKeepAliveActive(): Boolean =
         repository.isForegroundConnectivityEnabled()
 
+    fun onAppUnlocked() {
+        if (isAppSessionUnlocked && postUnlockBootstrapJob?.isActive == true) return
+        if (isAppSessionUnlocked && walletState.value.isInitialized) return
+
+        isAppSessionUnlocked = true
+        postUnlockBootstrapJob?.cancel()
+        postUnlockBootstrapJob =
+            viewModelScope.launch {
+                refreshServersState()
+                refreshPricePreferences()
+
+                if (repository.isWalletInitialized()) {
+                    _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+                    when (val result = repository.loadWallet()) {
+                        is WalletResult.Success -> {
+                            _uiState.value = _uiState.value.copy(isLoading = false)
+                        }
+                        is WalletResult.Error -> {
+                            _uiState.value =
+                                _uiState.value.copy(
+                                    isLoading = false,
+                                    error = result.message,
+                                )
+                        }
+                    }
+                }
+
+                if (!repository.isUserDisconnected()) {
+                    repository.getElectrumConfig()?.let { config ->
+                        connectToElectrum(config)
+                    } ?: run {
+                        _initialSyncComplete.value = true
+                    }
+                } else {
+                    // No auto-connect — mark initial sync as complete so
+                    // persistent notified-txid tracking works for offline mode.
+                    _initialSyncComplete.value = true
+                }
+
+                fetchFeeEstimates()
+                if (repository.isAppUpdateCheckEnabled()) {
+                    checkForAppUpdate()
+                }
+                if (_priceSourceState.value != SecureStorage.PRICE_SOURCE_OFF) {
+                    fetchBtcPrice()
+                    startBtcPriceRefreshLoop()
+                }
+            }
+    }
+
+    fun onAppLocked() {
+        if (!isAppSessionUnlocked && postUnlockBootstrapJob == null) return
+        isAppSessionUnlocked = false
+        postUnlockBootstrapJob?.cancel()
+        postUnlockBootstrapJob = null
+        connectionJob?.cancel()
+        connectionJob = null
+        appUpdateCheckJob?.cancel()
+        appUpdateCheckJob = null
+        btcPriceFetchJob?.cancel()
+        btcPriceFetchJob = null
+        stopBtcPriceRefreshLoop()
+        stopBackgroundSync()
+        stopHeartbeat()
+        stopReconnectRetry()
+        _initialSyncComplete.value = false
+        _uiState.value =
+            _uiState.value.copy(
+                isLoading = false,
+                isConnecting = false,
+                isConnected = false,
+                serverVersion = null,
+            )
+        ConnectivityKeepAlivePolicy.updateBitcoinState(
+            context = appContext,
+            connected = false,
+            electrumUsesTor = false,
+            externalTorRequired = false,
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.disconnect()
+            repository.unloadWalletFromMemoryForLock()
+        }
+    }
+
     init {
         // Initialize servers state
         refreshServersState()
-
-        fetchFeeEstimates()
-        if (repository.isAppUpdateCheckEnabled()) {
-            checkForAppUpdate()
-        }
         refreshPricePreferences()
-        if (_priceSourceState.value != SecureStorage.PRICE_SOURCE_OFF) {
-            fetchBtcPrice()
-            startBtcPriceRefreshLoop()
-        }
-
-        // Load existing wallet and auto-connect to Electrum on startup
-        viewModelScope.launch {
-            // Load wallet if one exists
-            if (repository.isWalletInitialized()) {
-                _uiState.value = _uiState.value.copy(isLoading = true)
-                when (val result = repository.loadWallet()) {
-                    is WalletResult.Success -> {
-                        _uiState.value = _uiState.value.copy(isLoading = false)
-                    }
-                    is WalletResult.Error -> {
-                        _uiState.value =
-                            _uiState.value.copy(
-                                isLoading = false,
-                                error = result.message,
-                            )
-                    }
-                }
-            }
-
-            // Auto-connect to saved Electrum server if available,
-            // unless the user explicitly disconnected last session.
-            if (!repository.isUserDisconnected()) {
-                repository.getElectrumConfig()?.let { config ->
-                    connectToElectrum(config)
-                }
-            } else {
-                // No auto-connect — mark initial sync as complete so
-                // persistent notified-txid tracking works for offline mode.
-                _initialSyncComplete.value = true
-            }
-        }
 
         // Refresh UTXOs asynchronously when wallet sync state changes in a way that can
         // affect confirmation status, balance, or the active wallet.
@@ -642,6 +693,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * and re-subscribe (the subscription socket likely died in background).
      */
     private suspend fun verifyConnectionOnForeground() {
+        if (!isAppSessionUnlocked) return
         if (connectionJob?.isActive == true) return
 
         val alive =
@@ -681,6 +733,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Shows "Connecting" status in UI.
      */
     private suspend fun reconnectOnForeground() {
+        if (!isAppSessionUnlocked) return
         if (repository.isUserDisconnected()) return
         if (connectionJob?.isActive == true) return
         val config = repository.getElectrumConfig() ?: return
@@ -804,6 +857,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Automatically enables/disables Tor based on server type
      */
     fun connectToElectrum(config: ElectrumConfig) {
+        if (!isAppSessionUnlocked) return
         val previousJob = connectionJob
         stopBackgroundSync()
         stopHeartbeat()
@@ -2563,6 +2617,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Automatically enables/disables Tor based on server type
      */
     fun connectToServer(serverId: String) {
+        if (!isAppSessionUnlocked) return
         val previousJob = connectionJob
         stopBackgroundSync()
         stopHeartbeat()
@@ -2961,7 +3016,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     ): JSONObject {
         return withContext(Dispatchers.IO) {
             val rawBytes = getApplication<Application>().contentResolver.openInputStream(uri)?.use {
-                it.readBytes()
+                it.readBytesWithLimit(InputLimits.BACKUP_FILE_BYTES)
             } ?: throw IllegalStateException("Could not read file")
 
             val fileJson = JSONObject(String(rawBytes, Charsets.UTF_8))
@@ -3049,9 +3104,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     if (shouldImportWallet) {
                         try {
                             val network = BitcoinUtils.parseSupportedWalletNetwork(parsed.network)
-                            val seedFormat = try {
-                                SeedFormat.valueOf(parsed.seedFormat)
-                            } catch (_: Exception) { SeedFormat.BIP39 }
+                            val seedFormat =
+                                parsed.seedFormat
+                                    .takeIf { it.isNotBlank() }
+                                    ?.let { SeedFormat.valueOf(it) }
+                                    ?: SeedFormat.BIP39
 
                             val gapLimit = walletObj.optInt("gapLimit", StoredWallet.DEFAULT_GAP_LIMIT)
                             val fingerprint = walletObj.optString("masterFingerprint", "").ifBlank { null }
@@ -3541,7 +3598,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         return withContext(Dispatchers.IO) {
             val rawBytes =
                 getApplication<Application>().contentResolver.openInputStream(uri)?.use {
-                    it.readBytes()
+                    it.readBytesWithLimit(InputLimits.BACKUP_FILE_BYTES)
                 } ?: throw IllegalStateException("Could not read file")
 
             val fileJson = JSONObject(String(rawBytes, Charsets.UTF_8))
@@ -3599,9 +3656,17 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
         val seedFormat =
             try {
-                SeedFormat.valueOf(parsed.seedFormat)
+                parsed.seedFormat
+                    .takeIf { it.isNotBlank() }
+                    ?.let { SeedFormat.valueOf(it) }
+                    ?: SeedFormat.BIP39
             } catch (_: Exception) {
-                SeedFormat.BIP39
+                viewModelScope.launch {
+                    val message = "Invalid backup file"
+                    _uiState.value = _uiState.value.copy(error = message)
+                    _events.emit(WalletEvent.Error(message))
+                }
+                return
             }
         val multisigConfig =
             keyMaterialObj.optJSONObject("multisigConfig")?.let {
@@ -4288,6 +4353,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             _feeEstimationState.value = FeeEstimationResult.Disabled
             return
         }
+        if (!isAppSessionUnlocked) return
 
         viewModelScope.launch {
             _feeEstimationState.value = FeeEstimationResult.Loading
@@ -4446,6 +4512,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             _btcPriceState.value = null
             return
         }
+        if (!isAppSessionUnlocked) return
 
         val now = SystemClock.elapsedRealtime()
         val recentlyFetchedSameQuote =
@@ -4497,6 +4564,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             _appUpdatePrompt.value = null
             return
         }
+        if (!isAppSessionUnlocked) return
 
         val now = SystemClock.elapsedRealtime()
         if (appUpdateCheckJob?.isActive == true) return
@@ -4576,6 +4644,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private suspend fun refreshHistoricalTxBtcPrices(request: HistoricalTxPriceRequest) {
+        if (!isAppSessionUnlocked) {
+            _historicalTxBtcPriceState.value = emptyMap()
+            return
+        }
         val supportsHistoricalPricing =
             request.priceSource == SecureStorage.PRICE_SOURCE_MEMPOOL ||
                 request.priceSource == SecureStorage.PRICE_SOURCE_MEMPOOL_ONION
@@ -4629,6 +4701,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun startBtcPriceRefreshLoop() {
+        if (!isAppSessionUnlocked) return
         if (repository.getPriceSource() == SecureStorage.PRICE_SOURCE_OFF) return
         if (btcPriceRefreshJob?.isActive == true) return
 
