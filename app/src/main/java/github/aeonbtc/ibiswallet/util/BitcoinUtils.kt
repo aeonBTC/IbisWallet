@@ -689,6 +689,7 @@ object BitcoinUtils {
         val keyMaterial: String,
         val isWatchOnly: Boolean,
         val customDerivationPath: String?,
+        val passphrase: String? = null,
     )
 
     /**
@@ -721,21 +722,18 @@ object BitcoinUtils {
             "BIP39"
         }
 
-        val mnemonic = keyMaterialJson.optString("mnemonic", null.toString()).let {
-            if (it == "null" || it.isBlank()) null else it
-        }
-        val xpub = keyMaterialJson.optString("extendedPublicKey", null.toString()).let {
-            if (it == "null" || it.isBlank()) null else it
-        }
+        val mnemonic = keyMaterialJson.optNonBlankString("mnemonic")
+        val privateKey = keyMaterialJson.optNonBlankString("privateKey")
+        val watchAddress = keyMaterialJson.optNonBlankString("watchAddress")
+        val xpub = keyMaterialJson.optNonBlankString("extendedPublicKey")
+        val passphrase = keyMaterialJson.optNonBlankString("passphrase")
 
-        val keyMaterial = mnemonic ?: xpub
+        val keyMaterial = mnemonic ?: privateKey ?: watchAddress ?: xpub
             ?: throw IllegalStateException("No key material found in backup")
 
-        val isWatchOnly = mnemonic == null
+        val isWatchOnly = mnemonic == null && privateKey == null
 
-        val customDerivationPath = walletJson.optString("derivationPath", null.toString()).let {
-            if (it == "null" || it.isBlank()) null else it
-        }
+        val customDerivationPath = walletJson.optNonBlankString("derivationPath")
 
         return BackupWalletData(
             name = walletJson.optString("name", "Restored Wallet"),
@@ -745,8 +743,14 @@ object BitcoinUtils {
             keyMaterial = keyMaterial,
             isWatchOnly = isWatchOnly,
             customDerivationPath = customDerivationPath,
+            passphrase = passphrase,
         )
     }
+
+    private fun org.json.JSONObject.optNonBlankString(name: String): String? =
+        optString(name, null.toString()).let { value ->
+            if (value == "null" || value.isBlank()) null else value
+        }
 
     // ── Fee Estimation JSON Parsing ──────────────────────────────────
 

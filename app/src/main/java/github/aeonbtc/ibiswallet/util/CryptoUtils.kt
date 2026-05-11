@@ -1,8 +1,11 @@
 package github.aeonbtc.ibiswallet.util
 
+import java.security.ProviderException
 import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
+import javax.crypto.ShortBufferException
+import javax.crypto.AEADBadTagException
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
@@ -88,7 +91,16 @@ object CryptoUtils {
             val aesKey = deriveKey(passwordChars, payload.salt, iterations)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.DECRYPT_MODE, aesKey, GCMParameterSpec(128, payload.iv))
-            return cipher.doFinal(payload.ciphertext)
+            return try {
+                cipher.doFinal(payload.ciphertext)
+            } catch (e: ProviderException) {
+                if (e.cause is ShortBufferException) {
+                    throw AEADBadTagException("Ciphertext is truncated or invalid").apply {
+                        initCause(e)
+                    }
+                }
+                throw e
+            }
         } finally {
             passwordChars.fill('\u0000')
         }

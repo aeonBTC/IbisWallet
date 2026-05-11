@@ -463,7 +463,7 @@ fun BalanceScreen(
                                 Icon(
                                     imageVector = if (privacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                     contentDescription = stringResource(R.string.loc_990bb023),
-                                    tint = TextSecondary,
+                                    tint = if (privacyMode) BitcoinOrange else TextSecondary,
                                     modifier = Modifier.size(24.dp),
                                 )
                             }

@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.selects.select
+import org.bitcoindevkit.Transaction
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedOutputStream
@@ -534,6 +535,11 @@ class CachingElectrumProxy(
                     if (txid.isBlank()) return null
 
                     val cachedHex = electrumCache.getRawTx(txid) ?: return null
+                    if (!rawTxHexMatchesTxid(txid, cachedHex)) {
+                        electrumCache.deleteRawTx(txid)
+                        if (BuildConfig.DEBUG) Log.w(TAG, "Cache DROP: tx $txid failed txid verification")
+                        return null
+                    }
                     if (BuildConfig.DEBUG) Log.d(TAG, "Cache HIT: tx $txid")
                     JSONObject().apply {
                         put("jsonrpc", "2.0")
@@ -614,6 +620,10 @@ class CachingElectrumProxy(
                 val hex = json.optString("result", "")
                 if (hex.isBlank() || hex.length < 20) return
 
+                if (!rawTxHexMatchesTxid(txid, hex)) {
+                    if (BuildConfig.DEBUG) Log.w(TAG, "Cache SKIP: tx $txid response failed txid verification")
+                    return
+                }
                 electrumCache.putRawTx(txid, hex)
                 if (BuildConfig.DEBUG) Log.d(TAG, "Cache STORE: tx $txid (${hex.length / 2} bytes)")
                 return
@@ -1392,8 +1402,25 @@ class CachingElectrumProxy(
             if (json.has("error") && !json.isNull("error")) return
             val hex = json.optString("result", "")
             if (hex.isBlank() || hex.length < 20) return
+            if (!rawTxHexMatchesTxid(txid, hex)) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Cache SKIP: tx $txid pipeline response failed txid verification")
+                return
+            }
             txCache.putRawTx(txid, hex)
         } catch (_: Exception) {
+        }
+    }
+
+    private fun rawTxHexMatchesTxid(
+        expectedTxid: String,
+        txHex: String,
+    ): Boolean {
+        return try {
+            if (txHex.length % 2 != 0) return false
+            val txBytes = txHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            Transaction(txBytes).computeTxid().toString().equals(expectedTxid, ignoreCase = true)
+        } catch (_: Exception) {
+            false
         }
     }
 

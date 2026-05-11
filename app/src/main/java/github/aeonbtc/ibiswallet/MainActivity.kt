@@ -18,6 +18,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Log
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -804,6 +805,14 @@ class MainActivity : FragmentActivity() {
                     override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                         super.onAuthenticationSucceeded(result)
                         biometricAutoCancelHandler.removeCallbacksAndMessages(null)
+                        if (result.cryptoObject == null) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                getString(R.string.loc_0039435a),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                            return
+                        }
                         // Biometric always opens the real wallet
                         walletViewModel.exitDuressMode()
                         appUnlockCounter++
@@ -860,7 +869,12 @@ class MainActivity : FragmentActivity() {
             if (cryptoObject != null) {
                 biometricPrompt?.authenticate(promptInfo, cryptoObject)
             } else {
-                biometricPrompt?.authenticate(promptInfo)
+                Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.loc_0039435a),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                return@launch
             }
 
             // In duress+biometric mode, auto-cancel the biometric prompt after 2 seconds

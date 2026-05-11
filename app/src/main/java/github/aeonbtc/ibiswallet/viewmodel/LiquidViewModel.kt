@@ -1280,17 +1280,13 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             SwapService.SIDESWAP -> {
                 val isPegIn = synchronizedPendingSwap.direction == SwapDirection.BTC_TO_LBTC
                 val status = repository.sideSwapClient.getPegStatus(synchronizedPendingSwap.swapId, isPegIn)
-                val refreshed =
-                    synchronizedPendingSwap.copy(
-                        depositAddress = status.addr.takeIf { it.isNotBlank() } ?: synchronizedPendingSwap.depositAddress,
-                        receiveAddress = status.addrRecv.takeIf { it.isNotBlank() } ?: synchronizedPendingSwap.receiveAddress,
-                    )
+                ensureSideSwapStatusMatchesReview(synchronizedPendingSwap, status.addr, status.addrRecv)
                 val hasActivity = status.transactions.isNotEmpty()
                 if (hasActivity) {
-                    val resumedStatus = pendingSwapStatus(refreshed.copy(phase = PendingSwapPhase.IN_PROGRESS))
+                    val resumedStatus = pendingSwapStatus(synchronizedPendingSwap.copy(phase = PendingSwapPhase.IN_PROGRESS))
                     val resumed =
                         setSwapInProgress(
-                            refreshed,
+                            synchronizedPendingSwap,
                             status = resumedStatus,
                             phase = PendingSwapPhase.IN_PROGRESS,
                         )
@@ -1299,11 +1295,11 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     startSwapMonitor(resumed)
                     throw Exception("This SideSwap order is already active. Monitoring resumed.")
                 }
-                if (fromResume && nowMs() - refreshed.createdAt > REVIEW_ORDER_VALIDITY_MS) {
+                if (fromResume && nowMs() - synchronizedPendingSwap.createdAt > REVIEW_ORDER_VALIDITY_MS) {
                     clearPreparedSwap()
                     throw Exception("Prepared SideSwap order is stale after restart. Create a new review.")
                 }
-                val updated = refreshed.copy(status = "")
+                val updated = synchronizedPendingSwap.copy(status = "")
                 savePreparedSwap(updated)
                 updated
             }
@@ -1326,6 +1322,23 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 savePreparedSwap(updated)
                 updated
             }
+        }
+    }
+
+    private fun ensureSideSwapStatusMatchesReview(
+        pendingSwap: PendingSwapSession,
+        depositAddress: String,
+        receiveAddress: String,
+    ) {
+        val returnedDeposit = depositAddress.takeIf { it.isNotBlank() }
+        if (returnedDeposit != null && returnedDeposit != pendingSwap.depositAddress) {
+            throw Exception("SideSwap deposit address changed. Create a new review before funding.")
+        }
+
+        val reviewedReceive = pendingSwap.receiveAddress.orEmpty()
+        val returnedReceive = receiveAddress.takeIf { it.isNotBlank() }
+        if (returnedReceive != null && returnedReceive != reviewedReceive) {
+            throw Exception("SideSwap receive address changed. Create a new review before funding.")
         }
     }
 
@@ -3681,8 +3694,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         launchLiquidJob {
-            var preview = (_sendState.value as? LiquidSendState.ReviewReady)?.preview
-            var executionPlan = preview?.executionPlan
+            val preview = (_sendState.value as? LiquidSendState.ReviewReady)?.preview
+            val executionPlan = preview?.executionPlan
             if (preview == null || executionPlan == null || preview.kind == LiquidSendKind.LBTC) {
                 _sendState.value = LiquidSendState.Failed("Review the Lightning payment before confirming.", preview)
                 return@launchLiquidJob
@@ -3694,14 +3707,17 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         status = "Preparing Boltz lockup details...",
                         canDismiss = false,
                     )
-                    executionPlan = repository.prepareLightningPaymentForConfirmation(executionPlan)
-                    preview = repository.resolveLightningPaymentPreview(
-                        executionPlan = executionPlan,
+                    val preparedPlan = repository.prepareLightningPaymentForConfirmation(executionPlan)
+                    val preparedPreview = repository.resolveLightningPaymentPreview(
+                        executionPlan = preparedPlan,
                         kind = preview.kind,
                         feeRateSatPerVb = preview.feeRate,
                         selectedUtxos = selectedUtxos,
                         label = label,
                     )
+                    _sendState.value = LiquidSendState.ReviewReady(preparedPreview)
+                    _events.emit(LiquidEvent.Error("Lightning payment details prepared. Review again before funding."))
+                    return@launchLiquidJob
                 }
                 when (executionPlan) {
                     is LightningPaymentExecutionPlan.BoltzSwap -> {
@@ -5435,10 +5451,19 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         ?: return@withLock
                     _swapState.value = SwapState.PreparingReview
                     val validated = validatePendingSwapForExecution(persisted)
+                    val reviewedSelectedUtxos = ensureSwapFundingSelectionMatchesReview(validated, selectedUtxos)
                     val active =
                         when (validated.service) {
-                            SwapService.SIDESWAP -> executeSideSwapPeg(validated, selectedUtxos, sendBitcoinFunding)
-                            SwapService.BOLTZ -> executeBoltzChainSwap(validated, selectedUtxos, sendBitcoinFunding)
+                            SwapService.SIDESWAP -> executeSideSwapPeg(
+                                validated,
+                                reviewedSelectedUtxos,
+                                sendBitcoinFunding,
+                            )
+                            SwapService.BOLTZ -> executeBoltzChainSwap(
+                                validated,
+                                reviewedSelectedUtxos,
+                                sendBitcoinFunding,
+                            )
                         }
                     clearPreparedSwap()
                     upsertPendingSwap(active)
@@ -5462,6 +5487,18 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+    }
+
+    private fun ensureSwapFundingSelectionMatchesReview(
+        pendingSwap: PendingSwapSession,
+        selectedUtxos: List<UtxoInfo>?,
+    ): List<UtxoInfo>? {
+        val reviewedOutpoints = pendingSwap.selectedFundingOutpoints
+        val currentOutpoints = selectedUtxos?.map { it.outpoint }.orEmpty()
+        if (reviewedOutpoints != currentOutpoints) {
+            throw Exception("Funding selection changed. Create a new review before funding.")
+        }
+        return selectedUtxos?.takeIf { it.isNotEmpty() }
     }
 
     private suspend fun executeSideSwapPeg(

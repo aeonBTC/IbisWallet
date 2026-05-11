@@ -2164,7 +2164,18 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             val isHex = data.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
             val result =
                 if (isHex && data.length % 2 == 0 && data.length > 20) {
-                    repository.broadcastRawTx(data, pendingLabel, onProgress)
+                    if (unsignedPsbt == null) {
+                        WalletResult.Error("Original PSBT missing. Cannot verify raw transaction before broadcast.")
+                    } else {
+                        repository.broadcastRawTx(
+                            txHex = data,
+                            pendingLabel = pendingLabel,
+                            onProgress = onProgress,
+                            unsignedPsbtBase64 = unsignedPsbt,
+                        )
+                    }
+                } else if (unsignedPsbt == null) {
+                    WalletResult.Error("Original PSBT missing. Cannot verify signed PSBT before broadcast.")
                 } else {
                     repository.broadcastSignedPsbt(data, unsignedPsbt, pendingLabel, onProgress)
                 }
@@ -2691,7 +2702,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         includeAppSettings: Boolean,
         password: String?,
     ) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 _uiState.value = _uiState.value.copy(isLoading = true, error = null)
 
@@ -2723,6 +2734,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         })
                         put("keyMaterial", JSONObject().apply {
                             keyMaterial.mnemonic?.let { put("mnemonic", it) }
+                            keyMaterial.passphrase?.let { put("passphrase", it) }
                             keyMaterial.extendedPublicKey?.let { put("extendedPublicKey", it) }
                             keyMaterial.watchAddress?.let { put("watchAddress", it) }
                             keyMaterial.privateKey?.let { put("privateKey", it) }
@@ -2758,26 +2770,26 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         if (walletId in labelWalletIdSet) {
                             val addrLabels = repository.getAllAddressLabelsForWallet(walletId)
                             val txLabels = repository.getAllTransactionLabelsForWallet(walletId)
-                            val liquidTxLabels = repository.getAllLiquidTransactionLabelsForWallet(walletId)
+                            val liquidMetadata = repository.getLiquidMetadataSnapshotForWallet(walletId)
                             val sparkAddrLabels = repository.getAllSparkAddressLabelsForWallet(walletId)
                             val sparkTxLabels = repository.getAllSparkTransactionLabelsForWallet(walletId)
                             put("labels", JSONObject().apply {
                                 put("addresses", JSONObject().apply { addrLabels.forEach { (k, v) -> put(k, v) } })
                                 put("transactions", JSONObject().apply { txLabels.forEach { (k, v) -> put(k, v) } })
-                                put("liquidTransactions", JSONObject().apply { liquidTxLabels.forEach { (k, v) -> put(k, v) } })
+                                put("liquidTransactions", JSONObject().apply {
+                                    liquidMetadata.txLabels.forEach { (k, v) -> put(k, v) }
+                                })
                                 put("sparkAddresses", JSONObject().apply { sparkAddrLabels.forEach { (k, v) -> put(k, v) } })
                                 put("sparkTransactions", JSONObject().apply { sparkTxLabels.forEach { (k, v) -> put(k, v) } })
                             })
 
-                            val liquidTxSources = repository.getAllLiquidTransactionSourcesForWallet(walletId)
-                            val liquidSwapDetails = repository.getAllLiquidSwapDetailsForWallet(walletId)
                             val bitcoinSwapDetails = repository.getAllTransactionSwapDetailsForWallet(walletId)
-                            if (liquidTxSources.isNotEmpty() || liquidSwapDetails.isNotEmpty()) {
+                            if (liquidMetadata.txSources.isNotEmpty() || liquidMetadata.txSwapDetails.isNotEmpty()) {
                                 put("liquidMetadata", JSONObject().apply {
                                     put("transactionSources", JSONObject().apply {
-                                        liquidTxSources.forEach { (txid, source) -> put(txid, source.name) }
+                                        liquidMetadata.txSources.forEach { (txid, source) -> put(txid, source.name) }
                                     })
-                                    put("swapDetails", buildSwapDetailsJsonObject(liquidSwapDetails))
+                                    put("swapDetails", buildSwapDetailsJsonObject(liquidMetadata.txSwapDetails))
                                 })
                             }
                             if (bitcoinSwapDetails.isNotEmpty()) {
@@ -2843,6 +2855,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             put("psbtQrBrightness", repository.getPsbtQrBrightness().toDouble())
                             put("nfcEnabled", repository.isNfcEnabled())
                             put("privacyMode", repository.getPrivacyMode())
+                            put("privacyModeHintSeen", repository.hasSeenPrivacyModeHint())
                             put("walletNotificationsEnabled", repository.isWalletNotificationsEnabled())
                             put("foregroundConnectivityEnabled", repository.isForegroundConnectivityEnabled())
                             put("appUpdateCheckEnabled", repository.isAppUpdateCheckEnabled())
@@ -2949,9 +2962,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
             if (selectedWalletIdSet.isNotEmpty() || labelWalletIdSet.isNotEmpty()) {
                 val walletsArray = backupJson.optJSONArray("wallets") ?: org.json.JSONArray()
-                val existingMnemonics = repository.getAllWalletIds().mapNotNull { id ->
-                    repository.getKeyMaterial(id)?.mnemonic
-                }.toSet()
+                val existingWalletIdsByIdentity =
+                    repository.getAllWalletIds().mapNotNull { id ->
+                        repository.getKeyMaterial(id)?.let { material ->
+                            backupIdentityForKeyMaterial(material)?.let { identity -> identity to id }
+                        }
+                    }.toMap().toMutableMap()
 
                 for (i in 0 until walletsArray.length()) {
                     val walletSelectionId = i.toString()
@@ -2962,27 +2978,36 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     val entry = walletsArray.getJSONObject(i)
                     val walletObj = entry.getJSONObject("wallet")
                     val keyMaterialObj = entry.getJSONObject("keyMaterial")
-                    val mnemonic = keyMaterialObj.optString("mnemonic", "")
+                    val parsed =
+                        try {
+                            BitcoinUtils.parseBackupJson(walletObj, keyMaterialObj)
+                        } catch (e: Exception) {
+                            if (BuildConfig.DEBUG) {
+                                android.util.Log.w("WalletViewModel", "Skip wallet import: ${e.message}")
+                            }
+                            if (shouldImportWallet) {
+                                walletsSkipped++
+                            }
+                            continue
+                        }
+                    val backupIdentity = backupIdentityForBackupJson(keyMaterialObj)
 
-                    if (mnemonic.isNotBlank() && mnemonic in existingMnemonics) {
+                    val existingId = backupIdentity?.let { existingWalletIdsByIdentity[it] }
+                    if (existingId != null) {
                         if (shouldImportWallet) {
                             walletsSkipped++
                         }
-                        val existingId = findWalletIdByMnemonic(mnemonic)
-                        if (existingId != null) {
-                            if (shouldImportWallet) {
-                                restoreWalletSettings(existingId, entry)
-                            }
-                            if (shouldImportLabels) {
-                                restoreLabelsForWallet(existingId, entry)
-                            }
+                        if (shouldImportWallet) {
+                            restoreWalletSettings(existingId, entry)
+                        }
+                        if (shouldImportLabels) {
+                            restoreLabelsForWallet(existingId, entry)
                         }
                         continue
                     }
 
                     if (shouldImportWallet) {
                         try {
-                            val parsed = BitcoinUtils.parseBackupJson(walletObj, keyMaterialObj)
                             val network = BitcoinUtils.parseSupportedWalletNetwork(parsed.network)
                             val seedFormat = try {
                                 SeedFormat.valueOf(parsed.seedFormat)
@@ -2999,6 +3024,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                 name = parsed.name,
                                 keyMaterial = parsed.keyMaterial,
                                 addressType = parsed.addressType,
+                                passphrase = parsed.passphrase,
                                 customDerivationPath = parsed.customDerivationPath,
                                 network = network,
                                 isWatchOnly = parsed.isWatchOnly,
@@ -3014,6 +3040,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
                             val newWalletId = repository.getActiveWalletId()
                             if (newWalletId != null) {
+                                backupIdentity?.let { existingWalletIdsByIdentity[it] = newWalletId }
                                 restoreWalletSettings(newWalletId, entry)
                                 if (shouldImportLabels) {
                                     restoreLabelsForWallet(newWalletId, entry)
@@ -3067,11 +3094,59 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun findWalletIdByMnemonic(mnemonic: String): String? {
-        return repository.getAllWalletIds().firstOrNull { id ->
-            repository.getKeyMaterial(id)?.mnemonic == mnemonic
-        }
+    private fun backupIdentityForKeyMaterial(material: WalletRepository.WalletKeyMaterial): String? {
+        val typeAndValue =
+            when {
+                material.mnemonic != null -> "mnemonic:${material.mnemonic.trim()}"
+                material.privateKey != null -> "privateKey:${material.privateKey.trim()}"
+                material.watchAddress != null -> "watchAddress:${material.watchAddress.trim()}"
+                material.extendedPublicKey != null -> "extendedPublicKey:${material.extendedPublicKey.trim()}"
+                else -> null
+            } ?: return null
+
+        return backupIdentity(
+            typeAndValue = typeAndValue,
+            passphrase = material.passphrase,
+            localCosignerKeyMaterial = material.localCosignerKeyMaterial,
+        )
     }
+
+    private fun backupIdentityForBackupJson(keyMaterialObj: JSONObject): String? {
+        val mnemonic = keyMaterialObj.optBackupString("mnemonic")
+        val privateKey = keyMaterialObj.optBackupString("privateKey")
+        val watchAddress = keyMaterialObj.optBackupString("watchAddress")
+        val extendedPublicKey = keyMaterialObj.optBackupString("extendedPublicKey")
+        val typeAndValue =
+            when {
+                mnemonic != null -> "mnemonic:${mnemonic.trim()}"
+                privateKey != null -> "privateKey:${privateKey.trim()}"
+                watchAddress != null -> "watchAddress:${watchAddress.trim()}"
+                extendedPublicKey != null -> "extendedPublicKey:${extendedPublicKey.trim()}"
+                else -> null
+            } ?: return null
+
+        return backupIdentity(
+            typeAndValue = typeAndValue,
+            passphrase = keyMaterialObj.optBackupString("passphrase"),
+            localCosignerKeyMaterial = keyMaterialObj.optBackupString("localCosignerKeyMaterial"),
+        )
+    }
+
+    private fun backupIdentity(
+        typeAndValue: String,
+        passphrase: String?,
+        localCosignerKeyMaterial: String?,
+    ): String =
+        listOf(
+            typeAndValue,
+            "passphrase:${passphrase ?: ""}",
+            "localCosigner:${localCosignerKeyMaterial?.trim() ?: ""}",
+        ).joinToString("|")
+
+    private fun JSONObject.optBackupString(name: String): String? =
+        optString(name, null.toString()).let { value ->
+            if (value == "null" || value.isBlank()) null else value
+        }
 
     private fun buildSwapDetailsJsonObject(swapDetails: Map<String, LiquidSwapDetails>): JSONObject =
         JSONObject().apply {
@@ -3274,6 +3349,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (settings.has("nfcEnabled")) repository.setNfcEnabled(settings.getBoolean("nfcEnabled"))
         if (settings.has("privacyMode")) repository.setPrivacyMode(settings.getBoolean("privacyMode"))
+        if (settings.has("privacyModeHintSeen")) {
+            repository.setHasSeenPrivacyModeHint(settings.getBoolean("privacyModeHintSeen"))
+        }
         if (settings.has("walletNotificationsEnabled")) repository.setWalletNotificationsEnabled(settings.getBoolean("walletNotificationsEnabled"))
         if (settings.has("foregroundConnectivityEnabled")) {
             repository.setForegroundConnectivityEnabled(settings.getBoolean("foregroundConnectivityEnabled"))
@@ -3452,6 +3530,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 name = parsed.name,
                 keyMaterial = parsed.keyMaterial,
                 addressType = parsed.addressType,
+                passphrase = parsed.passphrase,
                 customDerivationPath = parsed.customDerivationPath,
                 network = network,
                 isWatchOnly = parsed.isWatchOnly,

@@ -477,7 +477,12 @@ fun ImportWalletScreen(
                     } else {
                         ""
                     }
-                val title = pluralStringResource(R.plurals.import_seed_invalid_title, invalidWords.size)
+                val title =
+                    pluralStringResource(
+                        R.plurals.import_seed_invalid_title,
+                        invalidWords.size,
+                        invalidWords.size,
+                    )
                 stringResource(R.string.import_seed_invalid_line, title, badWords, moreSuffix) to ErrorRed
             }
             isValidWordCount -> pluralStringResource(R.plurals.import_seed_words_entered, wordCount, wordCount) to TextSecondary

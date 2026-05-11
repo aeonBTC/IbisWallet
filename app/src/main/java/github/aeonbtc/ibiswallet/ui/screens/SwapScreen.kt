@@ -532,6 +532,20 @@ fun SwapScreen(
             limitWarning == null &&
             destinationValidationError == null &&
             fundingFeeRateValidationError == null
+    val requestSwapReview: () -> Unit = {
+        amountSats?.let { sats ->
+            onPrepareSwapReview(
+                direction,
+                sats,
+                selectedService,
+                selectedFundingUtxos.toList().takeIf { it.isNotEmpty() },
+                effectiveCustomDestination.trim().takeIf { it.isNotBlank() },
+                txLabel,
+                isMaxMode,
+                fundingFeeRateOverride,
+            )
+        }
+    }
 
     LaunchedEffect(preparedSwap?.swapId) {
         if (preparedSwap != null && executingReviewSwapId == preparedSwap.swapId) {
@@ -729,11 +743,15 @@ fun SwapScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
+                        modifier = Modifier.weight(1f),
                         text = stringResource(R.string.loc_f0100030),
                         style = MaterialTheme.typography.titleLarge,
                         color = TextPrimary,
                         fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                    Spacer(modifier = Modifier.width(12.dp))
                     val coinControlActive = selectedFundingUtxos.isNotEmpty()
                     val hasFundingUtxos = selectableFundingUtxos.isNotEmpty()
                     Card(
@@ -1452,20 +1470,7 @@ fun SwapScreen(
         when (swapState) {
             is SwapState.Idle -> {
                 Button(
-                    onClick = {
-                        amountSats?.let { sats ->
-                            onPrepareSwapReview(
-                                direction,
-                                sats,
-                                selectedService,
-                                selectedFundingUtxos.toList().takeIf { it.isNotEmpty() },
-                                effectiveCustomDestination.trim().takeIf { it.isNotBlank() },
-                                txLabel,
-                                isMaxMode,
-                                fundingFeeRateOverride,
-                            )
-                        }
-                    },
+                    onClick = requestSwapReview,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp),
@@ -1737,10 +1742,11 @@ fun SwapScreen(
                     }
                 } else {
                     Button(
-                        onClick = { onResetSwap() },
+                        onClick = requestSwapReview,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp),
+                        enabled = canRequestQuote && broadcastingSwapId == null,
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
                     ) {
@@ -1880,7 +1886,7 @@ private fun PendingSwapsCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = stringResource(R.string.loc_36c054ad),
+                    text = pendingSwaps.size.toString(),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
                     fontWeight = FontWeight.SemiBold,
