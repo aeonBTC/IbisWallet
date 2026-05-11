@@ -1139,6 +1139,7 @@ class BitcoinUtilsTest : FunSpec({
             }
             val keyMaterial = org.json.JSONObject().apply {
                 put("mnemonic", "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")
+                put("passphrase", "TREZOR")
                 put("extendedPublicKey", "xpub6ABC")
             }
 
@@ -1150,6 +1151,7 @@ class BitcoinUtilsTest : FunSpec({
             result.keyMaterial shouldBe "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
             result.isWatchOnly shouldBe false
             result.customDerivationPath shouldBe "86'/0'/0'"
+            result.passphrase shouldBe "TREZOR"
         }
 
         test("watch-only backup (no mnemonic, only xpub)") {
@@ -1165,6 +1167,48 @@ class BitcoinUtilsTest : FunSpec({
             val result = BitcoinUtils.parseBackupJson(wallet, keyMaterial)
             result.keyMaterial shouldBe "xpub6CatLookfBzE1..."
             result.isWatchOnly shouldBe true
+        }
+
+        test("WIF backup restores private key as spendable wallet") {
+            val wallet = org.json.JSONObject().apply {
+                put("name", "Private Key")
+                put("addressType", "SEGWIT")
+            }
+            val keyMaterial = org.json.JSONObject().apply {
+                put("privateKey", "L1privateKeyMaterialFromExport")
+                put("extendedPublicKey", "xpub6ShouldNotWin")
+            }
+
+            val result = BitcoinUtils.parseBackupJson(wallet, keyMaterial)
+            result.keyMaterial shouldBe "L1privateKeyMaterialFromExport"
+            result.isWatchOnly shouldBe false
+        }
+
+        test("single address backup restores watch address as watch-only wallet") {
+            val wallet = org.json.JSONObject().apply {
+                put("name", "Watched Address")
+                put("addressType", "SEGWIT")
+            }
+            val keyMaterial = org.json.JSONObject().apply {
+                put("watchAddress", "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+            }
+
+            val result = BitcoinUtils.parseBackupJson(wallet, keyMaterial)
+            result.keyMaterial shouldBe "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+            result.isWatchOnly shouldBe true
+        }
+
+        test("blank passphrase is treated as missing") {
+            val wallet = org.json.JSONObject().apply {
+                put("name", "No Passphrase")
+            }
+            val keyMaterial = org.json.JSONObject().apply {
+                put("mnemonic", "test mnemonic words")
+                put("passphrase", "")
+            }
+
+            val result = BitcoinUtils.parseBackupJson(wallet, keyMaterial)
+            result.passphrase shouldBe null
         }
 
         test("missing addressType defaults to SEGWIT") {
@@ -1222,7 +1266,7 @@ class BitcoinUtilsTest : FunSpec({
             result.seedFormat shouldBe "BIP39"
         }
 
-        test("invalid addressType defaults to SEGWIT") {
+        test("invalid addressType is rejected") {
             val wallet = org.json.JSONObject().apply {
                 put("name", "Test")
                 put("addressType", "INVALID_TYPE")
@@ -1231,8 +1275,9 @@ class BitcoinUtilsTest : FunSpec({
                 put("mnemonic", "test words")
             }
 
-            val result = BitcoinUtils.parseBackupJson(wallet, keyMaterial)
-            result.addressType shouldBe AddressType.SEGWIT
+            shouldThrow<IllegalArgumentException> {
+                BitcoinUtils.parseBackupJson(wallet, keyMaterial)
+            }.message shouldContain "Unsupported address type"
         }
 
         test("nested SegWit addressType is rejected") {
@@ -1357,22 +1402,18 @@ class BitcoinUtilsTest : FunSpec({
             result.minimumFee shouldBe 5.7
         }
 
-        test("missing fields default to 1.0") {
+        test("missing fields reject the response") {
             val json = """{"fastestFee":10}"""
-            val result = BitcoinUtils.parseFeeEstimatesJson(json)
-            result.fastestFee shouldBe 10.0
-            result.halfHourFee shouldBe 1.0
-            result.hourFee shouldBe 1.0
-            result.minimumFee shouldBe 1.0
+            shouldThrow<IllegalArgumentException> {
+                BitcoinUtils.parseFeeEstimatesJson(json)
+            }
         }
 
-        test("empty JSON defaults all to 1.0") {
+        test("empty JSON rejects the response") {
             val json = """{}"""
-            val result = BitcoinUtils.parseFeeEstimatesJson(json)
-            result.fastestFee shouldBe 1.0
-            result.halfHourFee shouldBe 1.0
-            result.hourFee shouldBe 1.0
-            result.minimumFee shouldBe 1.0
+            shouldThrow<IllegalArgumentException> {
+                BitcoinUtils.parseFeeEstimatesJson(json)
+            }
         }
 
         test("extra fields are ignored") {
@@ -1383,16 +1424,16 @@ class BitcoinUtilsTest : FunSpec({
         }
 
         test("malformed JSON throws") {
-            shouldThrow<org.json.JSONException> {
+            shouldThrow<IllegalArgumentException> {
                 BitcoinUtils.parseFeeEstimatesJson("not json")
             }
         }
 
-        test("zero fee rates parsed correctly") {
+        test("zero fee rates are rejected as implausible") {
             val json = """{"fastestFee":0,"halfHourFee":0,"hourFee":0,"minimumFee":0}"""
-            val result = BitcoinUtils.parseFeeEstimatesJson(json)
-            result.fastestFee shouldBe 0.0
-            result.halfHourFee shouldBe 0.0
+            shouldThrow<IllegalArgumentException> {
+                BitcoinUtils.parseFeeEstimatesJson(json)
+            }
         }
 
         test("very large fee rates parsed correctly") {
@@ -1400,6 +1441,31 @@ class BitcoinUtilsTest : FunSpec({
             val result = BitcoinUtils.parseFeeEstimatesJson(json)
             result.fastestFee shouldBe 1000.5
             result.halfHourFee shouldBe 500.25
+        }
+
+        test("absurdly large fee rates are rejected") {
+            val json = """{"fastestFee":100000,"halfHourFee":50000,"hourFee":25000,"minimumFee":1}"""
+            shouldThrow<IllegalArgumentException> {
+                BitcoinUtils.parseFeeEstimatesJson(json)
+            }
+        }
+
+        test("non-monotonic buckets are coerced to non-increasing") {
+            val json = """{"fastestFee":10,"halfHourFee":50,"hourFee":30,"minimumFee":2}"""
+            val result = BitcoinUtils.parseFeeEstimatesJson(json)
+            result.fastestFee shouldBe 10.0
+            result.halfHourFee shouldBe 10.0
+            result.hourFee shouldBe 10.0
+            result.minimumFee shouldBe 2.0
+        }
+
+        test("NaN values are rejected") {
+            // JSONObject cannot natively encode NaN; use string and confirm the
+            // parser refuses to coerce it.
+            val json = """{"fastestFee":"NaN","halfHourFee":20,"hourFee":15,"minimumFee":5}"""
+            shouldThrow<IllegalArgumentException> {
+                BitcoinUtils.parseFeeEstimatesJson(json)
+            }
         }
     }
 
