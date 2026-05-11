@@ -78,7 +78,9 @@ Requires Android Studio with JDK 17.
 
 ## Bug Bounty
 
-Offering $1000 paid in BTC to any major bugs found in Ibis Wallet.
+Offering $1000 paid in BTC to any major vulnerabilities found in Ibis Wallet.
+
+In-scope vulnerabilities are those with a realistic path to loss of funds for our users. Lower-severity issues (UI bugs, rate limiting, etc.) may be acknowledged but are generally out of scope for monetary rewards.
 
 ## Disclaimer
 
