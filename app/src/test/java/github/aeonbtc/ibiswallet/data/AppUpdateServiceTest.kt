@@ -5,7 +5,7 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 
 class AppUpdateServiceTest : FunSpec({
-    test("picks the newest release including prereleases") {
+    test("picks the newest stable release and ignores prereleases") {
         val latest =
             AppUpdateService.parseLatestRelease(
                 """
@@ -26,8 +26,8 @@ class AppUpdateServiceTest : FunSpec({
                 """.trimIndent(),
             ).shouldNotBeNull()
 
-        latest.versionName shouldBe "v3.2.1-beta"
-        latest.htmlUrl shouldBe "https://example.com/beta"
+        latest.versionName shouldBe "v3.2.0"
+        latest.htmlUrl shouldBe "https://example.com/320"
     }
 
     test("ignores draft releases even when numerically newer") {
@@ -54,7 +54,7 @@ class AppUpdateServiceTest : FunSpec({
         latest.versionName shouldBe "v3.2.0"
     }
 
-    test("returns newest beta when only beta releases exist") {
+    test("returns null when only prereleases exist") {
         val latest =
             AppUpdateService.parseLatestRelease(
                 """
@@ -73,9 +73,33 @@ class AppUpdateServiceTest : FunSpec({
                   }
                 ]
                 """.trimIndent(),
+            )
+
+        latest shouldBe null
+    }
+
+    test("ignores prerelease tags even if GitHub prerelease flag is false") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                """
+                [
+                  {
+                    "tag_name": "v3.2.1-rc.1",
+                    "html_url": "https://example.com/rc",
+                    "draft": false,
+                    "prerelease": false
+                  },
+                  {
+                    "tag_name": "v3.2.0",
+                    "html_url": "https://example.com/stable",
+                    "draft": false,
+                    "prerelease": false
+                  }
+                ]
+                """.trimIndent(),
             ).shouldNotBeNull()
 
-        latest.versionName shouldBe "v3.1.3-beta"
-        latest.htmlUrl shouldBe "https://example.com/beta1"
+        latest.versionName shouldBe "v3.2.0"
+        latest.htmlUrl shouldBe "https://example.com/stable"
     }
 })
