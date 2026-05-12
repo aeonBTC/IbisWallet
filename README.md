@@ -80,7 +80,7 @@ Requires Android Studio with JDK 17.
 
 Offering $1000 paid in BTC to any major vulnerabilities found in Ibis Wallet.
 
-In-scope vulnerabilities are those with a realistic path to loss of funds for our users. Lower-severity issues (UI bugs, rate limiting, etc.) may be acknowledged but are generally out of scope for monetary rewards.
+In-scope vulnerabilities are critical vulnerabilities with a realistic path to loss of funds for our users. Lower-severity issue may be acknowledged but are generally out of scope for monetary rewards.
 
 ## Disclaimer
 
