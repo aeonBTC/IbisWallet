@@ -78,9 +78,12 @@ Requires Android Studio with JDK 17.
 
 ## Bug Bounty
 
-Offering $1000 paid in BTC to any major vulnerabilities found in Ibis Wallet.
+We are offering $1,000 paid in BTC for any critical vulnerabilities in Ibis Wallet that could lead to unauthorized loss of user funds.
 
-In-scope vulnerabilities are critical vulnerabilities with a realistic path to loss of funds for our users. Lower-severity issue may be acknowledged but are generally out of scope for monetary rewards.
+In scope for the bounty are vulnerabilities that provide a practical, realistic attack path resulting in theft or permanent loss of funds for users (e.g. remote compromise of the wallet, seed extraction, transaction manipulation, etc.).
+
+Lower severity issues, theoretical vulnerabilities without a practical exploit path, or findings that do not lead to fund loss will be acknowledged but are generally out of scope for monetary rewards.
+
 
 ## Disclaimer
 
