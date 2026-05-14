@@ -1,5 +1,6 @@
 package github.aeonbtc.ibiswallet.data
 
+import github.aeonbtc.ibiswallet.util.AppVersion
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
@@ -151,5 +152,52 @@ class AppUpdateServiceTest : FunSpec({
 
         latest.versionName shouldBe "v4.1.0"
         latest.htmlUrl shouldBe "https://example.com/410"
+    }
+
+    test("prefers stable 1.x over newer legacy beta versions during migration") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                json =
+                    """
+                    [
+                      {
+                        "tag_name": "v4.4-beta",
+                        "html_url": "https://example.com/44beta",
+                        "draft": false,
+                        "prerelease": false
+                      },
+                      {
+                        "tag_name": "v1.0",
+                        "html_url": "https://example.com/10",
+                        "draft": false,
+                        "prerelease": false
+                      }
+                    ]
+                    """.trimIndent(),
+                currentVersion = AppVersion.parse("v4.3-beta"),
+            ).shouldNotBeNull()
+
+        latest.versionName shouldBe "v1.0"
+        latest.htmlUrl shouldBe "https://example.com/10"
+    }
+
+    test("ignores legacy beta releases after migrating to stable 1.x") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                json =
+                    """
+                    [
+                      {
+                        "tag_name": "v4.4-beta",
+                        "html_url": "https://example.com/44beta",
+                        "draft": false,
+                        "prerelease": false
+                      }
+                    ]
+                    """.trimIndent(),
+                currentVersion = AppVersion.parse("v1.0"),
+            )
+
+        latest shouldBe null
     }
 })

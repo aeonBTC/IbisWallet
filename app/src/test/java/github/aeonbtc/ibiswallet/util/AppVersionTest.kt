@@ -29,6 +29,22 @@ class AppVersionTest : FunSpec({
         version.isStableOrBeta shouldBe false
     }
 
+    test("stable 1.x can replace the legacy beta track") {
+        val current = AppVersion.parse("4.3-beta").shouldNotBeNull()
+        val release = AppVersion.parse("1.0").shouldNotBeNull()
+
+        release.isUpdateFor(current) shouldBe true
+        release.updatePriorityAgainst(current) shouldBe 2
+    }
+
+    test("legacy beta track does not replace stable 1.x after migration") {
+        val current = AppVersion.parse("1.0").shouldNotBeNull()
+        val release = AppVersion.parse("4.4-beta").shouldNotBeNull()
+
+        release.isUpdateFor(current) shouldBe false
+        release.updatePriorityAgainst(current) shouldBe 1
+    }
+
     test("stable release outranks matching beta version") {
         val beta = AppVersion.parse("3.1.3-beta").shouldNotBeNull()
         val stable = AppVersion.parse("3.1.3").shouldNotBeNull()
