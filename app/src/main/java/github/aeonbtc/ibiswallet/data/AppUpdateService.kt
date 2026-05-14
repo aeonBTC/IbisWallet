@@ -15,7 +15,7 @@ class AppUpdateService(
     private val client: OkHttpClient = defaultClient(),
     private val releasesUrl: String = GITHUB_RELEASES_API_URL,
 ) {
-    suspend fun fetchLatestRelease(): Result<AppReleaseInfo?> =
+    suspend fun fetchLatestRelease(currentVersion: AppVersion? = null): Result<AppReleaseInfo?> =
         withContext(Dispatchers.IO) {
             try {
                 val request =
@@ -37,7 +37,7 @@ class AppUpdateService(
                         return@withContext Result.failure(Exception("Empty update response"))
                     }
 
-                    Result.success(parseLatestRelease(body))
+                    Result.success(parseLatestRelease(body, currentVersion))
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -51,10 +51,14 @@ class AppUpdateService(
         private const val USER_AGENT = "IbisWallet-UpdateCheck"
         private const val TIMEOUT_SECONDS = 15L
 
-        fun parseLatestRelease(json: String): AppReleaseInfo? {
+        fun parseLatestRelease(
+            json: String,
+            currentVersion: AppVersion? = null,
+        ): AppReleaseInfo? {
             val releases = JSONArray(json)
 
-            return buildList {
+            val supportedReleases =
+                buildList {
                 for (index in 0 until releases.length()) {
                     val release = releases.optJSONObject(index) ?: continue
                     if (release.optBoolean("draft")) continue
@@ -72,7 +76,18 @@ class AppUpdateService(
                         ),
                     )
                 }
-            }.maxByOrNull { it.version }
+            }
+
+            return if (currentVersion == null) {
+                supportedReleases.maxByOrNull { it.version }
+            } else {
+                supportedReleases
+                    .filter { it.version.isUpdateFor(currentVersion) }
+                    .maxWithOrNull(
+                        compareBy<AppReleaseInfo> { it.version.updatePriorityAgainst(currentVersion) }
+                            .thenBy { it.version },
+                    )
+            }
         }
 
         private fun defaultClient(): OkHttpClient =
