@@ -84,10 +84,20 @@ In scope for the bounty are vulnerabilities that provide a practical, realistic 
 
 Lower severity issues, theoretical vulnerabilities without a practical exploit path, or findings that do not lead to fund loss will be acknowledged but are generally out of scope for monetary rewards.
 
-
 ## Disclaimer
 
 Ibis is coded and audited by the most current frontier AI models.
+
+## Donations
+
+As I originally made this app for myself, I do not expect donations. However, tokens arent cheap. So if you wish to show thanks, please do. 
+
+<img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
+
+```bash
+bc1qk54j45l8s20z6glxnt5zuk7efq2qsjj9n44wc8
+```
+
 
 ## License
 
