@@ -30,7 +30,9 @@ import github.aeonbtc.ibiswallet.data.model.MultisigWalletConfig
 import github.aeonbtc.ibiswallet.data.model.PsbtSessionStatus
 import github.aeonbtc.ibiswallet.data.model.PsbtSigningSession
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
+import github.aeonbtc.ibiswallet.data.model.SparkPayment
 import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
+import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
 import github.aeonbtc.ibiswallet.data.model.SwapService
@@ -1397,15 +1399,18 @@ class SecureStorage private constructor(private val context: Context) {
         "${KEY_LIQUID_ADDRESS_LABEL_PREFIX}${walletId}_",
         "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_",
         "${KEY_TX_LABEL_PREFIX}${walletId}_",
+        "${KEY_TX_SOURCE_PREFIX}${walletId}_",
         "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_",
         "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_",
         "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_",
+        "${KEY_SPARK_TX_SOURCE_PREFIX}${walletId}_",
         // Spark counterparty and on-chain claim metadata. Without these
         // prefixes, deleting a wallet would leave recipient identifiers
         // and pending Spark deposit overlays in encrypted prefs.
         "${KEY_SPARK_PAYMENT_RECIPIENT_PREFIX}${walletId}_",
         "${KEY_SPARK_DEPOSIT_ADDRESS_PREFIX}${walletId}_",
         "${KEY_SPARK_PENDING_DEPOSIT_PREFIX}${walletId}_",
+        "${KEY_SPARK_WALLET_STATE_CACHE_PREFIX}$walletId",
         "${KEY_LIQUID_TX_SOURCE_PREFIX}${walletId}_",
         "${KEY_LIQUID_TX_SWAP_DETAILS_PREFIX}${walletId}_",
         "${KEY_LIQUID_TX_RECIPIENT_PREFIX}${walletId}_",
@@ -2158,6 +2163,35 @@ class SecureStorage private constructor(private val context: Context) {
         return recipients
     }
 
+    fun saveSparkTransactionSource(
+        walletId: String,
+        paymentId: String,
+        source: String,
+    ) {
+        if (source.isBlank()) return
+        val key = "${KEY_SPARK_TX_SOURCE_PREFIX}${walletId}_$paymentId"
+        putPrivateString(key, source)
+    }
+
+    fun saveSparkTransactionSources(
+        walletId: String,
+        sources: Map<String, String>,
+    ) {
+        val prefix = "${KEY_SPARK_TX_SOURCE_PREFIX}${walletId}_"
+        putPrivateStrings(
+            sources
+                .filterValues { it.isNotBlank() }
+                .mapKeys { (paymentId, _) -> "$prefix$paymentId" },
+        )
+    }
+
+    fun getAllSparkTransactionSources(walletId: String): Map<String, String> {
+        val prefix = "${KEY_SPARK_TX_SOURCE_PREFIX}${walletId}_"
+        return privateStringsWithPrefix(prefix)
+            .mapKeys { (key, _) -> key.removePrefix(prefix) }
+            .filterValues { it.isNotBlank() }
+    }
+
     fun saveSparkDepositAddress(
         walletId: String,
         txid: String,
@@ -2238,6 +2272,167 @@ class SecureStorage private constructor(private val context: Context) {
                     }.getOrNull()
                 }
             }
+    }
+
+    fun saveSparkWalletStateCache(
+        walletId: String,
+        state: SparkWalletState,
+    ) {
+        val json =
+            JSONObject()
+                .put("walletId", walletId)
+                .put("identityPubkey", state.identityPubkey ?: JSONObject.NULL)
+                .put("balanceSats", state.balanceSats)
+                .put("lightningAddress", state.lightningAddress ?: JSONObject.NULL)
+                .put("lastSyncTimestamp", state.lastSyncTimestamp)
+                .put(
+                    "payments",
+                    JSONArray().apply {
+                        state.payments.forEach { payment ->
+                            put(sparkPaymentToJson(payment))
+                        }
+                    },
+                )
+                .put(
+                    "unclaimedDeposits",
+                    JSONArray().apply {
+                        state.unclaimedDeposits.forEach { deposit ->
+                            put(sparkUnclaimedDepositToJson(deposit))
+                        }
+                    },
+                )
+        putPrivateString("${KEY_SPARK_WALLET_STATE_CACHE_PREFIX}$walletId", json.toString())
+    }
+
+    fun getSparkWalletStateCache(walletId: String): SparkWalletState? {
+        val raw = getPrivateString("${KEY_SPARK_WALLET_STATE_CACHE_PREFIX}$walletId", null) ?: return null
+        return runCatching {
+            val json = JSONObject(raw)
+            SparkWalletState(
+                walletId = walletId,
+                isInitialized = true,
+                identityPubkey =
+                    if (json.isNull("identityPubkey")) {
+                        null
+                    } else {
+                        json.optString("identityPubkey")
+                    },
+                balanceSats = json.optLong("balanceSats", 0L),
+                payments = json.optJSONArray("payments").toSparkPayments(),
+                unclaimedDeposits = json.optJSONArray("unclaimedDeposits").toSparkUnclaimedDeposits(),
+                lightningAddress =
+                    if (json.isNull("lightningAddress")) {
+                        null
+                    } else {
+                        json.optString("lightningAddress")
+                    },
+                isSyncing = false,
+                lastSyncTimestamp = json.optLong("lastSyncTimestamp", 0L),
+            )
+        }.getOrNull()
+    }
+
+    fun clearSparkWalletStateCache(walletId: String) {
+        removePrivateValue("${KEY_SPARK_WALLET_STATE_CACHE_PREFIX}$walletId")
+    }
+
+    private fun sparkPaymentToJson(payment: SparkPayment): JSONObject =
+        JSONObject()
+            .put("id", payment.id)
+            .put("type", payment.type)
+            .put("status", payment.status)
+            .put("amountSats", payment.amountSats)
+            .put("feeSats", payment.feeSats)
+            .put("timestamp", payment.timestamp)
+            .put("method", payment.method)
+            .put("recipient", payment.recipient ?: JSONObject.NULL)
+            .put("methodDetails", payment.methodDetails)
+
+    private fun sparkUnclaimedDepositToJson(deposit: SparkUnclaimedDeposit): JSONObject =
+        JSONObject()
+            .put("txid", deposit.txid)
+            .put("vout", deposit.vout.toLong())
+            .put("amountSats", deposit.amountSats)
+            .put("isMature", deposit.isMature)
+            .put("timestamp", deposit.timestamp ?: JSONObject.NULL)
+            .put("address", deposit.address ?: JSONObject.NULL)
+            .put("claimError", deposit.claimError ?: JSONObject.NULL)
+
+    private fun JSONArray?.toSparkPayments(): List<SparkPayment> {
+        if (this == null) return emptyList()
+        return List(length()) { index -> optJSONObject(index) }
+            .mapNotNull { json ->
+                json?.let {
+                    SparkPayment(
+                        id = it.optString("id"),
+                        type = it.optString("type"),
+                        status = it.optString("status"),
+                        amountSats = it.optLong("amountSats", 0L),
+                        feeSats = it.optLong("feeSats", 0L),
+                        timestamp = it.optLong("timestamp", 0L),
+                        method = it.optString("method"),
+                        recipient =
+                            if (it.isNull("recipient")) {
+                                null
+                            } else {
+                                it.optString("recipient")
+                            },
+                        methodDetails = it.optString("methodDetails", it.optString("method")),
+                    )
+                }
+            }
+            .filter { it.id.isNotBlank() }
+    }
+
+    private fun JSONArray?.toSparkUnclaimedDeposits(): List<SparkUnclaimedDeposit> {
+        if (this == null) return emptyList()
+        return List(length()) { index -> optJSONObject(index) }
+            .mapNotNull { json ->
+                json?.let {
+                    SparkUnclaimedDeposit(
+                        txid = it.optString("txid"),
+                        vout = it.optLong("vout", 0L).toUInt(),
+                        amountSats = it.optLong("amountSats", 0L),
+                        isMature = it.optBoolean("isMature", false),
+                        timestamp =
+                            if (it.isNull("timestamp")) {
+                                null
+                            } else {
+                                it.optLong("timestamp")
+                            },
+                        address =
+                            if (it.isNull("address")) {
+                                null
+                            } else {
+                                it.optString("address")
+                            },
+                        claimError =
+                            if (it.isNull("claimError")) {
+                                null
+                            } else {
+                                it.optString("claimError")
+                            },
+                    )
+                }
+            }
+            .filter { it.txid.isNotBlank() }
+    }
+
+    fun saveTransactionSource(
+        walletId: String,
+        txid: String,
+        source: String,
+    ) {
+        if (source.isBlank()) return
+        val key = "${KEY_TX_SOURCE_PREFIX}${walletId}_$txid"
+        putPrivateString(key, source)
+    }
+
+    fun getAllTransactionSources(walletId: String): Map<String, String> {
+        val prefix = "${KEY_TX_SOURCE_PREFIX}${walletId}_"
+        return privateStringsWithPrefix(prefix)
+            .mapKeys { (key, _) -> key.removePrefix(prefix) }
+            .filterValues { it.isNotBlank() }
     }
 
     /**
@@ -3970,12 +4165,15 @@ class SecureStorage private constructor(private val context: Context) {
 
         // Transaction labels
         private const val KEY_TX_LABEL_PREFIX = "tx_label_"
+        private const val KEY_TX_SOURCE_PREFIX = "tx_source_"
         private const val KEY_TX_SWAP_DETAILS_PREFIX = "tx_swap_details_"
         private const val KEY_LIQUID_TX_LABEL_PREFIX = "liquid_tx_label_"
         private const val KEY_SPARK_TX_LABEL_PREFIX = "spark_tx_label_"
+        private const val KEY_SPARK_TX_SOURCE_PREFIX = "spark_tx_source_"
         private const val KEY_SPARK_PAYMENT_RECIPIENT_PREFIX = "spark_payment_recipient_"
         private const val KEY_SPARK_DEPOSIT_ADDRESS_PREFIX = "spark_deposit_address_"
         private const val KEY_SPARK_PENDING_DEPOSIT_PREFIX = "spark_pending_deposit_"
+        private const val KEY_SPARK_WALLET_STATE_CACHE_PREFIX = "spark_wallet_state_cache_"
         private const val KEY_LIQUID_TX_SOURCE_PREFIX = "liquid_tx_source_"
         private const val KEY_LIQUID_TX_SWAP_DETAILS_PREFIX = "liquid_tx_swap_details_"
         private const val KEY_LIQUID_TX_RECIPIENT_PREFIX = "liquid_tx_recipient_"
@@ -4023,7 +4221,8 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_PIN_LOCKOUT_UNTIL = "pin_lockout_until"
         private const val PIN_PBKDF2_ITERATIONS = 150_000
         private const val PIN_HASH_LENGTH = 256
-        private const val MAX_PIN_ATTEMPTS = 5
+        /** Failed PIN tries (real + duress shared counter) before lockout; keep UI in sync via this constant. */
+        const val MAX_PIN_ATTEMPTS = 5
         private const val KEY_LOCK_TIMING = "lock_timing"
         private const val KEY_LAST_BACKGROUND_TIME = "last_background_time"
         private const val KEY_DISABLE_SCREENSHOTS = "disable_screenshots"
@@ -4153,6 +4352,9 @@ class SecureStorage private constructor(private val context: Context) {
             putString("${KEY_LAYER2_PROVIDER_PREFIX}$walletId", provider.name)
             putBoolean("${KEY_LIQUID_ENABLED_PREFIX}$walletId", provider == Layer2Provider.LIQUID)
             putBoolean("${KEY_SPARK_ENABLED_PREFIX}$walletId", provider == Layer2Provider.SPARK)
+            if (provider == Layer2Provider.SPARK) {
+                putBoolean(KEY_SPARK_LAYER2_ENABLED, true)
+            }
         }
     }
 

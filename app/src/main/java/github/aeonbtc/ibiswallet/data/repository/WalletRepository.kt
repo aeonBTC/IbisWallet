@@ -25,6 +25,7 @@ import github.aeonbtc.ibiswallet.data.model.PsbtDetails
 import github.aeonbtc.ibiswallet.data.model.ReceiveAddressInfo
 import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
+import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
 import github.aeonbtc.ibiswallet.data.model.SwapService
@@ -131,6 +132,7 @@ class WalletRepository(context: Context) {
         private const val INCREMENTAL_RECONCILE_MAX_AGE_MS = 30 * 60_000L
         private const val TRANSACTION_HISTORY_INITIAL_CHUNK_SIZE = 25
         private const val TRANSACTION_HISTORY_CHUNK_SIZE = 100
+        private const val BITCOIN_SOURCE_CHAIN_SWAP = "CHAIN_SWAP"
 
         /** Pattern to extract supported xpub/zpub keys from a descriptor string. */
         private val XPUB_PATTERN = """]([xzXZ]pub[a-zA-Z0-9]+)""".toRegex()
@@ -4436,6 +4438,26 @@ class WalletRepository(context: Context) {
         return secureStorage.getAllSparkTransactionLabels(walletId)
     }
 
+    fun getAllSparkPaymentRecipientsForWallet(walletId: String): Map<String, String> {
+        return secureStorage.getAllSparkPaymentRecipients(walletId)
+    }
+
+    fun getAllSparkDepositAddressesForWallet(walletId: String): Map<String, String> {
+        return secureStorage.getAllSparkDepositAddresses(walletId)
+    }
+
+    fun getAllSparkPendingDepositsForWallet(walletId: String): List<SparkUnclaimedDeposit> {
+        return secureStorage.getAllSparkPendingDeposits(walletId)
+    }
+
+    fun getSparkOnchainDepositAddressForWallet(walletId: String): String? {
+        return secureStorage.getSparkOnchainDepositAddress(walletId)
+    }
+
+    fun getAllSparkTransactionSourcesForWallet(walletId: String): Map<String, String> {
+        return secureStorage.getAllSparkTransactionSources(walletId)
+    }
+
     fun getAllLiquidTransactionSourcesForWallet(walletId: String): Map<String, LiquidTxSource> {
         return secureStorage.getAllLiquidTransactionSources(walletId)
     }
@@ -4446,6 +4468,15 @@ class WalletRepository(context: Context) {
 
     fun getAllTransactionSwapDetailsForWallet(walletId: String): Map<String, LiquidSwapDetails> {
         return secureStorage.getAllTransactionSwapDetails(walletId)
+    }
+
+    fun getAllTransactionSourcesForWallet(walletId: String): Map<String, String> {
+        val storedSources = secureStorage.getAllTransactionSources(walletId)
+        val swapSources =
+            secureStorage.getAllTransactionSwapDetails(walletId).keys.associateWith {
+                BITCOIN_SOURCE_CHAIN_SWAP
+            }
+        return storedSources + swapSources
     }
 
     private fun inferBitcoinChainSwapSettlementDetails(
@@ -4517,6 +4548,14 @@ class WalletRepository(context: Context) {
         saveBitcoinTransactionLabelsIndexed(walletId, labels)
     }
 
+    fun saveTransactionSourceForWallet(
+        walletId: String,
+        txid: String,
+        source: String,
+    ) {
+        secureStorage.saveTransactionSource(walletId, txid, source)
+    }
+
     fun saveLiquidTransactionLabelForWallet(
         walletId: String,
         txid: String,
@@ -4546,6 +4585,44 @@ class WalletRepository(context: Context) {
         secureStorage.saveSparkTransactionLabels(walletId, labels)
     }
 
+    fun saveSparkTransactionSourceForWallet(
+        walletId: String,
+        paymentId: String,
+        source: String,
+    ) {
+        secureStorage.saveSparkTransactionSource(walletId, paymentId, source)
+    }
+
+    fun saveSparkPaymentRecipientForWallet(
+        walletId: String,
+        paymentId: String,
+        recipient: String,
+    ) {
+        secureStorage.saveSparkPaymentRecipient(walletId, paymentId, recipient)
+    }
+
+    fun saveSparkDepositAddressForWallet(
+        walletId: String,
+        txid: String,
+        address: String,
+    ) {
+        secureStorage.saveSparkDepositAddress(walletId, txid, address)
+    }
+
+    fun saveSparkPendingDepositForWallet(
+        walletId: String,
+        deposit: SparkUnclaimedDeposit,
+    ) {
+        secureStorage.saveSparkPendingDeposit(walletId, deposit)
+    }
+
+    fun setSparkOnchainDepositAddressForWallet(
+        walletId: String,
+        address: String,
+    ) {
+        secureStorage.setSparkOnchainDepositAddress(walletId, address)
+    }
+
     fun saveLiquidTransactionSourceForWallet(
         walletId: String,
         txid: String,
@@ -4568,6 +4645,7 @@ class WalletRepository(context: Context) {
         details: LiquidSwapDetails,
     ) {
         secureStorage.saveTransactionSwapDetails(walletId, txid, details)
+        secureStorage.saveTransactionSource(walletId, txid, BITCOIN_SOURCE_CHAIN_SWAP)
     }
 
     // ==================== BIP 329 Labels ====================
@@ -6983,6 +7061,7 @@ class WalletRepository(context: Context) {
         withContext(Dispatchers.IO) {
             try {
                 val wasActive = secureStorage.getActiveWalletId() == walletId
+                var nextActiveWalletId: String? = null
 
                 // If deleting the duress wallet, clean up duress configuration
                 if (secureStorage.getDuressWalletId() == walletId) {
@@ -6996,27 +7075,24 @@ class WalletRepository(context: Context) {
 
                 // Delete wallet data from secure storage
                 secureStorage.deleteWallet(walletId)
+                nextActiveWalletId = secureStorage.getActiveWalletId()
+
+                // Update the list immediately so Manage Wallets reflects the deletion
+                // before cache/db cleanup and the next wallet load finish.
+                if (wasActive && nextActiveWalletId == null) {
+                    _walletState.value = WalletState()
+                } else {
+                    updateWalletState()
+                }
+
                 electrumCache.clearAllWalletActivityData()
 
                 // Delete BDK database files
                 deleteWalletDatabase(walletId)
                 deleteLiquidWalletDatabase(walletId)
 
-                // If this was the active wallet, clear current BDK wallet
-                if (wasActive) {
-                    // Try to load another wallet if available
-                    val remainingWallets = secureStorage.getAllWallets()
-                    if (remainingWallets.isNotEmpty()) {
-                        val newActiveId = remainingWallets.first().id
-                        secureStorage.setActiveWalletId(newActiveId)
-                        loadWalletById(newActiveId)
-                    } else {
-                        // No more wallets
-                        _walletState.value = WalletState()
-                    }
-                } else {
-                    // Just update the wallets list in state
-                    updateWalletState()
+                if (wasActive && nextActiveWalletId != null) {
+                    loadWalletById(nextActiveWalletId)
                 }
 
                 WalletResult.Success(Unit)
@@ -7267,12 +7343,6 @@ class WalletRepository(context: Context) {
                     name = "SethForPrivacy (Tor)",
                     url = "iuo6acfdicxhrovyqrekefh4rg2b7vgmzeeohc5cbwegawwhqpdxkgad.onion",
                     port = 50002,
-                    useSsl = true,
-                ),
-                ElectrumConfig(
-                    name = "Mullvad",
-                    url = "bitcoin.mullvad.net",
-                    port = 5010,
                     useSsl = true,
                 ),
                 ElectrumConfig(
