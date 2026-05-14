@@ -355,6 +355,7 @@
     <string name="loc_f8b82c65" formatted="false">Proteccion</string>
     <string name="loc_f6dc0e2f" formatted="false">Cifrar archivo de copia</string>
     <string name="loc_c4d81c53" formatted="false">Proteger con contrasena</string>
+    <string name="loc_e8f2c91a" formatted="false">Las copias sin cifrar contienen frases semilla en texto plano</string>
     <string name="loc_ccb42483" formatted="false">Contrasena</string>
     <string name="loc_04ab6415" formatted="false">Ocultar</string>
     <string name="loc_923c763f" formatted="false">Mostrar</string>
@@ -1114,6 +1115,7 @@
     <string name="loc_35cb0c66" formatted="false">Permitir gastar UTXO sin confirmar</string>
     <string name="loc_ccb38171" formatted="false">NFC</string>
     <string name="loc_db88d4ce" formatted="false">Navegacion por gestos</string>
+    <string name="loc_23c9f3ad" formatted="false">Servicios externos de Bitcoin</string>
     <string name="loc_64f10f32" formatted="false">Servicios externos de Liquid</string>
     <string name="loc_31ab2a4e" formatted="false">Fuente de comisiones</string>
     <string name="loc_892c0ce5" formatted="false">Tor conectado</string>

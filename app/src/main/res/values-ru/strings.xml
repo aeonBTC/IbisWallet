@@ -286,6 +286,7 @@
     <string name="loc_5fd82ed8" formatted="false">Инвойс</string>
     <string name="loc_61bda033" formatted="false">Комиссия обмена Boltz</string>
     <string name="loc_625681c5" formatted="false">ID транзакции Liquid</string>
+    <string name="loc_23c9f3ad" formatted="false">Внешние сервисы Bitcoin</string>
     <string name="loc_64f10f32" formatted="false">Внешние сервисы Liquid</string>
     <string name="loc_799c4cd6" formatted="false">API SideSwap</string>
     <string name="loc_7cac602a" formatted="false">Статус</string>
@@ -706,6 +707,7 @@
     <string name="loc_f8b82c65" formatted="false">Защита</string>
     <string name="loc_f6dc0e2f" formatted="false">Шифровать файл резервной копии</string>
     <string name="loc_c4d81c53" formatted="false">Защита паролем</string>
+    <string name="loc_e8f2c91a" formatted="false">Незашифрованные резервные копии содержат сид-фразы в открытом виде</string>
     <string name="loc_46e1da73" formatted="false">Минимум 8 символов</string>
     <string name="loc_3df88eb4" formatted="false">Пароли не совпадают</string>
     <string name="loc_7fdce75b" formatted="false">Выбрать место сохранения</string>
