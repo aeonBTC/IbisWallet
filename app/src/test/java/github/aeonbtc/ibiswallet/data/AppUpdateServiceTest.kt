@@ -5,6 +5,31 @@ import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 
 class AppUpdateServiceTest : FunSpec({
+    test("allows beta releases when not marked prerelease") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                """
+                [
+                  {
+                    "tag_name": "v4.1.1-beta",
+                    "html_url": "https://example.com/411beta",
+                    "draft": false,
+                    "prerelease": false
+                  },
+                  {
+                    "tag_name": "v4.1.0",
+                    "html_url": "https://example.com/410",
+                    "draft": false,
+                    "prerelease": false
+                  }
+                ]
+                """.trimIndent(),
+            ).shouldNotBeNull()
+
+        latest.versionName shouldBe "v4.1.1-beta"
+        latest.htmlUrl shouldBe "https://example.com/411beta"
+    }
+
     test("picks the newest stable release and ignores prereleases") {
         val latest =
             AppUpdateService.parseLatestRelease(
@@ -101,5 +126,30 @@ class AppUpdateServiceTest : FunSpec({
 
         latest.versionName shouldBe "v3.2.0"
         latest.htmlUrl shouldBe "https://example.com/stable"
+    }
+
+    test("ignores beta tags when GitHub marks them as prerelease") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                """
+                [
+                  {
+                    "tag_name": "v4.1.1-beta",
+                    "html_url": "https://example.com/411beta",
+                    "draft": false,
+                    "prerelease": true
+                  },
+                  {
+                    "tag_name": "v4.1.0",
+                    "html_url": "https://example.com/410",
+                    "draft": false,
+                    "prerelease": false
+                  }
+                ]
+                """.trimIndent(),
+            ).shouldNotBeNull()
+
+        latest.versionName shouldBe "v4.1.0"
+        latest.htmlUrl shouldBe "https://example.com/410"
     }
 })
