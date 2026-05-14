@@ -64,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
@@ -269,6 +270,7 @@ private fun BackupDialog(
     isLoading: Boolean,
 ) {
     val context = LocalContext.current
+    val mainActivity = context as? MainActivity
     val selectedWallets = remember(wallets) {
         mutableStateMapOf<String, Boolean>().apply {
             wallets.forEach { wallet ->
@@ -286,7 +288,7 @@ private fun BackupDialog(
 
     var includeServers by remember { mutableStateOf(true) }
     var includeAppSettings by remember { mutableStateOf(true) }
-    var encryptBackup by remember { mutableStateOf(false) }
+    var encryptBackup by remember { mutableStateOf(true) }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
@@ -434,6 +436,15 @@ private fun BackupDialog(
                         onCheckedChange = { encryptBackup = it },
                     )
 
+                    if (!encryptBackup) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = stringResource(R.string.loc_e8f2c91a),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ErrorRed,
+                        )
+                    }
+
                     if (encryptBackup) {
                         Spacer(modifier = Modifier.height(10.dp))
                         OutlinedTextField(
@@ -514,7 +525,10 @@ private fun BackupDialog(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedButton(
-                    onClick = { filePickerLauncher.launch(suggestedFileName) },
+                    onClick = {
+                        mainActivity?.skipNextBackgroundLockForActivityResult()
+                        filePickerLauncher.launch(suggestedFileName)
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 48.dp),
@@ -740,6 +754,7 @@ private fun RestoreDialog(
     isLoading: Boolean,
 ) {
     val context = LocalContext.current
+    val mainActivity = context as? MainActivity
     val genericParseErrorMessage = stringResource(R.string.loc_166a5cb9)
     val scope = rememberCoroutineScope()
 
@@ -867,7 +882,10 @@ private fun RestoreDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 OutlinedButton(
-                    onClick = { filePickerLauncher.launch(arrayOf("application/json", "*/*")) },
+                    onClick = {
+                        mainActivity?.skipNextBackgroundLockForActivityResult()
+                        filePickerLauncher.launch(arrayOf("application/json", "*/*"))
+                    },
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 48.dp),

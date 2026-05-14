@@ -112,6 +112,7 @@ import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
+import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.data.model.SyncProgress
 import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import github.aeonbtc.ibiswallet.data.model.WalletPolicyType
@@ -396,6 +397,20 @@ fun IbisWalletApp(
             activeLayer2Provider == Layer2Provider.SPARK &&
             (sparkEnabledWallets[activeWalletObj.id] ?: sparkViewModel.isSparkEnabledForWallet(activeWalletObj.id))
     }
+    val visibleSparkState =
+        if (activeWalletObj != null &&
+            loadedSparkWalletId == activeWalletObj.id &&
+            sparkState.walletId == activeWalletObj.id
+        ) {
+            sparkState
+        } else {
+            SparkWalletState(
+                walletId = activeWalletObj?.id,
+                isInitialized = true,
+                isSyncing = isSparkAvailable,
+            )
+        }
+    val visibleSparkConnected = isSparkConnected && loadedSparkWalletId == activeWalletObj?.id
     val isLayer2Available = isLiquidAvailable || isSparkAvailable
     val isAnyLayer2Enabled = isLayer2Enabled || isSparkLayer2Enabled
     val layer2Accent = if (activeLayer2Provider == Layer2Provider.SPARK) SparkPurple else LiquidTeal
@@ -408,8 +423,13 @@ fun IbisWalletApp(
         }
     }
 
-    // Swaps require a signer — disable for Liquid watch-only wallets
-    val swapEnabledForWallet = swapAvailable && !isActiveWalletLiquidWatchOnly
+    // Liquid swaps depend on Boltz/SideSwap, while Spark transfer only needs a Spark-capable wallet.
+    val swapEnabledForWallet =
+        if (activeLayer2Provider == Layer2Provider.SPARK) {
+            isSparkAvailable
+        } else {
+            swapAvailable && !isActiveWalletLiquidWatchOnly
+        }
     val isLayer1EnabledForWallet = !isActiveWalletLiquidWatchOnly
 
     LaunchedEffect(privacyMode) {
@@ -1146,6 +1166,7 @@ fun IbisWalletApp(
                 }
                 is WalletEvent.WalletImported -> {
                     liquidViewModel.reloadRestoredSettings()
+                    sparkViewModel.reloadRestoredSettings()
                     Toast.makeText(context, walletAddedMessage, Toast.LENGTH_SHORT).show()
                     navController.navigate(Screen.Balance.route) {
                         popUpTo(navController.graph.findStartDestination().id) {
@@ -1345,18 +1366,18 @@ fun IbisWalletApp(
 
     LaunchedEffect(
         liquidState.transactions,
-        sparkState.payments,
-        sparkState.unclaimedDeposits,
+        visibleSparkState.payments,
+        visibleSparkState.unclaimedDeposits,
     ) {
         viewModel.setExternalHistoricalTxTimestamps(
             buildMap {
                 liquidState.transactions.forEach { tx ->
                     put(tx.txid, tx.timestamp)
                 }
-                sparkState.payments.forEach { payment ->
+                visibleSparkState.payments.forEach { payment ->
                     put(payment.id, payment.timestamp)
                 }
-                sparkState.unclaimedDeposits.forEach { deposit ->
+                visibleSparkState.unclaimedDeposits.forEach { deposit ->
                     put(deposit.txid, deposit.timestamp)
                 }
             },
@@ -1494,7 +1515,7 @@ fun IbisWalletApp(
         }
     val layer2StatusColor =
         if (isSparkAvailable) {
-            if (isSparkConnected) SuccessGreen else SparkPurple
+            if (visibleSparkConnected) SuccessGreen else SparkPurple
         } else {
             liquidStatusColor
         }
@@ -1503,8 +1524,8 @@ fun IbisWalletApp(
             isLiquidAvailable && uiState.isConnected && isLiquidConnected -> SuccessGreen
             isLiquidAvailable && (showLiquidConnecting || uiState.isConnecting) -> BitcoinOrange
             isLiquidAvailable && (uiState.isConnected || isLiquidConnected) -> SuccessGreen
-            isSparkAvailable && uiState.isConnected && isSparkConnected -> SuccessGreen
-            isSparkAvailable && (uiState.isConnecting || !isSparkConnected) -> SparkPurple
+            isSparkAvailable && uiState.isConnected && visibleSparkConnected -> SuccessGreen
+            isSparkAvailable && (uiState.isConnecting || !visibleSparkConnected) -> SparkPurple
             uiState.isConnecting -> BitcoinOrange
             else -> electrumStatusColor
         }
@@ -1537,9 +1558,9 @@ fun IbisWalletApp(
     fun SparkConnectionCard() {
         val statusColor =
             when {
-                sparkState.isSyncing -> BitcoinOrange
-                isSparkConnected -> SuccessGreen
-                sparkState.error != null -> ErrorRed
+                visibleSparkState.isSyncing -> BitcoinOrange
+                visibleSparkConnected -> SuccessGreen
+                visibleSparkState.error != null -> ErrorRed
                 else -> TextSecondary
             }
 
@@ -1607,7 +1628,7 @@ fun IbisWalletApp(
                         contentAlignment = Alignment.Center,
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (sparkState.isSyncing) {
+                            if (visibleSparkState.isSyncing) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(12.dp),
                                     color = statusColor,
@@ -1618,8 +1639,8 @@ fun IbisWalletApp(
                             Text(
                                 text =
                                     when {
-                                        sparkState.isSyncing -> stringResource(R.string.loc_066df953)
-                                        isSparkConnected -> stringResource(R.string.loc_9f448218)
+                                        visibleSparkState.isSyncing -> stringResource(R.string.loc_066df953)
+                                        visibleSparkConnected -> stringResource(R.string.loc_9f448218)
                                         else -> stringResource(R.string.loc_82e9d0dd)
                                     },
                                 style = MaterialTheme.typography.labelMedium,
@@ -1977,7 +1998,7 @@ fun IbisWalletApp(
                                         Text(
                                             text =
                                                 if (isSparkAvailable) {
-                                                    if (isSparkConnected) {
+                                                    if (visibleSparkConnected) {
                                                         stringResource(R.string.loc_85f5955f)
                                                     } else {
                                                         stringResource(R.string.loc_85f5955f)
@@ -2404,7 +2425,7 @@ fun IbisWalletApp(
                                     if (activeLayer == WalletLayer.LAYER2) {
                                         if (isSparkAvailable) {
                                             SparkBalanceScreen(
-                                                sparkState = sparkState,
+                                                sparkState = visibleSparkState,
                                                 receiveState = sparkReceiveState,
                                                 layer1Transactions = walletState.transactions,
                                                 layer1BlockHeight = walletState.blockHeight,
@@ -2673,7 +2694,7 @@ fun IbisWalletApp(
                                                     btcPrice = btcPrice,
                                                     fiatCurrency = priceCurrency,
                                                     privacyMode = privacyMode,
-                                                    availableSats = sparkState.balanceSats,
+                                                    availableSats = visibleSparkState.balanceSats,
                                                     onUpdateDraft = { draft -> sparkViewModel.setSendDraft(draft) },
                                                     onLoadOnchainFeeQuotes = { paymentRequest, amountSats, useAllFunds ->
                                                         sparkViewModel.getOnchainFeeQuotes(paymentRequest, amountSats, useAllFunds)
@@ -3034,9 +3055,9 @@ fun IbisWalletApp(
                             },
                             onDeleteWallet = { wallet ->
                                 scope.launch {
+                                    viewModel.deleteWallet(wallet.id)
                                     liquidViewModel.deleteWalletData(wallet.id)
                                     sparkViewModel.deleteWalletData(wallet.id)
-                                    viewModel.deleteWallet(wallet.id)
                                 }
                             },
                             onSelectWallet = { wallet ->
@@ -3242,7 +3263,7 @@ fun IbisWalletApp(
                                     liquidViewModel.requestFullSync(wallet.id)
                                 }
                                 if (sparkViewModel.isSparkEnabledForWallet(wallet.id)) {
-                                    sparkViewModel.refresh()
+                                    sparkViewModel.syncWallet(wallet.id)
                                 }
                                 if (!wallet.isLiquidWatchOnly) {
                                     viewModel.fullSync(wallet.id)
@@ -3554,7 +3575,7 @@ fun IbisWalletApp(
                             onSwipeModeChange = { mode ->
                                 viewModel.setSwipeMode(mode)
                             },
-                            isLiquidAvailable = isLayer2Enabled,
+                            isLiquidAvailable = isAnyLayer2Enabled,
                             torStatus = torState.status,
                             onOpenBitcoinElectrum = {
                                 navController.navigate(Screen.ElectrumConfig.route) {
@@ -4310,7 +4331,7 @@ fun IbisWalletApp(
                             )
                             Box(modifier = Modifier.weight(1f)) {
                                 SparkTransferScreen(
-                                    sparkState = sparkState,
+                                    sparkState = visibleSparkState,
                                     receiveState = sparkReceiveState,
                                     layer1Address = walletState.currentAddress,
                                     denomination = layer2Denomination,

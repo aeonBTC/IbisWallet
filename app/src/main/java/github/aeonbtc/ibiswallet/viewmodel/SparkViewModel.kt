@@ -12,11 +12,14 @@ import github.aeonbtc.ibiswallet.data.repository.SparkRepository
 import github.aeonbtc.ibiswallet.util.Bip329LabelNetwork
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.Bip329Labels
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 class SparkViewModel(application: Application) : AndroidViewModel(application) {
     private val secureStorage = SecureStorage.getInstance(application)
@@ -38,21 +41,58 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     private val _sparkEnabledWallets = MutableStateFlow<Map<String, Boolean>>(emptyMap())
     val sparkEnabledWallets: StateFlow<Map<String, Boolean>> = _sparkEnabledWallets
 
+    private var walletLifecycleJob: Job? = null
+    private var pendingWalletLoadId: String? = null
+
     fun loadSparkWallet(walletId: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { repository.loadWallet(walletId) }
-                .onFailure { error ->
-                    repository.markLoadFailed(
-                        walletId = walletId,
-                        message = error.message?.takeIf { it.isNotBlank() } ?: "Spark wallet load failed",
-                    )
+        if (pendingWalletLoadId == walletId && walletLifecycleJob?.isActive == true) {
+            return
+        }
+
+        val visibleWalletId = pendingWalletLoadId ?: loadedWalletId.value
+        if (visibleWalletId != null && visibleWalletId != walletId) {
+            repository.clearWalletDisplayState()
+            resetSparkUiState()
+        }
+
+        val previousLifecycleJob = walletLifecycleJob
+        pendingWalletLoadId = walletId
+        walletLifecycleJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                previousLifecycleJob?.cancelAndJoinWithinSwitchTimeout()
+                runCatching { repository.loadWallet(walletId) }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        repository.markLoadFailed(
+                            walletId = walletId,
+                            message = error.message?.takeIf { it.isNotBlank() } ?: "Spark wallet load failed",
+                        )
+                    }
+            } finally {
+                if (pendingWalletLoadId == walletId) {
+                    pendingWalletLoadId = null
                 }
+                if (walletLifecycleJob?.isActive != true) {
+                    walletLifecycleJob = null
+                }
+            }
         }
     }
 
     fun unloadSparkWallet() {
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.unloadWallet()
+        val previousLifecycleJob = walletLifecycleJob
+        pendingWalletLoadId = null
+        repository.clearWalletDisplayState()
+        resetSparkUiState()
+        walletLifecycleJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                previousLifecycleJob?.cancelAndJoinWithinSwitchTimeout()
+                repository.unloadWallet()
+            } finally {
+                if (walletLifecycleJob?.isActive != true) {
+                    walletLifecycleJob = null
+                }
+            }
         }
     }
 
@@ -62,12 +102,64 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun prepareForFullWipe() {
+        walletLifecycleJob?.cancel()
         repository.unloadWallet()
     }
 
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.refreshState()
+        }
+    }
+
+    fun syncWallet(walletId: String) {
+        val visibleWalletId = pendingWalletLoadId ?: loadedWalletId.value
+        if (visibleWalletId != null && visibleWalletId != walletId) {
+            repository.clearWalletDisplayState()
+            resetSparkUiState()
+        }
+
+        val previousLifecycleJob = walletLifecycleJob
+        pendingWalletLoadId = walletId
+        walletLifecycleJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                previousLifecycleJob?.cancelAndJoinWithinSwitchTimeout()
+                runCatching {
+                    if (loadedWalletId.value == walletId && isSparkConnected.value) {
+                        repository.refreshState()
+                    } else {
+                        repository.loadWallet(walletId)
+                    }
+                }.onFailure { error ->
+                    if (error is CancellationException) throw error
+                    repository.markLoadFailed(
+                        walletId = walletId,
+                        message = error.message?.takeIf { it.isNotBlank() } ?: "Spark wallet sync failed",
+                    )
+                }
+            } finally {
+                if (pendingWalletLoadId == walletId) {
+                    pendingWalletLoadId = null
+                }
+                if (walletLifecycleJob?.isActive != true) {
+                    walletLifecycleJob = null
+                }
+            }
+        }
+    }
+
+    fun reloadRestoredSettings() {
+        val sparkLayer2Enabled = secureStorage.isSparkLayer2Enabled()
+        _isSparkLayer2Enabled.value = sparkLayer2Enabled
+        _sparkEnabledWallets.value =
+            secureStorage.getWalletIds().associateWith { walletId ->
+                SparkRestoredSettings.isWalletSparkEnabled(
+                    storedSparkEnabled = secureStorage.isSparkEnabledForWallet(walletId),
+                    provider = secureStorage.getLayer2ProviderForWallet(walletId),
+                )
+            }
+        if (!sparkLayer2Enabled) {
+            unloadSparkWallet()
         }
     }
 
@@ -135,6 +227,19 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetReceiveState() {
         repository.resetReceiveState()
+    }
+
+    private fun resetSparkUiState() {
+        repository.resetSendState()
+        repository.resetReceiveState()
+        _sendDraft.value = SendScreenDraft()
+    }
+
+    private suspend fun Job.cancelAndJoinWithinSwitchTimeout() {
+        cancel()
+        withTimeoutOrNull(SPARK_WALLET_SWITCH_CANCEL_TIMEOUT_MS) {
+            join()
+        }
     }
 
     fun getSparkBip329LabelsContent(walletId: String): String =
@@ -211,8 +316,20 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLayer2ProviderForWallet(walletId: String, provider: Layer2Provider) {
         secureStorage.setLayer2ProviderForWallet(walletId, provider)
+        if (provider == Layer2Provider.SPARK) {
+            _isSparkLayer2Enabled.value = true
+        }
         _sparkEnabledWallets.value = _sparkEnabledWallets.value.toMutableMap().apply {
             put(walletId, provider == Layer2Provider.SPARK)
         }
     }
 }
+
+internal object SparkRestoredSettings {
+    fun isWalletSparkEnabled(
+        storedSparkEnabled: Boolean,
+        provider: Layer2Provider,
+    ): Boolean = storedSparkEnabled || provider == Layer2Provider.SPARK
+}
+
+private const val SPARK_WALLET_SWITCH_CANCEL_TIMEOUT_MS = 2_000L

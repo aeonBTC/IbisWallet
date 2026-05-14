@@ -73,6 +73,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrCode
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrCodeBytes
@@ -144,6 +145,7 @@ fun PsbtScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    val mainActivity = context as? MainActivity
     var showScanner by remember { mutableStateOf(false) }
     var showPasteDialog by remember { mutableStateOf(false) }
     var qrExportFormat by rememberSaveable { mutableStateOf(PsbtQrExportFormat.BC_UR) }
@@ -463,6 +465,7 @@ fun PsbtScreen(
                                             } else {
                                                 "unsigned.psbt"
                                             }
+                                        mainActivity?.skipNextBackgroundLockForActivityResult()
                                         savePsbtLauncher.launch(fileName)
                                     },
                                     shape = RoundedCornerShape(8.dp),
@@ -641,6 +644,7 @@ fun PsbtScreen(
                             ) {
                                 OutlinedButton(
                                     onClick = {
+                                        mainActivity?.skipNextBackgroundLockForActivityResult()
                                         loadSignedLauncher.launch(arrayOf("*/*"))
                                     },
                                     modifier =

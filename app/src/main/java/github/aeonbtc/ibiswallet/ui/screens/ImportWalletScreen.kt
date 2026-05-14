@@ -82,6 +82,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.MultisigScriptType
@@ -167,6 +168,7 @@ fun ImportWalletScreen(
     var showBackupRestoreDialog by remember { mutableStateOf(false) }
     val backupCoroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
+    val mainActivity = context as? MainActivity
     val backupParseFallbackError = stringResource(R.string.loc_53017e88)
     val walletConfigFileReadError = stringResource(R.string.loc_e61e3fea)
     val backupDecryptPasswordError = stringResource(R.string.loc_94b6dca8)
@@ -690,6 +692,7 @@ fun ImportWalletScreen(
             },
             onChooseDifferentFile = {
                 showBackupRestoreDialog = false
+                mainActivity?.skipNextBackgroundLockForActivityResult()
                 backupFilePickerLauncher.launch(arrayOf("application/json", "*/*"))
             },
             onDismiss = { showBackupRestoreDialog = false },
@@ -1787,7 +1790,10 @@ fun ImportWalletScreen(
             }
 
             IbisButton(
-                onClick = { walletConfigFilePickerLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
+                onClick = {
+                    mainActivity?.skipNextBackgroundLockForActivityResult()
+                    walletConfigFilePickerLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+                },
                 modifier =
                     Modifier
                         .weight(1f)
@@ -1849,7 +1855,10 @@ fun ImportWalletScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         IbisButton(
-            onClick = { backupFilePickerLauncher.launch(arrayOf("application/json", "*/*")) },
+            onClick = {
+                mainActivity?.skipNextBackgroundLockForActivityResult()
+                backupFilePickerLauncher.launch(arrayOf("application/json", "*/*"))
+            },
             modifier =
                 Modifier
                     .fillMaxWidth()

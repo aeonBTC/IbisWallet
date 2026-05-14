@@ -431,7 +431,7 @@ fun SettingsScreen(
                         .padding(16.dp),
             ) {
                 Text(
-                    text = stringResource(R.string.loc_64f10f32),
+                    text = stringResource(R.string.loc_23c9f3ad),
                     style = MaterialTheme.typography.titleMedium,
                     color = BitcoinOrange,
                 )

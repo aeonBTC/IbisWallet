@@ -95,6 +95,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.MultisigWalletConfig
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
@@ -1482,6 +1483,8 @@ private fun Bip329LabelsDialog(
     getLabelsContent: (walletId: String, scope: Bip329LabelScope) -> String,
     getLabelCounts: (walletId: String) -> Bip329LabelCounts,
 ) {
+    val context = LocalContext.current
+    val mainActivity = context as? MainActivity
     val counts = remember(wallet.id) { getLabelCounts(wallet.id) }
     var selectedScope by remember(wallet.id, walletSupportsLiquid, walletSupportsSpark) {
         mutableStateOf(Bip329LabelScope.BITCOIN)
@@ -1746,6 +1749,7 @@ private fun Bip329LabelsDialog(
                 ) {
                     OutlinedButton(
                         onClick = {
+                            mainActivity?.skipNextBackgroundLockForActivityResult()
                             importFilePicker.launch(
                                 arrayOf(
                                     "application/json",
@@ -1823,6 +1827,7 @@ private fun Bip329LabelsDialog(
                                     Bip329LabelScope.BOTH -> "combined"
                                 }
                             val fileName = "${wallet.name.replace(" ", "_")}_${suffix}_labels.jsonl"
+                            mainActivity?.skipNextBackgroundLockForActivityResult()
                             exportFilePicker.launch(fileName)
                         },
                         modifier =

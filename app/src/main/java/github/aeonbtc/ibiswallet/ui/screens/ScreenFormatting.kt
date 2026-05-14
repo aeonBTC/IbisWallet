@@ -35,7 +35,9 @@ fun formatFiat(
 ): String {
     val normalizedCode = currencyCode.uppercase(Locale.US)
     return try {
-        NumberFormat.getCurrencyInstance(Locale.getDefault()).run {
+        // USD: use US locale so the symbol is "$", not "US$" (default locale disambiguates $ currencies).
+        val formatLocale = if (normalizedCode == "USD") Locale.US else Locale.getDefault()
+        NumberFormat.getCurrencyInstance(formatLocale).run {
             currency = Currency.getInstance(normalizedCode)
             format(amount)
         }

@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -89,6 +90,7 @@ fun BroadcastTransactionScreen(
     var showQrScanner by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val mainActivity = context as? MainActivity
 
     // File picker for loading transaction from file (.psbt, .txn, .txt, or any file)
     val filePickerLauncher =
@@ -279,6 +281,7 @@ fun BroadcastTransactionScreen(
                     // Import from file
                     IbisButton(
                         onClick = {
+                            mainActivity?.skipNextBackgroundLockForActivityResult()
                             filePickerLauncher.launch(arrayOf("*/*"))
                         },
                         modifier =

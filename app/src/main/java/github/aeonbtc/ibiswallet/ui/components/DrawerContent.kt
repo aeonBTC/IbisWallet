@@ -94,9 +94,9 @@ private val baseDrawerItems =
 /** Drawer items shown in the main menu */
 fun getDrawerItems(): List<DrawerItem> = buildList {
     addAll(baseDrawerItems)
+    add(DrawerItem.Layer2Options)
     add(DrawerItem.Security)
     add(DrawerItem.Settings)
-    add(DrawerItem.Layer2Options)
     add(DrawerItem.BackupRestore)
     add(DrawerItem.About)
 }

@@ -38,7 +38,7 @@ val LightningYellow = Color(0xFFEEB311)
 
 // Layer 2 - Liquid Network branding
 val LiquidTeal = Color(0xFF1F9E8F)
-val SparkPurple = Color(0xFF53389B)
+val SparkPurple = Color(0xFF583DA1)
 
 // Drawer menu icon accent - muted orange
 val DrawerIconColor = Color(0xFFCD7F32)

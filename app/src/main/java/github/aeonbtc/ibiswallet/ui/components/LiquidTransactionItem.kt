@@ -15,7 +15,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -27,10 +30,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import github.aeonbtc.ibiswallet.R
@@ -99,6 +104,7 @@ fun LiquidTransactionItem(
         }
     val nonLbtcDelta = tx.assetDeltas.entries.firstOrNull { !LiquidAsset.isPolicyAsset(it.key) && it.value != 0L }
     val nonLbtcAsset = nonLbtcDelta?.let { LiquidAsset.resolve(it.key) }
+    val isUsdtBadge = nonLbtcAsset?.assetId == LiquidAsset.USDT_ASSET_ID
     val hideNativeLiquidBadgeForUsdt =
         tx.source == LiquidTxSource.NATIVE && nonLbtcAsset?.assetId == LiquidAsset.USDT_ASSET_ID
     val showNetworkBadge = !hideNativeLiquidBadgeForUsdt
@@ -156,33 +162,41 @@ fun LiquidTransactionItem(
                     if (showNetworkBadge) {
                         Spacer(modifier = Modifier.width(3.dp))
                         Box(
+                            contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
+                                    .size(22.dp)
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(networkBadge.color.copy(alpha = 0.16f))
-                                    .padding(horizontal = 5.dp, vertical = 2.dp),
+                                    .background(networkBadge.color.copy(alpha = 0.16f)),
                         ) {
-                            Text(
-                                text = stringResource(networkBadge.labelRes),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
-                                color = networkBadge.color,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
+                            Icon(
+                                imageVector = networkBadge.icon,
+                                contentDescription = stringResource(networkBadge.labelRes),
+                                tint = networkBadge.color,
+                                modifier = Modifier.size(networkBadge.iconSize),
                             )
                         }
                     }
                     if (showAssetBadge) {
                         Spacer(modifier = Modifier.width(4.dp))
                         Box(
+                            contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
+                                    .then(if (isUsdtBadge) Modifier.size(22.dp) else Modifier)
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(AccentTeal.copy(alpha = 0.16f))
-                                    .padding(horizontal = 5.dp, vertical = 2.dp),
+                                    .padding(
+                                        horizontal = if (isUsdtBadge) 0.dp else 5.dp,
+                                        vertical = if (isUsdtBadge) 0.dp else 2.dp,
+                                    ),
                         ) {
                             Text(
-                                text = nonLbtcAsset.ticker,
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
+                                text = if (isUsdtBadge) "$" else nonLbtcAsset.ticker,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = if (isUsdtBadge) 16.sp else 12.sp,
+                                    lineHeight = if (isUsdtBadge) 20.sp else 17.sp,
+                                ),
                                 color = AccentTeal,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
@@ -322,6 +336,8 @@ private fun defaultTransactionTitleRes(
 private data class TransactionNetworkBadge(
     val labelRes: Int,
     val color: Color,
+    val icon: ImageVector,
+    val iconSize: Dp,
 )
 
 private fun networkBadge(source: LiquidTxSource): TransactionNetworkBadge =
@@ -329,16 +345,22 @@ private fun networkBadge(source: LiquidTxSource): TransactionNetworkBadge =
         LiquidTxSource.CHAIN_SWAP -> TransactionNetworkBadge(
             labelRes = R.string.loc_85a12a5f,
             color = BitcoinOrange,
+            icon = Icons.Default.SwapHoriz,
+            iconSize = 21.dp,
         )
         LiquidTxSource.LIGHTNING_RECEIVE_SWAP,
         LiquidTxSource.LIGHTNING_SEND_SWAP,
         -> TransactionNetworkBadge(
             labelRes = R.string.loc_03b82433,
             color = LightningYellow,
+            icon = Icons.Default.Bolt,
+            iconSize = 20.dp,
         )
         LiquidTxSource.NATIVE -> TransactionNetworkBadge(
             labelRes = R.string.loc_22236665,
             color = LiquidTeal,
+            icon = Icons.Default.WaterDrop,
+            iconSize = 18.dp,
         )
     }
 

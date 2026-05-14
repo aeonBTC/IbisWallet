@@ -84,6 +84,7 @@ class MainActivity : FragmentActivity() {
             0x00, 0xB0.toByte(), 0x00, 0x00, 0x02,
         )
         private const val NFC_READ_CHUNK_SIZE = 59
+        private const val ACTIVITY_RESULT_LOCK_SKIP_WINDOW_MS = 30_000L
     }
 
     private lateinit var secureStorage: SecureStorage
@@ -95,6 +96,7 @@ class MainActivity : FragmentActivity() {
     private var cloakBypassed by mutableStateOf(false)
     private var biometricPrompt: BiometricPrompt? = null
     private var wasInBackground = false
+    private var skipBackgroundLockUntilMs = 0L
     private val biometricAutoCancelHandler = Handler(Looper.getMainLooper())
     private var isCloakActive = false
 
@@ -315,6 +317,14 @@ class MainActivity : FragmentActivity() {
         if (!nfcHceRequests.hasActiveRequests()) {
             deactivatePreferredHceService()
         }
+    }
+
+    /**
+     * System pickers briefly stop this activity. Keep the app unlocked so their
+     * activity result can resume the in-flight operation.
+     */
+    fun skipNextBackgroundLockForActivityResult() {
+        skipBackgroundLockUntilMs = System.currentTimeMillis() + ACTIVITY_RESULT_LOCK_SKIP_WINDOW_MS
     }
 
     private fun activateNfcReaderMode() {
@@ -717,6 +727,11 @@ class MainActivity : FragmentActivity() {
         if (securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive) {
             return
         }
+        if (System.currentTimeMillis() <= skipBackgroundLockUntilMs) {
+            skipBackgroundLockUntilMs = 0L
+            return
+        }
+        skipBackgroundLockUntilMs = 0L
         // Cloak mode with no PIN: re-engage calculator immediately on background
         if (securityMethod == SecureStorage.SecurityMethod.NONE && isCloakActive) {
             lockApp()

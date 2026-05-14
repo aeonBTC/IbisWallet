@@ -14,15 +14,11 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.DryRunResult
 import github.aeonbtc.ibiswallet.data.model.ElectrumConfig
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
-import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
-import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
-import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.PsbtDetails
 import github.aeonbtc.ibiswallet.data.model.PsbtSessionStatus
 import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
-import github.aeonbtc.ibiswallet.data.model.SwapDirection
 import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
@@ -51,6 +47,8 @@ import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.ServerUrlValidator
 import github.aeonbtc.ibiswallet.util.BitcoinSendPreparationCacheKey
 import github.aeonbtc.ibiswallet.util.BitcoinSendPreparationState
+import github.aeonbtc.ibiswallet.util.BackupJsonAdapters
+import github.aeonbtc.ibiswallet.util.SparkBackupMetadata
 import github.aeonbtc.ibiswallet.util.buildMultiBitcoinSendPreparationKey
 import github.aeonbtc.ibiswallet.util.buildSingleBitcoinSendPreparationKey
 import github.aeonbtc.ibiswallet.util.readBytesWithLimit
@@ -2473,24 +2471,24 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Delete a specific wallet by ID
      */
-    fun deleteWallet(walletId: String) {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
+    suspend fun deleteWallet(walletId: String): WalletResult<Unit> {
+        _uiState.value = _uiState.value.copy(isLoading = true)
 
-            when (val result = repository.deleteWallet(walletId)) {
-                is WalletResult.Success -> {
-                    _uiState.value = _uiState.value.copy(isLoading = false)
-                    refreshWalletLastFullSyncTimes()
-                    _events.emit(WalletEvent.WalletDeleted)
-                }
-                is WalletResult.Error -> {
-                    _uiState.value =
-                        _uiState.value.copy(
-                            isLoading = false,
-                            error = result.message,
-                        )
-                    _events.emit(WalletEvent.Error(result.message))
-                }
+        return when (val result = repository.deleteWallet(walletId)) {
+            is WalletResult.Success -> {
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                refreshWalletLastFullSyncTimes()
+                _events.emit(WalletEvent.WalletDeleted)
+                result
+            }
+            is WalletResult.Error -> {
+                _uiState.value =
+                    _uiState.value.copy(
+                        isLoading = false,
+                        error = result.message,
+                    )
+                _events.emit(WalletEvent.Error(result.message))
+                result
             }
         }
     }
@@ -2868,6 +2866,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             val liquidMetadata = repository.getLiquidMetadataSnapshotForWallet(walletId)
                             val sparkAddrLabels = repository.getAllSparkAddressLabelsForWallet(walletId)
                             val sparkTxLabels = repository.getAllSparkTransactionLabelsForWallet(walletId)
+                            val sparkMetadata =
+                                SparkBackupMetadata(
+                                    transactionSources = repository.getAllSparkTransactionSourcesForWallet(walletId),
+                                    paymentRecipients = repository.getAllSparkPaymentRecipientsForWallet(walletId),
+                                    depositAddresses = repository.getAllSparkDepositAddressesForWallet(walletId),
+                                    pendingDeposits = repository.getAllSparkPendingDepositsForWallet(walletId),
+                                    onchainDepositAddress = repository.getSparkOnchainDepositAddressForWallet(walletId),
+                                )
                             put("labels", JSONObject().apply {
                                 put("addresses", JSONObject().apply { addrLabels.forEach { (k, v) -> put(k, v) } })
                                 put("transactions", JSONObject().apply { txLabels.forEach { (k, v) -> put(k, v) } })
@@ -2877,20 +2883,29 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                 put("sparkAddresses", JSONObject().apply { sparkAddrLabels.forEach { (k, v) -> put(k, v) } })
                                 put("sparkTransactions", JSONObject().apply { sparkTxLabels.forEach { (k, v) -> put(k, v) } })
                             })
+                            if (!sparkMetadata.isEmpty()) {
+                                put("sparkMetadata", BackupJsonAdapters.Spark.metadataToJson(sparkMetadata))
+                            }
 
                             val bitcoinSwapDetails = repository.getAllTransactionSwapDetailsForWallet(walletId)
+                            val bitcoinTransactionSources = repository.getAllTransactionSourcesForWallet(walletId)
                             if (liquidMetadata.txSources.isNotEmpty() || liquidMetadata.txSwapDetails.isNotEmpty()) {
-                                put("liquidMetadata", JSONObject().apply {
-                                    put("transactionSources", JSONObject().apply {
-                                        liquidMetadata.txSources.forEach { (txid, source) -> put(txid, source.name) }
-                                    })
-                                    put("swapDetails", buildSwapDetailsJsonObject(liquidMetadata.txSwapDetails))
-                                })
+                                put(
+                                    "liquidMetadata",
+                                    BackupJsonAdapters.Liquid.metadataToJson(
+                                        transactionSources = liquidMetadata.txSources,
+                                        swapDetails = liquidMetadata.txSwapDetails,
+                                    ),
+                                )
                             }
-                            if (bitcoinSwapDetails.isNotEmpty()) {
-                                put("bitcoinMetadata", JSONObject().apply {
-                                    put("swapDetails", buildSwapDetailsJsonObject(bitcoinSwapDetails))
-                                })
+                            if (bitcoinTransactionSources.isNotEmpty() || bitcoinSwapDetails.isNotEmpty()) {
+                                put(
+                                    "bitcoinMetadata",
+                                    BackupJsonAdapters.Bitcoin.metadataToJson(
+                                        transactionSources = bitcoinTransactionSources,
+                                        swapDetails = bitcoinSwapDetails,
+                                    ),
+                                )
                             }
                         }
                     }
@@ -3245,84 +3260,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             if (value == "null" || value.isBlank()) null else value
         }
 
-    private fun buildSwapDetailsJsonObject(swapDetails: Map<String, LiquidSwapDetails>): JSONObject =
-        JSONObject().apply {
-            swapDetails.forEach { (txid, details) ->
-                put(
-                    txid,
-                    JSONObject().apply {
-                        put("service", details.service.name)
-                        put("direction", details.direction.name)
-                        put("swapId", details.swapId)
-                        put("role", details.role.name)
-                        put("depositAddress", details.depositAddress)
-                        put("receiveAddress", details.receiveAddress)
-                        put("refundAddress", details.refundAddress)
-                        put("sendAmountSats", details.sendAmountSats)
-                        put("expectedReceiveAmountSats", details.expectedReceiveAmountSats)
-                        put("paymentInput", details.paymentInput)
-                        put("resolvedPaymentInput", details.resolvedPaymentInput)
-                        put("invoice", details.invoice)
-                        put("status", details.status)
-                        put("timeoutBlockHeight", details.timeoutBlockHeight)
-                        put("refundPublicKey", details.refundPublicKey)
-                        put("claimPublicKey", details.claimPublicKey)
-                        put("swapTree", details.swapTree)
-                        put("blindingKey", details.blindingKey)
-                    },
-                )
-            }
-        }
-
-    private fun parseSwapDetailsJson(detailsJson: JSONObject): LiquidSwapDetails? =
-        runCatching {
-            LiquidSwapDetails(
-                service = SwapService.valueOf(detailsJson.getString("service")),
-                direction = SwapDirection.valueOf(detailsJson.getString("direction")),
-                swapId = detailsJson.getString("swapId"),
-                role = LiquidSwapTxRole.valueOf(
-                    detailsJson.optString("role", LiquidSwapTxRole.FUNDING.name),
-                ),
-                depositAddress = detailsJson.getString("depositAddress"),
-                receiveAddress = detailsJson.optString("receiveAddress").takeIf { it.isNotBlank() },
-                refundAddress = detailsJson.optString("refundAddress").takeIf { it.isNotBlank() },
-                sendAmountSats = detailsJson.optLong("sendAmountSats", 0L),
-                expectedReceiveAmountSats = detailsJson.optLong("expectedReceiveAmountSats", 0L),
-                paymentInput = detailsJson.optString("paymentInput").takeIf { it.isNotBlank() },
-                resolvedPaymentInput = detailsJson.optString("resolvedPaymentInput").takeIf { it.isNotBlank() },
-                invoice = detailsJson.optString("invoice").takeIf { it.isNotBlank() },
-                status = detailsJson.optString("status").takeIf { it.isNotBlank() },
-                timeoutBlockHeight =
-                    detailsJson.optInt("timeoutBlockHeight").takeIf {
-                        !detailsJson.isNull("timeoutBlockHeight")
-                    },
-                refundPublicKey = detailsJson.optString("refundPublicKey").takeIf { it.isNotBlank() },
-                claimPublicKey = detailsJson.optString("claimPublicKey").takeIf { it.isNotBlank() },
-                swapTree = detailsJson.optString("swapTree").takeIf { it.isNotBlank() },
-                blindingKey = detailsJson.optString("blindingKey").takeIf { it.isNotBlank() },
-            )
-        }.getOrNull()
-
-    private fun restoreSwapDetailsForWallet(
-        detailsObj: JSONObject?,
-        save: (String, LiquidSwapDetails) -> Unit,
-    ) {
-        val keys = detailsObj?.keys() ?: return
-        while (keys.hasNext()) {
-            val txid = keys.next()
-            val detailsJson = detailsObj.optJSONObject(txid) ?: continue
-            val details = parseSwapDetailsJson(detailsJson) ?: continue
-            save(txid, details)
-        }
-    }
-
     private fun restoreLabelsForWallet(walletId: String, walletEntry: JSONObject) {
-        val labelsObj = walletEntry.optJSONObject("labels") ?: return
-        val addrLabels = labelsObj.optJSONObject("addresses")
-        val txLabels = labelsObj.optJSONObject("transactions")
-        val liquidTxLabels = labelsObj.optJSONObject("liquidTransactions")
-        val sparkAddrLabels = labelsObj.optJSONObject("sparkAddresses")
-        val sparkTxLabels = labelsObj.optJSONObject("sparkTransactions")
+        val labelsObj = walletEntry.optJSONObject("labels")
+        val addrLabels = labelsObj?.optJSONObject("addresses")
+        val txLabels = labelsObj?.optJSONObject("transactions")
+        val liquidTxLabels = labelsObj?.optJSONObject("liquidTransactions")
+        val sparkAddrLabels = labelsObj?.optJSONObject("sparkAddresses")
+        val sparkTxLabels = labelsObj?.optJSONObject("sparkTransactions")
 
         val restoredAddressLabels = mutableMapOf<String, String>()
         addrLabels?.keys()?.forEach { addr ->
@@ -3368,31 +3312,23 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
         repository.saveSparkTransactionLabelsForWallet(walletId, restoredSparkTransactionLabels)
+        restoreSparkMetadataForWallet(walletId, walletEntry.optJSONObject("sparkMetadata"))
 
         val metadataObj = walletEntry.optJSONObject("liquidMetadata")
-        if (metadataObj != null) {
-            val sourcesObj = metadataObj.optJSONObject("transactionSources")
-            sourcesObj?.keys()?.forEach { txid ->
-                val sourceName = sourcesObj.optString(txid, "")
-                val source = try { LiquidTxSource.valueOf(sourceName) } catch (_: Exception) { null }
-                if (source != null) {
-                    repository.saveLiquidTransactionSourceForWallet(walletId, txid, source)
-                }
-            }
-            restoreSwapDetailsForWallet(
-                detailsObj = metadataObj.optJSONObject("swapDetails"),
-                save = { txid, details ->
-                    repository.saveLiquidSwapDetailsForWallet(walletId, txid, details)
-                },
-            )
+        BackupJsonAdapters.Liquid.transactionSourcesFromMetadata(metadataObj).forEach { (txid, source) ->
+            repository.saveLiquidTransactionSourceForWallet(walletId, txid, source)
         }
-
-        restoreSwapDetailsForWallet(
-            detailsObj = walletEntry.optJSONObject("bitcoinMetadata")?.optJSONObject("swapDetails"),
-            save = { txid, details ->
+        BackupJsonAdapters.Liquid.swapDetailsFromMetadata(metadataObj).forEach { (txid, details) ->
+            repository.saveLiquidSwapDetailsForWallet(walletId, txid, details)
+        }
+        BackupJsonAdapters.Bitcoin.swapDetailsFromMetadata(walletEntry.optJSONObject("bitcoinMetadata"))
+            .forEach { (txid, details) ->
                 repository.saveTransactionSwapDetailsForWallet(walletId, txid, details)
-            },
-        )
+            }
+        BackupJsonAdapters.Bitcoin.transactionSourcesFromMetadata(walletEntry.optJSONObject("bitcoinMetadata"))
+            .forEach { (txid, source) ->
+                repository.saveTransactionSourceForWallet(walletId, txid, source)
+            }
     }
 
     private fun restoreLiquidServers(serversArray: org.json.JSONArray?) {
@@ -3692,6 +3628,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         val labelsObj = backupJson.optJSONObject("labels")
         val bitcoinMetadataObj = backupJson.optJSONObject("bitcoinMetadata")
         val liquidMetadataObj = backupJson.optJSONObject("liquidMetadata")
+        val sparkMetadataObj = backupJson.optJSONObject("sparkMetadata")
         val walletSettingsObj = backupJson.optJSONObject("walletSettings")
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
@@ -3714,19 +3651,22 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         restoreWalletSettingsObject(restoredWalletId, walletSettingsObj)
                     }
 
-                    if (restoredWalletId != null && (labelsObj != null || bitcoinMetadataObj != null || liquidMetadataObj != null)) {
+                    if (restoredWalletId != null &&
+                        (labelsObj != null || bitcoinMetadataObj != null || liquidMetadataObj != null || sparkMetadataObj != null)
+                    ) {
                         restoreBackupMetadata(
                             walletId = restoredWalletId,
                             labelsObj = labelsObj,
                             bitcoinMetadataObj = bitcoinMetadataObj,
                             liquidMetadataObj = liquidMetadataObj,
+                            sparkMetadataObj = sparkMetadataObj,
                         )
                     }
 
                     _uiState.value = _uiState.value.copy(isLoading = false)
                     _events.emit(WalletEvent.WalletImported)
 
-                    if (labelsObj != null || bitcoinMetadataObj != null || liquidMetadataObj != null) {
+                    if (labelsObj != null || bitcoinMetadataObj != null || liquidMetadataObj != null || sparkMetadataObj != null) {
                         _events.emit(WalletEvent.LabelsRestored)
                     }
 
@@ -3751,6 +3691,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         labelsObj: JSONObject?,
         bitcoinMetadataObj: JSONObject?,
         liquidMetadataObj: JSONObject?,
+        sparkMetadataObj: JSONObject?,
     ) {
         val addressLabels = labelsObj?.optJSONObject("addresses")
         if (addressLabels != null) {
@@ -3809,33 +3750,42 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             }
             repository.saveSparkTransactionLabelsForWallet(walletId, labels)
         }
+        restoreSparkMetadataForWallet(walletId, sparkMetadataObj)
 
-        restoreSwapDetailsForWallet(
-            detailsObj = bitcoinMetadataObj?.optJSONObject("swapDetails"),
-            save = { txid, details ->
-                repository.saveTransactionSwapDetailsForWallet(walletId, txid, details)
-            },
-        )
-
-        val liquidTxSources = liquidMetadataObj?.optJSONObject("transactionSources")
-        if (liquidTxSources != null) {
-            val keys = liquidTxSources.keys()
-            while (keys.hasNext()) {
-                val txid = keys.next()
-                val source =
-                    runCatching {
-                        LiquidTxSource.valueOf(liquidTxSources.getString(txid))
-                    }.getOrNull() ?: continue
-                repository.saveLiquidTransactionSourceForWallet(walletId, txid, source)
-            }
+        BackupJsonAdapters.Bitcoin.swapDetailsFromMetadata(bitcoinMetadataObj).forEach { (txid, details) ->
+            repository.saveTransactionSwapDetailsForWallet(walletId, txid, details)
         }
+        BackupJsonAdapters.Bitcoin.transactionSourcesFromMetadata(bitcoinMetadataObj).forEach { (txid, source) ->
+            repository.saveTransactionSourceForWallet(walletId, txid, source)
+        }
+        BackupJsonAdapters.Liquid.transactionSourcesFromMetadata(liquidMetadataObj).forEach { (txid, source) ->
+            repository.saveLiquidTransactionSourceForWallet(walletId, txid, source)
+        }
+        BackupJsonAdapters.Liquid.swapDetailsFromMetadata(liquidMetadataObj).forEach { (txid, details) ->
+            repository.saveLiquidSwapDetailsForWallet(walletId, txid, details)
+        }
+    }
 
-        restoreSwapDetailsForWallet(
-            detailsObj = liquidMetadataObj?.optJSONObject("swapDetails"),
-            save = { txid, details ->
-                repository.saveLiquidSwapDetailsForWallet(walletId, txid, details)
-            },
-        )
+    private fun restoreSparkMetadataForWallet(
+        walletId: String,
+        sparkMetadataObj: JSONObject?,
+    ) {
+        val metadata = BackupJsonAdapters.Spark.metadataFromJson(sparkMetadataObj) ?: return
+        metadata.transactionSources.forEach { (paymentId, source) ->
+            repository.saveSparkTransactionSourceForWallet(walletId, paymentId, source)
+        }
+        metadata.paymentRecipients.forEach { (paymentId, recipient) ->
+            repository.saveSparkPaymentRecipientForWallet(walletId, paymentId, recipient)
+        }
+        metadata.depositAddresses.forEach { (txid, address) ->
+            repository.saveSparkDepositAddressForWallet(walletId, txid, address)
+        }
+        metadata.pendingDeposits.forEach { deposit ->
+            repository.saveSparkPendingDepositForWallet(walletId, deposit)
+        }
+        metadata.onchainDepositAddress?.let { address ->
+            repository.setSparkOnchainDepositAddressForWallet(walletId, address)
+        }
     }
 
     /**

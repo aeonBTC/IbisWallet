@@ -61,7 +61,7 @@ fun LockScreen(
             if (!success) {
                 attempts++
                 error =
-                    if (attempts >= 6) {
+                    if (attempts >= SecureStorage.MAX_PIN_ATTEMPTS) {
                         tooManyAttemptsMsg
                     } else {
                         incorrectPinMsg

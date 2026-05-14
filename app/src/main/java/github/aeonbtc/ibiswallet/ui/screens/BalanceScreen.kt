@@ -1295,17 +1295,18 @@ private fun TransactionItem(
                     if (swapDetails != null) {
                         Spacer(modifier = Modifier.width(4.dp))
                         Box(
+                            contentAlignment = Alignment.Center,
                             modifier =
                                 Modifier
+                                    .size(22.dp)
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(BitcoinOrange.copy(alpha = 0.16f))
-                                    .padding(horizontal = 5.dp, vertical = 2.dp),
+                                    .background(BitcoinOrange.copy(alpha = 0.16f)),
                         ) {
-                            Text(
-                                text = stringResource(R.string.loc_85a12a5f),
-                                style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
-                                color = BitcoinOrange,
-                                fontWeight = FontWeight.SemiBold,
+                            Icon(
+                                imageVector = Icons.Default.SwapHoriz,
+                                contentDescription = stringResource(R.string.loc_85a12a5f),
+                                tint = BitcoinOrange,
+                                modifier = Modifier.size(21.dp),
                             )
                         }
                     }

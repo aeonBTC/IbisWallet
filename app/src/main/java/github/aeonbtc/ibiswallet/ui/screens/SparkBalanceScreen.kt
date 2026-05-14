@@ -1290,30 +1290,10 @@ private fun SparkTransactionAsteriskFilterButton(
                 .clickable(onClick = onClick),
     ) {
         val iconColor = if (isSelected) tint else TextSecondary.copy(alpha = 0.6f)
-        Canvas(modifier = Modifier.size(15.dp)) {
-            val center = Offset(size.width / 2f, size.height / 2f)
-            val outerRadius = size.minDimension * 0.46f
-            val innerRadius = size.minDimension * 0.18f
-            val starPath =
-                Path().apply {
-                    for (index in 0 until 12) {
-                        val angle = Math.toRadians((index * 30 - 90).toDouble())
-                        val radius = if (index % 2 == 0) outerRadius else innerRadius
-                        val x = center.x + kotlin.math.cos(angle).toFloat() * radius
-                        val y = center.y + kotlin.math.sin(angle).toFloat() * radius
-                        if (index == 0) {
-                            moveTo(x, y)
-                        } else {
-                            lineTo(x, y)
-                        }
-                    }
-                    close()
-                }
-            drawPath(
-                path = starPath,
-                color = iconColor,
-            )
-        }
+        SparkAsteriskIcon(
+            tint = iconColor,
+            modifier = Modifier.size(16.dp),
+        )
     }
 }
 
@@ -1394,21 +1374,7 @@ private fun SparkTransactionRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Spacer(modifier = Modifier.size(3.dp))
-                    Box(
-                        modifier =
-                            Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(railBadge.color.copy(alpha = 0.16f))
-                                .padding(horizontal = 5.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            text = stringResource(railBadge.labelRes),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
-                            color = railBadge.color,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                        )
-                    }
+                    SparkHistoryRailBadge(railBadge = railBadge)
                 }
                 if (!displayLabel.isNullOrBlank()) {
                     Text(
@@ -2037,6 +2003,76 @@ private fun SparkCopyRow(
                 modifier = Modifier.size(18.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun SparkHistoryRailBadge(railBadge: SparkRailBadge) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier =
+            Modifier
+                .size(22.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(railBadge.color.copy(alpha = 0.16f)),
+    ) {
+        if (railBadge.rail == SparkRail.SPARK) {
+            SparkAsteriskIcon(
+                tint = railBadge.color,
+                modifier = Modifier.size(18.dp),
+            )
+        } else {
+            Icon(
+                imageVector =
+                    when (railBadge.rail) {
+                        SparkRail.LIGHTNING -> Icons.Default.Bolt
+                        SparkRail.SWAP -> Icons.Default.CurrencyBitcoin
+                        SparkRail.SPARK -> Icons.Default.Bolt
+                    },
+                contentDescription = stringResource(railBadge.labelRes),
+                tint = railBadge.color,
+                modifier =
+                    Modifier.size(
+                        when (railBadge.rail) {
+                            SparkRail.LIGHTNING,
+                            -> 20.dp
+                            SparkRail.SWAP -> 21.dp
+                            SparkRail.SPARK -> 18.dp
+                        },
+                    ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SparkAsteriskIcon(
+    tint: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier) {
+        val center = Offset(size.width / 2f, size.height / 2f)
+        val outerRadius = size.minDimension * 0.46f
+        val innerRadius = size.minDimension * 0.18f
+        val starPath =
+            Path().apply {
+                for (index in 0 until 12) {
+                    val angle = Math.toRadians((index * 30 - 90).toDouble())
+                    val radius = if (index % 2 == 0) outerRadius else innerRadius
+                    val x = center.x + kotlin.math.cos(angle).toFloat() * radius
+                    val y = center.y + kotlin.math.sin(angle).toFloat() * radius
+                    if (index == 0) {
+                        moveTo(x, y)
+                    } else {
+                        lineTo(x, y)
+                    }
+                }
+                close()
+            }
+        drawPath(
+            path = starPath,
+            color = tint,
+        )
     }
 }
 
