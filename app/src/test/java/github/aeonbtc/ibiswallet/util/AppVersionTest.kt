@@ -11,6 +11,22 @@ class AppVersionTest : FunSpec({
         val version = AppVersion.parse("v3.2.0").shouldNotBeNull()
 
         version.isStable shouldBe true
+        version.isStableOrBeta shouldBe true
+    }
+
+    test("treats beta releases as supported updater targets") {
+        val version = AppVersion.parse("4.1.1-beta").shouldNotBeNull()
+
+        version.isStable shouldBe false
+        version.isBeta shouldBe true
+        version.isStableOrBeta shouldBe true
+    }
+
+    test("does not treat rc releases as supported updater targets") {
+        val version = AppVersion.parse("4.1.1-rc.1").shouldNotBeNull()
+
+        version.isBeta shouldBe false
+        version.isStableOrBeta shouldBe false
     }
 
     test("stable release outranks matching beta version") {
