@@ -4527,18 +4527,16 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 _appUpdateStatus.value = AppUpdateStatus.Checking
 
                 val updateStatus =
-                    appUpdateService.fetchLatestRelease().fold(
+                    appUpdateService.fetchLatestRelease(AppVersion.parse(BuildConfig.VERSION_NAME)).fold(
                         onSuccess = { release ->
                             lastAppUpdateCheckElapsedMs = SystemClock.elapsedRealtime()
                             when {
                                 release == null -> AppUpdateStatus.UpToDate
-                                release.version > (AppVersion.parse(BuildConfig.VERSION_NAME) ?: release.version) ->
+                                else ->
                                     AppUpdateStatus.UpdateAvailable(
                                         latestVersionName = release.versionName,
                                         releaseUrl = release.htmlUrl,
                                     )
-
-                                else -> AppUpdateStatus.UpToDate
                             }
                         },
                         onFailure = {

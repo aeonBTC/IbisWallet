@@ -15,6 +15,7 @@ data class AppVersion(
     private val numericParts: List<Int>,
     private val prereleaseParts: List<PrereleasePart> = emptyList(),
 ) : Comparable<AppVersion> {
+    val major: Int get() = numericParts.firstOrNull() ?: 0
     val isStable: Boolean get() = prereleaseParts.isEmpty()
     val isBeta: Boolean
         get() =
@@ -22,6 +23,8 @@ data class AppVersion(
                 prereleaseParts.firstOrNull() == PrereleasePart.Text("beta") &&
                 prereleaseParts.drop(1).all { it is PrereleasePart.Numeric }
     val isStableOrBeta: Boolean get() = isStable || isBeta
+    val isLegacyBetaSeries: Boolean get() = isBeta && major > 1
+    val isStableResetSeries: Boolean get() = isStable && major == 1
 
     override fun compareTo(other: AppVersion): Int {
         val maxPartCount = maxOf(numericParts.size, other.numericParts.size)
@@ -50,6 +53,18 @@ data class AppVersion(
 
         return 0
     }
+
+    fun isUpdateFor(current: AppVersion): Boolean {
+        if (isLegacyBetaSeries && current.isStableResetSeries) return false
+        return this > current || (isStableResetSeries && current.isLegacyBetaSeries)
+    }
+
+    fun updatePriorityAgainst(current: AppVersion): Int =
+        when {
+            isStableResetSeries && current.isLegacyBetaSeries -> 2
+            this > current -> 1
+            else -> 0
+        }
 
     companion object {
         private val VERSION_REGEX =
