@@ -16,6 +16,12 @@ data class AppVersion(
     private val prereleaseParts: List<PrereleasePart> = emptyList(),
 ) : Comparable<AppVersion> {
     val isStable: Boolean get() = prereleaseParts.isEmpty()
+    val isBeta: Boolean
+        get() =
+            prereleaseParts.isNotEmpty() &&
+                prereleaseParts.firstOrNull() == PrereleasePart.Text("beta") &&
+                prereleaseParts.drop(1).all { it is PrereleasePart.Numeric }
+    val isStableOrBeta: Boolean get() = isStable || isBeta
 
     override fun compareTo(other: AppVersion): Int {
         val maxPartCount = maxOf(numericParts.size, other.numericParts.size)
