@@ -1,4 +1,5 @@
--Improved Spark wallet reliability, better restore/sync behavior, faster wallet switching, cached state, and expanded backup coverage.
+- Expanded CoinGecko fiat options (AMD, BAM, COP, CRC, DOP, GTQ, HNL, KES, LBP, PEN, RON, SVC, ZMW).
+- Improved Spark wallet reliability, better restore/sync behavior, faster wallet switching, cached state, and expanded backup coverage.
 - Updated core wallet/network libraries (BDK 2.3.1, Spark SDK 0.14.0, LWK 0.15.0, Lightning KMP 1.11.5, OkHttp 5.3.2)
 - Updated security/QR dependencies (AndroidX Security Crypto 1.1.0, ZXing 3.5.4)
 - Updated supporting dependencies (Hummingbird 1.7.4, org.json 20251224)
