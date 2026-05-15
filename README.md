@@ -90,7 +90,7 @@ Ibis is coded and audited by the most current frontier AI models.
 
 ## Donations
 
-As I originally made this app for myself, I do not expect donations. However, tokens arent cheap. So if you wish to show thanks, please do. 
+As I originally made this wallet for myself, I do not expect donations. However, tokens arent cheap. So if you wish to show thanks, please do. 
 
 <img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
 
