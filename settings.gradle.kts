@@ -18,8 +18,6 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // Guardian Project Maven for tor-android
-        maven { url = uri("https://raw.githubusercontent.com/guardianproject/gpmaven/master") }
         // Breez Maven for Spark SDK Android bindings
         maven { url = uri("https://mvn.breez.technology/releases") }
     }
