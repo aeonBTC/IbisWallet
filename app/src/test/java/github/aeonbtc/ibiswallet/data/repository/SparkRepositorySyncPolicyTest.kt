@@ -43,4 +43,41 @@ class SparkRepositorySyncPolicyTest : FunSpec({
     test("payment history pagination advances by Spark page size") {
         SparkPaymentHistoryPaging.nextOffset(100u) shouldBe 150u
     }
+
+    test("network recovery runs only when a Spark wallet is loaded") {
+        SparkSyncPolicy.shouldForceReconnectOnNetworkChange(loadedWalletId = null) shouldBe false
+        SparkSyncPolicy.shouldForceReconnectOnNetworkChange(loadedWalletId = "wallet-1") shouldBe true
+    }
+
+    test("reconnect debouncer coalesces rapid schedule requests") {
+        var now = 0L
+        val debouncer = SparkReconnectDebouncer(clock = { now })
+
+        debouncer.recordScheduleRequest() shouldBe true
+        debouncer.shouldRunReconnect() shouldBe false
+
+        now += SPARK_NETWORK_RECONNECT_DEBOUNCE_MS
+        debouncer.shouldRunReconnect() shouldBe true
+        debouncer.markReconnectExecuted()
+
+        now += 1_000L
+        debouncer.recordScheduleRequest() shouldBe false
+    }
+
+    test("reconnect debouncer enforces minimum interval between reconnects") {
+        var now = 0L
+        val debouncer = SparkReconnectDebouncer(clock = { now })
+
+        debouncer.recordScheduleRequest()
+        now += SPARK_NETWORK_RECONNECT_DEBOUNCE_MS
+        debouncer.shouldRunReconnect() shouldBe true
+        debouncer.markReconnectExecuted()
+
+        now += SPARK_NETWORK_RECONNECT_DEBOUNCE_MS
+        debouncer.recordScheduleRequest() shouldBe false
+        debouncer.shouldRunReconnect() shouldBe false
+
+        now += SPARK_NETWORK_RECONNECT_MIN_INTERVAL_MS
+        debouncer.recordScheduleRequest() shouldBe true
+    }
 })

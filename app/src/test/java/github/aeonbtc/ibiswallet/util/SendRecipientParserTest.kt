@@ -273,4 +273,17 @@ class SendRecipientParserTest : FunSpec({
             error shouldBe "Enter a Liquid, Spark, BOLT 11/12, or LN Address"
         }
     }
+
+    context("normalizeSparkAddressLabelRef") {
+        test("strips bitcoin BIP21 wrapper to bare address") {
+            normalizeSparkAddressLabelRef(
+                "bitcoin:bc1qtestaddressxxxxxxxxxxxxxxxxxxxxxx?amount=0.001&label=Donation",
+            ) shouldBe "bc1qtestaddressxxxxxxxxxxxxxxxxxxxxxx"
+        }
+
+        test("leaves bare address unchanged") {
+            normalizeSparkAddressLabelRef("bc1qtestaddressxxxxxxxxxxxxxxxxxxxxxx") shouldBe
+                "bc1qtestaddressxxxxxxxxxxxxxxxxxxxxxx"
+        }
+    }
 })

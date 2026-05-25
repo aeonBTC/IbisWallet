@@ -70,4 +70,36 @@ class MultisigWalletParserTest : FunSpec({
         config.cosigners.size shouldBe 3
         config.externalDescriptor shouldContain "[aaaaaaaa/48'/0'/0'/2']"
     }
+
+    test("parseCosignerScanLines extracts bsms key line") {
+        val lines =
+            MultisigWalletParser.parseCosignerScanLines(
+                "aaaaaaaa: $xpub1",
+            )
+        lines shouldBe listOf("aaaaaaaa: $xpub1")
+    }
+
+    test("parseCosignerScanLines extracts all cosigners from bsms") {
+        val lines =
+            MultisigWalletParser.parseCosignerScanLines(
+                """
+                BSMS 1.0
+                Policy: 2 of 3
+                Derivation: m/48'/0'/0'/2'
+                aaaaaaaa: $xpub1
+                bbbbbbbb: $xpub2
+                cccccccc: $xpub3
+                """.trimIndent(),
+            )
+        lines.size shouldBe 3
+        lines[0] shouldBe "aaaaaaaa: $xpub1"
+    }
+
+    test("parseCosignerScanLines extracts from key origin") {
+        val lines =
+            MultisigWalletParser.parseCosignerScanLines(
+                "[aaaaaaaa/48'/0'/0'/2']$xpub1",
+            )
+        lines shouldBe listOf("aaaaaaaa: $xpub1")
+    }
 })

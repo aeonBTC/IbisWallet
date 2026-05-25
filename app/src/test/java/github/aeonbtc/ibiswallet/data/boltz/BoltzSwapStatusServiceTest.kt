@@ -19,7 +19,7 @@ class BoltzSwapStatusServiceTest : FunSpec({
                     service.awaitSwapActivity(
                         swapId = "swap-1",
                         timeoutMs = 1,
-                        pollStatus = { "invoice.pending" },
+                        pollUpdate = { BoltzSwapUpdate(id = "swap-1", status = "invoice.pending") },
                     )
                 first?.status shouldBe "invoice.pending"
 
@@ -41,7 +41,7 @@ class BoltzSwapStatusServiceTest : FunSpec({
                     service.awaitSwapActivity(
                         swapId = "swap-2",
                         timeoutMs = 1,
-                        pollStatus = { "invoice.pending" },
+                        pollUpdate = { BoltzSwapUpdate(id = "swap-2", status = "invoice.pending") },
                     )
                 first?.status shouldBe "invoice.pending"
 
@@ -51,14 +51,42 @@ class BoltzSwapStatusServiceTest : FunSpec({
                         swapId = "swap-2",
                         timeoutMs = 20,
                         previousUpdate = first,
-                        pollStatus = {
+                        pollUpdate = {
                             polled = true
-                            "transaction.claimed"
+                            BoltzSwapUpdate(id = "swap-2", status = "transaction.claimed")
                         },
                     )
 
                 polled shouldBe true
                 second?.status shouldBe "transaction.claimed"
+            } finally {
+                service.close()
+            }
+        }
+    }
+
+    test("polling preserves transaction metadata") {
+        runTest {
+            val source = FakeBoltzSwapUpdatesSource()
+            val service = BoltzSwapStatusService(source)
+
+            try {
+                val update =
+                    service.awaitSwapActivity(
+                        swapId = "swap-3",
+                        timeoutMs = 1,
+                        pollUpdate = {
+                            BoltzSwapUpdate(
+                                id = "swap-3",
+                                status = "transaction.lockupFailed",
+                                transactionId = "lockup-txid",
+                                transactionHex = "deadbeef",
+                            )
+                        },
+                    )
+
+                update?.transactionId shouldBe "lockup-txid"
+                update?.transactionHex shouldBe "deadbeef"
             } finally {
                 service.close()
             }

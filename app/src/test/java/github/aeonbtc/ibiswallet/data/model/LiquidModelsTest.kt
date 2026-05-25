@@ -19,6 +19,44 @@ class LiquidModelsTest : FunSpec({
         }
     }
 
+    context("PendingLightningPaymentSession refund metadata") {
+        test("defaults legacy REST fallback sessions to wallet seed refund keys") {
+            val session = PendingLightningPaymentSession(
+                swapId = "swap-id",
+                backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE,
+                requestKey = "request",
+                paymentInput = "lnbc1example",
+                lockupAddress = "lq1lockup",
+                lockupAmountSats = 10_000L,
+                refundAddress = "lq1refund",
+            )
+
+            session.refundKeySource shouldBe BoltzSubmarineRefundKeySource.WALLET_SEED
+            session.refundState shouldBe BoltzSubmarineRefundState.NONE
+        }
+
+        test("stores active refund progress without changing the swap phase") {
+            val session = PendingLightningPaymentSession(
+                swapId = "swap-id",
+                backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE,
+                requestKey = "request",
+                paymentInput = "lnbc1example",
+                lockupAddress = "lq1lockup",
+                lockupAmountSats = 10_000L,
+                refundAddress = "lq1refund",
+                phase = PendingLightningPaymentPhase.REFUNDING,
+                refundKeySource = BoltzSubmarineRefundKeySource.BOLTZ_RESCUE_MNEMONIC,
+                refundKeyPath = "m/44/0/0/0/7",
+                refundKeyIndex = 7,
+                refundState = BoltzSubmarineRefundState.BROADCAST,
+                refundTxid = "refund-txid",
+            )
+
+            session.phase shouldBe PendingLightningPaymentPhase.REFUNDING
+            session.refundTxid shouldBe "refund-txid"
+        }
+    }
+
     context("SwapQuote total fee helpers") {
         test("preserves swap fee aggregation semantics") {
             val quote =
