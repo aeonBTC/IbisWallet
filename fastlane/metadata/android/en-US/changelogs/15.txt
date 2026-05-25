@@ -1,0 +1,6 @@
+- Added date format selection option
+- Added AMOLED theme option
+- Added new feerate source from bitview.space
+- Added new fiat price API from yadio.io
+
+See full changelogs on GitHub.
