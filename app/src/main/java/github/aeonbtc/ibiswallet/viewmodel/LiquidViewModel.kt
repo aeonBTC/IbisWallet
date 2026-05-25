@@ -21,6 +21,7 @@ import github.aeonbtc.ibiswallet.data.boltz.shouldRecreateBoltzMaxOrder
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.BoltzChainFundingPreview
 import github.aeonbtc.ibiswallet.data.model.BoltzChainSwapDraft
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
 import github.aeonbtc.ibiswallet.data.model.BoltzSwapUpdate
 import github.aeonbtc.ibiswallet.data.model.DryRunResult
 import github.aeonbtc.ibiswallet.data.model.EstimatedSwapTerms
@@ -1435,30 +1436,20 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     label = null,
                 )
             if (session.phase == PendingLightningPaymentPhase.REFUNDING && session.fundingTxid != null) {
-                val staleMs = System.currentTimeMillis() - session.createdAt
-                if (staleMs >= STALE_REFUNDING_SESSION_MS) {
-                    _sendState.value = LiquidSendState.Failed(
-                        error = "A Lightning payment has been awaiting refund for over 24 hours. " +
-                            "Use your Boltz rescue key to recover funds manually.",
-                        preview = preview,
-                        refundAddress = session.refundAddress,
-                    )
-                } else {
-                    _sendState.value = LiquidSendState.Sending(
-                        preview = preview,
-                        status = "Lightning payment failed. Awaiting refund to your wallet...",
-                        refundAddress = session.refundAddress,
-                        detail = "Close anytime. The refund will arrive at the address below.",
-                        canDismiss = true,
-                    )
-                    monitorPreparedLightningPayment(
-                        backend = session.backend,
-                        swapId = session.swapId,
-                        paymentReference = session.paymentInput,
-                        fundingTxid = session.fundingTxid,
-                        preview = preview,
-                    )
-                }
+                _sendState.value = LiquidSendState.Sending(
+                    preview = preview,
+                    status = session.status.ifBlank { "Preparing refund..." },
+                    refundAddress = session.refundAddress,
+                    detail = restSubmarineRefundDetail(session),
+                    canDismiss = true,
+                )
+                monitorPreparedLightningPayment(
+                    backend = session.backend,
+                    swapId = session.swapId,
+                    paymentReference = session.paymentInput,
+                    fundingTxid = session.fundingTxid,
+                    preview = preview,
+                )
             } else if (session.fundingTxid != null) {
                 _sendState.value = LiquidSendState.Sending(
                     preview = preview,
@@ -4173,6 +4164,40 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     }
                     val boltzStatus = boltzUpdate?.status
+                    if (session.phase == PendingLightningPaymentPhase.REFUNDING) {
+                        val refundSession =
+                            try {
+                                repository.processRestSubmarineRefund(
+                                    swapId = swapId,
+                                    latestUpdate = boltzUpdate,
+                                )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                logBoltzTrace(
+                                    "refund_processing_retry_failed",
+                                    trace,
+                                    level = BoltzTraceLevel.WARN,
+                                    throwable = e,
+                                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                )
+                                session.copy(
+                                    refundState = BoltzSubmarineRefundState.FAILED,
+                                    refundError = safeLiquidErrorMessage(e, "Refund failed"),
+                                    status = "Refund needs attention. Retry from the pending payment card.",
+                                ).also(::saveLightningSession)
+                            }
+                        saveLightningSession(refundSession)
+                        _sendState.value = LiquidSendState.Sending(
+                            preview = preview,
+                            status = refundSession.status.ifBlank { "Preparing refund..." },
+                            refundAddress = refundSession.refundAddress,
+                            detail = restSubmarineRefundDetail(refundSession),
+                            canDismiss = true,
+                        )
+                        delay(5_000)
+                        continue
+                    }
                     when {
                         isRestLightningPaymentPendingStatus(boltzStatus) -> {
                             val waitingStatus = when {
@@ -4226,33 +4251,41 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         boltzStatus in setOf("invoice.failedToPay", "swap.expired", "transaction.lockupFailed") -> {
                             if (refundingSince == null) refundingSince = System.currentTimeMillis()
                             logBoltzTrace(
-                                "failed_status_awaiting_refund",
+                                "failed_status_processing_refund",
                                 trace,
                                 level = BoltzTraceLevel.WARN,
                                 "elapsedMs" to boltzElapsedMs(traceStartedAt),
                                 "status" to boltzStatus,
                             )
-                            saveLightningSession(
-                                session.copy(
-                                    phase = PendingLightningPaymentPhase.REFUNDING,
-                                    status = "Lightning payment failed ($boltzStatus). Awaiting refund.",
-                                ),
-                            )
-                            val refundStatus = if (refundEscalated) {
-                                "Refund is taking longer than expected. Use your Boltz rescue key if needed."
-                            } else {
-                                "Lightning payment failed. Awaiting refund to your wallet..."
-                            }
-                            val refundDetail = if (refundEscalated) {
-                                "Check the pending payment card for your rescue key."
-                            } else {
-                                "Close anytime. The refund will arrive at the address below."
-                            }
+                            val refundSession =
+                                try {
+                                    repository.processRestSubmarineRefund(
+                                        swapId = swapId,
+                                        latestUpdate = boltzUpdate,
+                                    )
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    logBoltzTrace(
+                                        "refund_processing_failed",
+                                        trace,
+                                        level = BoltzTraceLevel.WARN,
+                                        throwable = e,
+                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                    )
+                                    session.copy(
+                                        phase = PendingLightningPaymentPhase.REFUNDING,
+                                        refundState = BoltzSubmarineRefundState.FAILED,
+                                        refundError = safeLiquidErrorMessage(e, "Refund failed"),
+                                        status = "Refund needs attention. Retry from the pending payment card.",
+                                    ).also(::saveLightningSession)
+                                }
+                            saveLightningSession(refundSession)
                             _sendState.value = LiquidSendState.Sending(
                                 preview = preview,
-                                status = refundStatus,
-                                refundAddress = session.refundAddress,
-                                detail = refundDetail,
+                                status = refundSession.status.ifBlank { "Preparing refund..." },
+                                refundAddress = refundSession.refundAddress,
+                                detail = restSubmarineRefundDetail(refundSession),
                                 canDismiss = true,
                             )
                         }
@@ -4346,6 +4379,31 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         _pendingSubmarineSwap.value = session
     }
 
+    fun retryPendingLightningRefund(swapId: String) {
+        launchLiquidJob {
+            val session = repository.getPendingLightningPaymentSession()
+                ?.takeIf { it.swapId == swapId && it.backend == LightningPaymentBackend.BOLTZ_REST_SUBMARINE }
+                ?: return@launchLiquidJob
+            val updated =
+                try {
+                    repository.processRestSubmarineRefund(swapId = swapId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    session.copy(
+                        phase = PendingLightningPaymentPhase.REFUNDING,
+                        refundState = BoltzSubmarineRefundState.FAILED,
+                        refundError = safeLiquidErrorMessage(e, "Refund failed"),
+                        status = "Refund needs attention. Retry from the pending payment card.",
+                    ).also { repository.savePendingLightningPaymentSession(it) }
+                }
+            _pendingSubmarineSwap.value = updated
+            if (updated.refundState == BoltzSubmarineRefundState.FAILED) {
+                _events.emit(LiquidEvent.Error(updated.status.ifBlank { "Refund retry failed." }))
+            }
+        }
+    }
+
     private suspend fun clearLightningSession(
         swapId: String,
         fundingTxid: String? = null,
@@ -4407,6 +4465,25 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 tx.walletAddress.equals(session.refundAddress, ignoreCase = true) &&
                 tx.balanceSatoshi > 0L &&
                 tx.txid != session.fundingTxid
+        }
+    }
+
+    private fun restSubmarineRefundDetail(session: PendingLightningPaymentSession): String {
+        return when (session.refundState) {
+            BoltzSubmarineRefundState.RESTORING ->
+                "Close anytime. Refund state is being restored."
+            BoltzSubmarineRefundState.COOPERATIVE_REFUNDING ->
+                "Close anytime. Ibis is requesting the Boltz refund signature."
+            BoltzSubmarineRefundState.WAITING_FOR_TIMELOCK ->
+                "Close anytime. Ibis will broadcast when the refund timelock is eligible."
+            BoltzSubmarineRefundState.BROADCAST ->
+                "Close anytime. Waiting for the refund to appear in your wallet."
+            BoltzSubmarineRefundState.DETECTED ->
+                "Refund returned to your Liquid wallet."
+            BoltzSubmarineRefundState.FAILED ->
+                session.refundError ?: "Retry refund from the pending payment card."
+            BoltzSubmarineRefundState.NONE ->
+                "Close anytime. Refund continues in background."
         }
     }
 

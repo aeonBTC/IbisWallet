@@ -79,6 +79,7 @@ import github.aeonbtc.ibiswallet.data.model.WalletState
 import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
@@ -1276,88 +1277,40 @@ fun SendScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // Available balance row with Max button
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Start,
-                    ) {
-                        Text(
-                            text = stringResource(R.string.loc_277e2626),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text =
-                                if (privacyMode) {
-                                    HIDDEN_AMOUNT
-                                } else {
-                                    "${formatAmount(
-                                        remainingAfterSend.toULong(),
-                                        useSats,
-                                    )} ${if (useSats) "sats" else "BTC"}"
-                                },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                        )
-                        // USD conversion
-                        if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                            val usdValue = (remainingAfterSend.toDouble() / 100_000_000.0) * btcPrice
-                            Text(
-                                text = " · ${formatFiat(usdValue, fiatCurrency)}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary.copy(alpha = 0.7f),
-                            )
-                        }
-                        Spacer(modifier = Modifier.weight(1f))
-                        val maxEnabled = walletState.isInitialized && availableSats > 0
-                        Card(
-                            modifier =
-                                Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable(enabled = maxEnabled) {
-                                        if (isMaxMode) {
-                                            // Unclick max - clear amount
-                                            isMaxMode = false
-                                            amountInput = ""
-                                        } else {
-                                            // Click max — sets the flag; the max-mode LaunchedEffect
-                                            // will fill amountInput with the exact value from dry-run.
-                                            // Use rough estimate as an immediate placeholder.
-                                            isMaxMode = true
-                                            isUsdMode = false
-                                            val roughMaxSats =
-                                                maxOf(0L, availableSats - kotlin.math.ceil(feeRate * 150.0).toLong())
-                                            amountInput =
-                                                when {
-                                                    useSats -> roughMaxSats.toString()
-                                                    else -> formatBtc(roughMaxSats.toULong())
-                                                }
-                                        }
-                                    },
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                CardDefaults.cardColors(
-                                    containerColor = if (isMaxMode) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface,
-                                ),
-                            border = BorderStroke(1.dp, if (isMaxMode) BitcoinOrange else BorderColor),
-                        ) {
-                            Text(
-                                text = stringResource(R.string.loc_a53b6469),
-                                style = MaterialTheme.typography.labelMedium,
-                                color =
-                                    if (isMaxMode) {
-                                        BitcoinOrange
-                                    } else if (maxEnabled) {
-                                        TextSecondary
-                                    } else {
-                                        TextSecondary.copy(alpha = 0.5f)
-                                    },
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                            )
-                        }
-                    }
+                    AvailableBalanceMaxRow(
+                        amountText =
+                            if (privacyMode) {
+                                HIDDEN_AMOUNT
+                            } else {
+                                "${formatAmount(remainingAfterSend.toULong(), useSats)} ${if (useSats) "sats" else "BTC"}"
+                            },
+                        fiatText =
+                            if (btcPrice != null && btcPrice > 0 && !privacyMode) {
+                                val usdValue = (remainingAfterSend.toDouble() / 100_000_000.0) * btcPrice
+                                " · ${formatFiat(usdValue, fiatCurrency)}"
+                            } else {
+                                null
+                            },
+                        accentColor = BitcoinOrange,
+                        isMaxMode = isMaxMode,
+                        maxEnabled = walletState.isInitialized && availableSats > 0,
+                        onMaxClick = {
+                            if (isMaxMode) {
+                                isMaxMode = false
+                                amountInput = ""
+                            } else {
+                                isMaxMode = true
+                                isUsdMode = false
+                                val roughMaxSats =
+                                    maxOf(0L, availableSats - kotlin.math.ceil(feeRate * 150.0).toLong())
+                                amountInput =
+                                    when {
+                                        useSats -> roughMaxSats.toString()
+                                        else -> formatBtc(roughMaxSats.toULong())
+                                    }
+                            }
+                        },
+                    )
                 } // end if (!isMultiMode)
 
                 // Label row with button and inline field

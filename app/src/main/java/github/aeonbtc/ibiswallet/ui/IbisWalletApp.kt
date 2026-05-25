@@ -301,6 +301,8 @@ fun IbisWalletApp(
     val privacyMode by viewModel.privacyMode.collectAsStateWithLifecycle()
     var showPrivacyModeHintDialog by remember { mutableStateOf(false) }
     val swipeMode by viewModel.swipeMode.collectAsStateWithLifecycle()
+    val balanceDateFormat by viewModel.balanceDateFormatState.collectAsStateWithLifecycle()
+    val themeMode by viewModel.themeModeState.collectAsStateWithLifecycle()
     val certDialogState by viewModel.certDialogState.collectAsStateWithLifecycle()
     val liquidCertDialogState by liquidViewModel.certDialogState.collectAsStateWithLifecycle()
     val isDuressMode by viewModel.isDuressMode.collectAsStateWithLifecycle()
@@ -319,6 +321,7 @@ fun IbisWalletApp(
     val sparkState by sparkViewModel.sparkState.collectAsStateWithLifecycle()
     val sparkSendState by sparkViewModel.sendState.collectAsStateWithLifecycle()
     val sparkReceiveState by sparkViewModel.receiveState.collectAsStateWithLifecycle()
+    val sparkAddressLabels by sparkViewModel.sparkAddressLabels.collectAsStateWithLifecycle()
     val sparkSendDraft by sparkViewModel.sendDraft.collectAsStateWithLifecycle()
     val loadedSparkWalletId by sparkViewModel.loadedWalletId.collectAsStateWithLifecycle()
     val isSparkConnected by sparkViewModel.isSparkConnected.collectAsStateWithLifecycle()
@@ -676,6 +679,7 @@ fun IbisWalletApp(
         )
     }
     var showLiquidEnableInfoDialog by remember { mutableStateOf(false) }
+    var showSparkEnableInfoDialog by remember { mutableStateOf(false) }
 
     val electrumConfig = viewModel.getElectrumConfig()
     val liquidElectrumConfig = liquidServersState.servers.find {
@@ -771,6 +775,17 @@ fun IbisWalletApp(
             confirmText = stringResource(R.string.liquid_enable_info_confirm),
             showDismissButton = false,
             onConfirm = { showLiquidEnableInfoDialog = false },
+        )
+    }
+
+    if (showSparkEnableInfoDialog) {
+        IbisConfirmDialog(
+            onDismissRequest = { showSparkEnableInfoDialog = false },
+            title = stringResource(R.string.spark_enable_info_title),
+            message = stringResource(R.string.spark_enable_info_message),
+            confirmText = stringResource(R.string.spark_enable_info_confirm),
+            showDismissButton = false,
+            onConfirm = { showSparkEnableInfoDialog = false },
         )
     }
 
@@ -2305,6 +2320,7 @@ fun IbisWalletApp(
                                         if (isSparkAvailable) {
                                             SparkReceiveScreen(
                                                 receiveState = sparkReceiveState,
+                                                sparkAddressLabels = sparkAddressLabels,
                                                 denomination = layer2Denomination,
                                                 btcPrice = btcPrice,
                                                 fiatCurrency = priceCurrency,
@@ -2436,6 +2452,7 @@ fun IbisWalletApp(
                                                 fiatCurrency = priceCurrency,
                                                 historicalBtcPrices = historicalTxBtcPrices,
                                                 showHistoricalTxPrices = showHistoricalTxPrices,
+                                                dateFormat = balanceDateFormat,
                                                 onShowHistoricalTxPricesChange = { showHistoricalTxPrices = it },
                                                 privacyMode = privacyMode,
                                                 sparkTransactionLabels = sparkTransactionLabels,
@@ -2464,6 +2481,7 @@ fun IbisWalletApp(
                                                 fiatCurrency = priceCurrency,
                                                 historicalBtcPrices = historicalTxBtcPrices,
                                                 showHistoricalTxPrices = showHistoricalTxPrices,
+                                                dateFormat = balanceDateFormat,
                                                 onShowHistoricalTxPricesChange = { showHistoricalTxPrices = it },
                                                 privacyMode = privacyMode,
                                                 liquidExplorer = liquidExplorer,
@@ -2520,6 +2538,7 @@ fun IbisWalletApp(
                                             fiatCurrency = priceCurrency,
                                             historicalBtcPrices = historicalTxBtcPrices,
                                             showHistoricalTxPrices = showHistoricalTxPrices,
+                                            dateFormat = balanceDateFormat,
                                             onShowHistoricalTxPricesChange = { showHistoricalTxPrices = it },
                                             privacyMode = privacyMode,
                                             onTogglePrivacy = { viewModel.togglePrivacyMode() },
@@ -2528,8 +2547,6 @@ fun IbisWalletApp(
                                             transactionLabels = transactionLabels,
                                             feeEstimationState = feeEstimationState,
                                             minFeeRate = minFeeRate,
-                                            canBumpFee = { txid -> viewModel.canBumpFee(txid) },
-                                            canCpfp = { txid -> viewModel.canCpfp(txid) },
                                             onBumpFee = { txid, feeRate -> viewModel.bumpFee(txid, feeRate) },
                                             onCpfp = { txid, feeRate -> viewModel.cpfp(txid, feeRate) },
                                             onRedirectTransaction = { txid, feeRate, destinationAddress ->
@@ -2576,6 +2593,7 @@ fun IbisWalletApp(
                                 fiatCurrency = priceCurrency,
                                 historicalBtcPrices = historicalTxBtcPrices,
                                 showHistoricalTxPrices = showHistoricalTxPrices,
+                                dateFormat = balanceDateFormat,
                                 onShowHistoricalTxPricesChange = { showHistoricalTxPrices = it },
                                 privacyMode = privacyMode,
                                 onTogglePrivacy = { viewModel.togglePrivacyMode() },
@@ -2584,8 +2602,6 @@ fun IbisWalletApp(
                                 transactionLabels = transactionLabels,
                                 feeEstimationState = feeEstimationState,
                                 minFeeRate = minFeeRate,
-                                canBumpFee = { txid -> viewModel.canBumpFee(txid) },
-                                canCpfp = { txid -> viewModel.canCpfp(txid) },
                                 onBumpFee = { txid, feeRate -> viewModel.bumpFee(txid, feeRate) },
                                 onCpfp = { txid, feeRate -> viewModel.cpfp(txid, feeRate) },
                                 onRedirectTransaction = { txid, feeRate, destinationAddress ->
@@ -2828,6 +2844,9 @@ fun IbisWalletApp(
                                                 },
                                                 pendingSubmarineSwap = pendingSubmarineSwap,
                                                 boltzRescueMnemonic = sendBoltzRescueMnemonic,
+                                                onRetryPendingLightningRefund = { swapId ->
+                                                    liquidViewModel.retryPendingLightningRefund(swapId)
+                                                },
                                                 preSelectedUtxo = currentPreSelectedLiquidUtxo,
                                                 onClearPreSelectedUtxo = { liquidViewModel.clearPreSelectedLiquidUtxo() },
                                                 onClearDraft = { liquidViewModel.clearSendDraft() },
@@ -3575,6 +3594,14 @@ fun IbisWalletApp(
                             onSwipeModeChange = { mode ->
                                 viewModel.setSwipeMode(mode)
                             },
+                            currentBalanceDateFormat = balanceDateFormat,
+                            onBalanceDateFormatChange = { format ->
+                                viewModel.setBalanceDateFormat(format)
+                            },
+                            currentThemeMode = themeMode,
+                            onThemeModeChange = { mode ->
+                                viewModel.setThemeMode(mode)
+                            },
                             isLiquidAvailable = isAnyLayer2Enabled,
                             torStatus = torState.status,
                             onOpenBitcoinElectrum = {
@@ -3617,6 +3644,10 @@ fun IbisWalletApp(
                             sparkEnabled = isSparkLayer2Enabled,
                             onSparkEnabledChange = { enabled ->
                                 sparkViewModel.setSparkLayer2Enabled(enabled)
+                                if (enabled && !isSparkLayer2Enabled && !secureStorage.hasSeenSparkEnableInfo()) {
+                                    secureStorage.setHasSeenSparkEnableInfo(true)
+                                    showSparkEnableInfoDialog = true
+                                }
                             },
                             currentDenomination = layer2Denomination,
                             onDenominationChange = { newDenomination ->
@@ -3673,6 +3704,7 @@ fun IbisWalletApp(
                         var duressEnabled by remember { mutableStateOf(viewModel.isDuressEnabled()) }
                         var autoWipeThreshold by remember { mutableStateOf(viewModel.getAutoWipeThreshold()) }
                         var cloakModeEnabled by remember { mutableStateOf(viewModel.isCloakModeEnabled()) }
+                        var pendingBiometricEnrollment by remember { mutableStateOf(false) }
                         val isDuressMode by viewModel.isDuressMode.collectAsStateWithLifecycle()
                         // Check if device has biometric hardware
                         val biometricManager = BiometricManager.from(context)
@@ -3681,6 +3713,86 @@ fun IbisWalletApp(
                                 BiometricManager.Authenticators.BIOMETRIC_STRONG or
                                     BiometricManager.Authenticators.BIOMETRIC_WEAK,
                             ) == BiometricManager.BIOMETRIC_SUCCESS
+
+                        LaunchedEffect(pendingBiometricEnrollment) {
+                            if (!pendingBiometricEnrollment) return@LaunchedEffect
+                            val hostActivity = activity
+                            if (hostActivity == null) {
+                                pendingBiometricEnrollment = false
+                                snackbarHostState.showSnackbar(biometricUnavailableMessage)
+                                return@LaunchedEffect
+                            }
+                            val cryptoObject =
+                                withContext(Dispatchers.Default) {
+                                    runCatching {
+                                        secureStorage.createSpendSecretBiometricEnrollmentCryptoObject()
+                                    }.getOrNull()
+                                }
+                            if (cryptoObject == null) {
+                                pendingBiometricEnrollment = false
+                                snackbarHostState.showSnackbar(biometricUnavailableMessage)
+                                return@LaunchedEffect
+                            }
+                            val enrollmentPrompt =
+                                BiometricPrompt(
+                                    hostActivity,
+                                    ContextCompat.getMainExecutor(hostActivity),
+                                    object : BiometricPrompt.AuthenticationCallback() {
+                                        override fun onAuthenticationSucceeded(
+                                            result: BiometricPrompt.AuthenticationResult,
+                                        ) {
+                                            super.onAuthenticationSucceeded(result)
+                                            val cipher = result.cryptoObject?.cipher
+                                            if (cipher == null) {
+                                                pendingBiometricEnrollment = false
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(biometricUnavailableMessage)
+                                                }
+                                                return
+                                            }
+                                            runCatching {
+                                                viewModel.enrollBiometricLock(cipher)
+                                            }.onSuccess {
+                                                viewModel.clearPin()
+                                                viewModel.setSecurityMethod(
+                                                    SecureStorage.SecurityMethod.BIOMETRIC,
+                                                )
+                                                securityMethod = SecureStorage.SecurityMethod.BIOMETRIC
+                                                isSecurityEnabled = true
+                                            }.onFailure {
+                                                scope.launch {
+                                                    snackbarHostState.showSnackbar(
+                                                        biometricUnavailableMessage,
+                                                    )
+                                                }
+                                            }
+                                            pendingBiometricEnrollment = false
+                                        }
+
+                                        override fun onAuthenticationError(
+                                            errorCode: Int,
+                                            errString: CharSequence,
+                                        ) {
+                                            super.onAuthenticationError(errorCode, errString)
+                                            pendingBiometricEnrollment = false
+                                        }
+                                    },
+                                )
+                            val promptInfo =
+                                BiometricPrompt.PromptInfo.Builder()
+                                    .setTitle(
+                                        hostActivity.getString(R.string.biometric_prompt_unlock_ibis_wallet),
+                                    )
+                                    .setSubtitle(
+                                        hostActivity.getString(R.string.biometric_prompt_access_wallet),
+                                    )
+                                    .setNegativeButtonText(hostActivity.getString(R.string.loc_51bac044))
+                                    .setAllowedAuthenticators(
+                                        BiometricManager.Authenticators.BIOMETRIC_STRONG,
+                                    )
+                                    .build()
+                            enrollmentPrompt.authenticate(promptInfo, cryptoObject)
+                        }
 
                         SecurityScreen(
                             currentSecurityMethod = securityMethod,
@@ -3700,9 +3812,7 @@ fun IbisWalletApp(
                                 isSecurityEnabled = true
                             },
                             onEnableBiometric = {
-                                viewModel.setSecurityMethod(SecureStorage.SecurityMethod.BIOMETRIC)
-                                securityMethod = SecureStorage.SecurityMethod.BIOMETRIC
-                                isSecurityEnabled = true
+                                pendingBiometricEnrollment = true
                             },
                             onDisableSecurity = {
                                 // Disabling security also disables duress

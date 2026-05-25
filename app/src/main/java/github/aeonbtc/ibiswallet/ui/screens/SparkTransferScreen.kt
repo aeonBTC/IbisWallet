@@ -28,6 +28,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -75,6 +76,7 @@ import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.FeeRateOption
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
@@ -85,7 +87,9 @@ import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
+import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.SecureClipboard
+import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -149,6 +153,7 @@ fun SparkTransferScreen(
     var isExecutingReview by remember { mutableStateOf(false) }
     var reviewError by remember { mutableStateOf<String?>(null) }
     var reviewState by remember { mutableStateOf<SparkTransferReview?>(null) }
+    var showCustomDestinationQrScanner by rememberSaveable { mutableStateOf(false) }
     var showAdvancedOptions by rememberSaveable { mutableStateOf(false) }
     var useCustomDestination by rememberSaveable { mutableStateOf(false) }
     var customDestination by rememberSaveable { mutableStateOf("") }
@@ -183,7 +188,13 @@ fun SparkTransferScreen(
     val fromLayerLabel = if (isLayer1ToSpark) layer1Label else layer2Label
     val toLayerLabel = if (isLayer1ToSpark) layer2Label else layer1Label
     val sparkDepositAddressLabel = stringResource(R.string.spark_transfer_spark_deposit_address)
-    val destinationOverrideHint = stringResource(R.string.spark_transfer_destination_override_hint)
+    val invalidBitcoinAddressLabel = stringResource(R.string.loc_04536bb4)
+    val destinationOverrideHint =
+        if (isLayer1ToSpark) {
+            stringResource(R.string.spark_transfer_spark_destination_hint)
+        } else {
+            stringResource(R.string.loc_955fce50)
+        }
     val enterDestinationAddressLabel = stringResource(R.string.spark_transfer_enter_destination_address)
     val customFeeRateLabel = stringResource(R.string.spark_transfer_custom_fee_rate)
     val enterFeeRateLabel = stringResource(R.string.spark_transfer_enter_fee_rate)
@@ -199,15 +210,28 @@ fun SparkTransferScreen(
         (receiveState as? SparkReceiveState.Ready)
             ?.takeIf { it.kind == SparkReceiveKind.BITCOIN_ADDRESS }
             ?.paymentRequest
+    val parsedCustomDestination =
+        remember(customDestination, useCustomDestination) {
+            customDestination
+                .trim()
+                .takeIf { useCustomDestination && it.isNotEmpty() }
+                ?.let(::parseSendRecipient)
+        }
+    val resolvedCustomDestination =
+        when (val parsed = parsedCustomDestination) {
+            is ParsedSendRecipient.Bitcoin -> parsed.address
+            else -> customDestination.trim().takeIf { useCustomDestination && it.isNotEmpty() }
+        }
     val destinationAddress =
-        customDestination.trim()
-            .takeIf { useCustomDestination && it.isNotBlank() }
+        resolvedCustomDestination
             ?: if (isLayer1ToSpark) sparkDepositAddress else layer1Address
+    val isCustomDestinationMissing = useCustomDestination && customDestination.isBlank()
     val destinationValidationError =
-        if (useCustomDestination && customDestination.isBlank()) {
-            enterDestinationAddressLabel
-        } else {
-            null
+        when (val parsed = parsedCustomDestination) {
+            null -> null
+            is ParsedSendRecipient.Bitcoin -> null
+            is ParsedSendRecipient.Unknown -> parsed.errorMessage
+            else -> invalidBitcoinAddressLabel
         }
     val customFundingFeeOption =
         remember(customFundingFeeOptionName) {
@@ -238,6 +262,7 @@ fun SparkTransferScreen(
     val canPrepareReview =
         !isPreparingReview &&
             !isExecutingReview &&
+            !isCustomDestinationMissing &&
             destinationValidationError == null &&
             fundingFeeRateValidationError == null
 
@@ -307,6 +332,21 @@ fun SparkTransferScreen(
         if (layer1Address.isNullOrBlank()) {
             onGenerateLayer1Address()
         }
+    }
+
+    if (showCustomDestinationQrScanner) {
+        QrScannerDialog(
+            onCodeScanned = { code ->
+                showCustomDestinationQrScanner = false
+                customDestination =
+                    when (val parsed = parseSendRecipient(code.trim())) {
+                        is ParsedSendRecipient.Bitcoin -> parsed.address
+                        else -> code.trim()
+                    }
+                reviewError = null
+            },
+            onDismiss = { showCustomDestinationQrScanner = false },
+        )
     }
 
     reviewState?.let { review ->
@@ -677,6 +717,19 @@ fun SparkTransferScreen(
                                             color = TextTertiary,
                                         )
                                     },
+                                    trailingIcon = {
+                                        IconButton(
+                                            onClick = { showCustomDestinationQrScanner = true },
+                                            enabled = !isPreparingReview && !isExecutingReview,
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.QrCodeScanner,
+                                                contentDescription = stringResource(R.string.loc_59b2cdc5),
+                                                tint = toColor,
+                                                modifier = Modifier.size(20.dp),
+                                            )
+                                        }
+                                    },
                                     isError = destinationValidationError != null,
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
@@ -801,6 +854,10 @@ fun SparkTransferScreen(
                     onClick = {
                         if (amountSats == null || amountSats <= 0L) {
                             reviewError = "Enter an amount"
+                            return@Button
+                        }
+                        if (isCustomDestinationMissing) {
+                            reviewError = enterDestinationAddressLabel
                             return@Button
                         }
                         if (destinationValidationError != null) {

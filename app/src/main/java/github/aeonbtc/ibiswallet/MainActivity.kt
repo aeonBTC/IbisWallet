@@ -23,6 +23,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -48,7 +49,6 @@ import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.IbisWalletApp
 import github.aeonbtc.ibiswallet.ui.screens.CalculatorScreen
 import github.aeonbtc.ibiswallet.ui.screens.LockScreen
-import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
 import github.aeonbtc.ibiswallet.util.BiometricCrypto
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
@@ -536,6 +536,7 @@ class MainActivity : FragmentActivity() {
 
         setContent {
             val appLocale by walletViewModel.appLocale.collectAsStateWithLifecycle()
+            val themeMode by walletViewModel.themeModeState.collectAsStateWithLifecycle()
             val localizedContext = remember(appLocale) {
                 AppLocale.createLocalizedContext(this, appLocale)
             }
@@ -547,10 +548,10 @@ class MainActivity : FragmentActivity() {
                 LocalConfiguration provides localizedContext.resources.configuration,
                 LocalResources provides localizedContext.resources,
             ) {
-                IbisWalletTheme {
+                IbisWalletTheme(themeMode = themeMode) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
-                        color = DarkBackground,
+                        color = MaterialTheme.colorScheme.background,
                     ) {
                         if (isUnlocked) {
                             IbisWalletApp(

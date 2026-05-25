@@ -128,6 +128,7 @@ fun SparkBalanceScreen(
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
     denomination: String,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     btcPrice: Double?,
     fiatCurrency: String,
     historicalBtcPrices: Map<String, Double> = emptyMap(),
@@ -215,7 +216,7 @@ fun SparkBalanceScreen(
                     railFilteredPayments.filter { payment ->
                         val label = sparkPaymentLabel(payment, sparkTransactionLabels).orEmpty()
                         val badge = sparkRailBadge(payment)
-                        val date = formatSparkTimestamp(payment.timestamp)
+                        val date = formatSparkTimestamp(payment.timestamp, dateFormat)
                         listOf(
                             payment.id,
                             payment.type,
@@ -280,6 +281,7 @@ fun SparkBalanceScreen(
             mempoolUrl = mempoolUrl,
             mempoolServer = mempoolServer,
             useSats = useSats,
+            dateFormat = dateFormat,
             btcPrice = btcPrice,
             fiatCurrency = fiatCurrency,
             historicalBtcPrice = historicalBtcPrices[payment.id],
@@ -306,6 +308,7 @@ fun SparkBalanceScreen(
             mempoolUrl = mempoolUrl,
             mempoolServer = mempoolServer,
             useSats = useSats,
+            dateFormat = dateFormat,
             btcPrice = btcPrice,
             fiatCurrency = fiatCurrency,
             historicalBtcPrice = historicalBtcPrices[deposit.txid],
@@ -524,6 +527,7 @@ fun SparkBalanceScreen(
                             SparkTransactionRow(
                                 payment = item.payment,
                                 useSats = useSats,
+                                dateFormat = dateFormat,
                                 btcPrice = btcPrice,
                                 fiatCurrency = fiatCurrency,
                                 historicalBtcPrice =
@@ -545,6 +549,7 @@ fun SparkBalanceScreen(
                                         it.txid.equals(item.deposit.txid, ignoreCase = true)
                                     }?.timestamp,
                                 useSats = useSats,
+                                dateFormat = dateFormat,
                                 btcPrice = btcPrice,
                                 fiatCurrency = fiatCurrency,
                                 historicalBtcPrice =
@@ -775,13 +780,14 @@ private fun SparkPendingDepositRow(
     deposit: SparkUnclaimedDeposit,
     layer1Timestamp: Long?,
     useSats: Boolean,
+    dateFormat: String,
     btcPrice: Double?,
     fiatCurrency: String,
     historicalBtcPrice: Double?,
     privacyMode: Boolean,
     onClick: () -> Unit,
 ) {
-    val formattedTimestamp = (deposit.timestamp ?: layer1Timestamp)?.let(::formatSparkTimestamp).orEmpty()
+    val formattedTimestamp = (deposit.timestamp ?: layer1Timestamp)?.let { formatSparkTimestamp(it, dateFormat) }.orEmpty()
     Card(
         modifier =
             Modifier
@@ -794,13 +800,13 @@ private fun SparkPendingDepositRow(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
+                    .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier =
                     Modifier
-                        .size(40.dp)
+                        .size(34.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(AccentGreen.copy(alpha = 0.1f)),
                 contentAlignment = Alignment.Center,
@@ -809,11 +815,11 @@ private fun SparkPendingDepositRow(
                     imageVector = Icons.AutoMirrored.Filled.CallReceived,
                     contentDescription = stringResource(R.string.loc_301a5b91),
                     tint = AccentGreen,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
 
-            Spacer(modifier = Modifier.size(12.dp))
+            Spacer(modifier = Modifier.size(10.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -891,6 +897,7 @@ private fun SparkPendingDepositDetailDialog(
     mempoolUrl: String,
     mempoolServer: String,
     useSats: Boolean,
+    dateFormat: String,
     btcPrice: Double?,
     fiatCurrency: String,
     historicalBtcPrice: Double?,
@@ -904,7 +911,8 @@ private fun SparkPendingDepositDetailDialog(
     var showCopiedAddress by remember { mutableStateOf(false) }
     val showTorBrowserError = remember { mutableStateOf(false) }
     val confirmationProgress = sparkDepositConfirmationProgress(deposit, layer1Transaction, layer1BlockHeight)
-    val formattedTimestamp = (deposit.timestamp ?: layer1Transaction?.timestamp)?.let(::formatSparkFullTimestamp).orEmpty()
+    val formattedTimestamp =
+        (deposit.timestamp ?: layer1Transaction?.timestamp)?.let { formatSparkFullTimestamp(it, dateFormat) }.orEmpty()
     val explorerTxid = deposit.txid.takeIf { mempoolServer != SecureStorage.MEMPOOL_DISABLED && mempoolUrl.isNotBlank() }
 
     if (showTorBrowserError.value) {
@@ -1301,6 +1309,7 @@ private fun SparkTransactionAsteriskFilterButton(
 private fun SparkTransactionRow(
     payment: SparkPayment,
     useSats: Boolean,
+    dateFormat: String,
     btcPrice: Double?,
     fiatCurrency: String,
     historicalBtcPrice: Double?,
@@ -1317,7 +1326,7 @@ private fun SparkTransactionRow(
     val iconTint = if (isReceive) AccentGreen else AccentRed
     val iconBackground = if (isReceive) AccentGreen.copy(alpha = 0.1f) else AccentRed.copy(alpha = 0.1f)
     val amountColor = if (isReceive) AccentGreen else AccentRed
-    val formattedTimestamp = remember(payment.timestamp) { formatSparkTimestamp(payment.timestamp) }
+    val formattedTimestamp = remember(payment.timestamp, dateFormat) { formatSparkTimestamp(payment.timestamp, dateFormat) }
     val displayLabel = label?.takeIf { it.isNotBlank() }
     val railBadge = sparkRailBadge(payment)
 
@@ -1333,13 +1342,13 @@ private fun SparkTransactionRow(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
+                    .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier =
                     Modifier
-                        .size(40.dp)
+                        .size(34.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(iconBackground),
                 contentAlignment = Alignment.Center,
@@ -1353,11 +1362,11 @@ private fun SparkTransactionRow(
                             stringResource(R.string.loc_1af68597)
                         },
                     tint = iconTint,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
 
-            Spacer(modifier = Modifier.size(12.dp))
+            Spacer(modifier = Modifier.size(10.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1487,6 +1496,7 @@ private fun SparkPaymentDetailDialog(
     mempoolUrl: String,
     mempoolServer: String,
     useSats: Boolean,
+    dateFormat: String,
     btcPrice: Double?,
     fiatCurrency: String,
     historicalBtcPrice: Double?,
@@ -1517,7 +1527,7 @@ private fun SparkPaymentDetailDialog(
                 if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString()
             }
         }
-    val formattedTimestamp = formatSparkFullTimestamp(payment.timestamp)
+    val formattedTimestamp = formatSparkFullTimestamp(payment.timestamp, dateFormat)
     val recipient = payment.recipient?.takeIf { it.isNotBlank() }
     val feeColor = if (railBadge.rail == SparkRail.LIGHTNING) LightningYellow else BitcoinOrange
     val scrollState = rememberScrollState()
@@ -2331,21 +2341,20 @@ private fun sparkOpenBitcoinExplorer(
     }
 }
 
-private fun formatSparkTimestamp(timestamp: Long): String {
+private fun formatSparkTimestamp(
+    timestamp: Long,
+    dateFormat: String,
+): String {
     if (timestamp <= 0L) return ""
-    val millis = if (timestamp > 10_000_000_000L) timestamp else timestamp * 1000L
-    return sparkDateTimeFormatter.get()?.format(Date(millis)).orEmpty()
+    return formatBalanceTimestamp(timestamp, dateFormat)
 }
 
-private val sparkDateTimeFormatter: ThreadLocal<SimpleDateFormat> =
-    ThreadLocal.withInitial {
-        SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
-    }
-
-private fun formatSparkFullTimestamp(timestamp: Long): String {
+private fun formatSparkFullTimestamp(
+    timestamp: Long,
+    dateFormat: String,
+): String {
     if (timestamp <= 0L) return ""
-    val millis = if (timestamp > 10_000_000_000L) timestamp else timestamp * 1000L
-    return formatFullTimestamp(millis)
+    return formatFullTimestamp(timestamp, dateFormat)
 }
 
 @Composable

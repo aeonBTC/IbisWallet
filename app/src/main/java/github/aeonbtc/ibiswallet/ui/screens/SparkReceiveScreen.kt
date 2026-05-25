@@ -81,6 +81,7 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
+import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URLEncoder
@@ -93,6 +94,7 @@ import androidx.compose.material3.Text
 @Composable
 fun SparkReceiveScreen(
     receiveState: SparkReceiveState,
+    sparkAddressLabels: Map<String, String> = emptyMap(),
     denomination: String,
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
@@ -198,7 +200,16 @@ fun SparkReceiveScreen(
         }
     }
     val shareRequestChooserTitle = stringResource(R.string.loc_ebbd9745)
-    val labelTargetRequest = baseRequestText ?: requestText
+    val labelTargetRequest =
+        baseRequestText?.let(::normalizeSparkAddressLabelRef)
+            ?: requestText?.let(::normalizeSparkAddressLabelRef)
+    val savedOnchainAddressLabel =
+        remember(baseRequestText, sparkAddressLabels) {
+            baseRequestText
+                ?.let(::normalizeSparkAddressLabelRef)
+                ?.let { sparkAddressLabels[it] }
+                .orEmpty()
+        }
     // Match the other receive screens by showing a default request immediately, and
     // switch Spark QR generation to invoice mode when amount/label must be embedded.
     LaunchedEffect(requestKind, requestedAmountSats, embeddedLabel) {
@@ -208,6 +219,13 @@ fun SparkReceiveScreen(
             SparkReceiveKind.SPARK_ADDRESS,
             -> onReceive(requestKind, null, "", false)
             SparkReceiveKind.SPARK_INVOICE -> onReceive(requestKind, requestedAmountSats, embeddedLabel.orEmpty(), false)
+        }
+    }
+
+    LaunchedEffect(activeKind, baseRequestText, savedOnchainAddressLabel) {
+        if (activeKind == SparkReceiveKind.BITCOIN_ADDRESS && savedOnchainAddressLabel.isNotBlank()) {
+            descriptionText = savedOnchainAddressLabel
+            showLabelField = true
         }
     }
 

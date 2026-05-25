@@ -59,6 +59,7 @@ import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeQuote
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeSpeed
 import github.aeonbtc.ibiswallet.data.model.SparkSendState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
@@ -529,48 +530,30 @@ fun SparkSendScreen(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Start,
-                ) {
-                    Text(stringResource(R.string.loc_277e2626), style = MaterialTheme.typography.bodySmall, color = TextSecondary)
-                    Spacer(modifier = Modifier.size(8.dp))
-                    Text(
-                        text =
-                            if (privacyMode) {
-                                SPARK_SEND_HIDDEN
-                            } else {
-                                formatAmount(availableSats.toULong(), useSats, includeUnit = true)
-                            },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                    )
-                    if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                        Text(
-                            text =
-                                " · ${
-                                    formatFiat(
-                                        (availableSats.toDouble() / 100_000_000.0) * btcPrice,
-                                        fiatCurrency,
-                                    )
-                                }",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary.copy(alpha = 0.7f),
-                        )
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                    SparkChipButton(
-                        text = "Max",
-                        selected = isMaxMode,
-                        enabled = availableSats > 0 && !busy,
-                        onClick = {
-                            amountInput = formatSparkSendAmountInput(availableSats, useSats)
-                            isUsdMode = false
-                            isMaxMode = true
+                AvailableBalanceMaxRow(
+                    amountText =
+                        if (privacyMode) {
+                            SPARK_SEND_HIDDEN
+                        } else {
+                            formatAmount(availableSats.toULong(), useSats, includeUnit = true)
                         },
-                    )
-                }
+                    fiatText =
+                        if (btcPrice != null && btcPrice > 0 && !privacyMode) {
+                            val usdValue = (availableSats.toDouble() / 100_000_000.0) * btcPrice
+                            " · ${formatFiat(usdValue, fiatCurrency)}"
+                        } else {
+                            null
+                        },
+                    accentColor = SparkPurple,
+                    isMaxMode = isMaxMode,
+                    maxEnabled = availableSats > 0 && !busy,
+                    fadeWhenDisabled = true,
+                    onMaxClick = {
+                        amountInput = formatSparkSendAmountInput(availableSats, useSats)
+                        isUsdMode = false
+                        isMaxMode = true
+                    },
+                )
 
                 Row(
                     modifier =

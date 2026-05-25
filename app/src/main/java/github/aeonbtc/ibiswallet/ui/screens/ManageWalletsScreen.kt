@@ -2549,20 +2549,6 @@ private fun WalletCard(
                                 modifier = Modifier.size(16.dp),
                             )
                         }
-                        if (wallet.isActive) {
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = BitcoinOrange.copy(alpha = 0.2f),
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.loc_4cb2f934),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = BitcoinOrange,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-                                )
-                            }
-                        }
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))

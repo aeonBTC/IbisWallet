@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CurrencyBitcoin
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
@@ -30,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import github.aeonbtc.ibiswallet.localization.AppLocale
@@ -82,6 +85,10 @@ fun SettingsScreen(
     onCustomMempoolUrlSave: (String) -> Unit = {},
     currentSwipeMode: String = SecureStorage.SWIPE_MODE_DISABLED,
     onSwipeModeChange: (String) -> Unit = {},
+    currentBalanceDateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    onBalanceDateFormatChange: (String) -> Unit = {},
+    currentThemeMode: String = SecureStorage.THEME_MODE_DARK,
+    onThemeModeChange: (String) -> Unit = {},
     isLiquidAvailable: Boolean = false,
     torStatus: TorStatus = TorStatus.DISCONNECTED,
     onOpenBitcoinElectrum: () -> Unit = {},
@@ -138,6 +145,10 @@ fun SettingsScreen(
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
+
+                SettingsSubsectionHeader(title = stringResource(R.string.settings_general_section_display))
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
                 Row(
@@ -197,13 +208,106 @@ fun SettingsScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                val nfcSubtitle =
-                    when {
-                        !hasNfcHardware -> stringResource(R.string.loc_3e2ca137)
-                        !isSystemNfcEnabled -> stringResource(R.string.loc_e762ab0b)
-                        !supportsNfcBroadcast -> stringResource(R.string.loc_03cc7c45)
-                        else -> stringResource(R.string.loc_7e8f0b30)
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.settings_language_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextSecondary,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                LanguageDropdown(
+                    currentLocale = currentAppLocale,
+                    onLocaleSelected = onAppLocaleChange,
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Schedule,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.settings_balance_date_format_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextSecondary,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                BalanceDateFormatDropdown(
+                    currentFormat = currentBalanceDateFormat,
+                    onFormatSelected = onBalanceDateFormatChange,
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Palette,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.settings_theme_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextSecondary,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                ThemeModeDropdown(
+                    currentThemeMode = currentThemeMode,
+                    onThemeModeSelected = onThemeModeChange,
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.SwapHoriz,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.loc_db88d4ce),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextSecondary,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                SwipeModeDropdown(
+                    currentMode = currentSwipeMode,
+                    onModeSelected = onSwipeModeChange,
+                    isLiquidAvailable = isLiquidAvailable,
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                SettingsSubsectionHeader(title = stringResource(R.string.settings_general_section_transactions))
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
                     modifier =
@@ -236,7 +340,11 @@ fun SettingsScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+
+                SettingsSubsectionHeader(title = stringResource(R.string.settings_general_section_connectivity))
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 val walletNotificationsSubtitle =
                     when (walletNotificationDeliveryState) {
@@ -253,6 +361,13 @@ fun SettingsScreen(
                         WalletNotificationDeliveryState.SYSTEM_DISABLED,
                         -> ErrorRed
                         else -> TextSecondary
+                    }
+                val nfcSubtitle =
+                    when {
+                        !hasNfcHardware -> stringResource(R.string.loc_3e2ca137)
+                        !isSystemNfcEnabled -> stringResource(R.string.loc_e762ab0b)
+                        !supportsNfcBroadcast -> stringResource(R.string.loc_03cc7c45)
+                        else -> stringResource(R.string.loc_7e8f0b30)
                     }
 
                 Row(
@@ -364,55 +479,6 @@ fun SettingsScreen(
                         onCheckedChange = if (hasNfcHardware) onNfcEnabledChange else { _ -> },
                     )
                 }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.SwapHoriz,
-                        contentDescription = null,
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.loc_db88d4ce),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextSecondary,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                SwipeModeDropdown(
-                    currentMode = currentSwipeMode,
-                    onModeSelected = onSwipeModeChange,
-                    isLiquidAvailable = isLiquidAvailable,
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Language,
-                        contentDescription = null,
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.settings_language_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextSecondary,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                LanguageDropdown(
-                    currentLocale = currentAppLocale,
-                    onLocaleSelected = onAppLocaleChange,
-                )
             }
         }
 
@@ -621,9 +687,7 @@ fun SettingsScreen(
                 onSourceSelected = onPriceSourceChange,
             )
 
-            val historicalTxFiatSupported =
-                currentPriceSource == SecureStorage.PRICE_SOURCE_MEMPOOL ||
-                    currentPriceSource == SecureStorage.PRICE_SOURCE_MEMPOOL_ONION
+            val historicalTxFiatSupported = SecureStorage.supportsHistoricalTxFiatPricing(currentPriceSource)
 
             if (currentPriceSource != SecureStorage.PRICE_SOURCE_OFF) {
                 Spacer(modifier = Modifier.height(6.dp))
@@ -654,6 +718,19 @@ fun SettingsScreen(
                         SquareToggle(
                             checked = historicalTxFiatEnabled,
                             onCheckedChange = onHistoricalTxFiatEnabledChange,
+                        )
+                    }
+
+                    if (currentPriceSource == SecureStorage.PRICE_SOURCE_YADIO) {
+                        Text(
+                            text = stringResource(R.string.historical_tx_fiat_yadio_limit_note),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = BitcoinOrange,
+                            textAlign = TextAlign.Start,
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 4.dp),
                         )
                     }
                 }
@@ -1244,6 +1321,17 @@ private data class SwipeModeOption(
     val description: String,
 )
 
+private data class BalanceDateFormatOption(
+    val id: String,
+    val name: String,
+)
+
+private data class ThemeModeOption(
+    val id: String,
+    val name: String,
+    val description: String,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SwipeModeDropdown(
@@ -1334,6 +1422,150 @@ private fun SwipeModeDropdown(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BalanceDateFormatDropdown(
+    currentFormat: String,
+    onFormatSelected: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val options =
+        listOf(
+            BalanceDateFormatOption(
+                id = SecureStorage.DATE_FORMAT_MM_DD_YY,
+                name = stringResource(R.string.settings_balance_date_format_mm_dd_yy),
+            ),
+            BalanceDateFormatOption(
+                id = SecureStorage.DATE_FORMAT_DD_MM_YY,
+                name = stringResource(R.string.settings_balance_date_format_dd_mm_yy),
+            ),
+            BalanceDateFormatOption(
+                id = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+                name = stringResource(R.string.settings_balance_date_format_month_dd_yyyy),
+            ),
+            BalanceDateFormatOption(
+                id = SecureStorage.DATE_FORMAT_YYYY_MM_DD,
+                name = stringResource(R.string.settings_balance_date_format_yyyy_mm_dd),
+            ),
+        )
+    val selectedOption =
+        options.find { it.id == currentFormat }
+            ?: options.first { it.id == SecureStorage.DATE_FORMAT_MONTH_DD_YYYY }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        CompactDropdownField(
+            value = selectedOption.name,
+            expanded = expanded,
+            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier =
+                Modifier
+                    .exposedDropdownSize(true)
+                    .background(DarkSurface),
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        DropdownOptionText(
+                            title = option.name,
+                            subtitle = "",
+                            selected = option.id == currentFormat,
+                        )
+                    },
+                    onClick = {
+                        onFormatSelected(option.id)
+                        expanded = false
+                    },
+                    leadingIcon = {
+                        if (option.id == currentFormat) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(R.string.common_selected),
+                                tint = BitcoinOrange,
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ThemeModeDropdown(
+    currentThemeMode: String,
+    onThemeModeSelected: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val options =
+        listOf(
+            ThemeModeOption(
+                id = SecureStorage.THEME_MODE_DARK,
+                name = stringResource(R.string.settings_theme_dark),
+                description = stringResource(R.string.settings_theme_dark_description),
+            ),
+            ThemeModeOption(
+                id = SecureStorage.THEME_MODE_AMOLED,
+                name = stringResource(R.string.settings_theme_amoled),
+                description = stringResource(R.string.settings_theme_amoled_description),
+            ),
+        )
+    val selectedOption = options.find { it.id == currentThemeMode } ?: options.first()
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        CompactDropdownField(
+            value = selectedOption.name,
+            expanded = expanded,
+            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier =
+                Modifier
+                    .exposedDropdownSize(true)
+                    .background(DarkSurface),
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        DropdownOptionText(
+                            title = option.name,
+                            subtitle = option.description,
+                            selected = option.id == currentThemeMode,
+                        )
+                    },
+                    onClick = {
+                        onThemeModeSelected(option.id)
+                        expanded = false
+                    },
+                    leadingIcon = {
+                        if (option.id == currentThemeMode) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(R.string.common_selected),
+                                tint = BitcoinOrange,
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
 /**
  * Data class for fee source options
  */
@@ -1370,6 +1602,11 @@ private fun FeeSourceDropdown(
                 id = SecureStorage.FEE_SOURCE_MEMPOOL_ONION,
                 name = stringResource(R.string.loc_e70effb6),
                 description = stringResource(R.string.loc_a1b0d97e),
+            ),
+            FeeSourceOption(
+                id = SecureStorage.FEE_SOURCE_BITVIEW,
+                name = "bitview.space",
+                description = stringResource(R.string.loc_bed05818),
             ),
             FeeSourceOption(
                 id = SecureStorage.FEE_SOURCE_ELECTRUM,
@@ -1471,6 +1708,11 @@ private fun PriceSourceDropdown(
             PriceSourceOption(
                 id = SecureStorage.PRICE_SOURCE_COINGECKO,
                 name = "CoinGecko",
+                description = stringResource(R.string.loc_bed05818),
+            ),
+            PriceSourceOption(
+                id = SecureStorage.PRICE_SOURCE_YADIO,
+                name = "Yadio.io",
                 description = stringResource(R.string.loc_bed05818),
             ),
         )
@@ -1834,6 +2076,34 @@ private fun ToggleOptionText(
             text = subtitle,
             style = TextStyle(fontSize = 13.sp),
             color = subtitleColor,
+        )
+    }
+}
+
+@Composable
+private fun SettingsSubsectionHeader(title: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HorizontalDivider(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp),
+            color = BorderColor.copy(alpha = 0.7f),
+        )
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = TextSecondary,
+        )
+        HorizontalDivider(
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .padding(start = 8.dp),
+            color = BorderColor.copy(alpha = 0.7f),
         )
     }
 }

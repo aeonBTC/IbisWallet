@@ -69,6 +69,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -114,6 +115,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     // Active connection job (cancellable)
     private var connectionJob: Job? = null
+
+    /** Bumped on each connect request so stale jobs exit after a server switch. */
+    @Volatile
+    private var bitcoinConnectionEpoch = 0
 
     // Background sync loop job - runs every ~5min while connected
     private var backgroundSyncJob: Job? = null
@@ -207,6 +212,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     // Swipe navigation mode
     private val _swipeMode = MutableStateFlow(repository.getSwipeMode())
     val swipeMode: StateFlow<String> = _swipeMode.asStateFlow()
+
+    private val _balanceDateFormatState = MutableStateFlow(repository.getBalanceDateFormat())
+    val balanceDateFormatState: StateFlow<String> = _balanceDateFormatState.asStateFlow()
+
+    private val _themeModeState = MutableStateFlow(repository.getThemeMode())
+    val themeModeState: StateFlow<String> = _themeModeState.asStateFlow()
 
     // QR density for PSBT/PSET animated exports
     private val _psbtQrDensityState = MutableStateFlow(repository.getPsbtQrDensity())
@@ -856,49 +867,22 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun connectToElectrum(config: ElectrumConfig) {
         if (!isAppSessionUnlocked) return
+        val serverRequiresTor = config.useTor || config.isOnionAddress()
         val previousJob = connectionJob
+        val epoch = ++bitcoinConnectionEpoch
+        updateBitcoinTorStateForServer(serverRequiresTor)
         stopBackgroundSync()
         stopHeartbeat()
         stopReconnectRetry()
         repository.setUserDisconnected(false)
         connectionJob =
             viewModelScope.launch {
-                previousJob?.cancelAndJoin()
+                val thisJob = currentCoroutineContext()[Job] ?: return@launch
                 _uiState.value = _uiState.value.copy(isConnecting = true, isConnected = false, error = null, serverVersion = null)
 
                 try {
-                    // Auto-enable Tor for Tor-routed servers, auto-disable for clearnet
-                    // (but keep Tor alive if fee/price source is .onion)
-                    val serverRequiresTor = config.useTor || config.isOnionAddress()
-                    val otherNeedsTor = isFeeSourceOnion() || isPriceSourceOnion()
-                    val shouldKeepTorRunning = shouldKeepTorRunningForBitcoin(serverRequiresTor || otherNeedsTor)
-                    disconnectForServerSwitch(shouldKeepTorRunning)
-                    if (serverRequiresTor) {
-                        repository.setTorEnabled(true)
-                    } else if (repository.isTorEnabled()) {
-                        // Switching to clearnet — Electrum won't use Tor proxy
-                        repository.setTorEnabled(false)
-                        // Only stop the Tor service if nothing else needs it
-                        if (!shouldKeepTorRunningForBitcoin(otherNeedsTor)) {
-                            torManager.stop()
-                        }
-                    }
-                    if (serverRequiresTor && !torManager.isReady()) {
-                        torManager.start()
-
-                        if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
-                            val msg = if (torState.value.status == TorStatus.ERROR) {
-                                "Tor failed to start: ${torState.value.statusMessage}"
-                            } else {
-                                "Tor connection timed out"
-                            }
-                            _uiState.value = _uiState.value.copy(isConnecting = false, error = msg)
-                            _events.emit(WalletEvent.Error(msg))
-                            return@launch
-                        }
-                        // Brief settle time for the SOCKS proxy after bootstrap
-                        delay(TOR_POST_BOOTSTRAP_DELAY_MS)
-                    }
+                    if (!prepareBitcoinServerSwitch(epoch, previousJob)) return@launch
+                    if (!ensureTorReadyForBitcoin(serverRequiresTor, epoch)) return@launch
 
                     // Connect with timeout
                     val timeoutMs = if (serverRequiresTor) CONNECTION_TIMEOUT_TOR_MS else CONNECTION_TIMEOUT_CLEARNET_MS
@@ -906,6 +890,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         withTimeoutOrNull(timeoutMs) {
                             repository.connectToElectrum(config)
                         }
+
+                    if (epoch != bitcoinConnectionEpoch) return@launch
 
                     when (result) {
                         null -> {
@@ -977,21 +963,61 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 } finally {
-                    connectionJob = null
+                    if (connectionJob === thisJob) {
+                        connectionJob = null
+                    }
                 }
             }
     }
 
-    private suspend fun disconnectForServerSwitch(shouldKeepTorRunning: Boolean) {
+    /**
+     * Apply Tor enabled flag and start/stop the Tor service for the target server.
+     * Called eagerly before waiting on a cancelled in-flight connect.
+     */
+    private fun updateBitcoinTorStateForServer(serverRequiresTor: Boolean) {
+        val otherNeedsTor = isFeeSourceOnion() || isPriceSourceOnion()
+        if (serverRequiresTor) {
+            repository.setTorEnabled(true)
+        } else {
+            repository.setTorEnabled(false)
+            if (!shouldKeepTorRunningForBitcoin(otherNeedsTor)) {
+                torManager.stop()
+            }
+        }
+    }
+
+    private suspend fun prepareBitcoinServerSwitch(epoch: Int, previousJob: Job?): Boolean {
+        if (epoch != bitcoinConnectionEpoch) return false
+        withContext(Dispatchers.IO) {
+            repository.abortActiveElectrumConnection()
+        }
+        previousJob?.cancel()
+        previousJob?.cancelAndJoin()
+        if (epoch != bitcoinConnectionEpoch) return false
         withContext(Dispatchers.IO) {
             repository.disconnect()
         }
+        return epoch == bitcoinConnectionEpoch
+    }
 
-        val previousServerUsedTor =
-            repository.getElectrumConfig()?.isOnionAddress() == true || repository.isTorEnabled()
-        if (previousServerUsedTor && !shouldKeepTorRunning) {
-            torManager.stop()
+    private suspend fun ensureTorReadyForBitcoin(serverRequiresTor: Boolean, epoch: Int): Boolean {
+        if (!serverRequiresTor) return epoch == bitcoinConnectionEpoch
+        if (torManager.isReady()) return true
+        torManager.start()
+        if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
+            val msg =
+                if (torState.value.status == TorStatus.ERROR) {
+                    "Tor failed to start: ${torState.value.statusMessage}"
+                } else {
+                    "Tor connection timed out"
+                }
+            _uiState.value = _uiState.value.copy(isConnecting = false, error = msg)
+            _events.emit(WalletEvent.Error(msg))
+            return false
         }
+        if (epoch != bitcoinConnectionEpoch) return false
+        delay(TOR_POST_BOOTSTRAP_DELAY_MS)
+        return epoch == bitcoinConnectionEpoch
     }
 
     /**
@@ -2616,7 +2642,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun connectToServer(serverId: String) {
         if (!isAppSessionUnlocked) return
+        val servers = repository.getAllElectrumServers()
+        val serverConfig = servers.find { it.id == serverId }
+        val serverRequiresTor = serverConfig?.let { it.useTor || it.isOnionAddress() } == true
         val previousJob = connectionJob
+        val epoch = ++bitcoinConnectionEpoch
+        updateBitcoinTorStateForServer(serverRequiresTor)
         stopBackgroundSync()
         stopHeartbeat()
         stopReconnectRetry()
@@ -2625,46 +2656,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         _serversState.value = _serversState.value.copy(activeServerId = serverId)
         connectionJob =
             viewModelScope.launch {
-                previousJob?.cancelAndJoin()
+                val thisJob = currentCoroutineContext()[Job] ?: return@launch
                 _uiState.value = _uiState.value.copy(isConnecting = true, isConnected = false, error = null, serverVersion = null)
 
                 try {
-                    // Get the server config to check if it's an onion address
-                    val servers = repository.getAllElectrumServers()
-                    val serverConfig = servers.find { it.id == serverId }
-
-                    // Auto-enable Tor for Tor-routed servers, auto-disable for clearnet
-                    // (but keep Tor alive if fee/price source is .onion)
-                    val serverRequiresTor = serverConfig?.let { it.useTor || it.isOnionAddress() } == true
-                    val otherNeedsTor = isFeeSourceOnion() || isPriceSourceOnion()
-                    val shouldKeepTorRunning = shouldKeepTorRunningForBitcoin(serverRequiresTor || otherNeedsTor)
-                    disconnectForServerSwitch(shouldKeepTorRunning)
-                    if (serverRequiresTor) {
-                        repository.setTorEnabled(true)
-                    } else if (repository.isTorEnabled()) {
-                        // Switching to clearnet — Electrum won't use Tor proxy
-                        repository.setTorEnabled(false)
-                        // Only stop the Tor service if nothing else needs it
-                        if (!shouldKeepTorRunningForBitcoin(otherNeedsTor)) {
-                            torManager.stop()
-                        }
-                    }
-                    if (serverRequiresTor && !torManager.isReady()) {
-                        torManager.start()
-
-                        if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
-                            val msg = if (torState.value.status == TorStatus.ERROR) {
-                                "Tor failed to start: ${torState.value.statusMessage}"
-                            } else {
-                                "Tor connection timed out"
-                            }
-                            _uiState.value = _uiState.value.copy(isConnecting = false, error = msg)
-                            _events.emit(WalletEvent.Error(msg))
-                            return@launch
-                        }
-                        // Brief settle time for the SOCKS proxy after bootstrap
-                        delay(TOR_POST_BOOTSTRAP_DELAY_MS)
-                    }
+                    if (!prepareBitcoinServerSwitch(epoch, previousJob)) return@launch
+                    if (!ensureTorReadyForBitcoin(serverRequiresTor, epoch)) return@launch
 
                     // Connect with timeout
                     val timeoutMs = if (serverRequiresTor) CONNECTION_TIMEOUT_TOR_MS else CONNECTION_TIMEOUT_CLEARNET_MS
@@ -2672,6 +2669,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         withTimeoutOrNull(timeoutMs) {
                             repository.connectToServer(serverId)
                         }
+
+                    if (epoch != bitcoinConnectionEpoch) return@launch
 
                     when (result) {
                         null -> {
@@ -2736,7 +2735,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 } finally {
-                    connectionJob = null
+                    if (connectionJob === thisJob) {
+                        connectionJob = null
+                    }
                 }
             }
     }
@@ -2958,6 +2959,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             put("layer2Denomination", repository.getLayer2Denomination())
                             put("appLocale", repository.getAppLocale().storageValue)
                             put("swipeMode", repository.getSwipeMode())
+                            put("balanceDateFormat", repository.getBalanceDateFormat())
+                            put("themeMode", repository.getThemeMode())
                             put("autoSwitchServer", repository.isAutoSwitchServerEnabled())
                             put("torEnabled", repository.isTorEnabled())
                             put("spendUnconfirmed", repository.getSpendUnconfirmed())
@@ -3392,6 +3395,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             ?.let { repository.setAppLocale(AppLocale.fromStorageValue(it)) }
         settings.optString("swipeMode", "").takeIf { it.isNotBlank() }
             ?.let { repository.setSwipeMode(it) }
+        settings.optString("balanceDateFormat", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setBalanceDateFormat(it) }
+        settings.optString("themeMode", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setThemeMode(it) }
         if (settings.has("autoSwitchServer")) {
             repository.setAutoSwitchServerEnabled(settings.getBoolean("autoSwitchServer"))
         }
@@ -4089,6 +4096,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Cancel an in-progress connection attempt
      */
     fun cancelConnection() {
+        ++bitcoinConnectionEpoch
         stopBackgroundSync()
         stopHeartbeat()
         stopReconnectRetry()
@@ -4097,6 +4105,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false, serverVersion = null, error = null)
         viewModelScope.launch(Dispatchers.IO) {
             repository.setUserDisconnected(true)
+            repository.abortActiveElectrumConnection()
             jobToCancel?.cancelAndJoin()
             repository.disconnect()
         }
@@ -4129,6 +4138,16 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun setSwipeMode(mode: String) {
         repository.setSwipeMode(mode)
         _swipeMode.value = mode
+    }
+
+    fun setBalanceDateFormat(format: String) {
+        repository.setBalanceDateFormat(format)
+        _balanceDateFormatState.value = format
+    }
+
+    fun setThemeMode(themeMode: String) {
+        repository.setThemeMode(themeMode)
+        _themeModeState.value = themeMode
     }
 
     // ==================== Mempool Server Settings ====================
@@ -4319,7 +4338,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
 
-            // Fetch from mempool.space HTTP API
+            // Fetch from mempool.space-compatible HTTP API
             val feeSourceUrl =
                 repository.getFeeSourceUrl() ?: run {
                     _feeEstimationState.value = FeeEstimationResult.Disabled
@@ -4423,6 +4442,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         refreshPricePreferences()
         _privacyMode.value = repository.getPrivacyMode()
         _swipeMode.value = repository.getSwipeMode()
+        _balanceDateFormatState.value = repository.getBalanceDateFormat()
+        _themeModeState.value = repository.getThemeMode()
         _psbtQrDensityState.value = repository.getPsbtQrDensity()
         _psbtQrBrightnessState.value = repository.getPsbtQrBrightness()
         _autoSwitchServer.value = repository.isAutoSwitchServerEnabled()
@@ -4496,6 +4517,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         SecureStorage.PRICE_SOURCE_MEMPOOL -> btcPriceService.fetchFromMempool(currencyCode)
                         SecureStorage.PRICE_SOURCE_MEMPOOL_ONION -> btcPriceService.fetchFromMempoolOnion(currencyCode)
                         SecureStorage.PRICE_SOURCE_COINGECKO -> btcPriceService.fetchFromCoinGecko(currencyCode)
+                        SecureStorage.PRICE_SOURCE_YADIO -> btcPriceService.fetchFromYadio(currencyCode)
                         else -> null
                     }
 
@@ -4596,9 +4618,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             _historicalTxBtcPriceState.value = emptyMap()
             return
         }
-        val supportsHistoricalPricing =
-            request.priceSource == SecureStorage.PRICE_SOURCE_MEMPOOL ||
-                request.priceSource == SecureStorage.PRICE_SOURCE_MEMPOOL_ONION
+        val supportsHistoricalPricing = SecureStorage.supportsHistoricalTxFiatPricing(request.priceSource)
         val timestampedTransactions = request.transactions.filter { it.timestamp != null }
 
         if (!request.enabled || !supportsHistoricalPricing || timestampedTransactions.isEmpty()) {
@@ -4626,6 +4646,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         btcPriceService.fetchHistoricalSeriesFromMempool(request.fiatCurrency)
                     SecureStorage.PRICE_SOURCE_MEMPOOL_ONION ->
                         btcPriceService.fetchHistoricalSeriesFromMempoolOnion(request.fiatCurrency)
+                    SecureStorage.PRICE_SOURCE_YADIO ->
+                        btcPriceService.fetchHistoricalSeriesFromYadio(request.fiatCurrency)
                     else -> emptyList()
                 }.also { loadedSeries ->
                     if (loadedSeries.isNotEmpty()) {
@@ -4696,6 +4718,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun clearPin() {
         repository.clearPin()
+    }
+
+    /**
+     * Wrap spend secrets for biometric unlock after the user authenticates in Settings.
+     */
+    fun enrollBiometricLock(cipher: javax.crypto.Cipher) {
+        repository.enrollBiometricLock(cipher)
     }
 
     /**

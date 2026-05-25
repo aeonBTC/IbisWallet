@@ -379,4 +379,39 @@ object MultisigWalletParser {
         if (!line.startsWith(prefix, ignoreCase = true)) return null
         return line.substring(prefix.length).trim().ifBlank { null }
     }
+
+    /**
+     * Extracts cosigner lines (`fingerprint: xpub`) from a single scanned QR payload.
+     * Supports BSMS key lines, full multisig configs, key-origin strings, and descriptors.
+     */
+    fun parseCosignerScanLines(input: String): List<String> {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return emptyList()
+
+        parse(trimmed)?.cosigners?.takeIf { it.isNotEmpty() }?.let { cosigners ->
+            return cosigners.map { cosigner -> cosigner.toScanLine() }
+        }
+
+        val lines =
+            trimmed.lineSequence()
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toList()
+        val keyLines = lines.mapNotNull { line -> keyLineRegex.find(line)?.toScanLine() }
+        if (keyLines.isNotEmpty()) return keyLines.distinctBy { it.substringBefore(':').trim() }
+
+        descriptorCosignerRegex.findAll(trimmed).map { it.toScanLine() }.toList()
+            .takeIf { it.isNotEmpty() }
+            ?.let { return it.distinctBy { line -> line.substringBefore(':').trim() } }
+
+        return emptyList()
+    }
+
+    private fun MatchResult.toScanLine(): String =
+        "${groupValues[1].lowercase()}: ${BitcoinUtils.convertToXpub(groupValues[2])}"
+
+    private val descriptorCosignerRegex =
+        Regex("""\[([0-9a-fA-F]{8})/[^]]+]([xyz]pub[1-9A-HJ-NP-Za-km-z]+)""")
 }
+
+private fun MultisigCosigner.toScanLine(): String = "$fingerprint: ${BitcoinUtils.convertToXpub(xpub)}"

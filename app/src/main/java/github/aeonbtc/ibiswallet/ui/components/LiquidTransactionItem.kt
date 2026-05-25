@@ -39,11 +39,13 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidTxType
+import github.aeonbtc.ibiswallet.ui.screens.formatBalanceTimestamp
 import github.aeonbtc.ibiswallet.ui.screens.formatFiat
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
@@ -68,6 +70,7 @@ import kotlin.math.pow
 fun LiquidTransactionItem(
     tx: LiquidTransaction,
     denomination: String,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     btcPrice: Double?,
     fiatCurrency: String,
     historicalBtcPrice: Double?,
@@ -99,8 +102,8 @@ fun LiquidTransactionItem(
     val networkBadge = networkBadge(tx.source)
     val defaultTitleRes = defaultTransactionTitleRes(tx, isReceive)
     val formattedTimestamp =
-        remember(tx.timestamp) {
-            tx.timestamp?.let { formatTimestamp(it) }.orEmpty()
+        remember(tx.timestamp, dateFormat) {
+            tx.timestamp?.let { formatBalanceTimestamp(it, dateFormat) }.orEmpty()
         }
     val nonLbtcDelta = tx.assetDeltas.entries.firstOrNull { !LiquidAsset.isPolicyAsset(it.key) && it.value != 0L }
     val nonLbtcAsset = nonLbtcDelta?.let { LiquidAsset.resolve(it.key) }
@@ -121,13 +124,13 @@ fun LiquidTransactionItem(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
+                    .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier =
                     Modifier
-                        .size(40.dp)
+                        .size(34.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(iconBackground),
                 contentAlignment = Alignment.Center,
@@ -141,12 +144,12 @@ fun LiquidTransactionItem(
                             stringResource(R.string.loc_1af68597)
                         },
                     tint = iconTint,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
 
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(
@@ -362,15 +365,4 @@ private fun networkBadge(source: LiquidTxSource): TransactionNetworkBadge =
             icon = Icons.Default.WaterDrop,
             iconSize = 18.dp,
         )
-    }
-
-private fun formatTimestamp(epochSeconds: Long): String {
-    return try {
-        liquidDateTimeFormatter.get()?.format(Date(epochSeconds * 1000)).orEmpty()
-    } catch (_: Exception) { "" }
 }
-
-private val liquidDateTimeFormatter: ThreadLocal<SimpleDateFormat> =
-    ThreadLocal.withInitial {
-        SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
-    }

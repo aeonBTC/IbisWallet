@@ -164,6 +164,7 @@ enum class SpeedUpMethod {
 fun BalanceScreen(
     walletState: WalletState = WalletState(),
     denomination: String = SecureStorage.DENOMINATION_BTC,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
     btcPrice: Double? = null,
@@ -177,8 +178,6 @@ fun BalanceScreen(
     transactionLabels: Map<String, String> = emptyMap(),
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
     minFeeRate: Double = 1.0,
-    canBumpFee: (String) -> Boolean = { false },
-    canCpfp: (String) -> Boolean = { false },
     onBumpFee: (String, Double) -> Unit = { _, _ -> },
     onCpfp: (String, Double) -> Unit = { _, _ -> },
     onRedirectTransaction: (String, Double, String?) -> Unit = { _, _, _ -> },
@@ -243,10 +242,25 @@ fun BalanceScreen(
     val isNfcReaderActive = nfcAvailable && mainActivity?.isNfcReaderModeActive == true
     val nfcReaderState by NfcRuntimeStatus.readerState.collectAsState()
 
+    // Keep the open transaction detail in sync with wallet state (fees, RBF/CPFP flags, replacements).
+    LaunchedEffect(walletState.transactions) {
+        val selected = selectedTransaction ?: return@LaunchedEffect
+        val refreshed = walletState.transactions.find { it.txid == selected.txid }
+        if (refreshed != null) {
+            if (refreshed != selected) {
+                selectedTransaction = refreshed
+            }
+            return@LaunchedEffect
+        }
+        val replacement =
+            walletState.transactions.find { it.replacesTxid == selected.txid }
+        if (replacement != null) {
+            selectedTransaction = replacement
+        }
+    }
+
     // Show transaction detail dialog when a transaction is selected
     selectedTransaction?.let { tx ->
-        val txCanRbf = canBumpFee(tx.txid)
-        val txCanCpfp = canCpfp(tx.txid)
         val explicitTxLabel = transactionLabels[tx.txid]
         val txLabel = explicitTxLabel ?: tx.address?.let { addressLabels[it] }
 
@@ -254,6 +268,7 @@ fun BalanceScreen(
             transaction = tx,
             currentBlockHeight = walletState.blockHeight,
             useSats = useSats,
+            dateFormat = dateFormat,
             mempoolUrl = mempoolUrl,
             mempoolServer = mempoolServer,
             btcPrice = btcPrice,
@@ -261,8 +276,6 @@ fun BalanceScreen(
             fiatCurrency = fiatCurrency,
             privacyMode = privacyMode,
             label = txLabel,
-            canRbf = txCanRbf,
-            canCpfp = txCanCpfp,
             availableBalance = walletState.balanceSats,
             feeEstimationState = feeEstimationState,
             minFeeRate = minFeeRate,
@@ -902,6 +915,7 @@ fun BalanceScreen(
                     TransactionItem(
                         transaction = tx,
                         useSats = useSats,
+                        dateFormat = dateFormat,
                         label = label,
                         btcPrice = btcPrice,
                         historicalBtcPrice =
@@ -1205,6 +1219,7 @@ private fun Layer2RequiredPlaceholder(
 private fun TransactionItem(
     transaction: TransactionDetails,
     useSats: Boolean = false,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     label: String? = null,
     btcPrice: Double? = null,
     historicalBtcPrice: Double? = null,
@@ -1221,8 +1236,8 @@ private fun TransactionItem(
         }
     val absSats = swapDisplayAmountSats(transaction).toULong()
     val formattedTimestamp =
-        remember(transaction.timestamp) {
-            transaction.timestamp?.let { formatDateTime(it) }.orEmpty()
+        remember(transaction.timestamp, dateFormat) {
+            transaction.timestamp?.let { formatBalanceTimestamp(it, dateFormat) }.orEmpty()
         }
     val effectiveBtcPrice = historicalBtcPrice ?: btcPrice
 
@@ -1241,14 +1256,14 @@ private fun TransactionItem(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(12.dp),
+                    .padding(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Icon
             Box(
                 modifier =
                     Modifier
-                        .size(40.dp)
+                        .size(34.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(
                             if (isReceived) {
@@ -1273,11 +1288,11 @@ private fun TransactionItem(
                             stringResource(R.string.loc_1af68597)
                         },
                     tint = if (isReceived) AccentGreen else AccentRed,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
             // Details
             Column(modifier = Modifier.weight(1f)) {
@@ -1365,16 +1380,6 @@ private fun TransactionItem(
         }
     }
 }
-
-private fun formatDateTime(timestamp: Long): String {
-    val date = Date(timestamp * 1000) // Convert seconds to milliseconds
-    return balanceDateTimeFormatter.get()?.format(date).orEmpty()
-}
-
-private val balanceDateTimeFormatter: ThreadLocal<SimpleDateFormat> =
-    ThreadLocal.withInitial {
-        SimpleDateFormat("MMM d, yyyy · HH:mm", Locale.getDefault())
-    }
 
 private fun TransactionDetails.confirmationProgressText(currentBlockHeight: UInt?): String? {
     if (!isConfirmed) return "0/6"
@@ -1727,6 +1732,7 @@ fun TransactionDetailDialog(
     transaction: TransactionDetails,
     currentBlockHeight: UInt? = null,
     useSats: Boolean = false,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
     btcPrice: Double? = null,
@@ -1734,8 +1740,6 @@ fun TransactionDetailDialog(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     label: String? = null,
-    canRbf: Boolean = false,
-    canCpfp: Boolean = false,
     availableBalance: ULong = 0UL,
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
     minFeeRate: Double = 1.0,
@@ -1800,6 +1804,8 @@ fun TransactionDetailDialog(
 
     // State for Redirect (cancel) dialog
     var showRedirectDialog by remember { mutableStateOf(false) }
+    val canRbf = transaction.canRbf
+    val canCpfp = transaction.canCpfp
     val canRedirect = canRbf && !isReceived && !transaction.isConfirmed && !transaction.isSelfTransfer
 
     // State for label editing
@@ -1899,12 +1905,10 @@ fun TransactionDetailDialog(
             feeEstimationState = feeEstimationState,
             minFeeRate = minFeeRate,
             useSats = useSats,
-            privacyMode = privacyMode,
             onRefreshFees = onRefreshFees,
             onConfirm = { feeRate, _ ->
                 onSpeedUp(speedUpMethod, feeRate, null)
                 showSpeedUpDialog = false
-                onDismiss()
             },
             onDismiss = { showSpeedUpDialog = false },
         )
@@ -1922,12 +1926,10 @@ fun TransactionDetailDialog(
             feeEstimationState = feeEstimationState,
             minFeeRate = minFeeRate,
             useSats = useSats,
-            privacyMode = privacyMode,
             onRefreshFees = onRefreshFees,
             onConfirm = { feeRate, destinationAddress ->
                 onSpeedUp(SpeedUpMethod.REDIRECT, feeRate, destinationAddress)
                 showRedirectDialog = false
-                onDismiss()
             },
             onDismiss = { showRedirectDialog = false },
         )
@@ -2228,7 +2230,7 @@ fun TransactionDetailDialog(
                                 }
                                 if (transaction.timestamp != null) {
                                     Text(
-                                        text = formatFullTimestamp(transaction.timestamp * 1000),
+                                        text = formatFullTimestamp(transaction.timestamp * 1000, dateFormat),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary,
                                     )
@@ -2843,11 +2845,11 @@ private fun SpeedUpDialog(
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
     minFeeRate: Double = 1.0,
     useSats: Boolean = true,
-    privacyMode: Boolean = false,
     onRefreshFees: () -> Unit = {},
     onConfirm: (Double, String?) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val denominationUnit = if (useSats) stringResource(R.string.loc_9384ed0d) else "BTC"
     val dialogTitle =
         when (method) {
             SpeedUpMethod.RBF -> stringResource(R.string.loc_3dae8142)
@@ -3064,15 +3066,11 @@ private fun SpeedUpDialog(
                             if (currentFee != null && currentFee > 0UL) {
                                 Text(
                                     text =
-                                        if (privacyMode) {
-                                            stringResource(R.string.loc_de90114d)
-                                        } else {
-                                            stringResource(
-                                                R.string.balance_fee_amount_format,
-                                                formatAmount(currentFee, useSats),
-                                                if (useSats) "sats" else "BTC",
-                                            )
-                                        },
+                                        stringResource(
+                                            R.string.balance_fee_amount_format,
+                                            formatAmount(currentFee, useSats),
+                                            denominationUnit,
+                                        ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = BitcoinOrange,
                                 )
@@ -3164,16 +3162,12 @@ private fun SpeedUpDialog(
                                     }
                                 Text(
                                     text =
-                                        if (privacyMode) {
-                                            stringResource(R.string.balance_cost_amount_format, costLabel, HIDDEN_AMOUNT, "")
-                                        } else {
-                                            stringResource(
-                                                R.string.balance_cost_amount_format,
-                                                costLabel,
-                                                formatAmount(additionalCost.toULong(), useSats),
-                                                if (useSats) "sats" else "BTC",
-                                            ).trimEnd()
-                                        },
+                                        stringResource(
+                                            R.string.balance_cost_amount_format,
+                                            costLabel,
+                                            formatAmount(additionalCost.toULong(), useSats),
+                                            denominationUnit,
+                                        ).trimEnd(),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (canAfford) BitcoinOrange else ErrorRed,
                                 )
@@ -3207,44 +3201,32 @@ private fun SpeedUpDialog(
                                         )
                                         Text(
                                             text =
-                                                if (privacyMode) {
-                                                    stringResource(R.string.loc_35652873)
-                                                } else {
-                                                    stringResource(
-                                                        R.string.balance_need_fee_dust_format,
-                                                        formatAmount(needed.toULong(), useSats),
-                                                        if (useSats) "sats" else "BTC",
-                                                    )
-                                                },
+                                                stringResource(
+                                                    R.string.balance_need_fee_dust_format,
+                                                    formatAmount(needed.toULong(), useSats),
+                                                    denominationUnit,
+                                                ),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = ErrorRed,
                                         )
                                         Text(
                                             text =
-                                                if (privacyMode) {
-                                                    stringResource(R.string.loc_760081de)
-                                                } else {
-                                                    stringResource(
-                                                        R.string.balance_have_output_wallet_format,
-                                                        formatAmount(fundsForFee, useSats),
-                                                        if (useSats) "sats" else "BTC",
-                                                    )
-                                                },
+                                                stringResource(
+                                                    R.string.balance_have_output_wallet_format,
+                                                    formatAmount(fundsForFee, useSats),
+                                                    denominationUnit,
+                                                ),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = TextSecondary,
                                         )
                                     } else {
                                         Text(
                                             text =
-                                                if (privacyMode) {
-                                                    stringResource(R.string.loc_534e1eb2)
-                                                } else {
-                                                    stringResource(
-                                                        R.string.balance_insufficient_funds_available_format,
-                                                        formatAmount(fundsForFee, useSats),
-                                                        if (useSats) "sats" else "BTC",
-                                                    )
-                                                },
+                                                stringResource(
+                                                    R.string.balance_insufficient_funds_available_format,
+                                                    formatAmount(fundsForFee, useSats),
+                                                    denominationUnit,
+                                                ),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = ErrorRed,
                                         )

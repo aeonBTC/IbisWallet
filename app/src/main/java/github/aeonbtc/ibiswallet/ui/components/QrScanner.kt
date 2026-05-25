@@ -3,16 +3,21 @@ package github.aeonbtc.ibiswallet.ui.components
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.TextButton
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -22,8 +27,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -34,25 +41,39 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.RGBLuminanceSource
-import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
-import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import com.google.zxing.common.GlobalHistogramBinarizer
+import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
+import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import androidx.camera.core.Preview as CameraPreview
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
-import androidx.compose.material3.Text
 
 /**
- * QR Scanner Dialog - provides camera-based QR code scanning with dialog wrapper
+ * QR Scanner Dialog — large centered camera preview with a close control only.
  */
 @Composable
 fun QrScannerDialog(
     onCodeScanned: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val context = LocalContext.current
+    CameraPermissionGate(onDismiss = onDismiss) { lifecycleOwner ->
+        QrScannerDialogShell(onDismiss = onDismiss) {
+            QrCameraPreview(
+                lifecycleOwner = lifecycleOwner,
+                onFrameScanned = onCodeScanned,
+                singleShot = true,
+            )
+        }
+    }
+}
 
+@Composable
+internal fun CameraPermissionGate(
+    onDismiss: () -> Unit,
+    content: @Composable (LifecycleOwner) -> Unit,
+) {
+    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     var cameraPermission by remember {
         mutableIntStateOf(
@@ -62,16 +83,14 @@ fun QrScannerDialog(
     val cameraPermissionLauncher =
         androidx.activity.compose.rememberLauncherForActivityResult(
             contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
-        ) { isGranted: Boolean ->
+        ) { isGranted ->
             if (isGranted) {
                 cameraPermission = android.content.pm.PackageManager.PERMISSION_GRANTED
             } else {
-                // Permission denied, dismiss the dialog
                 onDismiss()
             }
         }
 
-    // Request permission immediately if not granted
     LaunchedEffect(Unit) {
         if (cameraPermission != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA)
@@ -79,75 +98,109 @@ fun QrScannerDialog(
     }
 
     if (cameraPermission == android.content.pm.PackageManager.PERMISSION_GRANTED) {
-        Dialog(
-            onDismissRequest = onDismiss,
-            properties = DialogProperties(usePlatformDefaultWidth = false),
+        content(lifecycleOwner)
+    }
+}
+
+@Composable
+internal fun QrScannerDialogShell(
+    onDismiss: () -> Unit,
+    scanProgress: Float = 0f,
+    showProgress: Boolean = false,
+    errorMessage: String? = null,
+    cameraContent: @Composable () -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.72f)),
+            contentAlignment = Alignment.Center,
         ) {
-            Surface(
+            Box(
                 modifier =
                     Modifier
+                        .padding(horizontal = 24.dp, vertical = 40.dp)
                         .fillMaxWidth()
-                        .padding(16.dp),
-                shape = RoundedCornerShape(24.dp),
-                color = DarkSurface,
+                        .widthIn(max = 400.dp)
+                        .aspectRatio(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color.Black),
             ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
+                cameraContent()
+
+                IconButton(
+                    onClick = onDismiss,
+                    modifier =
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(4.dp),
                 ) {
-                    // Header
-                    Row(
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = stringResource(R.string.loc_51bac044),
+                        tint = Color.White,
+                    )
+                }
+
+                if (showProgress || errorMessage != null) {
+                    Column(
                         modifier =
                             Modifier
+                                .align(Alignment.BottomCenter)
                                 .fillMaxWidth()
-                                .padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                                .background(Color.Black.copy(alpha = 0.55f))
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
                     ) {
-                        Text(
-                            text = stringResource(R.string.loc_59b2cdc5),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        TextButton(onClick = onDismiss) {
-                            Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                        if (showProgress) {
+                            LinearProgressIndicator(
+                                progress = { scanProgress },
+                                modifier = Modifier.fillMaxWidth(),
+                                color = BitcoinOrange,
+                                trackColor = BitcoinOrange.copy(alpha = 0.25f),
+                            )
+                        }
+                        if (errorMessage != null) {
+                            androidx.compose.material3.Text(
+                                text = errorMessage,
+                                color = ErrorRed,
+                                modifier = Modifier.padding(top = if (showProgress) 8.dp else 0.dp),
+                            )
                         }
                     }
-
-                    // Camera preview
-                    CameraPreviewBox(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(300.dp)
-                                .padding(horizontal = 16.dp)
-                                .padding(bottom = 16.dp),
-                        onCodeScanned = onCodeScanned,
-                        lifecycleOwner = lifecycleOwner,
-                    )
                 }
             }
         }
     }
 }
 
+/**
+ * Camera preview with QR decoding. Fills the parent — use inside [QrScannerDialogShell].
+ */
 @Composable
-private fun CameraPreviewBox(
-    modifier: Modifier = Modifier,
-    onCodeScanned: (String) -> Unit,
+internal fun QrCameraPreview(
     lifecycleOwner: LifecycleOwner,
+    onFrameScanned: (String) -> Unit,
+    modifier: Modifier = Modifier.fillMaxSize(),
+    pauseScanning: Boolean = false,
+    singleShot: Boolean = false,
 ) {
     val context = LocalContext.current
     val previewView = remember {
         androidx.camera.view.PreviewView(context).apply {
             scaleType = androidx.camera.view.PreviewView.ScaleType.FILL_CENTER
+            setBackgroundColor(android.graphics.Color.BLACK)
         }
     }
 
-    DisposableEffect(lifecycleOwner) {
-        val scanned = AtomicBoolean(false)
+    val analyzerExecutor = remember { Executors.newSingleThreadExecutor() }
+    DisposableEffect(lifecycleOwner, singleShot) {
+        val scanned = if (singleShot) AtomicBoolean(false) else null
         val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-        val analyzerExecutor = Executors.newSingleThreadExecutor()
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
@@ -164,17 +217,24 @@ private fun CameraPreviewBox(
                     .build()
                     .also {
                         it.setAnalyzer(analyzerExecutor) { imageProxy ->
-                            processFrame(imageProxy, scanned, mainHandler, onCodeScanned)
+                            if (pauseScanning) {
+                                imageProxy.close()
+                                return@setAnalyzer
+                            }
+                            decodeQrFrame(
+                                imageProxy = imageProxy,
+                                scanned = scanned,
+                                mainHandler = mainHandler,
+                                onFrameScanned = onFrameScanned,
+                            )
                         }
                     }
-
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             try {
                 cameraProvider.unbindAll()
                 cameraProvider.bindToLifecycle(
                     lifecycleOwner,
-                    cameraSelector,
+                    CameraSelector.DEFAULT_BACK_CAMERA,
                     preview,
                     imageAnalyzer,
                 )
@@ -193,17 +253,19 @@ private fun CameraPreviewBox(
         }
     }
 
-    AndroidView(
-        factory = { previewView },
-        modifier = modifier,
-    )
+    Box(modifier = modifier.clipToBounds()) {
+        AndroidView(
+            factory = { previewView },
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
 }
 
-private fun processFrame(
+private fun decodeQrFrame(
     imageProxy: androidx.camera.core.ImageProxy,
-    scanned: AtomicBoolean,
+    scanned: AtomicBoolean?,
     mainHandler: android.os.Handler,
-    onCodeScanned: (String) -> Unit,
+    onFrameScanned: (String) -> Unit,
 ) {
     try {
         val buffer = imageProxy.planes[0].buffer
@@ -220,14 +282,14 @@ private fun processFrame(
         }
 
         val source = RGBLuminanceSource(width, height, pixels)
-        val binaryBitmap =
-            BinaryBitmap(
-                com.google.zxing.common.GlobalHistogramBinarizer(source),
-            )
-
+        val binaryBitmap = BinaryBitmap(GlobalHistogramBinarizer(source))
         val result = MultiFormatReader().decode(binaryBitmap)
-        if (scanned.compareAndSet(false, true)) {
-            mainHandler.post { onCodeScanned(result.text) }
+        val deliverResult = {
+            onFrameScanned(result.text)
+        }
+        when {
+            scanned == null -> deliverResult()
+            scanned.compareAndSet(false, true) -> mainHandler.post(deliverResult)
         }
     } catch (_: Exception) {
         // No QR code found in this frame

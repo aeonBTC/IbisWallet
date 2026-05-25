@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -85,6 +86,9 @@ import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundKeySource
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
+import github.aeonbtc.ibiswallet.data.model.LightningPaymentBackend
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentExecutionPlan
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
@@ -95,9 +99,11 @@ import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentSession
+import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentPhase
 import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
@@ -230,6 +236,7 @@ fun LiquidSendScreen(
     ) -> Unit = { _, _, _, _, _, _ -> },
     pendingSubmarineSwap: PendingLightningPaymentSession? = null,
     boltzRescueMnemonic: String? = null,
+    onRetryPendingLightningRefund: (String) -> Unit = {},
     preSelectedUtxo: UtxoInfo? = null,
     onClearPreSelectedUtxo: () -> Unit = {},
     onClearDraft: () -> Unit = {},
@@ -879,6 +886,7 @@ fun LiquidSendScreen(
                 onExpandedChange = { pendingCardExpanded = it },
                 privacyMode = privacyMode,
                 useSats = useSats,
+                onRetryLightningRefund = onRetryPendingLightningRefund,
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -1406,97 +1414,53 @@ fun LiquidSendScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Start,
-                    ) {
-                        Text(
-                            text = stringResource(R.string.loc_277e2626),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        if (isAssetMode && !privacyMode) {
-                            Text(
-                                text = formatCoinControlAssetAmount(sendAsset, availableSats),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                            )
-                        } else {
-                            Text(
-                                text =
-                                    if (privacyMode) {
-                                        LIQUID_HIDDEN_AMOUNT
+                    AvailableBalanceMaxRow(
+                        amountText =
+                            when {
+                                privacyMode -> LIQUID_HIDDEN_AMOUNT
+                                isAssetMode -> formatCoinControlAssetAmount(sendAsset, availableSats)
+                                else -> formatLiquidAmount(availableSats, useSats)
+                            },
+                        fiatText =
+                            if (!isAssetMode && btcPrice != null && btcPrice > 0 && !privacyMode) {
+                                " · ${formatLiquidUsd(availableSats, btcPrice, fiatCurrency)}"
+                            } else {
+                                null
+                            },
+                        accentColor = LiquidTeal,
+                        isMaxMode = isMaxMode,
+                        maxEnabled = liquidState.isInitialized && isMaxAvailable,
+                        fadeWhenDisabled = true,
+                        onMaxClick = {
+                            if (isMaxMode) {
+                                isMaxMode = false
+                                amountInput = ""
+                            } else {
+                                isMaxMode = true
+                                isUsdMode = false
+                                amountInput =
+                                    if (isAssetMode) {
+                                        val divisor = 10.0.pow(sendAsset.precision.toDouble())
+                                        val full =
+                                            String.format(
+                                                Locale.US,
+                                                "%.${sendAsset.precision}f",
+                                                availableSats.toDouble() / divisor,
+                                            )
+                                        full.trimEnd('0').trimEnd('.')
+                                    } else if (useSats) {
+                                        availableSats.toString()
                                     } else {
-                                        formatLiquidAmount(availableSats, useSats)
-                                    },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                            )
-                            if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                                Text(
-                                    text = " · ${formatLiquidUsd(availableSats, btcPrice, fiatCurrency)}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary.copy(alpha = 0.7f),
-                                )
+                                        formatLiquidInputAmount(
+                                            availableSats,
+                                            useSats = false,
+                                            isUsdMode = false,
+                                            btcPrice = btcPrice,
+                                        )
+                                    }
                             }
-                        }
-                        Spacer(modifier = Modifier.weight(1f))
-                        Card(
-                            modifier =
-                                Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable(enabled = liquidState.isInitialized && isMaxAvailable) {
-                                        if (isMaxMode) {
-                                            isMaxMode = false
-                                            amountInput = ""
-                                        } else {
-                                            isMaxMode = true
-                                            isUsdMode = false
-                                            amountInput =
-                                                if (isAssetMode) {
-                                                    val divisor = 10.0.pow(sendAsset.precision.toDouble())
-                                                    val full = String.format(Locale.US, "%.${sendAsset.precision}f", availableSats.toDouble() / divisor)
-                                                    full.trimEnd('0').trimEnd('.')
-                                                } else if (useSats) {
-                                                    availableSats.toString()
-                                                } else {
-                                                    formatLiquidInputAmount(availableSats, useSats = false, isUsdMode = false, btcPrice = btcPrice)
-                                                }
-                                        }
-                                    },
-                            shape = RoundedCornerShape(8.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor =
-                                    when {
-                                        isMaxMode -> LiquidTeal.copy(alpha = 0.15f)
-                                        isMaxAvailable -> DarkSurface
-                                        else -> DarkSurface.copy(alpha = 0.6f)
-                                    },
-                            ),
-                            border = BorderStroke(
-                                1.dp,
-                                when {
-                                    isMaxMode -> LiquidTeal
-                                    isMaxAvailable -> BorderColor
-                                    else -> BorderColor.copy(alpha = 0.5f)
-                                },
-                            ),
-                        ) {
-                            Text(
-                                text = stringResource(R.string.loc_a53b6469),
-                                style = MaterialTheme.typography.labelMedium,
-                                color =
-                                    when {
-                                        isMaxMode -> LiquidTeal
-                                        isMaxAvailable -> TextSecondary
-                                        else -> TextSecondary.copy(alpha = 0.5f)
-                                    },
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                            )
-                        }
-                    }
+                        },
+                    )
                 }
 
                 Row(
@@ -3645,6 +3609,7 @@ private fun PendingPaymentsCard(
     onExpandedChange: (Boolean) -> Unit,
     privacyMode: Boolean,
     useSats: Boolean,
+    onRetryLightningRefund: (String) -> Unit,
 ) {
     val expandedItems = remember { mutableStateMapOf<String, Boolean>() }
     var showRescueKeyDialog by rememberSaveable { mutableStateOf(false) }
@@ -3717,6 +3682,7 @@ private fun PendingPaymentsCard(
                                     privacyMode = privacyMode,
                                     useSats = useSats,
                                     onShowRescueKey = { showRescueKeyDialog = true },
+                                    onRetryRefund = { onRetryLightningRefund(pendingSubmarineSwap.swapId) },
                                 )
                             }
                         }
@@ -3841,6 +3807,7 @@ private fun PendingLightningPaymentDetails(
     privacyMode: Boolean,
     useSats: Boolean,
     onShowRescueKey: () -> Unit,
+    onRetryRefund: () -> Unit,
 ) {
     Column(modifier = Modifier.padding(start = 4.dp, top = 4.dp)) {
         Row(
@@ -3869,7 +3836,15 @@ private fun PendingLightningPaymentDetails(
             }
         }
 
-        if (session.status.isNotBlank() || (session.swapFeeSats > 0 && !privacyMode) || boltzRescueMnemonic != null) {
+        val rescueKeyAvailable =
+            boltzRescueMnemonic != null &&
+                (session.backend != LightningPaymentBackend.BOLTZ_REST_SUBMARINE ||
+                    session.refundKeySource == BoltzSubmarineRefundKeySource.BOLTZ_RESCUE_MNEMONIC)
+        val retryRefundAvailable =
+            session.backend == LightningPaymentBackend.BOLTZ_REST_SUBMARINE &&
+                session.phase == PendingLightningPaymentPhase.REFUNDING &&
+                session.refundState == BoltzSubmarineRefundState.FAILED
+        if (session.status.isNotBlank() || (session.swapFeeSats > 0 && !privacyMode) || rescueKeyAvailable) {
             Spacer(modifier = Modifier.height(8.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -3891,7 +3866,7 @@ private fun PendingLightningPaymentDetails(
                         )
                     }
                 }
-                if (boltzRescueMnemonic != null) {
+                if (rescueKeyAvailable) {
                     Spacer(modifier = Modifier.width(8.dp))
                     OutlinedButton(
                         onClick = onShowRescueKey,
@@ -3910,6 +3885,24 @@ private fun PendingLightningPaymentDetails(
             }
         }
 
+        if (retryRefundAvailable) {
+            Spacer(modifier = Modifier.height(8.dp))
+            OutlinedButton(
+                onClick = onRetryRefund,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 40.dp),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, BorderColor),
+            ) {
+                Text(
+                    text = stringResource(R.string.pending_lightning_retry_refund),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TextPrimary,
+                )
+            }
+        }
+
         Spacer(modifier = Modifier.height(8.dp))
 
         PendingDetailRow(label = stringResource(R.string.loc_12c49c0c), value = session.swapId)
@@ -3917,6 +3910,7 @@ private fun PendingLightningPaymentDetails(
         PendingDetailRow(label = stringResource(R.string.loc_f967d9c8), value = session.lockupAddress)
         PendingDetailRow(label = stringResource(R.string.loc_245027bd), value = session.refundAddress)
         session.fundingTxid?.let { PendingDetailRow(label = stringResource(R.string.loc_c52f86d9), value = it) }
+        session.refundTxid?.let { PendingDetailRow(label = stringResource(R.string.pending_lightning_refund_txid), value = it) }
         session.refundPublicKey?.let { PendingDetailRow(label = stringResource(R.string.loc_8236c6fa), value = it) }
         session.timeoutBlockHeight?.let {
             PendingDetailRow(label = stringResource(R.string.loc_b2a432e9), value = it.toString())

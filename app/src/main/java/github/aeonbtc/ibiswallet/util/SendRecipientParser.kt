@@ -74,6 +74,24 @@ internal data class SendRouteResolution(
 
 private const val LAYER2_DEFAULT_FEE_RATE = 0.1
 
+/**
+ * Canonical key for Spark on-chain deposit address labels.
+ * Strips BIP21 wrappers so labels stay attached to the bare address.
+ */
+fun normalizeSparkAddressLabelRef(addressOrRequest: String): String {
+    val trimmed = addressOrRequest.trim()
+    if (trimmed.isEmpty()) return trimmed
+    return when (val parsed = parseSendRecipient(trimmed)) {
+        is ParsedSendRecipient.Bitcoin -> parsed.address
+        else ->
+            if (trimmed.startsWith("bitcoin:", ignoreCase = true)) {
+                trimmed.substringAfter(':').substringBefore('?').trim()
+            } else {
+                trimmed
+            }
+    }
+}
+
 internal fun parseSendRecipient(input: String): ParsedSendRecipient {
     val trimmed = input.trim()
     if (trimmed.isEmpty()) {

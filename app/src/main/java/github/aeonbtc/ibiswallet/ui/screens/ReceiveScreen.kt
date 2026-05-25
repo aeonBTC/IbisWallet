@@ -207,10 +207,12 @@ fun ReceiveScreen(
         }
     }
 
-    // Generate address if wallet is initialized but no address
-    LaunchedEffect(walletState.isInitialized, walletState.currentAddress) {
-        if (walletState.isInitialized && walletState.currentAddress == null) {
-            onGenerateAddress()
+    LaunchedEffect(walletState.isInitialized, walletState.currentAddress, savedAddressLabel) {
+        when {
+            walletState.isInitialized && walletState.currentAddress == null -> onGenerateAddress()
+            walletState.isInitialized &&
+                walletState.currentAddress != null &&
+                savedAddressLabel.isNotBlank() -> onGenerateAddress()
         }
     }
 

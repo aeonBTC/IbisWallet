@@ -274,9 +274,10 @@ fun LiquidReceiveScreen(
             }
     }
 
-    LaunchedEffect(liquidAddress) {
-        if (liquidAddress == null) {
-            onEnsureLiquidAddress()
+    LaunchedEffect(liquidAddress, currentAddressLabel) {
+        when {
+            liquidAddress == null -> onEnsureLiquidAddress()
+            !currentAddressLabel.isNullOrBlank() -> onEnsureLiquidAddress()
         }
     }
 

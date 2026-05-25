@@ -2479,6 +2479,11 @@ private fun ManualMultisigDialog(
             """.trimIndent(),
         )
     }
+    var showCosignerQrScanner by remember { mutableStateOf(false) }
+    var cosignerScanError by remember { mutableStateOf<String?>(null) }
+    val cosignerScanErrorMessage = stringResource(R.string.loc_4e8c2a91)
+    val cosignerScanDuplicateMessage = stringResource(R.string.loc_7f3b1d54)
+    val cosignerScanHint = stringResource(R.string.loc_9a2e6c08)
 
     val cosignerLines =
         cosigners.lineSequence()
@@ -2505,6 +2510,51 @@ private fun ManualMultisigDialog(
             thresholdInt in 1..cosignerLines.size &&
             hasValidCosigners &&
             localCosignerValid
+
+    if (showCosignerQrScanner) {
+        ImportQrScannerDialog(
+            sequentialScan = true,
+            scanHint = cosignerScanHint,
+            scanError = cosignerScanError,
+            onCodeScanned = { scannedText ->
+                val parsedLines = MultisigWalletParser.parseCosignerScanLines(scannedText)
+                if (parsedLines.isEmpty()) {
+                    cosignerScanError = cosignerScanErrorMessage
+                    return@ImportQrScannerDialog
+                }
+                val updated =
+                    appendManualMultisigCosignerLines(
+                        current = cosigners,
+                        newLines = parsedLines,
+                        isPlaceholder = isManualMultisigCosignerPlaceholder(cosigners),
+                    )
+                if (updated == cosigners) {
+                    cosignerScanError = cosignerScanDuplicateMessage
+                } else {
+                    cosigners = updated
+                    cosignerScanError = null
+                    MultisigWalletParser.parse(scannedText)?.let { config ->
+                        if (name.isBlank() || name == "Multisig") {
+                            config.name?.takeIf { it.isNotBlank() }?.let { name = it }
+                        }
+                        threshold = config.threshold.toString()
+                        config.cosigners.firstOrNull()?.derivationPath?.let { path ->
+                            derivationPath =
+                                if (path.startsWith("m/")) {
+                                    path
+                                } else {
+                                    "m/$path"
+                                }
+                        }
+                    }
+                }
+            },
+            onDismiss = {
+                showCosignerQrScanner = false
+                cosignerScanError = null
+            },
+        )
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
@@ -2581,28 +2631,65 @@ private fun ManualMultisigDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                OutlinedTextField(
-                    value = cosigners,
-                    onValueChange = { cosigners = it },
-                    label = { Text(stringResource(R.string.loc_9054140b)) },
-                    placeholder = { Text(stringResource(R.string.loc_2a428c88), color = TextSecondary.copy(alpha = 0.5f)) },
-                    minLines = 4,
-                    isError = cosigners.isNotBlank() && !hasValidCosigners,
-                    supportingText = {
-                        Text(
-                            text = stringResource(R.string.loc_810fe008),
-                            color = if (hasValidCosigners) TextSecondary else ErrorRed,
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = cosigners,
+                        onValueChange = {
+                            cosigners = it
+                            cosignerScanError = null
+                        },
+                        label = { Text(stringResource(R.string.loc_9054140b)) },
+                        placeholder = { Text(stringResource(R.string.loc_2a428c88), color = TextSecondary.copy(alpha = 0.5f)) },
+                        minLines = 4,
+                        isError = cosigners.isNotBlank() && !hasValidCosigners,
+                        supportingText = {
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.loc_810fe008),
+                                    color = if (hasValidCosigners) TextSecondary else ErrorRed,
+                                )
+                                cosignerScanError?.let { error ->
+                                    Text(
+                                        text = error,
+                                        color = ErrorRed,
+                                    )
+                                }
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                cursorColor = BitcoinOrange,
+                            ),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(end = 4.dp, bottom = 4.dp),
+                    )
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier =
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(4.dp)
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(DarkSurfaceVariant)
+                                .clickable {
+                                    cosignerScanError = null
+                                    showCosignerQrScanner = true
+                                },
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = stringResource(R.string.loc_59b2cdc5),
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(24.dp),
                         )
-                    },
-                    shape = RoundedCornerShape(8.dp),
-                    colors =
-                        OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = BitcoinOrange,
-                            unfocusedBorderColor = BorderColor,
-                            cursorColor = BitcoinOrange,
-                        ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
@@ -2707,6 +2794,50 @@ private fun ManualMultisigDialog(
             }
         }
     }
+}
+
+private fun isManualMultisigCosignerPlaceholder(text: String): Boolean {
+    val lines =
+        text.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .toList()
+    if (lines.isEmpty()) return true
+    return lines.all { line ->
+        line.contains("aaaaaaaa:") ||
+            line.contains("bbbbbbbb:") ||
+            line.contains("cccccccc:") ||
+            line.endsWith("xpub...") ||
+            line.contains(": xpub...")
+    }
+}
+
+private fun appendManualMultisigCosignerLines(
+    current: String,
+    newLines: List<String>,
+    isPlaceholder: Boolean,
+): String {
+    val existing =
+        if (isPlaceholder) {
+            emptyList()
+        } else {
+            current.lineSequence()
+                .map(String::trim)
+                .filter(String::isNotBlank)
+                .toList()
+        }
+    val existingFingerprints =
+        existing.mapNotNull { line ->
+            Regex("""^([0-9a-fA-F]{8})""").find(line)?.groupValues?.get(1)?.lowercase()
+        }.toSet()
+    val toAdd =
+        newLines.filter { line ->
+            val fingerprint =
+                Regex("""^([0-9a-fA-F]{8})""").find(line)?.groupValues?.get(1)?.lowercase()
+            fingerprint != null && fingerprint !in existingFingerprints
+        }
+    if (toAdd.isEmpty()) return current
+    return (existing + toAdd).joinToString("\n")
 }
 
 private fun buildManualMultisigBsms(

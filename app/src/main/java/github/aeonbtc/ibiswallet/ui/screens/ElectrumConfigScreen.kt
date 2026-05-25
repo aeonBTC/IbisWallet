@@ -246,6 +246,14 @@ fun ElectrumConfigScreen(
                             showAddServerForm = true
                         }
                     },
+                onAddServer = {
+                    serverToEdit = null
+                    serverUrl = ""
+                    serverPort = "50001"
+                    serverName = ""
+                    useSsl = false
+                    showAddServerForm = true
+                },
             )
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -440,7 +448,6 @@ fun ElectrumConfigScreen(
                                             SavedServerItem(
                                                 server = server,
                                                 isActive = isActive,
-                                                isConnected = isConnected && isActive,
                                                 onConnect = {
                                                     server.id?.let { onConnectToServer(it) }
                                                 },
@@ -970,7 +977,6 @@ fun CurrentServerCard(
 private fun SavedServerItem(
     server: ElectrumConfig,
     isActive: Boolean,
-    isConnected: Boolean,
     onConnect: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
@@ -1035,20 +1041,6 @@ private fun SavedServerItem(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
-                    if (isActive) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = if (isConnected) SuccessGreen else BitcoinOrange,
-                        ) {
-                            Text(
-                                text = if (isConnected) stringResource(R.string.loc_4cb2f934) else stringResource(R.string.common_selected),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = DarkBackground,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            )
-                        }
-                    }
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
