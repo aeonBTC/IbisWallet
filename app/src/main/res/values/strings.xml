@@ -66,6 +66,9 @@
     <string name="liquid_enable_info_title">Layer 2 is modular</string>
     <string name="liquid_enable_info_message">Open the Wallet Management screen to enable Liquid support for your desired wallets.\n\n*Liquid can only be enabled on BIP39 wallets.</string>
     <string name="liquid_enable_info_confirm">Got it</string>
+    <string name="spark_enable_info_title">Layer 2 is modular</string>
+    <string name="spark_enable_info_message">Open the Wallet Management screen to enable Spark support for your desired wallets.\n\n*Spark can only be enabled on BIP39 seed wallets.</string>
+    <string name="spark_enable_info_confirm">Got it</string>
     <string name="privacy_mode_hint_title">Privacy mode enabled</string>
     <string name="privacy_mode_hint_message">Balances are hidden. Tap and hold the privacy icon to disable.</string>
     <string name="common_copy_with_label">Copy %1$s</string>
@@ -375,7 +378,7 @@
     <string name="loc_481063e5" formatted="false">Excluded</string>
     <string name="loc_daee1794" formatted="false">App settings</string>
     <string name="loc_14e0d86b" formatted="false">Encryption</string>
-    <string name="loc_9f448218" formatted="false">Enabled</string>
+    <string name="loc_9f448218" formatted="false">Connected</string>
     <string name="loc_13f11ba3" formatted="false">Off</string>
     <string name="loc_452013a2" formatted="false">Export</string>
     <string name="loc_166a5cb9" formatted="false">Failed to parse backup</string>
@@ -690,6 +693,9 @@
     <string name="loc_9054140b" formatted="false">Cosigners</string>
     <string name="loc_2a428c88" formatted="false">fingerprint: xpub</string>
     <string name="loc_810fe008" formatted="false">One per line: fingerprint: xpub</string>
+    <string name="loc_4e8c2a91" formatted="false">Could not parse cosigner from QR</string>
+    <string name="loc_7f3b1d54" formatted="false">Cosigner already added</string>
+    <string name="loc_9a2e6c08" formatted="false">Scan each cosigner QR. Tap Cancel when finished.</string>
     <string name="loc_7db8bd23" formatted="false">Local Cosigner (optional)</string>
     <string name="loc_d44eca4c" formatted="false">Seed phrase or [fingerprint/path]xprv...</string>
     <string name="loc_5237cff5" formatted="false">Use a BIP39 seed or origin-prefixed xprv matching one cosigner fingerprint.</string>
@@ -789,6 +795,8 @@
     <string name="pending_lightning_invoice_delete_message" formatted="false">This removes the pending invoice from the list. If it was already paid but not received, you may still need to claim it.</string>
     <string name="pending_lightning_invoice_boltz_id" formatted="false">Boltz ID</string>
     <string name="pending_lightning_invoice_last_claim_format">Last claim: %1$s</string>
+    <string name="pending_lightning_refund_txid" formatted="false">Refund txid</string>
+    <string name="pending_lightning_retry_refund" formatted="false">Retry refund</string>
     <string name="pending_lightning_invoice_last_claim_never" formatted="false">Never</string>
     <string name="pending_lightning_invoice_claiming" formatted="false">Claiming...</string>
     <string name="loc_5c96cb11" formatted="false">All Addresses</string>
@@ -1128,6 +1136,7 @@
     <string name="loc_00a426f8" formatted="false">Fiat Price Source</string>
     <string name="historical_tx_fiat_title">Show historical prices</string>
     <string name="historical_tx_fiat_subtitle">Show fiat price at time of transaction</string>
+    <string name="historical_tx_fiat_yadio_limit_note">Yadio.io: 365-day history limit</string>
     <string name="tx_history_show_current_prices">Show current prices</string>
     <string name="tx_history_show_historical_prices">Show historical prices</string>
     <string name="loc_a39dd5c6" formatted="false">Bitcoin Electrum Server</string>
@@ -1411,9 +1420,22 @@
     <string name="server_delete_confirmation_format">Are you sure you want to delete "%1$s"?</string>
     <string name="settings_spark_subtitle">Trust-minimized statechain</string>
     <string name="settings_custom_server_placeholder">http://192.168... or http://...onion</string>
-    <string name="spark_transfer_spark_deposit_address">Spark deposit address</string>
-    <string name="spark_transfer_destination_override_hint">Override the generated destination for this swap.</string>
-    <string name="spark_transfer_enter_destination_address">Enter a destination address</string>
+    <string name="settings_balance_date_format_title">Date format</string>
+    <string name="settings_balance_date_format_mm_dd_yy">MM/DD/YY</string>
+    <string name="settings_balance_date_format_dd_mm_yy">DD/MM/YY</string>
+    <string name="settings_balance_date_format_month_dd_yyyy">Month DD, YYYY</string>
+    <string name="settings_balance_date_format_yyyy_mm_dd">YYYY/MM/DD</string>
+    <string name="settings_theme_title">Theme</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_theme_dark_description">Default Ibis theme</string>
+    <string name="settings_theme_amoled">AMOLED</string>
+    <string name="settings_theme_amoled_description">Pure black backgrounds</string>
+    <string name="settings_general_section_display">Display</string>
+    <string name="settings_general_section_transactions">Transactions</string>
+    <string name="settings_general_section_connectivity">Connectivity</string>
+    <string name="spark_transfer_spark_deposit_address">Bitcoin deposit address for Spark</string>
+    <string name="spark_transfer_spark_destination_hint">Swap goes to this Bitcoin deposit address for Spark.</string>
+    <string name="spark_transfer_enter_destination_address">Enter a Bitcoin address</string>
     <string name="spark_transfer_custom_fee_rate">Custom fee rate</string>
     <string name="spark_transfer_enter_fee_rate">Enter a fee rate</string>
     <string name="spark_transfer_bitcoin_withdrawal_fee">Bitcoin withdrawal fee</string>
@@ -1425,5 +1447,27 @@
     <string name="spark_connection_identity_label">Identity</string>
     <string name="spark_connection_error_label">Error</string>
     <string name="spark_connection_hint">Spark uses a managed SDK session, not a selectable server.</string>
+    <string name="speed_up_error_not_connected">Not connected to Electrum. Check your server connection and try again.</string>
+    <string name="speed_up_error_wallet_not_ready">Wallet is not ready. Reopen the wallet and try again.</string>
+    <string name="speed_up_error_unknown_detail">Unknown error</string>
+    <string name="speed_up_error_rbf_tx_not_found">Transaction not found in wallet. Sync, then open the pending transaction again.</string>
+    <string name="speed_up_error_rbf_confirmed">Transaction is already confirmed. Fee bumps only work while it is still unconfirmed.</string>
+    <string name="speed_up_error_rbf_not_replaceable">This transaction cannot be replaced. It may not signal RBF or was already replaced in the mempool.</string>
+    <string name="speed_up_error_rbf_fee_too_low">New fee rate must be higher than the current transaction fee.</string>
+    <string name="speed_up_error_rbf_insufficient">Not enough change or wallet balance to pay the higher fee. Try a lower rate or wait for confirmed funds.</string>
+    <string name="speed_up_error_rbf_dust">Replacement would create an output below the dust limit. Try a slightly lower fee rate.</string>
+    <string name="speed_up_error_rbf_build_failed">Could not build the replacement transaction. Sync the wallet and try again.</string>
+    <string name="speed_up_error_rbf_sign_failed">Could not sign the replacement transaction.</string>
+    <string name="speed_up_error_rbf_broadcast_rejected">The network rejected the replacement. Try a higher fee rate, or sync in case the original already confirmed.</string>
+    <string name="speed_up_error_rbf_generic">RBF failed: %1$s</string>
+    <string name="speed_up_error_cpfp_no_outputs">No spendable outputs from this transaction. It may already have been spent (for example by another CPFP) or confirmed.</string>
+    <string name="speed_up_error_cpfp_parent_not_found">Parent transaction not found in wallet. Sync and try again.</string>
+    <string name="speed_up_error_cpfp_confirmed">Parent transaction is already confirmed. CPFP only works while it is still unconfirmed.</string>
+    <string name="speed_up_error_cpfp_insufficient">Not enough funds for the CPFP fee. Lower the fee rate or wait for confirmed wallet balance.</string>
+    <string name="speed_up_error_cpfp_insufficient_detailed">Not enough funds for CPFP: %1$s BTC available, %2$s BTC needed.</string>
+    <string name="speed_up_error_cpfp_dust">CPFP change output would be below the dust limit. Use a lower fee rate.</string>
+    <string name="speed_up_error_cpfp_build_failed">Could not build the CPFP child transaction. Sync the wallet and try again.</string>
+    <string name="speed_up_error_cpfp_broadcast_rejected">The network rejected the CPFP transaction. Try a higher fee rate or sync and retry.</string>
+    <string name="speed_up_error_cpfp_generic">CPFP failed: %1$s</string>
     <!-- End generated UI localization strings. -->
 </resources>

@@ -67,6 +67,9 @@
     <string name="liquid_enable_info_title">A camada 2 é modular</string>
     <string name="liquid_enable_info_message">Abra a tela de gerenciamento de carteira para ativar o Liquid nas carteiras desejadas.\n\n*O Liquid só pode ser ativado em carteiras BIP39.</string>
     <string name="liquid_enable_info_confirm">Entendido</string>
+    <string name="spark_enable_info_title">A camada 2 é modular</string>
+    <string name="spark_enable_info_message">Abra a tela de gerenciamento de carteira para ativar o Spark nas carteiras desejadas.\n\n*O Spark só pode ser ativado em carteiras seed BIP39.</string>
+    <string name="spark_enable_info_confirm">Entendido</string>
     <string name="privacy_mode_hint_title">Modo de privacidade ativado</string>
     <string name="privacy_mode_hint_message">Os saldos estão ocultos. Toque e segure o ícone de privacidade para desativar.</string>
     <string name="common_copy_with_label">Copiar %1$s</string>
@@ -375,7 +378,7 @@
     <string name="loc_481063e5" formatted="false">Excluído</string>
     <string name="loc_daee1794" formatted="false">Configurações do aplicativo</string>
     <string name="loc_14e0d86b" formatted="false">Criptografia</string>
-    <string name="loc_9f448218" formatted="false">Ativado</string>
+    <string name="loc_9f448218" formatted="false">Conectado</string>
     <string name="loc_13f11ba3" formatted="false">Desabilitado</string>
     <string name="loc_452013a2" formatted="false">Exportar</string>
     <string name="loc_166a5cb9" formatted="false">Não foi possível analisar a cópia</string>
@@ -690,6 +693,9 @@
     <string name="loc_9054140b" formatted="false">Fiadores</string>
     <string name="loc_2a428c88" formatted="false">impressão digital: xpub</string>
     <string name="loc_810fe008" formatted="false">Um por linha: pegada: xpub</string>
+    <string name="loc_4e8c2a91" formatted="false">Não foi possível analisar o cosigner do QR</string>
+    <string name="loc_7f3b1d54" formatted="false">Cosigner já adicionado</string>
+    <string name="loc_9a2e6c08" formatted="false">Digitalize cada QR de cosigner. Toque em Cancelar ao terminar.</string>
     <string name="loc_7db8bd23" formatted="false">Fiador local (opcional)</string>
     <string name="loc_d44eca4c" formatted="false">Frase-semente ou [pegada/rota]xprv...</string>
     <string name="loc_5237cff5" formatted="false">Use uma semente BIP39 ou um xprv com origem que corresponda à impressão digital do fiador.</string>
@@ -789,6 +795,8 @@
     <string name="pending_lightning_invoice_delete_message" formatted="false">Isso remove a fatura pendente da lista. Se ela já foi paga, mas ainda não recebida, você ainda pode precisar reivindicá-la.</string>
     <string name="pending_lightning_invoice_boltz_id" formatted="false">ID da Boltz</string>
     <string name="pending_lightning_invoice_last_claim_format">Última reivindicação: %1$s</string>
+    <string name="pending_lightning_refund_txid" formatted="false">Txid de reembolso</string>
+    <string name="pending_lightning_retry_refund" formatted="false">Tentar reembolso novamente</string>
     <string name="pending_lightning_invoice_last_claim_never" formatted="false">Nunca</string>
     <string name="pending_lightning_invoice_claiming" formatted="false">Reivindicando...</string>
     <string name="loc_5c96cb11" formatted="false">Instruções</string>
@@ -1128,6 +1136,7 @@
     <string name="loc_00a426f8" formatted="false">Fonte de preço Fiat</string>
     <string name="historical_tx_fiat_title">Mostrar preços históricos</string>
     <string name="historical_tx_fiat_subtitle">Mostrar preço fiduciário no momento da transação</string>
+    <string name="historical_tx_fiat_yadio_limit_note">Yadio.io: historico limitado a 365 dias</string>
     <string name="tx_history_show_current_prices">Mostrar preços atuais</string>
     <string name="tx_history_show_historical_prices">Mostrar preços históricos</string>
     <string name="loc_a39dd5c6" formatted="false">Servidor Bitcoin Electrum</string>
@@ -1413,10 +1422,23 @@ Digite seu PIN disfarçado na calculadora e pressione a tecla = para desbloquear
     <string name="server_delete_confirmation_format">Tem certeza de que deseja remover "%1$s"?</string>
     <string name="settings_spark_subtitle">Statechain com confiança minimizada</string>
     <string name="settings_custom_server_placeholder">http://192.168... ou http://...cebola</string>
-    <string name="spark_transfer_spark_deposit_address">Endereço do balde Spark</string>
-    <string name="spark_transfer_destination_override_hint">Substitui o destino gerado para esta troca.</string>
+    <string name="settings_balance_date_format_title">Formato de data</string>
+    <string name="settings_balance_date_format_mm_dd_yy">MM/DD/YY</string>
+    <string name="settings_balance_date_format_dd_mm_yy">DD/MM/YY</string>
+    <string name="settings_balance_date_format_month_dd_yyyy">Month DD, YYYY</string>
+    <string name="settings_balance_date_format_yyyy_mm_dd">YYYY/MM/DD</string>
+    <string name="settings_theme_title">Tema</string>
+    <string name="settings_theme_dark">Escuro</string>
+    <string name="settings_theme_dark_description">Tema padrão Ibis</string>
+    <string name="settings_theme_amoled">AMOLED</string>
+    <string name="settings_theme_amoled_description">Fundos pretos puros</string>
+    <string name="settings_general_section_display">Exibição</string>
+    <string name="settings_general_section_transactions">Transações</string>
+    <string name="settings_general_section_connectivity">Conectividade</string>
+    <string name="spark_transfer_spark_deposit_address">Endereço de depósito Bitcoin para Spark</string>
+    <string name="spark_transfer_spark_destination_hint">A troca irá para este endereço de depósito Bitcoin para Spark.</string>
     <string name="swap_unable_to_prepare">Não foi possível preparar a troca</string>
-    <string name="spark_transfer_enter_destination_address">Insira um endereço de destino</string>
+    <string name="spark_transfer_enter_destination_address">Insira um endereço Bitcoin</string>
     <string name="spark_transfer_custom_fee_rate">Taxa de comissão personalizada</string>
     <string name="spark_transfer_enter_fee_rate">Insira uma taxa de comissão</string>
     <string name="spark_transfer_bitcoin_withdrawal_fee">Taxa de retirada de Bitcoin</string>
@@ -1427,4 +1449,26 @@ Digite seu PIN disfarçado na calculadora e pressione a tecla = para desbloquear
     <string name="spark_connection_identity_label">Identidade</string>
     <string name="spark_connection_error_label">Erro</string>
     <string name="spark_connection_hint">O Spark usa uma sessão gerenciada do SDK, não um servidor selecionável.</string>
+    <string name="speed_up_error_not_connected">Sem conexão com o Electrum. Verifique o servidor e tente novamente.</string>
+    <string name="speed_up_error_wallet_not_ready">A carteira não está pronta. Abra-a novamente e tente de novo.</string>
+    <string name="speed_up_error_unknown_detail">Erro desconhecido</string>
+    <string name="speed_up_error_rbf_tx_not_found">Transação não encontrada na carteira. Sincronize e abra novamente a transação pendente.</string>
+    <string name="speed_up_error_rbf_confirmed">A transação já está confirmada. RBF só funciona enquanto ainda estiver pendente.</string>
+    <string name="speed_up_error_rbf_not_replaceable">Esta transação não pode ser substituída. Pode não sinalizar RBF ou já ter sido substituída no mempool.</string>
+    <string name="speed_up_error_rbf_fee_too_low">A nova taxa deve ser maior que a taxa atual da transação.</string>
+    <string name="speed_up_error_rbf_insufficient">Saldo ou troco insuficiente para pagar a taxa maior. Tente uma taxa menor ou aguarde fundos confirmados.</string>
+    <string name="speed_up_error_rbf_dust">A substituição criaria uma saída abaixo do limite de poeira. Tente uma taxa um pouco menor.</string>
+    <string name="speed_up_error_rbf_build_failed">Não foi possível criar a transação de substituição. Sincronize a carteira e tente novamente.</string>
+    <string name="speed_up_error_rbf_sign_failed">Não foi possível assinar a transação de substituição.</string>
+    <string name="speed_up_error_rbf_broadcast_rejected">A rede rejeitou a substituição. Tente uma taxa maior ou sincronize caso a original já tenha confirmado.</string>
+    <string name="speed_up_error_rbf_generic">RBF falhou: %1$s</string>
+    <string name="speed_up_error_cpfp_no_outputs">Não há saídas gastáveis desta transação. Elas podem já ter sido gastas (por exemplo por outro CPFP) ou a transação confirmou.</string>
+    <string name="speed_up_error_cpfp_parent_not_found">Transação pai não encontrada na carteira. Sincronize e tente novamente.</string>
+    <string name="speed_up_error_cpfp_confirmed">A transação pai já está confirmada. CPFP só funciona enquanto ainda estiver pendente.</string>
+    <string name="speed_up_error_cpfp_insufficient">Fundos insuficientes para a taxa CPFP. Reduza a taxa ou aguarde saldo confirmado na carteira.</string>
+    <string name="speed_up_error_cpfp_insufficient_detailed">Fundos insuficientes para CPFP: %1$s BTC disponíveis, %2$s BTC necessários.</string>
+    <string name="speed_up_error_cpfp_dust">A saída de troco do CPFP ficaria abaixo do limite de poeira. Use uma taxa menor.</string>
+    <string name="speed_up_error_cpfp_build_failed">Não foi possível criar a transação filha CPFP. Sincronize a carteira e tente novamente.</string>
+    <string name="speed_up_error_cpfp_broadcast_rejected">A rede rejeitou a transação CPFP. Tente uma taxa maior ou sincronize e tente de novo.</string>
+    <string name="speed_up_error_cpfp_generic">CPFP falhou: %1$s</string>
 </resources>

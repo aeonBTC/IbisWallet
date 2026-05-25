@@ -107,11 +107,15 @@
     <string name="app_update_check_title">Проверять обновления приложения через GitHub</string>
     <string name="historical_tx_fiat_title">Показывать исторические цены</string>
     <string name="historical_tx_fiat_subtitle">Показывать фиатную цену на момент транзакции</string>
+    <string name="historical_tx_fiat_yadio_limit_note">Yadio.io: история ограничена 365 днями</string>
     <string name="tx_history_show_current_prices">Показать текущие цены</string>
     <string name="tx_history_show_historical_prices">Показать исторические цены</string>
     <string name="liquid_enable_info_title">Уровень 2 модульный</string>
     <string name="liquid_enable_info_message">Откройте экран управления кошельками, чтобы включить Liquid для нужных кошельков.\n\n*Liquid доступен только для BIP39-кошельков.</string>
     <string name="liquid_enable_info_confirm">Понятно</string>
+    <string name="spark_enable_info_title">Уровень 2 модульный</string>
+    <string name="spark_enable_info_message">Откройте экран управления кошельками, чтобы включить Spark для нужных кошельков.\n\n*Spark доступен только для seed-кошельков BIP39.</string>
+    <string name="spark_enable_info_confirm">Понятно</string>
     <string name="privacy_mode_hint_title">Режим приватности включен</string>
     <string name="privacy_mode_hint_message">Балансы скрыты. Нажмите и удерживайте значок приватности, чтобы отключить.</string>
     <string name="common_copy_with_label">Копировать %1$s</string>
@@ -629,9 +633,9 @@
     <string name="loc_9384ed0d" formatted="false">sats</string>
     <string name="loc_0430ad11" formatted="false">Свернуть адреса</string>
     <string name="loc_afb3fec8" formatted="false">Развернуть адреса</string>
-    <string name="spark_transfer_spark_deposit_address">Адрес депозита Spark</string>
-    <string name="spark_transfer_destination_override_hint">Переопределите сгенерированный адрес назначения для этого обмена.</string>
-    <string name="spark_transfer_enter_destination_address">Введите адрес назначения</string>
+    <string name="spark_transfer_spark_deposit_address">Bitcoin-адрес депозита для Spark</string>
+    <string name="spark_transfer_spark_destination_hint">Обмен будет отправлен на этот Bitcoin-адрес депозита для Spark.</string>
+    <string name="spark_transfer_enter_destination_address">Введите Bitcoin-адрес</string>
     <string name="spark_transfer_custom_fee_rate">Пользовательская ставка комиссии</string>
     <string name="spark_transfer_enter_fee_rate">Введите ставку комиссии</string>
     <string name="spark_transfer_bitcoin_withdrawal_fee">Комиссия за вывод Bitcoin</string>
@@ -722,7 +726,7 @@
     <string name="loc_481063e5" formatted="false">Исключено</string>
     <string name="loc_daee1794" formatted="false">Настройки приложения</string>
     <string name="loc_14e0d86b" formatted="false">Шифрование</string>
-    <string name="loc_9f448218" formatted="false">Включено</string>
+    <string name="loc_9f448218" formatted="false">Подключено</string>
     <string name="loc_13f11ba3" formatted="false">Выкл.</string>
     <string name="loc_452013a2" formatted="false">Экспорт</string>
     <string name="loc_166a5cb9" formatted="false">Не удалось разобрать резервную копию</string>
@@ -756,6 +760,8 @@
     <string name="pending_lightning_invoice_delete_message" formatted="false">Это уберет ожидающий инвойс из списка. Если он уже оплачен, но еще не получен, его все равно может потребоваться получить.</string>
     <string name="pending_lightning_invoice_boltz_id" formatted="false">ID Boltz</string>
     <string name="pending_lightning_invoice_last_claim_format">Последняя попытка: %1$s</string>
+    <string name="pending_lightning_refund_txid" formatted="false">Txid возврата</string>
+    <string name="pending_lightning_retry_refund" formatted="false">Повторить возврат</string>
     <string name="pending_lightning_invoice_last_claim_never" formatted="false">Никогда</string>
     <string name="pending_lightning_invoice_claiming" formatted="false">Получение...</string>
     <string name="loc_ed3bf7b5" formatted="false">Адреса</string>
@@ -1070,6 +1076,9 @@
     <string name="loc_9054140b" formatted="false">Со-подписанты</string>
     <string name="loc_2a428c88" formatted="false">fingerprint: xpub</string>
     <string name="loc_810fe008" formatted="false">По одному на строку: fingerprint: xpub</string>
+    <string name="loc_4e8c2a91" formatted="false">Не удалось разобрать со-подписанта из QR</string>
+    <string name="loc_7f3b1d54" formatted="false">Со-подписант уже добавлен</string>
+    <string name="loc_9a2e6c08" formatted="false">Сканируйте QR каждого со-подписанта. Нажмите Отмена, когда закончите.</string>
     <string name="loc_7db8bd23" formatted="false">Локальный со-подписант (необязательно)</string>
     <string name="loc_d44eca4c" formatted="false">Seed-фраза или [fingerprint/path]xprv...</string>
     <string name="loc_5237cff5" formatted="false">Используйте BIP39 seed или xprv с origin-префиксом, совпадающий с fingerprint одного со-подписанта.</string>
@@ -1426,4 +1435,39 @@
     <string name="biometric_prompt_unlock_ibis_wallet">Разблокировать Ibis Wallet</string>
     <string name="biometric_prompt_verify_identity">Подтвердите личность</string>
     <string name="biometric_prompt_access_wallet">Пройдите аутентификацию для доступа к кошельку</string>
+    <string name="settings_balance_date_format_title">Формат даты</string>
+    <string name="settings_balance_date_format_mm_dd_yy">MM/DD/YY</string>
+    <string name="settings_balance_date_format_dd_mm_yy">DD/MM/YY</string>
+    <string name="settings_balance_date_format_month_dd_yyyy">Month DD, YYYY</string>
+    <string name="settings_balance_date_format_yyyy_mm_dd">YYYY/MM/DD</string>
+    <string name="settings_theme_title">Тема</string>
+    <string name="settings_theme_dark">Темная</string>
+    <string name="settings_theme_dark_description">Тема Ibis по умолчанию</string>
+    <string name="settings_theme_amoled">AMOLED</string>
+    <string name="settings_theme_amoled_description">Чисто черный фон</string>
+    <string name="settings_general_section_display">Отображение</string>
+    <string name="settings_general_section_transactions">Транзакции</string>
+    <string name="settings_general_section_connectivity">Подключение</string>
+    <string name="speed_up_error_not_connected">Нет подключения к Electrum. Проверьте сервер и повторите попытку.</string>
+    <string name="speed_up_error_wallet_not_ready">Кошелек не готов. Откройте его снова и повторите попытку.</string>
+    <string name="speed_up_error_unknown_detail">Неизвестная ошибка</string>
+    <string name="speed_up_error_rbf_tx_not_found">Транзакция не найдена в кошельке. Синхронизируйте и снова откройте неподтвержденную транзакцию.</string>
+    <string name="speed_up_error_rbf_confirmed">Транзакция уже подтверждена. RBF работает только пока она неподтверждена.</string>
+    <string name="speed_up_error_rbf_not_replaceable">Эту транзакцию нельзя заменить. Возможно, она не сигнализирует RBF или уже заменена в mempool.</string>
+    <string name="speed_up_error_rbf_fee_too_low">Новая комиссия должна быть выше текущей комиссии транзакции.</string>
+    <string name="speed_up_error_rbf_insufficient">Недостаточно сдачи или баланса для более высокой комиссии. Понизьте ставку или дождитесь подтвержденных средств.</string>
+    <string name="speed_up_error_rbf_dust">Замена создаст выход ниже dust limit. Попробуйте немного более низкую комиссию.</string>
+    <string name="speed_up_error_rbf_build_failed">Не удалось собрать транзакцию замены. Синхронизируйте кошелек и повторите попытку.</string>
+    <string name="speed_up_error_rbf_sign_failed">Не удалось подписать транзакцию замены.</string>
+    <string name="speed_up_error_rbf_broadcast_rejected">Сеть отклонила замену. Повысьте комиссию или синхронизируйте — возможно, исходная уже подтверждена.</string>
+    <string name="speed_up_error_rbf_generic">RBF не удался: %1$s</string>
+    <string name="speed_up_error_cpfp_no_outputs">Нет тратимых выходов этой транзакции. Они могли быть уже потрачены (например, другим CPFP) или транзакция подтверждена.</string>
+    <string name="speed_up_error_cpfp_parent_not_found">Родительская транзакция не найдена в кошельке. Синхронизируйте и повторите попытку.</string>
+    <string name="speed_up_error_cpfp_confirmed">Родительская транзакция уже подтверждена. CPFP работает только пока она неподтверждена.</string>
+    <string name="speed_up_error_cpfp_insufficient">Недостаточно средств для комиссии CPFP. Понизьте ставку или дождитесь подтвержденного баланса.</string>
+    <string name="speed_up_error_cpfp_insufficient_detailed">Недостаточно средств для CPFP: доступно %1$s BTC, нужно %2$s BTC.</string>
+    <string name="speed_up_error_cpfp_dust">Сдача CPFP будет ниже dust limit. Используйте более низкую комиссию.</string>
+    <string name="speed_up_error_cpfp_build_failed">Не удалось собрать дочернюю транзакцию CPFP. Синхронизируйте кошелек и повторите попытку.</string>
+    <string name="speed_up_error_cpfp_broadcast_rejected">Сеть отклонила транзакцию CPFP. Повысьте комиссию или синхронизируйте и повторите.</string>
+    <string name="speed_up_error_cpfp_generic">CPFP не удался: %1$s</string>
 </resources>
