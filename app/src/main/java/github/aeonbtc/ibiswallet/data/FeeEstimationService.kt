@@ -16,7 +16,8 @@ import java.net.Proxy
 import java.util.concurrent.TimeUnit
 
 /**
- * Service for fetching fee rate estimates from mempool.space API
+ * Service for fetching fee rate estimates from mempool.space-compatible APIs
+ * (mempool.space, bitview.space, custom instances).
  */
 class FeeEstimationService {
     companion object {

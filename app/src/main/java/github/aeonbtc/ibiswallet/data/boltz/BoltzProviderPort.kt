@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet.data.boltz
 
 import github.aeonbtc.ibiswallet.data.model.BoltzPairInfo
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundResponse
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineResponse
 import github.aeonbtc.ibiswallet.data.model.BoltzSwapUpdate
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentBackend
@@ -79,12 +80,19 @@ internal interface BoltzProviderPort {
         refundPublicKey: String,
     ): BoltzSubmarineResponse
 
+    suspend fun requestLegacySubmarineRefundSignature(
+        swapId: String,
+        pubNonce: String,
+        inputIndex: Int,
+        transactionHex: String,
+    ): BoltzSubmarineRefundResponse
+
     suspend fun awaitSwapActivity(
         swapId: String,
         timeoutMs: Long,
         mode: BoltzActivityMode,
         previousUpdate: BoltzSwapUpdate? = null,
-        pollStatus: (suspend () -> String?)? = null,
+        pollUpdate: (suspend () -> BoltzSwapUpdate?)? = null,
     ): BoltzSwapUpdate?
 
     fun close()
@@ -121,12 +129,26 @@ internal class HybridBoltzProvider(
         )
     }
 
+    override suspend fun requestLegacySubmarineRefundSignature(
+        swapId: String,
+        pubNonce: String,
+        inputIndex: Int,
+        transactionHex: String,
+    ): BoltzSubmarineRefundResponse {
+        return client.requestSubmarineRefundSignature(
+            swapId = swapId,
+            pubNonce = pubNonce,
+            inputIndex = inputIndex,
+            transactionHex = transactionHex,
+        )
+    }
+
     override suspend fun awaitSwapActivity(
         swapId: String,
         timeoutMs: Long,
         mode: BoltzActivityMode,
         previousUpdate: BoltzSwapUpdate?,
-        pollStatus: (suspend () -> String?)?,
+        pollUpdate: (suspend () -> BoltzSwapUpdate?)?,
     ): BoltzSwapUpdate? {
         return when (mode) {
             BoltzActivityMode.LWK_POLLING -> {
@@ -138,7 +160,7 @@ internal class HybridBoltzProvider(
                     swapId = swapId,
                     timeoutMs = timeoutMs,
                     previousUpdate = previousUpdate,
-                    pollStatus = pollStatus,
+                    pollUpdate = pollUpdate,
                 )
         }
     }

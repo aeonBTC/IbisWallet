@@ -10,8 +10,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetAddress
+import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.Locale
@@ -40,7 +45,11 @@ class BtcPriceService {
         private const val MEMPOOL_ONION_HISTORICAL_PRICE_URL =
             "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion/api/v1/historical-price"
         private const val COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies="
+        private const val YADIO_BASE_URL = "https://api.yadio.io"
+        private const val YADIO_HISTORICAL_RANGE_DAYS = 365
         private const val TIMEOUT_SECONDS = 15L
+        private val yadioHistoricalDateFormatter =
+            DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.US)
         private const val TOR_TIMEOUT_SECONDS = 30L
         private const val TOR_PROXY_HOST = "127.0.0.1"
         private const val TOR_PROXY_PORT = 9050
@@ -122,6 +131,7 @@ class BtcPriceService {
                 -> mempoolFiatOptions
 
                 SecureStorage.PRICE_SOURCE_COINGECKO -> coinGeckoFiatOptions
+                SecureStorage.PRICE_SOURCE_YADIO -> yadioFiatOptions
                 else -> emptyList()
             }
 
@@ -289,6 +299,108 @@ class BtcPriceService {
             client = torClient,
             logLabel = "Mempool onion historical price",
         )
+
+    suspend fun fetchFromYadio(currencyCode: String): Double? =
+        withContext(Dispatchers.IO) {
+            try {
+                val normalizedCurrency = currencyCode.uppercase(Locale.US)
+                val request =
+                    Request.Builder()
+                        .url("$YADIO_BASE_URL/rate/$normalizedCurrency/BTC")
+                        .header("Accept", "application/json")
+                        .build()
+
+                val response = client.newCall(request).execute()
+
+                response.use {
+                    if (!it.isSuccessful) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "Yadio price fetch failed: ${it.code}")
+                        return@withContext null
+                    }
+
+                    val body = it.body.stringWithLimit(InputLimits.SMALL_JSON_BYTES)
+                    if (body.isEmpty()) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "Yadio price response empty")
+                        return@withContext null
+                    }
+
+                    val price = JSONObject(body).optDouble("rate", -1.0)
+                    if (price > 0) {
+                        if (BuildConfig.DEBUG) Log.d(TAG, "Yadio price: $price $normalizedCurrency")
+                        price
+                    } else {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "Invalid price from Yadio")
+                        null
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching from Yadio", e)
+                null
+            }
+        }
+
+    suspend fun fetchHistoricalSeriesFromYadio(currencyCode: String): List<HistoricalPricePoint> =
+        withContext(Dispatchers.IO) {
+            try {
+                val normalizedCurrency = currencyCode.uppercase(Locale.US)
+                val request =
+                    Request.Builder()
+                        .url("$YADIO_BASE_URL/hist/$YADIO_HISTORICAL_RANGE_DAYS/$normalizedCurrency")
+                        .header("Accept", "application/json")
+                        .build()
+
+                val response = client.newCall(request).execute()
+
+                response.use {
+                    if (!it.isSuccessful) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "Yadio historical price fetch failed: ${it.code}")
+                        return@withContext emptyList()
+                    }
+
+                    val body = it.body.stringWithLimit(InputLimits.MEDIUM_JSON_BYTES)
+                    if (body.isEmpty()) {
+                        if (BuildConfig.DEBUG) Log.e(TAG, "Yadio historical price response empty")
+                        return@withContext emptyList()
+                    }
+
+                    val entries = JSONArray(body)
+                    val series =
+                        buildList {
+                            for (index in 0 until entries.length()) {
+                                val entry = entries.optJSONObject(index) ?: continue
+                                val time = parseYadioHistoricalDate(entry.optString("date")) ?: continue
+                                val price = entry.optDouble("avg24h", -1.0)
+                                if (price > 0.0) {
+                                    add(HistoricalPricePoint(time = time, price = price))
+                                }
+                            }
+                        }.sortedBy(HistoricalPricePoint::time)
+
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "Yadio historical price points loaded: ${series.size} $normalizedCurrency")
+                    }
+                    series
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.e(TAG, "Error fetching Yadio historical price", e)
+                emptyList()
+            }
+        }
+
+    private fun parseYadioHistoricalDate(date: String): Long? {
+        if (date.isBlank()) return null
+        return try {
+            LocalDate.parse(date, yadioHistoricalDateFormatter)
+                .atStartOfDay(ZoneOffset.UTC)
+                .toEpochSecond()
+        } catch (_: DateTimeParseException) {
+            null
+        }
+    }
 
     /**
      * Fetch BTC/USD price from CoinGecko

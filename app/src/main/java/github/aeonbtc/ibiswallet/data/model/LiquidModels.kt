@@ -572,6 +572,21 @@ enum class LightningPaymentBackend {
     BOLTZ_REST_SUBMARINE,
 }
 
+enum class BoltzSubmarineRefundKeySource {
+    WALLET_SEED,
+    BOLTZ_RESCUE_MNEMONIC,
+}
+
+enum class BoltzSubmarineRefundState {
+    NONE,
+    RESTORING,
+    COOPERATIVE_REFUNDING,
+    WAITING_FOR_TIMELOCK,
+    BROADCAST,
+    DETECTED,
+    FAILED,
+}
+
 data class PendingLightningPaymentSession(
     val swapId: String,
     val backend: LightningPaymentBackend = LightningPaymentBackend.LWK_PREPARE_PAY,
@@ -595,6 +610,15 @@ data class PendingLightningPaymentSession(
     val timeoutBlockHeight: Int? = null,
     val swapTree: String? = null,
     val blindingKey: String? = null,
+    val refundKeySource: BoltzSubmarineRefundKeySource = BoltzSubmarineRefundKeySource.WALLET_SEED,
+    val refundKeyPath: String? = null,
+    val refundKeyIndex: Int? = null,
+    val lockupTxid: String? = null,
+    val lockupTransactionHex: String? = null,
+    val refundState: BoltzSubmarineRefundState = BoltzSubmarineRefundState.NONE,
+    val refundTxid: String? = null,
+    val refundError: String? = null,
+    val refundLastAttemptAt: Long? = null,
 )
 
 // ──────────────────────────────────────────────
@@ -646,6 +670,11 @@ data class BoltzSwapUpdate(
     val status: String,
     val transactionHex: String? = null,
     val transactionId: String? = null,
+)
+
+data class BoltzSubmarineRefundResponse(
+    val pubNonce: String,
+    val partialSignature: String,
 )
 
 // ──────────────────────────────────────────────

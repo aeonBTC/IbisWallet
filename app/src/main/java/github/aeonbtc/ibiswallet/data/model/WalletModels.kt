@@ -189,6 +189,12 @@ data class TransactionDetails(
     val changeAmount: ULong? = null, // Amount returned as change
     val isSelfTransfer: Boolean = false, // True when sending to yourself (all outputs are yours)
     val swapDetails: LiquidSwapDetails? = null,
+    /** Unconfirmed outgoing tx eligible for RBF (Bump Fee). */
+    val canRbf: Boolean = false,
+    /** Unconfirmed incoming tx with wallet-owned outputs eligible for CPFP. */
+    val canCpfp: Boolean = false,
+    /** When set, this tx replaced a prior unconfirmed tx (e.g. after RBF). */
+    val replacesTxid: String? = null,
 ) {
     /** Ceiled vsize = ceil(weight / 4) matching Bitcoin Core / mempool.space */
     val vsize: Double?

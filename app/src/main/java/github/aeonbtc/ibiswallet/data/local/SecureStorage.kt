@@ -11,6 +11,8 @@ import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.BoltzChainFundingPreview
 import github.aeonbtc.ibiswallet.data.model.BoltzChainSwapDraft
 import github.aeonbtc.ibiswallet.data.model.BoltzChainSwapDraftState
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundKeySource
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
 import github.aeonbtc.ibiswallet.data.model.ElectrumConfig
 import github.aeonbtc.ibiswallet.data.model.EstimatedSwapTerms
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
@@ -41,6 +43,7 @@ import github.aeonbtc.ibiswallet.data.model.WalletNetwork
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.util.BiometricCrypto
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
+import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.SecureRandom
@@ -159,6 +162,10 @@ class SecureStorage private constructor(private val context: Context) {
         }
     }
 
+    /** Always uses encrypt mode so enrollment can replace an existing biometric wrap. */
+    fun createSpendSecretBiometricEnrollmentCryptoObject(): BiometricPrompt.CryptoObject =
+        BiometricCrypto.createCryptoObject()
+
     fun unlockSpendSecretsWithPin(pin: String) {
         spendSecretKey =
             unlockOrCreateSpendMaster(
@@ -185,7 +192,15 @@ class SecureStorage private constructor(private val context: Context) {
             if (wrapped != null) {
                 cipher.doFinal(wrapped.ciphertext)
             } else {
-                val newMaster = spendSecretKey ?: randomSpendSecretKey()
+                val newMaster =
+                    spendSecretKey
+                        ?: if (readWrappedSecret(KEY_SPEND_MASTER_PIN_WRAPPED) != null) {
+                            throw IllegalStateException(
+                                "Biometric lock is not enrolled; enable it again in Security settings",
+                            )
+                        } else {
+                            randomSpendSecretKey()
+                        }
                 writeWrappedSecret(
                     key = KEY_SPEND_MASTER_BIOMETRIC_WRAPPED,
                     wrapped =
@@ -197,6 +212,28 @@ class SecureStorage private constructor(private val context: Context) {
                 newMaster
             }
         spendSecretKey = master
+        migrateLegacySpendSecrets()
+    }
+
+    /**
+     * Bind biometric unlock to the current spend-secret session and drop PIN wrapping.
+     * Call while [spendSecretKey] is populated (e.g. right after saving a PIN in Settings).
+     */
+    fun enrollBiometricLock(cipher: Cipher) {
+        val master = spendSecretKey ?: randomSpendSecretKey()
+        writeWrappedSecret(
+            key = KEY_SPEND_MASTER_BIOMETRIC_WRAPPED,
+            wrapped =
+                WrappedSecret(
+                    iv = cipher.iv,
+                    ciphertext = cipher.doFinal(master),
+                ),
+        )
+        spendSecretKey = master
+        securePrefs.edit {
+            remove(KEY_SPEND_MASTER_PIN_WRAPPED)
+            remove(KEY_SPEND_MASTER_PIN_SALT)
+        }
         migrateLegacySpendSecrets()
     }
 
@@ -1521,6 +1558,25 @@ class SecureStorage private constructor(private val context: Context) {
         regularPrefs.edit { putString(KEY_SWIPE_MODE, mode) }
     }
 
+    fun getBalanceDateFormat(): String {
+        return regularPrefs.getString(
+            KEY_BALANCE_DATE_FORMAT,
+            DATE_FORMAT_MONTH_DD_YYYY,
+        ) ?: DATE_FORMAT_MONTH_DD_YYYY
+    }
+
+    fun setBalanceDateFormat(format: String) {
+        regularPrefs.edit { putString(KEY_BALANCE_DATE_FORMAT, format) }
+    }
+
+    fun getThemeMode(): String {
+        return regularPrefs.getString(KEY_THEME_MODE, THEME_MODE_DARK) ?: THEME_MODE_DARK
+    }
+
+    fun setThemeMode(themeMode: String) {
+        regularPrefs.edit { putString(KEY_THEME_MODE, themeMode) }
+    }
+
     fun getPsbtQrDensity(): QrDensity {
         val storedValue = regularPrefs.getString(KEY_PSBT_QR_DENSITY, QrDensity.MEDIUM.name)
         return try {
@@ -1670,6 +1726,7 @@ class SecureStorage private constructor(private val context: Context) {
             FEE_SOURCE_OFF -> null
             FEE_SOURCE_MEMPOOL -> "https://mempool.space"
             FEE_SOURCE_MEMPOOL_ONION -> "http://mempoolhqx4isw62xs7abwphsq7ldayuidyx2v2oethdhhj6mlo2r6ad.onion"
+            FEE_SOURCE_BITVIEW -> "https://bitview.space"
             FEE_SOURCE_ELECTRUM -> null // Electrum uses the connected client, not a URL
             FEE_SOURCE_CUSTOM -> getCustomFeeSourceUrl()?.ifBlank { null }
             else -> null
@@ -1770,6 +1827,12 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun setHasSeenLiquidEnableInfo(seen: Boolean) {
         regularPrefs.edit { putBoolean(KEY_HAS_SEEN_LIQUID_ENABLE_INFO, seen) }
+    }
+
+    fun hasSeenSparkEnableInfo(): Boolean = regularPrefs.getBoolean(KEY_HAS_SEEN_SPARK_ENABLE_INFO, false)
+
+    fun setHasSeenSparkEnableInfo(seen: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_HAS_SEEN_SPARK_ENABLE_INFO, seen) }
     }
 
     fun getSeenAppUpdateVersion(): String? {
@@ -1995,16 +2058,38 @@ class SecureStorage private constructor(private val context: Context) {
         address: String,
         label: String,
     ) {
-        val key = "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_$address"
+        val normalizedAddress = normalizeSparkAddressLabelRef(address)
+        val key = "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_$normalizedAddress"
         putPrivateString(key, label)
+        if (normalizedAddress != address.trim()) {
+            removePrivateValue("${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_${address.trim()}")
+        }
     }
 
     fun saveSparkAddressLabels(
         walletId: String,
         labels: Map<String, String>,
     ) {
+        val normalizedLabels =
+            labels
+                .mapKeys { (address, _) -> normalizeSparkAddressLabelRef(address) }
+                .filterValues { it.isNotBlank() }
         val prefix = "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_"
-        putPrivateStrings(labels.filterValues { it.isNotBlank() }.mapKeys { (address, _) -> "$prefix$address" })
+        putPrivateStrings(normalizedLabels.mapKeys { (address, _) -> "$prefix$address" })
+    }
+
+    fun getSparkAddressLabel(
+        walletId: String,
+        addressOrRequest: String,
+    ): String? {
+        val normalizedAddress = normalizeSparkAddressLabelRef(addressOrRequest)
+        val normalizedKey = "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_$normalizedAddress"
+        getPrivateString(normalizedKey, null)?.takeIf { it.isNotBlank() }?.let { return it }
+        val legacyKey = "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_${addressOrRequest.trim()}"
+        if (legacyKey != normalizedKey) {
+            return getPrivateString(legacyKey, null)?.takeIf { it.isNotBlank() }
+        }
+        return null
     }
 
     fun getAllSparkAddressLabels(walletId: String): Map<String, String> {
@@ -3292,6 +3377,15 @@ class SecureStorage private constructor(private val context: Context) {
                 put("timeoutBlockHeight", session.timeoutBlockHeight)
                 put("swapTree", session.swapTree)
                 put("blindingKey", session.blindingKey)
+                put("refundKeySource", session.refundKeySource.name)
+                put("refundKeyPath", session.refundKeyPath)
+                put("refundKeyIndex", session.refundKeyIndex)
+                put("lockupTxid", session.lockupTxid)
+                put("lockupTransactionHex", session.lockupTransactionHex)
+                put("refundState", session.refundState.name)
+                put("refundTxid", session.refundTxid)
+                put("refundError", session.refundError)
+                put("refundLastAttemptAt", session.refundLastAttemptAt)
             }.toString()
         putPrivateString("${KEY_PENDING_BOLTZ_LIGHTNING_PAYMENT_PREFIX}$walletId", json, commit = true)
     }
@@ -3360,6 +3454,44 @@ class SecureStorage private constructor(private val context: Context) {
                 blindingKey =
                     json.optString("blindingKey", "").takeIf {
                         it.isNotBlank() && !json.isNull("blindingKey")
+                    },
+                refundKeySource = runCatching {
+                    BoltzSubmarineRefundKeySource.valueOf(
+                        json.optString("refundKeySource", BoltzSubmarineRefundKeySource.WALLET_SEED.name),
+                    )
+                }.getOrDefault(BoltzSubmarineRefundKeySource.WALLET_SEED),
+                refundKeyPath =
+                    json.optString("refundKeyPath", "").takeIf {
+                        it.isNotBlank() && !json.isNull("refundKeyPath")
+                    },
+                refundKeyIndex =
+                    json.optInt("refundKeyIndex", -1).takeIf {
+                        it >= 0 && !json.isNull("refundKeyIndex")
+                    },
+                lockupTxid =
+                    json.optString("lockupTxid", "").takeIf {
+                        it.isNotBlank() && !json.isNull("lockupTxid")
+                    },
+                lockupTransactionHex =
+                    json.optString("lockupTransactionHex", "").takeIf {
+                        it.isNotBlank() && !json.isNull("lockupTransactionHex")
+                    },
+                refundState = runCatching {
+                    BoltzSubmarineRefundState.valueOf(
+                        json.optString("refundState", BoltzSubmarineRefundState.NONE.name),
+                    )
+                }.getOrDefault(BoltzSubmarineRefundState.NONE),
+                refundTxid =
+                    json.optString("refundTxid", "").takeIf {
+                        it.isNotBlank() && !json.isNull("refundTxid")
+                    },
+                refundError =
+                    json.optString("refundError", "").takeIf {
+                        it.isNotBlank() && !json.isNull("refundError")
+                    },
+                refundLastAttemptAt =
+                    json.optLong("refundLastAttemptAt", -1L).takeIf {
+                        it >= 0L && !json.isNull("refundLastAttemptAt")
                     },
             )
         } catch (_: Exception) {
@@ -4096,8 +4228,16 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_LAYER1_DENOMINATION = "layer1_denomination"
         private const val KEY_LAYER2_DENOMINATION = "layer2_denomination"
         private const val KEY_APP_LOCALE = "app_locale"
+        private const val KEY_BALANCE_DATE_FORMAT = "balance_date_format"
+        private const val KEY_THEME_MODE = "theme_mode"
         const val DENOMINATION_BTC = "BTC"
         const val DENOMINATION_SATS = "SATS"
+        const val DATE_FORMAT_MM_DD_YY = "MM_DD_YY"
+        const val DATE_FORMAT_DD_MM_YY = "DD_MM_YY"
+        const val DATE_FORMAT_MONTH_DD_YYYY = "MONTH_DD_YYYY"
+        const val DATE_FORMAT_YYYY_MM_DD = "YYYY_MM_DD"
+        const val THEME_MODE_DARK = "DARK"
+        const val THEME_MODE_AMOLED = "AMOLED"
 
         // Swipe navigation
         private const val KEY_SWIPE_MODE = "swipe_mode"
@@ -4134,6 +4274,7 @@ class SecureStorage private constructor(private val context: Context) {
         const val FEE_SOURCE_OFF = "OFF"
         const val FEE_SOURCE_MEMPOOL = "MEMPOOL_SPACE"
         const val FEE_SOURCE_MEMPOOL_ONION = "MEMPOOL_ONION"
+        const val FEE_SOURCE_BITVIEW = "BITVIEW"
         const val FEE_SOURCE_ELECTRUM = "ELECTRUM_SERVER"
         const val FEE_SOURCE_CUSTOM = "CUSTOM"
 
@@ -4145,7 +4286,13 @@ class SecureStorage private constructor(private val context: Context) {
         const val PRICE_SOURCE_MEMPOOL = "MEMPOOL_SPACE"
         const val PRICE_SOURCE_MEMPOOL_ONION = "MEMPOOL_ONION"
         const val PRICE_SOURCE_COINGECKO = "COINGECKO"
+        const val PRICE_SOURCE_YADIO = "YADIO"
         const val DEFAULT_PRICE_CURRENCY = "USD"
+
+        fun supportsHistoricalTxFiatPricing(source: String): Boolean =
+            source == PRICE_SOURCE_MEMPOOL ||
+                source == PRICE_SOURCE_MEMPOOL_ONION ||
+                source == PRICE_SOURCE_YADIO
 
         // Layer 2 external service settings
         private const val KEY_BOLTZ_API_SOURCE = "boltz_api_source"
@@ -4234,6 +4381,7 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_HAS_SEEN_APP_UPDATE_OPT_IN_PROMPT = "has_seen_app_update_opt_in_prompt"
         private const val KEY_HAS_SEEN_WELCOME = "has_seen_welcome"
         private const val KEY_HAS_SEEN_LIQUID_ENABLE_INFO = "has_seen_liquid_enable_info"
+        private const val KEY_HAS_SEEN_SPARK_ENABLE_INFO = "has_seen_spark_enable_info"
         private const val KEY_SEEN_APP_UPDATE_VERSION = "seen_app_update_version"
 
         // Auto-wipe

@@ -24,6 +24,8 @@ import github.aeonbtc.ibiswallet.data.model.BoltzChainSwapDraft
 import github.aeonbtc.ibiswallet.data.model.BoltzChainSwapDraftState
 import github.aeonbtc.ibiswallet.data.model.BoltzChainSwapOrder
 import github.aeonbtc.ibiswallet.data.model.BoltzPairInfo
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundKeySource
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
 import github.aeonbtc.ibiswallet.data.model.BoltzSwapUpdate
 import github.aeonbtc.ibiswallet.data.model.DirectLightningPayment
 import github.aeonbtc.ibiswallet.data.model.EstimatedSwapTerms
@@ -232,6 +234,8 @@ class LiquidRepository(
         private const val BOLTZ_SESSION_TIMEOUT_TOR_SECS = 12u
         private const val BOLTZ_RESCUE_MNEMONIC_WORD_COUNT = 12u
         private const val BOLTZ_RESCUE_MNEMONIC_BIP85_INDEX = 26_589u
+        private const val BOLTZ_RESCUE_SUBMARINE_KEY_PATH_PREFIX = "m/44/0/0/0/"
+        private const val LEGACY_REST_REFUND_KEY_SCAN_LIMIT = 10_000
 
         // Default Liquid Electrum servers
         val DEFAULT_SERVERS = listOf(
@@ -1998,6 +2002,12 @@ class LiquidRepository(
                 draft.refundAddress
                     ?.takeIf { it.isNotBlank() }
                     ?.let(reservedAddresses::add)
+            }
+        }
+
+        secureStorage.getAllLiquidAddressLabels(walletId).forEach { (address, label) ->
+            if (label.isNotBlank()) {
+                reservedAddresses.add(address)
             }
         }
 
@@ -3806,6 +3816,9 @@ class LiquidRepository(
     private data class BoltzSubmarineRefundDetails(
         val refundAddress: String,
         val refundPublicKey: String,
+        val keySource: BoltzSubmarineRefundKeySource,
+        val keyPath: String?,
+        val keyIndex: Int?,
     )
 
     private fun extractLiquidPreviewChangeOutput(
@@ -4526,7 +4539,7 @@ class LiquidRepository(
             mode = BoltzActivityMode.FALLBACK_STATUS,
             previousUpdate = previousUpdate,
         ) {
-            boltzClient.getSwapStatus(swapId)
+            boltzClient.getSwapUpdate(swapId)
         }
     }
 
@@ -4776,6 +4789,9 @@ class LiquidRepository(
                 timeoutBlockHeight = response.timeoutBlockHeight,
                 swapTree = response.swapTree,
                 blindingKey = response.blindingKey,
+                refundKeySource = refundDetails.keySource,
+                refundKeyPath = refundDetails.keyPath,
+                refundKeyIndex = refundDetails.keyIndex,
             )
         persistPreparedLightningPaymentSession(session)
         logBoltzTrace(
@@ -5470,28 +5486,62 @@ class LiquidRepository(
             .longValueExact()
     }
 
-    private fun allocateBoltzSubmarineRefundDetails(): BoltzSubmarineRefundDetails {
+    private suspend fun allocateBoltzSubmarineRefundDetails(): BoltzSubmarineRefundDetails {
         val walletId = currentWalletId ?: throw Exception("Wallet not loaded")
         val wollet = lwkWollet ?: throw Exception("Liquid wallet not loaded")
-        val mnemonic = secureStorage.getMnemonic(walletId)
-            ?: throw Exception("Liquid signer is unavailable for refund key derivation")
-        val passphrase = secureStorage.getPassphrase(walletId)
         val refundAddressResult = resolveEarliestUnusedLiquidExternalAddress(
             wollet = wollet,
             walletId = walletId,
         )
         val refundAddress = refundAddressResult.address
-        val refundIndex = refundAddressResult.index.toLong()
-        val seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, passphrase)
-        val refundPublicKey =
-            ElectrumSeedUtil.deriveCompressedPublicKeyHex(
-                seed = seed,
-                path = "m/84'/1776'/0'/0/$refundIndex",
-            )
+        val boltzSession = ensureBoltzSession()
+        val refundIndex = boltzSession.nextIndexToUse().toInt()
+        val signer = ensureSigner()
+        val rescueMnemonic = deriveBoltzRescueMnemonic(signer).toString()
+        val keyPath = refundIndex?.let { BOLTZ_RESCUE_SUBMARINE_KEY_PATH_PREFIX + it }
+            ?: throw Exception("Boltz refund key index unavailable")
+        val rescueSeed = ElectrumSeedUtil.bip39MnemonicToSeed(rescueMnemonic)
+        val refundPublicKey = ElectrumSeedUtil.deriveCompressedPublicKeyHex(
+            seed = rescueSeed,
+            path = keyPath,
+        )
+        boltzSession.setNextIndexToUse((refundIndex + 1).toUInt())
+        persistBoltzSessionNextIndex(walletId, boltzSession)
         return BoltzSubmarineRefundDetails(
             refundAddress = refundAddress,
             refundPublicKey = refundPublicKey,
+            keySource = BoltzSubmarineRefundKeySource.BOLTZ_RESCUE_MNEMONIC,
+            keyPath = keyPath,
+            keyIndex = refundIndex,
         )
+    }
+
+    private fun backfillLegacyRestSubmarineRefundKey(
+        session: PendingLightningPaymentSession,
+        maxScanIndex: Int = LEGACY_REST_REFUND_KEY_SCAN_LIMIT,
+    ): PendingLightningPaymentSession {
+        if (session.backend != LightningPaymentBackend.BOLTZ_REST_SUBMARINE) return session
+        if (session.refundKeySource != BoltzSubmarineRefundKeySource.WALLET_SEED) return session
+        if (!session.refundKeyPath.isNullOrBlank() && session.refundKeyIndex != null) return session
+        val refundPublicKey = session.refundPublicKey?.takeIf { it.isNotBlank() } ?: return session
+        val walletId = currentWalletId ?: return session
+        val mnemonic = secureStorage.getMnemonic(walletId) ?: return session
+        val passphrase = secureStorage.getPassphrase(walletId)
+        val seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, passphrase)
+        for (index in 0..maxScanIndex) {
+            val path = "m/84'/1776'/0'/0/$index"
+            val derivedPublicKey =
+                runCatching {
+                    ElectrumSeedUtil.deriveCompressedPublicKeyHex(seed = seed, path = path)
+                }.getOrNull() ?: continue
+            if (derivedPublicKey.equals(refundPublicKey, ignoreCase = true)) {
+                return session.copy(
+                    refundKeyPath = path,
+                    refundKeyIndex = index,
+                )
+            }
+        }
+        return session
     }
 
     private fun safeAddSats(left: Long, right: Long): Long {
@@ -5535,6 +5585,114 @@ class LiquidRepository(
             ?.takeIf { it.swapId == swapId }
             ?.let { persistPreparedLightningPaymentSession(it.copy(snapshot = snapshot)) }
         state
+    }
+
+    suspend fun processRestSubmarineRefund(
+        swapId: String,
+        latestUpdate: BoltzSwapUpdate? = null,
+    ): PendingLightningPaymentSession = withContext(Dispatchers.IO) {
+        val current = getPendingLightningPaymentSession()
+            ?.takeIf { it.swapId == swapId && it.backend == LightningPaymentBackend.BOLTZ_REST_SUBMARINE }
+            ?: throw Exception("REST Lightning payment swap not found")
+        var session = backfillLegacyRestSubmarineRefundKey(current)
+            .withBoltzLockupUpdate(latestUpdate)
+            .copy(
+                phase = PendingLightningPaymentPhase.REFUNDING,
+                refundLastAttemptAt = System.currentTimeMillis(),
+            )
+        if (session.refundKeySource != BoltzSubmarineRefundKeySource.BOLTZ_RESCUE_MNEMONIC) {
+            session = session.copy(
+                refundState = BoltzSubmarineRefundState.FAILED,
+                refundError = "Manual support required for this legacy REST swap.",
+                status = "Manual refund support required.",
+            )
+            persistPreparedLightningPaymentSession(session)
+            return@withContext session
+        }
+
+        session = session.copy(
+            refundState = if (session.snapshot.isNullOrBlank()) {
+                BoltzSubmarineRefundState.RESTORING
+            } else {
+                BoltzSubmarineRefundState.COOPERATIVE_REFUNDING
+            },
+            refundError = null,
+            status = if (session.snapshot.isNullOrBlank()) {
+                "Preparing refund..."
+            } else {
+                "Requesting cooperative refund..."
+            },
+        )
+        persistPreparedLightningPaymentSession(session)
+
+        val response =
+            withBoltzOperationLock(operation = "processRestSubmarineRefund", swapId = swapId) {
+                restoreRestSubmarinePreparePayResponse(session)
+            }
+        val (state, snapshot) =
+            withBoltzOperationLock(operation = "advanceRestSubmarineRefund", swapId = swapId) {
+                advanceBoltzPaymentState("advanceRestSubmarineRefund") {
+                    response.advance()
+                } to response.serialize()
+            }
+
+        val refundTxid = latestUpdate?.transactionId?.takeIf { it.isNotBlank() }
+        val nextRefundState =
+            when (state) {
+                PaymentState.SUCCESS -> BoltzSubmarineRefundState.BROADCAST
+                PaymentState.FAILED -> BoltzSubmarineRefundState.WAITING_FOR_TIMELOCK
+                PaymentState.CONTINUE -> BoltzSubmarineRefundState.COOPERATIVE_REFUNDING
+            }
+        val nextStatus =
+            when (nextRefundState) {
+                BoltzSubmarineRefundState.BROADCAST -> "Refund broadcast. Waiting for wallet sync..."
+                BoltzSubmarineRefundState.WAITING_FOR_TIMELOCK -> "Waiting for timelock. Refund will broadcast automatically."
+                else -> "Requesting cooperative refund..."
+            }
+        session = session.copy(
+            snapshot = snapshot,
+            refundState = nextRefundState,
+            refundTxid = refundTxid ?: session.refundTxid,
+            refundError = null,
+            status = nextStatus,
+        )
+        persistPreparedLightningPaymentSession(session)
+        session
+    }
+
+    private fun PendingLightningPaymentSession.withBoltzLockupUpdate(
+        update: BoltzSwapUpdate?,
+    ): PendingLightningPaymentSession {
+        if (update == null) return this
+        return copy(
+            lockupTxid = update.transactionId?.takeIf { it.isNotBlank() } ?: lockupTxid,
+            lockupTransactionHex = update.transactionHex?.takeIf { it.isNotBlank() } ?: lockupTransactionHex,
+        )
+    }
+
+    private suspend fun restoreRestSubmarinePreparePayResponse(
+        session: PendingLightningPaymentSession,
+    ): PreparePayResponse {
+        preparePayResponses[session.swapId]?.let { return it }
+        val boltzSession = ensureBoltzSession()
+        session.snapshot?.takeIf { it.isNotBlank() }?.let { snapshot ->
+            return boltzSession.restorePreparePay(snapshot).also {
+                preparePayResponses[session.swapId] = it
+            }
+        }
+        val restorableSwaps = boltzSession.restorableSubmarineSwaps(
+            boltzSession.swapRestore(),
+            Address(session.refundAddress),
+        )
+        val restored =
+            restorableSwaps.firstNotNullOfOrNull { serialized ->
+                runCatching { boltzSession.restorePreparePay(serialized) }
+                    .getOrNull()
+                    ?.takeIf { it.swapId() == session.swapId }
+            }
+                ?: throw Exception("REST submarine swap could not be restored from the Boltz rescue key")
+        preparePayResponses[session.swapId] = restored
+        return restored
     }
 
     suspend fun finishPreparedLightningPayment(swapId: String): Boolean? = withContext(Dispatchers.IO) {

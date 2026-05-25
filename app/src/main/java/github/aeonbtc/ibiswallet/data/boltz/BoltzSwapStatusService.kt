@@ -38,7 +38,7 @@ class BoltzSwapStatusService(
         swapId: String,
         timeoutMs: Long,
         previousUpdate: BoltzSwapUpdate? = null,
-        pollStatus: (suspend () -> String?)? = null,
+        pollUpdate: (suspend () -> BoltzSwapUpdate?)? = null,
     ): BoltzSwapUpdate? {
         val trace = BoltzTraceContext(operation = "awaitSwapActivity", swapId = swapId)
         val startedAt = boltzTraceStart()
@@ -74,9 +74,9 @@ class BoltzSwapStatusService(
                 return update
             }
 
-            pollStatus?.let { statusProvider ->
-                val status =
-                    runCatching { statusProvider() }
+            pollUpdate?.let { updateProvider ->
+                val update =
+                    runCatching { updateProvider() }
                         .onFailure { error ->
                             logBoltzTrace(
                                 "poll_failed",
@@ -95,14 +95,13 @@ class BoltzSwapStatusService(
                         )
                         return@let null
                     }
-                val update = BoltzSwapUpdate(id = swapId, status = status)
                 if (update.fingerprint() == previousFingerprint) {
                     logBoltzTrace(
                         "poll_unchanged",
                         trace,
                         "source" to "poll",
                         "elapsedMs" to boltzElapsedMs(startedAt),
-                        "status" to status,
+                        "status" to update.status,
                     )
                     return@let null
                 }
@@ -112,7 +111,8 @@ class BoltzSwapStatusService(
                     trace,
                     "source" to "poll",
                     "elapsedMs" to boltzElapsedMs(startedAt),
-                    "status" to status,
+                    "status" to update.status,
+                    "txid" to update.transactionId,
                 )
                 return update
             }

@@ -9,6 +9,7 @@ import github.aeonbtc.ibiswallet.data.boltz.logBoltzTrace
 import github.aeonbtc.ibiswallet.data.model.BoltzFees
 import github.aeonbtc.ibiswallet.data.model.BoltzLimits
 import github.aeonbtc.ibiswallet.data.model.BoltzPairInfo
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundResponse
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineResponse
 import github.aeonbtc.ibiswallet.data.model.BoltzSwapUpdate
 import github.aeonbtc.ibiswallet.util.InputLimits
@@ -349,6 +350,24 @@ class BoltzApiClient(
         )
     }
 
+    suspend fun requestSubmarineRefundSignature(
+        swapId: String,
+        pubNonce: String,
+        inputIndex: Int,
+        transactionHex: String,
+    ): BoltzSubmarineRefundResponse {
+        val body = JSONObject().apply {
+            put("pubNonce", pubNonce)
+            put("index", inputIndex)
+            put("transaction", transactionHex)
+        }
+        val j = post("/v2/swap/submarine/$swapId/refund", body)
+        return BoltzSubmarineRefundResponse(
+            pubNonce = j.getString("pubNonce"),
+            partialSignature = j.getString("partialSignature"),
+        )
+    }
+
     suspend fun fetchBolt12Invoice(
         offer: String,
         amountSats: Long,
@@ -426,6 +445,10 @@ class BoltzApiClient(
     suspend fun getSwapStatus(swapId: String): String {
         val j = get("/v2/swap/$swapId")
         return j.getString("status")
+    }
+
+    suspend fun getSwapUpdate(swapId: String): BoltzSwapUpdate {
+        return parseSwapUpdate(get("/v2/swap/$swapId"), fallbackId = swapId)
     }
 
     // ── WebSocket Status Updates ──
@@ -745,11 +768,24 @@ class BoltzApiClient(
 
     private fun nextRequestId(method: String): String = "$method-${requestCounter.incrementAndGet()}"
 
+    private fun parseSwapUpdate(json: JSONObject, fallbackId: String? = null): BoltzSwapUpdate {
+        val transaction = json.optJSONObject("transaction")
+        return BoltzSwapUpdate(
+            id = json.optString("id", fallbackId.orEmpty()).ifBlank { fallbackId.orEmpty() },
+            status = json.getString("status"),
+            transactionHex = transaction?.optString("hex")?.takeIf { it.isNotBlank() },
+            transactionId = transaction?.optString("id")?.takeIf { it.isNotBlank() },
+        )
+    }
+
     private fun summarizePostBody(path: String, body: JSONObject): String {
-        return when (path) {
-            "/v2/lightning/BTC/bolt12/fetch" ->
+        return when {
+            path == "/v2/lightning/BTC/bolt12/fetch" ->
                 "amount=${body.optLong("amount")} note=${body.optString("note").takeIf { it.isNotBlank() }?.let(::summarizeValue) ?: "none"} " +
                     "offer=${summarizeValue(body.optString("offer"))}"
+            Regex("""/v2/swap/submarine/.+/refund""").matches(path) ->
+                "index=${body.optInt("index")} pubNonce=${summarizeValue(body.optString("pubNonce"))} " +
+                    "transaction=${summarizeValue(body.optString("transaction"))}"
             else -> body.keys().asSequence().toList().sorted().joinToString(",")
         }
     }
