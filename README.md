@@ -1,6 +1,6 @@
 # Ibis Wallet
 
-A self-custodial Bitcoin wallet with a focus on intutive design, privacy, and modular customizability.
+Ibis is a self-custodial modular Bitcoin wallet with a focus on intutive design, privacy, and customizability.
 
 Designed for experienced users - no hand-holding, no training wheels.
 
