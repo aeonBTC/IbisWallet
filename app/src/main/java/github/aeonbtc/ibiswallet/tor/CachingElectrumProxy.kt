@@ -99,6 +99,7 @@ class CachingElectrumProxy(
         const val DEFAULT_MIN_FEE_RATE = 1.0
         private const val BTC_PER_KB_TO_SAT_PER_VB = 100_000.0
         private const val PIPELINE_CHUNK_SIZE = 100
+        private const val SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE = 500
 
         /** Read timeout for the subscription socket (5 minutes).
          *  If no data arrives in this window (not even a block header),
@@ -761,49 +762,32 @@ class CachingElectrumProxy(
             val reader = directReader ?: return@withLock emptyMap()
 
             try {
-                val idToScriptHash = mutableMapOf<Int, String>()
-                for (scriptHash in scriptHashes) {
-                    val id = directRequestId++
-                    idToScriptHash[id] = scriptHash
-                    val req =
-                        JSONObject().apply {
-                            put("id", id)
-                            put("method", "blockchain.scripthash.subscribe")
-                            put("params", JSONArray().apply { put(scriptHash) })
-                        }
-                    writer.println(req.toString())
-                }
-                writer.flush()
-
-                val results = mutableMapOf<String, String?>()
-                repeat(scriptHashes.size) {
-                    val line = reader.readLine()
-                    if (line == null) {
-                        closeDirectConnectionLocked()
-                        return@withLock results
-                    }
-                    val json = JSONObject(line)
-
-                    if (json.has("method") && json.optString("method") == "blockchain.scripthash.subscribe") {
-                        val extra = reader.readLine()
-                        if (extra != null) {
-                            val extraJson = JSONObject(extra)
-                            val extraId = extraJson.optInt("id", -1)
-                            val extraHash = idToScriptHash[extraId]
-                            if (extraHash != null) {
-                                val status: String? =
-                                    if (extraJson.isNull("result")) {
-                                        null
-                                    } else {
-                                        extraJson.optString("result")
-                                    }
-                                results[extraHash] = status
+                val results = LinkedHashMap<String, String?>(scriptHashes.size)
+                for (chunk in scriptHashes.chunked(SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE)) {
+                    val idToScriptHash = HashMap<Int, String>(chunk.size)
+                    for (scriptHash in chunk) {
+                        val id = directRequestId++
+                        idToScriptHash[id] = scriptHash
+                        val req =
+                            JSONObject().apply {
+                                put("id", id)
+                                put("method", "blockchain.scripthash.subscribe")
+                                put("params", JSONArray().apply { put(scriptHash) })
                             }
-                        } else {
+                        writer.println(req.toString())
+                    }
+                    writer.flush()
+
+                    var received = 0
+                    while (received < chunk.size) {
+                        val line = reader.readLine()
+                        if (line == null) {
                             closeDirectConnectionLocked()
-                            return@withLock results
+                            return@withLock emptyMap()
                         }
-                    } else {
+                        if (isServerPushNotification(line)) continue
+
+                        val json = JSONObject(line)
                         val responseId = json.optInt("id", -1)
                         val scriptHash = idToScriptHash[responseId]
                         if (scriptHash != null) {
@@ -815,6 +799,7 @@ class CachingElectrumProxy(
                                 }
                             results[scriptHash] = status
                         }
+                        received++
                     }
                 }
                 results
@@ -835,6 +820,7 @@ class CachingElectrumProxy(
         try {
             val currentStatuses = subscribeScriptHashes(cachedStatuses.keys.toList())
             if (currentStatuses.isEmpty()) return true
+            if (currentStatuses.size < cachedStatuses.size) return true
             for ((scriptHash, cachedStatus) in cachedStatuses) {
                 if (currentStatuses[scriptHash] != cachedStatus) {
                     if (BuildConfig.DEBUG) Log.d(TAG, "Script hash change: $scriptHash")
@@ -1010,22 +996,9 @@ class CachingElectrumProxy(
                     }
                 writer.println(headersReq.toString())
 
-                // 2. Subscribe to all script hashes (pipelined)
-                val idToScriptHash = mutableMapOf<Int, String>()
-                for (scriptHash in scriptHashes) {
-                    val id = subRequestId++
-                    idToScriptHash[id] = scriptHash
-                    val req =
-                        JSONObject().apply {
-                            put("id", id)
-                            put("method", "blockchain.scripthash.subscribe")
-                            put("params", JSONArray().apply { put(scriptHash) })
-                        }
-                    writer.println(req.toString())
-                }
                 writer.flush()
 
-                // 3. Read block header response
+                // 2. Read block header response
                 var headerLine = reader.readLine()
                 // Skip any interleaved push notifications
                 while (headerLine != null && isServerPushNotification(headerLine)) {
@@ -1048,39 +1021,49 @@ class CachingElectrumProxy(
                     }
                 }
 
-                // 4. Read all script hash subscribe responses
-                val results = mutableMapOf<String, String?>()
-                val expectedResponses = scriptHashes.size
-                var received = 0
-                while (received < expectedResponses) {
-                    val line = reader.readLine()
-                    if (line == null) {
-                        closeSubConnectionLocked()
-                        return@withLock results
-                    }
-
-                    val json = JSONObject(line)
-
-                    // Server push notification interleaved with responses
-                    if (isServerPushNotification(line)) {
-                        dispatchPushNotification(json)
-                        continue // Don't count as a response
-                    }
-
-                    // Normal response — match by id
-                    val responseId = json.optInt("id", -1)
-                    val scriptHash = idToScriptHash[responseId]
-                    if (scriptHash != null) {
-                        val status: String? =
-                            if (json.isNull("result")) {
-                                null
-                            } else {
-                                json.optString("result")
+                // 3. Subscribe to script hashes in bounded chunks so very large
+                // gap limits don't build one huge request/id map in memory.
+                val results = LinkedHashMap<String, String?>(scriptHashes.size)
+                for (chunk in scriptHashes.chunked(SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE)) {
+                    val idToScriptHash = HashMap<Int, String>(chunk.size)
+                    for (scriptHash in chunk) {
+                        val id = subRequestId++
+                        idToScriptHash[id] = scriptHash
+                        val req =
+                            JSONObject().apply {
+                                put("id", id)
+                                put("method", "blockchain.scripthash.subscribe")
+                                put("params", JSONArray().apply { put(scriptHash) })
                             }
-                        results[scriptHash] = status
-                        received++
-                    } else {
-                        // Unknown id — could be the headers response if we miscounted
+                        writer.println(req.toString())
+                    }
+                    writer.flush()
+
+                    var received = 0
+                    while (received < chunk.size) {
+                        val line = reader.readLine()
+                        if (line == null) {
+                            closeSubConnectionLocked()
+                            return@withLock emptyMap()
+                        }
+
+                        val json = JSONObject(line)
+                        if (isServerPushNotification(line)) {
+                            dispatchPushNotification(json)
+                            continue
+                        }
+
+                        val responseId = json.optInt("id", -1)
+                        val scriptHash = idToScriptHash[responseId]
+                        if (scriptHash != null) {
+                            val status: String? =
+                                if (json.isNull("result")) {
+                                    null
+                                } else {
+                                    json.optString("result")
+                                }
+                            results[scriptHash] = status
+                        }
                         received++
                     }
                 }
@@ -1107,7 +1090,9 @@ class CachingElectrumProxy(
      * here rather than dispatched as notifications. The listener continues
      * running but ignores lines while paused.
      *
-     * @return Map of scriptHash -> initial status for the new subscriptions.
+     * @return Non-empty initial statuses if known. Most callers should track
+     *         [scriptHashes] as subscribed because responses are intentionally
+     *         consumed by the listener while paused.
      */
     fun subscribeAdditionalScriptHashes(scriptHashes: List<String>): Map<String, String?> {
         if (scriptHashes.isEmpty()) return emptyMap()
@@ -1123,19 +1108,18 @@ class CachingElectrumProxy(
         // status change.
         subListenerPaused = true
         try {
-            val idToScriptHash = mutableMapOf<Int, String>()
-            for (scriptHash in scriptHashes) {
-                val id = subRequestId++
-                idToScriptHash[id] = scriptHash
-                val req =
-                    JSONObject().apply {
-                        put("id", id)
-                        put("method", "blockchain.scripthash.subscribe")
-                        put("params", JSONArray().apply { put(scriptHash) })
-                    }
-                writer.println(req.toString())
+            for (chunk in scriptHashes.chunked(SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE)) {
+                for (scriptHash in chunk) {
+                    val req =
+                        JSONObject().apply {
+                            put("id", subRequestId++)
+                            put("method", "blockchain.scripthash.subscribe")
+                            put("params", JSONArray().apply { put(scriptHash) })
+                        }
+                    writer.println(req.toString())
+                }
+                writer.flush()
             }
-            writer.flush()
 
             // Note: responses will be read by the listener coroutine (which
             // ignores them because subListenerPaused=true). We don't read
@@ -1149,9 +1133,9 @@ class CachingElectrumProxy(
                 )
             }
 
-            // Return the script hashes as subscribed with null status (unknown).
-            // The server will push notifications for any future changes.
-            return scriptHashes.associateWith { null as String? }
+            // The server will push notifications for future changes. Avoid
+            // allocating a huge scriptHash -> null map for large gap limits.
+            return emptyMap()
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Additional subscription failed: ${e.message}")
             return emptyMap()

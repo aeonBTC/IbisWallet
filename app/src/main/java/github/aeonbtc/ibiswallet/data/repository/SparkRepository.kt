@@ -16,6 +16,10 @@ import breez_sdk_spark.MaxFee
 import breez_sdk_spark.Network
 import breez_sdk_spark.OnchainConfirmationSpeed
 import breez_sdk_spark.Payment
+import breez_sdk_spark.PaymentDetails
+import breez_sdk_spark.PaymentRequest
+import breez_sdk_spark.PaymentStatus
+import breez_sdk_spark.PaymentType
 import breez_sdk_spark.PrepareLnurlPayRequest
 import breez_sdk_spark.PrepareLnurlPayResponse
 import breez_sdk_spark.PrepareSendPaymentRequest
@@ -28,6 +32,7 @@ import breez_sdk_spark.SendPaymentMethod
 import breez_sdk_spark.SendPaymentOptions
 import breez_sdk_spark.SendPaymentRequest
 import breez_sdk_spark.SendOnchainSpeedFeeQuote
+import breez_sdk_spark.SyncWalletRequest
 import breez_sdk_spark.UpdateUserSettingsRequest
 import breez_sdk_spark.connect
 import breez_sdk_spark.defaultConfig
@@ -37,6 +42,7 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.FeeEstimateSource
 import github.aeonbtc.ibiswallet.data.model.FeeEstimates
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
+import github.aeonbtc.ibiswallet.data.model.SparkEvent
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeQuote
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeSpeed
 import github.aeonbtc.ibiswallet.data.model.SparkPayment
@@ -46,16 +52,19 @@ import github.aeonbtc.ibiswallet.data.model.SparkSendState
 import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
 import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.localization.AppLocale
+import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.isTransactionInsufficientFundsError
 import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
-import github.aeonbtc.ibiswallet.util.SecureLog
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -63,13 +72,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
-import java.util.concurrent.TimeoutException
-import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
-import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 import java.io.File
-import java.lang.reflect.InvocationTargetException
 import java.math.BigInteger
+import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.TimeoutException
 
 class SparkRepository(
     private val context: Context,
@@ -84,6 +91,9 @@ class SparkRepository(
     private val _receiveState = MutableStateFlow<SparkReceiveState>(SparkReceiveState.Idle)
     val receiveState: StateFlow<SparkReceiveState> = _receiveState.asStateFlow()
 
+    private val _events = MutableSharedFlow<SparkEvent>(extraBufferCapacity = 8)
+    val events: SharedFlow<SparkEvent> = _events.asSharedFlow()
+
     private val _sparkTransactionLabels = MutableStateFlow<Map<String, String>>(emptyMap())
     val sparkTransactionLabels: StateFlow<Map<String, String>> = _sparkTransactionLabels.asStateFlow()
     private val _sparkAddressLabels = MutableStateFlow<Map<String, String>>(emptyMap())
@@ -94,6 +104,8 @@ class SparkRepository(
 
     private val _isConnected = MutableStateFlow(false)
     val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+    private val _isConnecting = MutableStateFlow(false)
+    val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
 
     private val mutex = Mutex()
     private val reconnectMutex = Mutex()
@@ -150,18 +162,29 @@ class SparkRepository(
         reconnectMutex.withLock {
             if (reconnectInProgress) return@withLock
             reconnectInProgress = true
+            var reconnected = false
             try {
                 val walletId = mutex.withLock { _loadedWalletId.value } ?: return@withLock
                 recoverySyncCompletedForWalletId = null
                 mutex.withLock {
                     applyLoadingSparkStateLocked(walletId)
                 }
-                val handle = mutex.withLock { softDetachSdkLocked() }
+                val handle = mutex.withLock { softDetachSdkLocked(markDisconnected = false) }
                 handle?.awaitDisconnect()
-                val connectedSdk = connectWalletLocked(walletId)
+                val connectedSdk = connectWalletLocked(walletId, showConnectingStatus = false)
+                reconnected = true
                 registerListenerForSdk(connectedSdk)
                 refreshState(SparkRefreshMode.ExplicitSdkSync, allowReconnectOnFailure = false)
             } finally {
+                if (!reconnected) {
+                    mutex.withLock {
+                        if (sdk == null) {
+                            _isConnected.value = false
+                            _isConnecting.value = false
+                            _sparkState.value = _sparkState.value.copy(isSyncing = false)
+                        }
+                    }
+                }
                 reconnectInProgress = false
             }
         }
@@ -175,6 +198,7 @@ class SparkRepository(
     fun clearWalletDisplayState() {
         _loadedWalletId.value = null
         _isConnected.value = false
+        _isConnecting.value = false
         _sparkTransactionLabels.value = emptyMap()
         _sparkAddressLabels.value = emptyMap()
         _sparkState.value = SparkWalletState(isInitialized = true)
@@ -185,6 +209,7 @@ class SparkRepository(
     fun markLoadFailed(walletId: String, message: String) {
         _loadedWalletId.value = walletId
         _isConnected.value = false
+        _isConnecting.value = false
         val currentState = _sparkState.value.takeIf { it.walletId == walletId && it.isInitialized }
         _sparkState.value =
             currentState?.copy(
@@ -202,6 +227,10 @@ class SparkRepository(
         amountSats: Long,
         address: String,
     ) {
+        val walletId = _loadedWalletId.value
+        if (walletId != null && sparkDepositHistoryId(txid, 0u) in secureStorage.getHiddenSparkHistoryItemIds(walletId)) {
+            return
+        }
         _loadedWalletId.value?.let { walletId ->
             secureStorage.saveSparkDepositAddress(walletId, txid, address)
         }
@@ -240,7 +269,7 @@ class SparkRepository(
         sdkToDisconnect?.disconnectInBackground()
     }
 
-    suspend fun refreshState() = reconnectWallet()
+    suspend fun refreshState() = refreshState(SparkSyncPolicy.modeForManualRefresh())
 
     private suspend fun refreshFromEvent() = refreshState(SparkRefreshMode.ReadCached)
 
@@ -348,7 +377,7 @@ class SparkRepository(
         withContext(Dispatchers.IO) {
             val response = sdkOrThrow().prepareSendPayment(
                 PrepareSendPaymentRequest(
-                    paymentRequest = paymentRequest,
+                    paymentRequest = PaymentRequest.Input(paymentRequest),
                     amount = amountSats.toSparkBigInteger(),
                     tokenIdentifier = null,
                     conversionOptions = null,
@@ -438,6 +467,16 @@ class SparkRepository(
         }
     }
 
+    fun deleteSparkAddressLabel(
+        walletId: String,
+        addressOrRequest: String,
+    ) {
+        secureStorage.deleteSparkAddressLabel(walletId, addressOrRequest)
+        if (_loadedWalletId.value == walletId) {
+            _sparkAddressLabels.value = secureStorage.getAllSparkAddressLabels(walletId)
+        }
+    }
+
     fun saveSparkTransactionLabels(
         walletId: String,
         labels: Map<String, String>,
@@ -473,9 +512,43 @@ class SparkRepository(
         }
     }
 
+    fun deleteSparkHistoryItem(
+        walletId: String,
+        itemId: String,
+    ) {
+        secureStorage.hideSparkHistoryItem(walletId, itemId)
+        secureStorage.purgeHiddenSparkHistoryItemMetadata(walletId, itemId)
+        if (_loadedWalletId.value == walletId) {
+            localPendingDeposits = filterHiddenSparkDeposits(walletId, localPendingDeposits)
+            val updatedState = filterHiddenSparkHistory(walletId, _sparkState.value)
+            _sparkState.value = updatedState
+            secureStorage.saveSparkWalletStateCache(walletId, updatedState)
+        }
+    }
+
+    fun deleteAllSparkHistory(walletId: String) {
+        val currentState = _sparkState.value
+        val itemIds =
+            currentState.payments.map { it.id } +
+                currentState.unclaimedDeposits.map(::sparkDepositHistoryId)
+        val cleanItemIds = itemIds.filter { it.isNotBlank() }.distinct()
+        if (cleanItemIds.isEmpty()) return
+
+        cleanItemIds.forEach { itemId ->
+            secureStorage.hideSparkHistoryItem(walletId, itemId)
+            secureStorage.purgeHiddenSparkHistoryItemMetadata(walletId, itemId)
+        }
+        if (_loadedWalletId.value == walletId) {
+            localPendingDeposits = filterHiddenSparkDeposits(walletId, localPendingDeposits)
+            val updatedState = filterHiddenSparkHistory(walletId, currentState)
+            _sparkState.value = updatedState
+            secureStorage.saveSparkWalletStateCache(walletId, updatedState)
+        }
+    }
+
     private suspend fun refreshState(
         mode: SparkRefreshMode,
-        allowReconnectOnFailure: Boolean = true,
+        allowReconnectOnFailure: Boolean = false,
     ) = withContext(Dispatchers.IO) {
         refreshMutex.withLock {
             refreshStateInternal(mode, allowReconnectOnFailure)
@@ -514,6 +587,7 @@ class SparkRepository(
                     payments.associate { payment -> payment.id to payment.method },
                 )
             }
+            val visiblePayments = filterHiddenSparkPayments(walletId, payments)
             val unclaimedDeposits =
                 runCatching {
                     activeSdk.listUnclaimedDeposits(ListUnclaimedDepositsRequest).deposits.map { deposit ->
@@ -528,18 +602,29 @@ class SparkRepository(
                         )
                     }
                 }.getOrDefault(emptyList())
+            val claimedDepositKeys =
+                (unclaimedDeposits + localPendingDeposits)
+                    .filter { deposit ->
+                        payments.any { payment -> SparkDepositClaimMatcher.matches(deposit, payment) }
+                    }
+                    .map(::sparkDepositKey)
+                    .toSet()
             localPendingDeposits =
                 localPendingDeposits.filter { pending ->
-                    unclaimedDeposits.none { it.txid == pending.txid }
+                    unclaimedDeposits.none { sparkDepositKey(it) == sparkDepositKey(pending) } &&
+                        sparkDepositKey(pending) !in claimedDepositKeys
                 }
             if (walletId != null) {
-                val sdkDepositTxids = unclaimedDeposits.map { it.txid }.toSet()
-                sdkDepositTxids.forEach { txid ->
+                val resolvedPendingTxids =
+                    (unclaimedDeposits.map { it.txid } + claimedDepositKeys.map { it.substringBefore(':') }).toSet()
+                resolvedPendingTxids.forEach { txid ->
                     secureStorage.deleteSparkPendingDeposit(walletId, txid)
                 }
             }
             val visibleUnclaimedDeposits = mergeLocalPendingDeposits(unclaimedDeposits)
-            val depositKeys = visibleUnclaimedDeposits.map { "${it.txid}:${it.vout}" }.toSet()
+                .filterNot { sparkDepositKey(it) in claimedDepositKeys }
+            val filteredUnclaimedDeposits = filterHiddenSparkDeposits(walletId, visibleUnclaimedDeposits)
+            val depositKeys = filteredUnclaimedDeposits.map { "${it.txid}:${it.vout}" }.toSet()
             if (walletId != null && depositKeys.any { it !in depositsRotatedForAddress }) {
                 secureStorage.clearSparkOnchainDepositAddress(walletId)
             }
@@ -549,8 +634,8 @@ class SparkRepository(
                 isInitialized = true,
                 identityPubkey = info.identityPubkey,
                 balanceSats = info.balanceSats.toLong(),
-                payments = payments,
-                unclaimedDeposits = visibleUnclaimedDeposits,
+                payments = visiblePayments,
+                unclaimedDeposits = filteredUnclaimedDeposits,
                 lightningAddress = lightningAddress,
                 isSyncing = false,
                 lastSyncTimestamp = System.currentTimeMillis(),
@@ -607,7 +692,7 @@ class SparkRepository(
         val cachedState = secureStorage.getSparkWalletStateCache(walletId)
         val inMemoryState = _sparkState.value.takeIf { it.walletId == walletId && it.isInitialized }
         _sparkState.value =
-            (cachedState ?: inMemoryState)?.copy(
+            (cachedState ?: inMemoryState)?.let { filterHiddenSparkHistory(walletId, it) }?.copy(
                 walletId = walletId,
                 isInitialized = true,
                 isSyncing = true,
@@ -619,7 +704,45 @@ class SparkRepository(
             )
     }
 
-    private suspend fun connectWalletLocked(walletId: String): BreezSdk {
+    private fun filterHiddenSparkHistory(
+        walletId: String?,
+        state: SparkWalletState,
+    ): SparkWalletState = state.copy(
+        payments = filterHiddenSparkPayments(walletId, state.payments),
+        unclaimedDeposits = filterHiddenSparkDeposits(walletId, state.unclaimedDeposits),
+    )
+
+    private fun filterHiddenSparkPayments(
+        walletId: String?,
+        payments: List<SparkPayment>,
+    ): List<SparkPayment> {
+        val hiddenIds = walletId?.let(secureStorage::getHiddenSparkHistoryItemIds).orEmpty()
+        if (hiddenIds.isEmpty()) return payments
+        return payments.filterNot { it.id in hiddenIds }
+    }
+
+    private fun filterHiddenSparkDeposits(
+        walletId: String?,
+        deposits: List<SparkUnclaimedDeposit>,
+    ): List<SparkUnclaimedDeposit> {
+        val hiddenIds = walletId?.let(secureStorage::getHiddenSparkHistoryItemIds).orEmpty()
+        if (hiddenIds.isEmpty()) return deposits
+        return deposits.filterNot { sparkDepositHistoryId(it) in hiddenIds }
+    }
+
+    private fun sparkDepositHistoryId(deposit: SparkUnclaimedDeposit): String = "deposit:${deposit.txid}:${deposit.vout}"
+
+    private fun sparkDepositKey(deposit: SparkUnclaimedDeposit): String = "${deposit.txid}:${deposit.vout}"
+
+    private fun sparkDepositHistoryId(
+        txid: String,
+        vout: UInt,
+    ): String = "deposit:$txid:$vout"
+
+    private suspend fun connectWalletLocked(
+        walletId: String,
+        showConnectingStatus: Boolean = true,
+    ): BreezSdk {
         val metadata = secureStorage.getWalletMetadata(walletId)
             ?: throw IllegalStateException("Wallet not found")
         if (metadata.seedFormat != SeedFormat.BIP39 || metadata.isWatchOnly) {
@@ -636,31 +759,40 @@ class SparkRepository(
         config.privateEnabledDefault = true
         config.maxDepositClaimFee = MaxFee.NetworkRecommended(1u)
 
-        val storageDir = File(context.filesDir, "spark/$walletId").apply { mkdirs() }
-        val connectedSdk = connect(
-            ConnectRequest(
-                config = config,
-                seed = Seed.Mnemonic(mnemonic, secureStorage.getPassphrase(walletId)),
-                storageDir = storageDir.absolutePath,
-            ),
-        )
-        mutex.withLock {
-            sdk = connectedSdk
-            _loadedWalletId.value = walletId
-            _isConnected.value = true
+        if (showConnectingStatus) {
+            _isConnecting.value = true
         }
-
-        runCatching {
-            connectedSdk.updateUserSettings(
-                UpdateUserSettingsRequest(sparkPrivateModeEnabled = true),
+        try {
+            val storageDir = File(context.filesDir, "spark/$walletId").apply { mkdirs() }
+            val connectedSdk = connect(
+                ConnectRequest(
+                    config = config,
+                    seed = Seed.Mnemonic(mnemonic, secureStorage.getPassphrase(walletId)),
+                    storageDir = storageDir.absolutePath,
+                ),
             )
-        }.onFailure {
-            SecureLog.w(TAG, "Spark private mode update failed", it, releaseMessage = "Spark privacy setup failed")
+            mutex.withLock {
+                sdk = connectedSdk
+                _loadedWalletId.value = walletId
+                _isConnected.value = true
+            }
+
+            runCatching {
+                connectedSdk.updateUserSettings(
+                    UpdateUserSettingsRequest(sparkPrivateModeEnabled = true),
+                )
+            }.onFailure {
+                SecureLog.w(TAG, "Spark private mode update failed", it, releaseMessage = "Spark privacy setup failed")
+            }
+            return connectedSdk
+        } finally {
+            if (showConnectingStatus) {
+                _isConnecting.value = false
+            }
         }
-        return connectedSdk
     }
 
-    private fun softDetachSdkLocked(): SparkSdkHandle? {
+    private fun softDetachSdkLocked(markDisconnected: Boolean = true): SparkSdkHandle? {
         val handle =
             sdk?.let { activeSdk ->
                 SparkSdkHandle(
@@ -671,7 +803,10 @@ class SparkRepository(
         sdk = null
         listenerId = null
         preparedSend = null
-        _isConnected.value = false
+        if (markDisconnected) {
+            _isConnected.value = false
+            _isConnecting.value = false
+        }
         return handle
     }
 
@@ -707,6 +842,7 @@ class SparkRepository(
         recoverySyncCompletedForWalletId = null
         _loadedWalletId.value = null
         _isConnected.value = false
+        _isConnecting.value = false
         _sparkTransactionLabels.value = emptyMap()
         _sparkAddressLabels.value = emptyMap()
         _sparkState.value = SparkWalletState(isInitialized = true)
@@ -731,11 +867,29 @@ class SparkRepository(
         sdk ?: throw IllegalStateException(_sparkState.value.error ?: "Spark wallet is not loaded")
 
     private suspend fun registerListenerForSdk(connectedSdk: BreezSdk) {
-        val id = connectedSdk.addEventListener(
-            SparkListener {
-                eventScope.launch { refreshFromEvent() }
-            },
-        )
+        val id =
+            connectedSdk.addEventListener(
+                SparkListener { event ->
+                    // Always hop off the callback stack. SDK may re-enter onEvent from the same
+                    // calling frame while we refresh/sync, which previously overflowed the stack.
+                    eventScope.launch {
+                        runCatching {
+                            if (event is SdkEvent.PaymentSucceeded) {
+                                handlePaymentSucceeded(event.payment)
+                            }
+                            refreshFromEvent()
+                        }.onFailure { err ->
+                            if (err is CancellationException) throw err
+                            SecureLog.w(
+                                TAG,
+                                "Spark event handling failed",
+                                err,
+                                releaseMessage = "Spark event handling failed",
+                            )
+                        }
+                    }
+                },
+            )
         mutex.withLock {
             if (sdk === connectedSdk) {
                 listenerId = id
@@ -745,36 +899,79 @@ class SparkRepository(
         }
     }
 
+    private fun handlePaymentSucceeded(payment: Payment) {
+        if (payment.paymentType != PaymentType.RECEIVE) return
+        if (payment.status != PaymentStatus.COMPLETED) return
+
+        val paymentId = payment.id
+        val amountSats = payment.amount.toLongSafe()
+        val paidKind = payment.receiveKindOrNull() ?: return
+        val paidRequest = payment.matchingReceiveRequest()
+        val openReady = _receiveState.value as? SparkReceiveState.Ready
+
+        val matchesOpenInvoice =
+            openReady != null &&
+                openReady.kind.canMatchReceivePayment(paidKind) &&
+                (
+                    paidRequest.isNullOrBlank() ||
+                        openReady.paymentRequest.normalizeSparkPaymentRequest() ==
+                        paidRequest.normalizeSparkPaymentRequest()
+                )
+
+        if (matchesOpenInvoice && openReady != null) {
+            _receiveState.value =
+                SparkReceiveState.Paid(
+                    kind = openReady.kind,
+                    paymentId = paymentId,
+                    amountSats = amountSats,
+                    paymentRequest = openReady.paymentRequest,
+                )
+        }
+
+        _events.tryEmit(
+            SparkEvent.PaymentReceived(
+                paymentId = paymentId,
+                amountSats = amountSats,
+                kind = if (matchesOpenInvoice) openReady?.kind else paidKind,
+            ),
+        )
+    }
+
+    private fun Payment.matchingReceiveRequest(): String? =
+        when (val details = details) {
+            is PaymentDetails.Lightning -> details.invoice
+            is PaymentDetails.Spark -> details.invoiceDetails?.invoice
+            else -> null
+        }
+
+    private fun Payment.receiveKindOrNull(): SparkReceiveKind? =
+        when (details) {
+            is PaymentDetails.Lightning -> SparkReceiveKind.BOLT11_INVOICE
+            is PaymentDetails.Spark -> SparkReceiveKind.SPARK_INVOICE
+            else -> null
+        }
+
+    private fun SparkReceiveKind.canMatchReceivePayment(paidKind: SparkReceiveKind): Boolean =
+        when (this) {
+            SparkReceiveKind.BOLT11_INVOICE -> paidKind == SparkReceiveKind.BOLT11_INVOICE
+            SparkReceiveKind.SPARK_INVOICE,
+            SparkReceiveKind.SPARK_ADDRESS,
+            -> paidKind == SparkReceiveKind.SPARK_INVOICE
+            SparkReceiveKind.BITCOIN_ADDRESS -> false
+        }
+
+    private fun String.normalizeSparkPaymentRequest(): String =
+        trim()
+            .removePrefix("lightning:")
+            .removePrefix("LIGHTNING:")
+            .lowercase(Locale.US)
+
     private suspend fun BreezSdk.syncWalletCompat() {
-        val result =
-            runCatching {
-                val requestClass = Class.forName("breez_sdk_spark.SyncWalletRequest")
-                val request =
-                    runCatching { requestClass.getField("INSTANCE").get(null) }
-                        .getOrElse { requestClass.getDeclaredConstructor().newInstance() }
-                val method = javaClass.methods.firstOrNull { method ->
-                    method.name == "syncWallet" &&
-                        method.parameterTypes.size == 2 &&
-                        method.parameterTypes.firstOrNull()?.name == "breez_sdk_spark.SyncWalletRequest"
-                } ?: return@runCatching null
-
-                suspendCoroutineUninterceptedOrReturn<Any?> { continuation ->
-                    try {
-                        val value = method.invoke(this, request, continuation)
-                        if (value === COROUTINE_SUSPENDED) COROUTINE_SUSPENDED else value
-                    } catch (e: InvocationTargetException) {
-                        throw e.targetException
-                    }
-                }
-            }
-
-        if (result.isFailure || result.getOrNull() == null) {
-            result.exceptionOrNull()?.let {
+        runCatching { syncWallet(SyncWalletRequest) }
+            .onFailure {
                 SecureLog.w(TAG, "Spark syncWallet failed", it, releaseMessage = "Spark wallet sync failed")
                 throw it
             }
-            getInfo(GetInfoRequest(ensureSynced = true))
-        }
     }
 
     private suspend fun BreezSdk.listAllBitcoinPayments(): List<Payment> {
@@ -802,21 +999,13 @@ class SparkRepository(
     }
 
     private class SparkListener(
-        private val onRefresh: () -> Unit,
+        private val onSdkEvent: (SdkEvent) -> Unit,
     ) : EventListener {
         override suspend fun onEvent(event: SdkEvent) {
-            when (event) {
-                is SdkEvent.Synced,
-                is SdkEvent.PaymentSucceeded,
-                is SdkEvent.PaymentPending,
-                is SdkEvent.PaymentFailed,
-                is SdkEvent.NewDeposits,
-                is SdkEvent.ClaimedDeposits,
-                is SdkEvent.UnclaimedDeposits,
-                is SdkEvent.LightningAddressChanged,
-                -> onRefresh()
-                is SdkEvent.Optimization -> Unit
-            }
+            // Keep this method non-branching and non-suspending so UniFFI/native callbacks
+            // cannot re-enter through sealed-class dispatch on the same stack frame.
+            if (event is SdkEvent.AutoOptimization) return
+            onSdkEvent(event)
         }
     }
 
@@ -851,7 +1040,7 @@ class SparkRepository(
                 null -> {
                     val response = activeSdk.prepareSendPayment(
                         PrepareSendPaymentRequest(
-                            paymentRequest = paymentRequest,
+                            paymentRequest = PaymentRequest.Input(paymentRequest),
                             amount = amount,
                             tokenIdentifier = null,
                             conversionOptions = null,
@@ -944,6 +1133,7 @@ class SparkRepository(
             is SendPaymentMethod.Bolt11Invoice -> lightningFeeSats.toLong()
             is SendPaymentMethod.SparkAddress -> fee.toLongSafe()
             is SendPaymentMethod.SparkInvoice -> fee.toLongSafe()
+            is SendPaymentMethod.CrossChainAddress -> sourceTransferFeeSats.toLong()
         }
 
     private fun SendPaymentMethod.onchainFeeQuotes(): List<SparkOnchainFeeQuote> =
@@ -988,7 +1178,20 @@ class SparkRepository(
         when (this) {
             is InputType.LnurlPay -> v1
             is InputType.LightningAddress -> v1.payRequest
-            else -> null
+            is InputType.CrossChainAddress,
+            is InputType.Bip21,
+            is InputType.BitcoinAddress,
+            is InputType.Bolt11Invoice,
+            is InputType.Bolt12Invoice,
+            is InputType.Bolt12InvoiceRequest,
+            is InputType.Bolt12Offer,
+            is InputType.LnurlAuth,
+            is InputType.LnurlWithdraw,
+            is InputType.SilentPaymentAddress,
+            is InputType.SparkAddress,
+            is InputType.SparkInvoice,
+            is InputType.Url,
+            -> null
         }
 
     private fun Payment.toSparkPayment(
@@ -1131,4 +1334,30 @@ internal const val SPARK_NETWORK_RECONNECT_MIN_INTERVAL_MS = 5_000L
 
 internal object SparkPaymentHistoryPaging {
     fun nextOffset(currentOffset: UInt): UInt = currentOffset + SparkRepository.SPARK_PAYMENT_HISTORY_PAGE_SIZE
+}
+
+internal object SparkDepositClaimMatcher {
+    fun matches(
+        deposit: SparkUnclaimedDeposit,
+        payment: SparkPayment,
+    ): Boolean =
+        payment.type.equals("RECEIVE", ignoreCase = true) &&
+            isSettled(payment.status) &&
+            payment.amountSats == deposit.amountSats &&
+            payment.referencesTxid(deposit.txid)
+
+    private fun isSettled(status: String): Boolean {
+        val normalized = status.trim().lowercase(Locale.US)
+        return normalized == "complete" ||
+            normalized == "completed" ||
+            normalized == "confirmed" ||
+            normalized == "succeeded" ||
+            normalized == "success"
+    }
+
+    private fun SparkPayment.referencesTxid(txid: String): Boolean {
+        val normalizedTxid = txid.lowercase(Locale.US)
+        return listOf(id, method, methodDetails, recipient.orEmpty())
+            .any { value -> value.lowercase(Locale.US).contains(normalizedTxid) }
+    }
 }

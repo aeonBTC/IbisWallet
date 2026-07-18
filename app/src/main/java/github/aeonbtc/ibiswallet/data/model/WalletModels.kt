@@ -47,6 +47,13 @@ enum class WalletPolicyType {
     MULTISIG,
 }
 
+/** The backend that owns a wallet entry. */
+enum class WalletKind {
+    BITCOIN,
+    LIQUID_WATCH_ONLY,
+    LIGHTNING_NODE,
+}
+
 enum class MultisigScriptType(
     val displayName: String,
 ) {
@@ -117,9 +124,11 @@ data class StoredWallet(
     val multisigTotalCosigners: Int? = null,
     val multisigScriptType: MultisigScriptType? = null,
     val localCosignerFingerprint: String? = null,
+    val walletKind: WalletKind = WalletKind.BITCOIN,
 ) {
     companion object {
         const val DEFAULT_GAP_LIMIT = 20
+        const val MAX_GAP_LIMIT = 99999
     }
 }
 

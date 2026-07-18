@@ -41,6 +41,8 @@ data class SparkPayment(
     val method: String,
     val recipient: String? = null,
     val methodDetails: String = method,
+    /** Human failure detail when known (SDK often only exposes status FAILED). */
+    val failureReason: String? = null,
 )
 
 data class SparkUnclaimedDeposit(
@@ -77,5 +79,19 @@ sealed interface SparkReceiveState {
         val paymentRequest: String,
         val feeSats: Long,
     ) : SparkReceiveState
+    data class Paid(
+        val kind: SparkReceiveKind,
+        val paymentId: String,
+        val amountSats: Long,
+        val paymentRequest: String? = null,
+    ) : SparkReceiveState
     data class Error(val message: String) : SparkReceiveState
+}
+
+sealed class SparkEvent {
+    data class PaymentReceived(
+        val paymentId: String,
+        val amountSats: Long,
+        val kind: SparkReceiveKind?,
+    ) : SparkEvent()
 }

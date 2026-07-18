@@ -71,7 +71,7 @@ class BoltzApiClient(
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
         private const val RECONNECT_BASE_DELAY_MS = 1_000L
         private const val RECONNECT_MAX_DELAY_MS = 16_000L
-        private const val MAX_RECONNECT_ATTEMPTS = 5
+        private const val MAX_BACKOFF_EXPONENT = 5
         private const val BOLT12_FETCH_TIMEOUT_CLEARNET_SECONDS = 90L
         private const val BOLT12_FETCH_TIMEOUT_TOR_SECONDS = 150L
     }
@@ -441,12 +441,6 @@ class BoltzApiClient(
 
     // ── Swap Status ──
 
-    /** Get current swap status via REST */
-    suspend fun getSwapStatus(swapId: String): String {
-        val j = get("/v2/swap/$swapId")
-        return j.getString("status")
-    }
-
     suspend fun getSwapUpdate(swapId: String): BoltzSwapUpdate {
         return parseSwapUpdate(get("/v2/swap/$swapId"), fallbackId = swapId)
     }
@@ -541,7 +535,9 @@ class BoltzApiClient(
                 false
             } else {
                 sharedWebSocketUrl = expectedUrl
-                reconnectAttempts = 0
+                // Do NOT reset reconnectAttempts here — a successful onOpen resets it.
+                // Resetting on every open attempt would pin the reconnect backoff at
+                // its base delay when the server is unreachable.
                 true
             }
         }
@@ -573,6 +569,10 @@ class BoltzApiClient(
                         reconnectAttempts = 0
                         reconnectJob?.cancel()
                         reconnectJob = null
+                        // Re-subscribe every active swap on (re)connect. flushPendingSubscriptions
+                        // clears the pending set after sending, so without this a reconnected
+                        // socket would be subscribed to nothing.
+                        pendingSubscriptions += swapSubscriptionCounts.keys
                     }
                     flushPendingSubscriptions()
                 }
@@ -692,17 +692,20 @@ class BoltzApiClient(
     }
 
     private suspend fun scheduleReconnect() {
+        // Reconnect indefinitely while there are active swap subscriptions —
+        // giving up would silently degrade swap monitoring to REST polling.
         val attempt = webSocketMutex.withLock {
-            if (reconnectJob != null || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            if (reconnectJob != null) {
                 logBoltzTrace(
                     "reconnect_skipped",
                     BoltzTraceContext(operation = "scheduleReconnect", viaTor = useTor(), source = "websocket"),
                     "attempt" to reconnectAttempts,
-                    "hasPendingJob" to (reconnectJob != null),
+                    "hasPendingJob" to true,
                 )
                 return
             }
-            reconnectAttempts += 1
+            // Cap attempt growth so backoff math stays bounded; delay is capped anyway.
+            reconnectAttempts = (reconnectAttempts + 1).coerceAtMost(MAX_BACKOFF_EXPONENT)
             reconnectAttempts
         }
         val reconnectTask = webSocketScope.launch {
@@ -727,24 +730,6 @@ class BoltzApiClient(
         }
         webSocketMutex.withLock {
             reconnectJob = reconnectTask
-        }
-        reconnectTask.invokeOnCompletion {
-            if (attempt >= MAX_RECONNECT_ATTEMPTS) {
-                logBoltzTrace(
-                    "reconnect_exhausted",
-                    BoltzTraceContext(
-                        operation = "scheduleReconnect",
-                        viaTor = useTor(),
-                        source = "websocket",
-                        attempt = attempt,
-                    ),
-                )
-                webSocketScope.launch {
-                    webSocketMutex.withLock {
-                        reconnectJob = null
-                    }
-                }
-            }
         }
     }
 

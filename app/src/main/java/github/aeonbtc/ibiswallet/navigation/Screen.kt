@@ -60,6 +60,21 @@ sealed class Screen(val route: String) {
     data object Swap : Screen("swap")
 
     data object SparkTransfer : Screen("spark_transfer")
+
+    data object LightningNodeConnection : Screen("lightning_node_connection?walletId={walletId}") {
+        const val BASE_ROUTE = "lightning_node_connection"
+        const val WALLET_ID_ARG = "walletId"
+
+        fun createRoute(walletId: String? = null): String =
+            if (walletId.isNullOrBlank()) {
+                BASE_ROUTE
+            } else {
+                "$BASE_ROUTE?$WALLET_ID_ARG=$walletId"
+            }
+    }
+
+    /** Lightning Node open-channel list (replaces center Swap for LN wallets). */
+    data object LightningNodeChannels : Screen("lightning_node_channels")
 }
 
 data class BottomNavItem(

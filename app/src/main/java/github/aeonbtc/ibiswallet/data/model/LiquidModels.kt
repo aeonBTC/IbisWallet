@@ -69,6 +69,7 @@ enum class Layer2Provider {
     NONE,
     LIQUID,
     SPARK,
+    LIGHTNING,
 }
 
 /** Liquid wallet state — parallel to WalletState for Bitcoin */
@@ -147,6 +148,8 @@ data class LiquidSwapDetails(
     val resolvedPaymentInput: String? = null,
     val invoice: String? = null,
     val status: String? = null,
+    /** Explicit failure detail for LN / swap failures when known. */
+    val failureReason: String? = null,
     val timeoutBlockHeight: Int? = null,
     val refundPublicKey: String? = null,
     val claimPublicKey: String? = null,
@@ -539,6 +542,11 @@ data class PendingSwapSession(
     val fundingTxid: String? = null,
     val settlementTxid: String? = null,
     val boltzSnapshot: String? = null,
+    /**
+     * Quote-only Boltz overview. Exact lockup/order is created on Confirm.
+     * SideSwap and exact Boltz reviews set this false.
+     */
+    val isEstimate: Boolean = false,
 )
 
 sealed class SwapState {
@@ -777,4 +785,6 @@ sealed class LightningInvoiceState {
 data class LiquidServersState(
     val servers: List<LiquidElectrumConfig> = emptyList(),
     val activeServerId: String? = null,
+    /** True after the user has connected to / selected a Liquid Electrum server. */
+    val hasUserSelectedServer: Boolean = false,
 )

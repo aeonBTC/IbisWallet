@@ -84,6 +84,7 @@ class BoltzChainSwapWorkflow(
                 "amount=${activeDraft.sendAmount}",
         )
         try {
+            // Timeout retries happen inside createOrder (LiquidRepository.createBoltzChainSwapOrder).
             val order = createOrder()
             requireValidOrder(order)
             activeDraft =

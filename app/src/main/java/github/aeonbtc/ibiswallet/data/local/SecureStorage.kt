@@ -19,6 +19,9 @@ import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
+import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
+import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionType
+import github.aeonbtc.ibiswallet.data.model.parseLightningNodeConnectionType
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentBackend
 import github.aeonbtc.ibiswallet.data.model.PendingLightningInvoiceSession
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentPhase
@@ -40,6 +43,7 @@ import github.aeonbtc.ibiswallet.data.model.SwapDirection
 import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.WalletPolicyType
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
+import github.aeonbtc.ibiswallet.data.model.WalletKind
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.util.BiometricCrypto
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
@@ -577,6 +581,7 @@ class SecureStorage private constructor(private val context: Context) {
                 put("seedFormat", wallet.seedFormat.name)
                 put("gapLimit", wallet.gapLimit)
                 put("policyType", wallet.policyType.name)
+                put("walletKind", wallet.walletKind.name)
                 wallet.multisigThreshold?.let { put("multisigThreshold", it) }
                 wallet.multisigTotalCosigners?.let { put("multisigTotalCosigners", it) }
                 wallet.multisigScriptType?.let { put("multisigScriptType", it.name) }
@@ -624,6 +629,12 @@ class SecureStorage private constructor(private val context: Context) {
                 } catch (_: IllegalArgumentException) {
                     WalletPolicyType.SINGLE_SIG
                 }
+            val walletKind =
+                try {
+                    WalletKind.valueOf(jsonObject.optString("walletKind", WalletKind.BITCOIN.name))
+                } catch (_: IllegalArgumentException) {
+                    WalletKind.BITCOIN
+                }
             val multisigScriptType =
                 jsonObject.optString("multisigScriptType", "").takeIf { it.isNotBlank() }?.let {
                     try {
@@ -656,6 +667,7 @@ class SecureStorage private constructor(private val context: Context) {
                 multisigScriptType = multisigScriptType,
                 localCosignerFingerprint =
                     jsonObject.optString("localCosignerFingerprint", "").ifBlank { null },
+                walletKind = walletKind,
             )
         } catch (_: Exception) {
             null
@@ -1174,7 +1186,15 @@ class SecureStorage private constructor(private val context: Context) {
         // If this was the active server, clear active (do not auto-assign another)
         if (getActiveServerId() == serverId) {
             setActiveServerId(null)
+            setUserSelectedElectrumServer(false)
         }
+    }
+
+    fun hasUserSelectedElectrumServer(): Boolean =
+        regularPrefs.getBoolean(KEY_ELECTRUM_SERVER_SELECTED_BY_USER, false)
+
+    fun setUserSelectedElectrumServer(selected: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_ELECTRUM_SERVER_SELECTED_BY_USER, selected) }
     }
 
     // ==================== Server Certificate TOFU ====================
@@ -1357,6 +1377,7 @@ class SecureStorage private constructor(private val context: Context) {
         deleteMultisigWalletConfig(walletId)
         deleteLocalCosignerKeyMaterial(walletId)
         removeLiquidDescriptor(walletId)
+        clearLightningNodeConfig(walletId)
 
         // Delete metadata
         deleteWalletMetadata(walletId)
@@ -1369,6 +1390,7 @@ class SecureStorage private constructor(private val context: Context) {
             remove("${KEY_LAST_FULL_SYNC_PREFIX}$walletId")
             remove("${KEY_LIQUID_ENABLED_PREFIX}$walletId")
             remove("${KEY_SPARK_ENABLED_PREFIX}$walletId")
+            remove("${KEY_LIGHTNING_NODE_ENABLED_PREFIX}$walletId")
             remove("${KEY_SPARK_ONCHAIN_DEPOSIT_ADDRESS_PREFIX}$walletId")
             remove("${KEY_LAYER2_PROVIDER_PREFIX}$walletId")
             remove("${KEY_LIQUID_WATCH_ONLY_PREFIX}$walletId")
@@ -1436,6 +1458,9 @@ class SecureStorage private constructor(private val context: Context) {
         "${KEY_LIQUID_ADDRESS_LABEL_PREFIX}${walletId}_",
         "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_",
         "${KEY_TX_LABEL_PREFIX}${walletId}_",
+        "${KEY_HIDDEN_BITCOIN_TX_PREFIX}${walletId}_",
+        "${KEY_HIDDEN_LIQUID_TX_PREFIX}${walletId}_",
+        "${KEY_HIDDEN_SPARK_HISTORY_PREFIX}${walletId}_",
         "${KEY_TX_SOURCE_PREFIX}${walletId}_",
         "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_",
         "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_",
@@ -1575,6 +1600,14 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun setThemeMode(themeMode: String) {
         regularPrefs.edit { putString(KEY_THEME_MODE, themeMode) }
+    }
+
+    fun getTypeface(): String {
+        return regularPrefs.getString(KEY_TYPEFACE, TYPEFACE_SYSTEM) ?: TYPEFACE_SYSTEM
+    }
+
+    fun setTypeface(typeface: String) {
+        regularPrefs.edit { putString(KEY_TYPEFACE, typeface) }
     }
 
     fun getPsbtQrDensity(): QrDensity {
@@ -1835,6 +1868,13 @@ class SecureStorage private constructor(private val context: Context) {
         regularPrefs.edit { putBoolean(KEY_HAS_SEEN_SPARK_ENABLE_INFO, seen) }
     }
 
+    fun hasSeenLightningNodeEnableInfo(): Boolean =
+        regularPrefs.getBoolean(KEY_HAS_SEEN_LIGHTNING_NODE_ENABLE_INFO, false)
+
+    fun setHasSeenLightningNodeEnableInfo(seen: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_HAS_SEEN_LIGHTNING_NODE_ENABLE_INFO, seen) }
+    }
+
     fun getSeenAppUpdateVersion(): String? {
         return regularPrefs.getString(KEY_SEEN_APP_UPDATE_VERSION, null)
     }
@@ -2078,18 +2118,16 @@ class SecureStorage private constructor(private val context: Context) {
         putPrivateStrings(normalizedLabels.mapKeys { (address, _) -> "$prefix$address" })
     }
 
-    fun getSparkAddressLabel(
+    fun deleteSparkAddressLabel(
         walletId: String,
         addressOrRequest: String,
-    ): String? {
+    ) {
         val normalizedAddress = normalizeSparkAddressLabelRef(addressOrRequest)
-        val normalizedKey = "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_$normalizedAddress"
-        getPrivateString(normalizedKey, null)?.takeIf { it.isNotBlank() }?.let { return it }
-        val legacyKey = "${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_${addressOrRequest.trim()}"
-        if (legacyKey != normalizedKey) {
-            return getPrivateString(legacyKey, null)?.takeIf { it.isNotBlank() }
+        removePrivateValue("${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_$normalizedAddress")
+        val trimmedAddress = addressOrRequest.trim()
+        if (trimmedAddress != normalizedAddress) {
+            removePrivateValue("${KEY_SPARK_ADDRESS_LABEL_PREFIX}${walletId}_$trimmedAddress")
         }
-        return null
     }
 
     fun getAllSparkAddressLabels(walletId: String): Map<String, String> {
@@ -2107,6 +2145,7 @@ class SecureStorage private constructor(private val context: Context) {
         txid: String,
         label: String,
     ) {
+        if (txid in getHiddenBitcoinTransactionIds(walletId)) return
         val key = "${KEY_TX_LABEL_PREFIX}${walletId}_$txid"
         putPrivateString(key, label)
     }
@@ -2115,8 +2154,9 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         labels: Map<String, String>,
     ) {
+        val hiddenTxids = getHiddenBitcoinTransactionIds(walletId)
         val prefix = "${KEY_TX_LABEL_PREFIX}${walletId}_"
-        putPrivateStrings(labels.mapKeys { (txid, _) -> "$prefix$txid" })
+        putPrivateStrings(labels.filterKeys { it !in hiddenTxids }.mapKeys { (txid, _) -> "$prefix$txid" })
     }
 
     fun deleteTransactionLabel(
@@ -2155,7 +2195,10 @@ class SecureStorage private constructor(private val context: Context) {
      */
     fun getAllTransactionLabels(walletId: String): Map<String, String> {
         val prefix = "${KEY_TX_LABEL_PREFIX}${walletId}_"
-        return privateStringsWithPrefix(prefix).mapKeys { (key, _) -> key.removePrefix(prefix) }
+        val hiddenTxids = getHiddenBitcoinTransactionIds(walletId)
+        return privateStringsWithPrefix(prefix)
+            .mapKeys { (key, _) -> key.removePrefix(prefix) }
+            .filterKeys { it !in hiddenTxids }
     }
 
     /**
@@ -2166,6 +2209,7 @@ class SecureStorage private constructor(private val context: Context) {
         txid: String,
         label: String,
     ) {
+        if (txid in getHiddenLiquidTransactionIds(walletId)) return
         val key = "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_$txid"
         putPrivateString(key, label)
     }
@@ -2174,8 +2218,9 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         labels: Map<String, String>,
     ) {
+        val hiddenTxids = getHiddenLiquidTransactionIds(walletId)
         val prefix = "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_"
-        putPrivateStrings(labels.mapKeys { (txid, _) -> "$prefix$txid" })
+        putPrivateStrings(labels.filterKeys { it !in hiddenTxids }.mapKeys { (txid, _) -> "$prefix$txid" })
     }
 
     fun deleteLiquidTransactionLabel(
@@ -2193,7 +2238,8 @@ class SecureStorage private constructor(private val context: Context) {
      * Get all Layer 2 Liquid transaction labels for a wallet.
      */
     fun getAllLiquidTransactionLabels(walletId: String): Map<String, String> {
-        return getLiquidMetadataSnapshot(walletId).txLabels
+        val hiddenTxids = getHiddenLiquidTransactionIds(walletId)
+        return getLiquidMetadataSnapshot(walletId).txLabels.filterKeys { it !in hiddenTxids }
     }
 
     fun saveSparkTransactionLabel(
@@ -2201,6 +2247,7 @@ class SecureStorage private constructor(private val context: Context) {
         paymentId: String,
         label: String,
     ) {
+        if (paymentId in getHiddenSparkHistoryItemIds(walletId)) return
         val key = "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_$paymentId"
         putPrivateString(key, label)
     }
@@ -2209,8 +2256,14 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         labels: Map<String, String>,
     ) {
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
         val prefix = "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_"
-        putPrivateStrings(labels.filterValues { it.isNotBlank() }.mapKeys { (paymentId, _) -> "$prefix$paymentId" })
+        putPrivateStrings(
+            labels
+                .filterKeys { it !in hiddenIds }
+                .filterValues { it.isNotBlank() }
+                .mapKeys { (paymentId, _) -> "$prefix$paymentId" },
+        )
     }
 
     fun deleteSparkTransactionLabel(
@@ -2223,7 +2276,101 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun getAllSparkTransactionLabels(walletId: String): Map<String, String> {
         val prefix = "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_"
-        return privateStringsWithPrefix(prefix).mapKeys { (key, _) -> key.removePrefix(prefix) }
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
+        return privateStringsWithPrefix(prefix)
+            .mapKeys { (key, _) -> key.removePrefix(prefix) }
+            .filterKeys { it !in hiddenIds }
+    }
+
+    fun hideBitcoinTransaction(
+        walletId: String,
+        txid: String,
+    ) {
+        if (txid.isBlank()) return
+        putPrivateString("${KEY_HIDDEN_BITCOIN_TX_PREFIX}${walletId}_$txid", "1")
+    }
+
+    fun purgeHiddenBitcoinTransactionMetadata(
+        walletId: String,
+        txid: String,
+    ) {
+        if (txid.isBlank()) return
+        listOf(
+            "${KEY_TX_LABEL_PREFIX}${walletId}_$txid",
+            "${KEY_TX_SOURCE_PREFIX}${walletId}_$txid",
+            "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_$txid",
+            "${KEY_TX_FIRST_SEEN_PREFIX}${walletId}_$txid",
+            "${KEY_PENDING_REPLACEMENT_TX_PREFIX}${walletId}_$txid",
+        ).forEach(::removePrivateValue)
+        saveNotifiedTxids(walletId, getNotifiedTxids(walletId) - txid)
+    }
+
+    fun getHiddenBitcoinTransactionIds(walletId: String): Set<String> {
+        val prefix = "${KEY_HIDDEN_BITCOIN_TX_PREFIX}${walletId}_"
+        return privateKeysWithPrefix(prefix).mapTo(linkedSetOf()) { it.removePrefix(prefix) }
+    }
+
+    fun hideLiquidTransaction(
+        walletId: String,
+        txid: String,
+    ) {
+        if (txid.isBlank()) return
+        putPrivateString("${KEY_HIDDEN_LIQUID_TX_PREFIX}${walletId}_$txid", "1")
+    }
+
+    fun purgeHiddenLiquidTransactionMetadata(
+        walletId: String,
+        txid: String,
+    ) {
+        if (txid.isBlank()) return
+        listOf(
+            "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_$txid",
+            "${KEY_LIQUID_TX_SOURCE_PREFIX}${walletId}_$txid",
+            "${KEY_LIQUID_TX_SWAP_DETAILS_PREFIX}${walletId}_$txid",
+            "${KEY_LIQUID_TX_RECIPIENT_PREFIX}${walletId}_$txid",
+            "${KEY_LIQUID_TX_FEE_DETAILS_PREFIX}${walletId}_$txid",
+        ).forEach(::removePrivateValue)
+        saveNotifiedLiquidTxids(walletId, getNotifiedLiquidTxids(walletId) - txid)
+    }
+
+    fun getHiddenLiquidTransactionIds(walletId: String): Set<String> {
+        val prefix = "${KEY_HIDDEN_LIQUID_TX_PREFIX}${walletId}_"
+        return privateKeysWithPrefix(prefix).mapTo(linkedSetOf()) { it.removePrefix(prefix) }
+    }
+
+    fun hideSparkHistoryItem(
+        walletId: String,
+        itemId: String,
+    ) {
+        if (itemId.isBlank()) return
+        putPrivateString("${KEY_HIDDEN_SPARK_HISTORY_PREFIX}${walletId}_$itemId", "1")
+    }
+
+    fun purgeHiddenSparkHistoryItemMetadata(
+        walletId: String,
+        itemId: String,
+    ) {
+        if (itemId.isBlank()) return
+        listOf(
+            "${KEY_SPARK_TX_LABEL_PREFIX}${walletId}_$itemId",
+            "${KEY_SPARK_TX_SOURCE_PREFIX}${walletId}_$itemId",
+            "${KEY_SPARK_PAYMENT_RECIPIENT_PREFIX}${walletId}_$itemId",
+        ).forEach(::removePrivateValue)
+
+        val depositPrefix = "deposit:"
+        if (itemId.startsWith(depositPrefix)) {
+            val parts = itemId.removePrefix(depositPrefix).split(':', limit = 2)
+            val txid = parts.firstOrNull().orEmpty()
+            if (txid.isNotBlank()) {
+                removePrivateValue("${KEY_SPARK_DEPOSIT_ADDRESS_PREFIX}${walletId}_$txid")
+                removePrivateValue("${KEY_SPARK_PENDING_DEPOSIT_PREFIX}${walletId}_$txid")
+            }
+        }
+    }
+
+    fun getHiddenSparkHistoryItemIds(walletId: String): Set<String> {
+        val prefix = "${KEY_HIDDEN_SPARK_HISTORY_PREFIX}${walletId}_"
+        return privateKeysWithPrefix(prefix).mapTo(linkedSetOf()) { it.removePrefix(prefix) }
     }
 
     fun saveSparkPaymentRecipient(
@@ -2231,17 +2378,21 @@ class SecureStorage private constructor(private val context: Context) {
         paymentId: String,
         recipient: String,
     ) {
+        if (paymentId in getHiddenSparkHistoryItemIds(walletId)) return
         val key = "${KEY_SPARK_PAYMENT_RECIPIENT_PREFIX}${walletId}_$paymentId"
         putPrivateString(key, recipient)
     }
 
     fun getAllSparkPaymentRecipients(walletId: String): Map<String, String> {
         val prefix = "${KEY_SPARK_PAYMENT_RECIPIENT_PREFIX}${walletId}_"
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
         val recipients = mutableMapOf<String, String>()
 
         privateKeysWithPrefix(prefix).forEach { key ->
+            val paymentId = key.removePrefix(prefix)
+            if (paymentId in hiddenIds) return@forEach
             getPrivateString(key, null)?.let { value ->
-                recipients[key.removePrefix(prefix)] = value
+                recipients[paymentId] = value
             }
         }
 
@@ -2253,6 +2404,7 @@ class SecureStorage private constructor(private val context: Context) {
         paymentId: String,
         source: String,
     ) {
+        if (paymentId in getHiddenSparkHistoryItemIds(walletId)) return
         if (source.isBlank()) return
         val key = "${KEY_SPARK_TX_SOURCE_PREFIX}${walletId}_$paymentId"
         putPrivateString(key, source)
@@ -2262,9 +2414,11 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         sources: Map<String, String>,
     ) {
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
         val prefix = "${KEY_SPARK_TX_SOURCE_PREFIX}${walletId}_"
         putPrivateStrings(
             sources
+                .filterKeys { it !in hiddenIds }
                 .filterValues { it.isNotBlank() }
                 .mapKeys { (paymentId, _) -> "$prefix$paymentId" },
         )
@@ -2272,8 +2426,10 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun getAllSparkTransactionSources(walletId: String): Map<String, String> {
         val prefix = "${KEY_SPARK_TX_SOURCE_PREFIX}${walletId}_"
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
         return privateStringsWithPrefix(prefix)
             .mapKeys { (key, _) -> key.removePrefix(prefix) }
+            .filterKeys { it !in hiddenIds }
             .filterValues { it.isNotBlank() }
     }
 
@@ -2282,17 +2438,22 @@ class SecureStorage private constructor(private val context: Context) {
         txid: String,
         address: String,
     ) {
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
+        if (hiddenIds.any { it.startsWith("deposit:$txid:") }) return
         val key = "${KEY_SPARK_DEPOSIT_ADDRESS_PREFIX}${walletId}_$txid"
         putPrivateString(key, address)
     }
 
     fun getAllSparkDepositAddresses(walletId: String): Map<String, String> {
         val prefix = "${KEY_SPARK_DEPOSIT_ADDRESS_PREFIX}${walletId}_"
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
         val addresses = mutableMapOf<String, String>()
 
         privateKeysWithPrefix(prefix).forEach { key ->
+            val txid = key.removePrefix(prefix)
+            if (hiddenIds.any { it.startsWith("deposit:$txid:") }) return@forEach
             getPrivateString(key, null)?.let { value ->
-                addresses[key.removePrefix(prefix)] = value
+                addresses[txid] = value
             }
         }
 
@@ -2303,6 +2464,7 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         deposit: SparkUnclaimedDeposit,
     ) {
+        if (sparkDepositHistoryId(deposit) in getHiddenSparkHistoryItemIds(walletId)) return
         val key = "${KEY_SPARK_PENDING_DEPOSIT_PREFIX}${walletId}_${deposit.txid}"
         val json =
             JSONObject()
@@ -2325,6 +2487,7 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun getAllSparkPendingDeposits(walletId: String): List<SparkUnclaimedDeposit> {
         val prefix = "${KEY_SPARK_PENDING_DEPOSIT_PREFIX}${walletId}_"
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
         return privateKeysWithPrefix(prefix)
             .mapNotNull { key ->
                 getPrivateString(key, null)?.let { raw ->
@@ -2357,12 +2520,14 @@ class SecureStorage private constructor(private val context: Context) {
                     }.getOrNull()
                 }
             }
+            .filterNot { sparkDepositHistoryId(it) in hiddenIds }
     }
 
     fun saveSparkWalletStateCache(
         walletId: String,
         state: SparkWalletState,
     ) {
+        val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
         val json =
             JSONObject()
                 .put("walletId", walletId)
@@ -2373,7 +2538,7 @@ class SecureStorage private constructor(private val context: Context) {
                 .put(
                     "payments",
                     JSONArray().apply {
-                        state.payments.forEach { payment ->
+                        state.payments.filterNot { it.id in hiddenIds }.forEach { payment ->
                             put(sparkPaymentToJson(payment))
                         }
                     },
@@ -2381,7 +2546,7 @@ class SecureStorage private constructor(private val context: Context) {
                 .put(
                     "unclaimedDeposits",
                     JSONArray().apply {
-                        state.unclaimedDeposits.forEach { deposit ->
+                        state.unclaimedDeposits.filterNot { sparkDepositHistoryId(it) in hiddenIds }.forEach { deposit ->
                             put(sparkUnclaimedDepositToJson(deposit))
                         }
                     },
@@ -2393,6 +2558,7 @@ class SecureStorage private constructor(private val context: Context) {
         val raw = getPrivateString("${KEY_SPARK_WALLET_STATE_CACHE_PREFIX}$walletId", null) ?: return null
         return runCatching {
             val json = JSONObject(raw)
+            val hiddenIds = getHiddenSparkHistoryItemIds(walletId)
             SparkWalletState(
                 walletId = walletId,
                 isInitialized = true,
@@ -2403,8 +2569,10 @@ class SecureStorage private constructor(private val context: Context) {
                         json.optString("identityPubkey")
                     },
                 balanceSats = json.optLong("balanceSats", 0L),
-                payments = json.optJSONArray("payments").toSparkPayments(),
-                unclaimedDeposits = json.optJSONArray("unclaimedDeposits").toSparkUnclaimedDeposits(),
+                payments = json.optJSONArray("payments").toSparkPayments().filterNot { it.id in hiddenIds },
+                unclaimedDeposits = json.optJSONArray("unclaimedDeposits")
+                    .toSparkUnclaimedDeposits()
+                    .filterNot { sparkDepositHistoryId(it) in hiddenIds },
                 lightningAddress =
                     if (json.isNull("lightningAddress")) {
                         null
@@ -2442,6 +2610,8 @@ class SecureStorage private constructor(private val context: Context) {
             .put("timestamp", deposit.timestamp ?: JSONObject.NULL)
             .put("address", deposit.address ?: JSONObject.NULL)
             .put("claimError", deposit.claimError ?: JSONObject.NULL)
+
+    private fun sparkDepositHistoryId(deposit: SparkUnclaimedDeposit): String = "deposit:${deposit.txid}:${deposit.vout}"
 
     private fun JSONArray?.toSparkPayments(): List<SparkPayment> {
         if (this == null) return emptyList()
@@ -2508,6 +2678,7 @@ class SecureStorage private constructor(private val context: Context) {
         txid: String,
         source: String,
     ) {
+        if (txid in getHiddenBitcoinTransactionIds(walletId)) return
         if (source.isBlank()) return
         val key = "${KEY_TX_SOURCE_PREFIX}${walletId}_$txid"
         putPrivateString(key, source)
@@ -2515,8 +2686,10 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun getAllTransactionSources(walletId: String): Map<String, String> {
         val prefix = "${KEY_TX_SOURCE_PREFIX}${walletId}_"
+        val hiddenTxids = getHiddenBitcoinTransactionIds(walletId)
         return privateStringsWithPrefix(prefix)
             .mapKeys { (key, _) -> key.removePrefix(prefix) }
+            .filterKeys { it !in hiddenTxids }
             .filterValues { it.isNotBlank() }
     }
 
@@ -2528,6 +2701,7 @@ class SecureStorage private constructor(private val context: Context) {
         txid: String,
         source: LiquidTxSource,
     ) {
+        if (txid in getHiddenLiquidTransactionIds(walletId)) return
         val key = "${KEY_LIQUID_TX_SOURCE_PREFIX}${walletId}_$txid"
         putPrivateString(key, source.name)
     }
@@ -2544,6 +2718,7 @@ class SecureStorage private constructor(private val context: Context) {
         txid: String,
         recipientAddress: String,
     ) {
+        if (txid in getHiddenLiquidTransactionIds(walletId)) return
         val key = "${KEY_LIQUID_TX_RECIPIENT_PREFIX}${walletId}_$txid"
         putPrivateString(key, recipientAddress)
     }
@@ -2554,6 +2729,7 @@ class SecureStorage private constructor(private val context: Context) {
         feeRate: Double,
         vsize: Double,
     ) {
+        if (txid in getHiddenLiquidTransactionIds(walletId)) return
         val key = "${KEY_LIQUID_TX_FEE_DETAILS_PREFIX}${walletId}_$txid"
         val json =
             JSONObject().apply {
@@ -2568,6 +2744,7 @@ class SecureStorage private constructor(private val context: Context) {
         txid: String,
         details: LiquidSwapDetails,
     ) {
+        if (txid in getHiddenLiquidTransactionIds(walletId)) return
         val key = "${KEY_LIQUID_TX_SWAP_DETAILS_PREFIX}${walletId}_$txid"
         val json =
             JSONObject().apply {
@@ -2584,6 +2761,7 @@ class SecureStorage private constructor(private val context: Context) {
                 put("resolvedPaymentInput", details.resolvedPaymentInput)
                 put("invoice", details.invoice)
                 put("status", details.status)
+                put("failureReason", details.failureReason)
                 put("timeoutBlockHeight", details.timeoutBlockHeight)
                 put("refundPublicKey", details.refundPublicKey)
                 put("claimPublicKey", details.claimPublicKey)
@@ -2598,6 +2776,7 @@ class SecureStorage private constructor(private val context: Context) {
         txid: String,
         details: LiquidSwapDetails,
     ) {
+        if (txid in getHiddenBitcoinTransactionIds(walletId)) return
         val key = "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_$txid"
         val json =
             JSONObject().apply {
@@ -2614,6 +2793,7 @@ class SecureStorage private constructor(private val context: Context) {
                 put("resolvedPaymentInput", details.resolvedPaymentInput)
                 put("invoice", details.invoice)
                 put("status", details.status)
+                put("failureReason", details.failureReason)
                 put("timeoutBlockHeight", details.timeoutBlockHeight)
                 put("refundPublicKey", details.refundPublicKey)
                 put("claimPublicKey", details.claimPublicKey)
@@ -2625,9 +2805,11 @@ class SecureStorage private constructor(private val context: Context) {
 
     fun getAllTransactionSwapDetails(walletId: String): Map<String, LiquidSwapDetails> {
         val prefix = "${KEY_TX_SWAP_DETAILS_PREFIX}${walletId}_"
+        val hiddenTxids = getHiddenBitcoinTransactionIds(walletId)
         val txSwapDetails = mutableMapOf<String, LiquidSwapDetails>()
         privateStringsWithPrefix(prefix).forEach { (key, value) ->
             val txid = key.removePrefix(prefix)
+            if (txid in hiddenTxids) return@forEach
             val details = parseLiquidSwapDetails(value) ?: return@forEach
             txSwapDetails[txid] = details
         }
@@ -2700,6 +2882,7 @@ class SecureStorage private constructor(private val context: Context) {
                 resolvedPaymentInput = json.optString("resolvedPaymentInput").takeIf { it.isNotBlank() },
                 invoice = json.optString("invoice").takeIf { it.isNotBlank() },
                 status = json.optString("status").takeIf { it.isNotBlank() },
+                failureReason = json.optString("failureReason").takeIf { it.isNotBlank() },
                 timeoutBlockHeight =
                     json.optInt("timeoutBlockHeight").takeIf {
                         !json.isNull("timeoutBlockHeight")
@@ -2729,6 +2912,7 @@ class SecureStorage private constructor(private val context: Context) {
     }
 
     fun getLiquidMetadataSnapshot(walletId: String): LiquidMetadataSnapshot {
+        val hiddenTxids = getHiddenLiquidTransactionIds(walletId)
         val txLabelPrefix = "${KEY_LIQUID_TX_LABEL_PREFIX}${walletId}_"
         val txSourcePrefix = "${KEY_LIQUID_TX_SOURCE_PREFIX}${walletId}_"
         val txSwapPrefix = "${KEY_LIQUID_TX_SWAP_DETAILS_PREFIX}${walletId}_"
@@ -2758,27 +2942,32 @@ class SecureStorage private constructor(private val context: Context) {
         ).forEach { (key, value) ->
             when {
                 key.startsWith(txLabelPrefix) -> {
-                    txLabels[key.removePrefix(txLabelPrefix)] = value
+                    val txid = key.removePrefix(txLabelPrefix)
+                    if (txid !in hiddenTxids) txLabels[txid] = value
                 }
 
                 key.startsWith(txSourcePrefix) -> {
                     val txid = key.removePrefix(txSourcePrefix)
+                    if (txid in hiddenTxids) return@forEach
                     val source = runCatching { LiquidTxSource.valueOf(value) }.getOrNull() ?: return@forEach
                     txSources[txid] = source
                 }
 
                 key.startsWith(txSwapPrefix) -> {
                     val txid = key.removePrefix(txSwapPrefix)
+                    if (txid in hiddenTxids) return@forEach
                     val details = parseLiquidSwapDetails(value) ?: return@forEach
                     txSwapDetails[txid] = details
                 }
 
                 key.startsWith(txRecipientPrefix) -> {
-                    txRecipients[key.removePrefix(txRecipientPrefix)] = value
+                    val txid = key.removePrefix(txRecipientPrefix)
+                    if (txid !in hiddenTxids) txRecipients[txid] = value
                 }
 
                 key.startsWith(txFeeDetailsPrefix) -> {
                     val txid = key.removePrefix(txFeeDetailsPrefix)
+                    if (txid in hiddenTxids) return@forEach
                     val details = parseLiquidTxFeeDetails(value) ?: return@forEach
                     txFeeDetails[txid] = details
                 }
@@ -3006,6 +3195,7 @@ class SecureStorage private constructor(private val context: Context) {
             put("actualFundingTxVBytes", pendingSwap.actualFundingTxVBytes)
             put("fundingTxid", pendingSwap.fundingTxid)
             put("settlementTxid", pendingSwap.settlementTxid)
+            put("isEstimate", pendingSwap.isEstimate)
         }
     }
 
@@ -3086,6 +3276,7 @@ class SecureStorage private constructor(private val context: Context) {
                         pendingSwapSnapshotKey(walletId, json.getString("swapId")),
                         null,
                     ),
+                isEstimate = json.optBoolean("isEstimate", false),
             )
         }.getOrNull()
     }
@@ -4215,6 +4406,7 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_DEFAULT_SERVERS_SEEDED = "default_servers_seeded"
         private const val KEY_AUTO_SWITCH_SERVER = "auto_switch_server"
         private const val KEY_USER_DISCONNECTED = "user_disconnected"
+        private const val KEY_ELECTRUM_SERVER_SELECTED_BY_USER = "electrum_server_selected_by_user"
         private const val KEY_LIQUID_USER_DISCONNECTED = "liquid_user_disconnected"
 
         // Sync settings
@@ -4230,6 +4422,7 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_APP_LOCALE = "app_locale"
         private const val KEY_BALANCE_DATE_FORMAT = "balance_date_format"
         private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_TYPEFACE = "typeface"
         const val DENOMINATION_BTC = "BTC"
         const val DENOMINATION_SATS = "SATS"
         const val DATE_FORMAT_MM_DD_YY = "MM_DD_YY"
@@ -4238,6 +4431,9 @@ class SecureStorage private constructor(private val context: Context) {
         const val DATE_FORMAT_YYYY_MM_DD = "YYYY_MM_DD"
         const val THEME_MODE_DARK = "DARK"
         const val THEME_MODE_AMOLED = "AMOLED"
+        const val TYPEFACE_SYSTEM = "SYSTEM"
+        const val TYPEFACE_ATKINSON_HYPERLEGIBLE = "ATKINSON_HYPERLEGIBLE"
+        const val TYPEFACE_OPEN_RUNDE = "OPEN_RUNDE"
 
         // Swipe navigation
         private const val KEY_SWIPE_MODE = "swipe_mode"
@@ -4316,6 +4512,9 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_TX_SWAP_DETAILS_PREFIX = "tx_swap_details_"
         private const val KEY_LIQUID_TX_LABEL_PREFIX = "liquid_tx_label_"
         private const val KEY_SPARK_TX_LABEL_PREFIX = "spark_tx_label_"
+        private const val KEY_HIDDEN_BITCOIN_TX_PREFIX = "hidden_bitcoin_tx_"
+        private const val KEY_HIDDEN_LIQUID_TX_PREFIX = "hidden_liquid_tx_"
+        private const val KEY_HIDDEN_SPARK_HISTORY_PREFIX = "hidden_spark_history_"
         private const val KEY_SPARK_TX_SOURCE_PREFIX = "spark_tx_source_"
         private const val KEY_SPARK_PAYMENT_RECIPIENT_PREFIX = "spark_payment_recipient_"
         private const val KEY_SPARK_DEPOSIT_ADDRESS_PREFIX = "spark_deposit_address_"
@@ -4382,6 +4581,7 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_HAS_SEEN_WELCOME = "has_seen_welcome"
         private const val KEY_HAS_SEEN_LIQUID_ENABLE_INFO = "has_seen_liquid_enable_info"
         private const val KEY_HAS_SEEN_SPARK_ENABLE_INFO = "has_seen_spark_enable_info"
+        private const val KEY_HAS_SEEN_LIGHTNING_NODE_ENABLE_INFO = "has_seen_lightning_node_enable_info"
         private const val KEY_SEEN_APP_UPDATE_VERSION = "seen_app_update_version"
 
         // Auto-wipe
@@ -4406,10 +4606,23 @@ class SecureStorage private constructor(private val context: Context) {
         // Layer 2 (Liquid)
         private const val KEY_LAYER2_ENABLED = "layer2_enabled"
         private const val KEY_SPARK_LAYER2_ENABLED = "spark_layer2_enabled"
+        private const val KEY_LIGHTNING_NODE_LAYER2_ENABLED = "lightning_node_layer2_enabled"
         private const val KEY_LIQUID_ENABLED_PREFIX = "liquid_enabled_"
         private const val KEY_SPARK_ENABLED_PREFIX = "spark_enabled_"
+        private const val KEY_LIGHTNING_NODE_ENABLED_PREFIX = "lightning_node_enabled_"
         private const val KEY_SPARK_ONCHAIN_DEPOSIT_ADDRESS_PREFIX = "spark_onchain_deposit_address_"
         private const val KEY_LAYER2_PROVIDER_PREFIX = "layer2_provider_"
+        private const val KEY_LN_NODE_TYPE_PREFIX = "ln_node_type_"
+        private const val KEY_LN_NODE_HOST_PREFIX = "ln_node_host_"
+        private const val KEY_LN_NODE_PORT_PREFIX = "ln_node_port_"
+        private const val KEY_LN_NODE_USE_TOR_PREFIX = "ln_node_use_tor_"
+        private const val KEY_LN_NODE_USE_TLS_PREFIX = "ln_node_use_tls_"
+        private const val KEY_LN_NODE_ALLOW_INSECURE_TLS_PREFIX = "ln_node_allow_insecure_tls_"
+        private const val KEY_LN_NODE_MACAROON_PREFIX = "ln_node_macaroon_"
+        private const val KEY_LN_NODE_TLS_CERT_PREFIX = "ln_node_tls_cert_"
+        private const val KEY_LN_NODE_NWC_URI_PREFIX = "ln_node_nwc_uri_"
+        private const val KEY_LN_NODE_CLN_RUNE_PREFIX = "ln_node_cln_rune_"
+        private const val KEY_LN_NODE_LIGHTNING_ADDRESS_PREFIX = "ln_node_lightning_address_"
         private const val KEY_LIQUID_GAP_LIMIT_PREFIX = "liquid_gap_limit_"
         private const val KEY_ACTIVE_LAYER_PREFIX = "active_layer_"
         private const val KEY_LIQUID_SERVER_IDS = "liquid_server_ids"
@@ -4440,6 +4653,14 @@ class SecureStorage private constructor(private val context: Context) {
         regularPrefs.edit { putBoolean(KEY_SPARK_LAYER2_ENABLED, enabled) }
     }
 
+    /** Global Lightning Node toggle (Settings → Layer 2) */
+    fun isLightningNodeLayer2Enabled(): Boolean =
+        regularPrefs.getBoolean(KEY_LIGHTNING_NODE_LAYER2_ENABLED, false)
+
+    fun setLightningNodeLayer2Enabled(enabled: Boolean) {
+        regularPrefs.edit { putBoolean(KEY_LIGHTNING_NODE_LAYER2_ENABLED, enabled) }
+    }
+
     /** Per-wallet Liquid support toggle */
     fun isLiquidEnabledForWallet(walletId: String): Boolean =
         regularPrefs.getBoolean("${KEY_LIQUID_ENABLED_PREFIX}$walletId", false)
@@ -4449,6 +4670,7 @@ class SecureStorage private constructor(private val context: Context) {
             putBoolean("${KEY_LIQUID_ENABLED_PREFIX}$walletId", enabled)
             if (enabled) {
                 putBoolean("${KEY_SPARK_ENABLED_PREFIX}$walletId", false)
+                putBoolean("${KEY_LIGHTNING_NODE_ENABLED_PREFIX}$walletId", false)
                 putString("${KEY_LAYER2_PROVIDER_PREFIX}$walletId", Layer2Provider.LIQUID.name)
             } else if (getLayer2ProviderForWallet(walletId) == Layer2Provider.LIQUID) {
                 putString("${KEY_LAYER2_PROVIDER_PREFIX}$walletId", Layer2Provider.NONE.name)
@@ -4466,8 +4688,27 @@ class SecureStorage private constructor(private val context: Context) {
             if (enabled) {
                 putBoolean(KEY_SPARK_LAYER2_ENABLED, true)
                 putBoolean("${KEY_LIQUID_ENABLED_PREFIX}$walletId", false)
+                putBoolean("${KEY_LIGHTNING_NODE_ENABLED_PREFIX}$walletId", false)
                 putString("${KEY_LAYER2_PROVIDER_PREFIX}$walletId", Layer2Provider.SPARK.name)
             } else if (getLayer2ProviderForWallet(walletId) == Layer2Provider.SPARK) {
+                putString("${KEY_LAYER2_PROVIDER_PREFIX}$walletId", Layer2Provider.NONE.name)
+            }
+        }
+    }
+
+    /** Per-wallet Lightning Node support toggle */
+    fun isLightningNodeEnabledForWallet(walletId: String): Boolean =
+        regularPrefs.getBoolean("${KEY_LIGHTNING_NODE_ENABLED_PREFIX}$walletId", false)
+
+    fun setLightningNodeEnabledForWallet(walletId: String, enabled: Boolean) {
+        regularPrefs.edit {
+            putBoolean("${KEY_LIGHTNING_NODE_ENABLED_PREFIX}$walletId", enabled)
+            if (enabled) {
+                putBoolean(KEY_LIGHTNING_NODE_LAYER2_ENABLED, true)
+                putBoolean("${KEY_LIQUID_ENABLED_PREFIX}$walletId", false)
+                putBoolean("${KEY_SPARK_ENABLED_PREFIX}$walletId", false)
+                putString("${KEY_LAYER2_PROVIDER_PREFIX}$walletId", Layer2Provider.LIGHTNING.name)
+            } else if (getLayer2ProviderForWallet(walletId) == Layer2Provider.LIGHTNING) {
                 putString("${KEY_LAYER2_PROVIDER_PREFIX}$walletId", Layer2Provider.NONE.name)
             }
         }
@@ -4489,6 +4730,7 @@ class SecureStorage private constructor(private val context: Context) {
         val parsed = stored?.let { runCatching { Layer2Provider.valueOf(it) }.getOrNull() }
         return when {
             parsed != null && parsed != Layer2Provider.NONE -> parsed
+            isLightningNodeEnabledForWallet(walletId) -> Layer2Provider.LIGHTNING
             isSparkEnabledForWallet(walletId) -> Layer2Provider.SPARK
             isLiquidEnabledForWallet(walletId) || isLiquidWatchOnly(walletId) -> Layer2Provider.LIQUID
             else -> Layer2Provider.NONE
@@ -4500,10 +4742,145 @@ class SecureStorage private constructor(private val context: Context) {
             putString("${KEY_LAYER2_PROVIDER_PREFIX}$walletId", provider.name)
             putBoolean("${KEY_LIQUID_ENABLED_PREFIX}$walletId", provider == Layer2Provider.LIQUID)
             putBoolean("${KEY_SPARK_ENABLED_PREFIX}$walletId", provider == Layer2Provider.SPARK)
+            putBoolean(
+                "${KEY_LIGHTNING_NODE_ENABLED_PREFIX}$walletId",
+                provider == Layer2Provider.LIGHTNING,
+            )
             if (provider == Layer2Provider.SPARK) {
                 putBoolean(KEY_SPARK_LAYER2_ENABLED, true)
             }
+            if (provider == Layer2Provider.LIGHTNING) {
+                putBoolean(KEY_LIGHTNING_NODE_LAYER2_ENABLED, true)
+            }
         }
+    }
+
+    fun getLightningNodeConfig(walletId: String): LightningNodeConfig {
+        val typeName =
+            regularPrefs.getString("${KEY_LN_NODE_TYPE_PREFIX}$walletId", null)
+                ?: LightningNodeConnectionType.NONE.name
+        val type = parseLightningNodeConnectionType(typeName)
+        val host = regularPrefs.getString("${KEY_LN_NODE_HOST_PREFIX}$walletId", "") ?: ""
+        val defaultPort =
+            when (type) {
+                LightningNodeConnectionType.CLN_REST -> LightningNodeConfig.DEFAULT_CLN_REST_PORT
+                else -> LightningNodeConfig.DEFAULT_LND_REST_PORT
+            }
+        val port = regularPrefs.getInt("${KEY_LN_NODE_PORT_PREFIX}$walletId", defaultPort)
+        val useTor = regularPrefs.getBoolean("${KEY_LN_NODE_USE_TOR_PREFIX}$walletId", host.endsWith(".onion"))
+        val macaroonHex = getSpendSecret("${KEY_LN_NODE_MACAROON_PREFIX}$walletId").orEmpty()
+        val tlsCertPem = getSpendSecret("${KEY_LN_NODE_TLS_CERT_PREFIX}$walletId").orEmpty()
+        val nwcUri = getSpendSecret("${KEY_LN_NODE_NWC_URI_PREFIX}$walletId").orEmpty()
+        val clnRune = getSpendSecret("${KEY_LN_NODE_CLN_RUNE_PREFIX}$walletId").orEmpty()
+        val hasUseTlsKey = regularPrefs.contains("${KEY_LN_NODE_USE_TLS_PREFIX}$walletId")
+        val hasAllowInsecureKey = regularPrefs.contains("${KEY_LN_NODE_ALLOW_INSECURE_TLS_PREFIX}$walletId")
+        val allowInsecureTls =
+            if (hasAllowInsecureKey) {
+                regularPrefs.getBoolean("${KEY_LN_NODE_ALLOW_INSECURE_TLS_PREFIX}$walletId", true)
+            } else {
+                // Default cleartext unless a cert was saved.
+                tlsCertPem.isBlank()
+            }
+        val useTls =
+            if (hasUseTlsKey) {
+                regularPrefs.getBoolean("${KEY_LN_NODE_USE_TLS_PREFIX}$walletId", false)
+            } else {
+                // Legacy: null use_tls key → derive from cert / old allowInsecure flag.
+                // TLS is off by default for all LN connection types.
+                when {
+                    tlsCertPem.isNotBlank() -> true
+                    hasAllowInsecureKey -> !allowInsecureTls
+                    else -> false
+                }
+            }
+        return LightningNodeConfig(
+            type = type,
+            host = host,
+            port = port,
+            useTor = useTor,
+            macaroonHex = macaroonHex,
+            tlsCertPem = tlsCertPem,
+            useTls = useTls,
+            allowInsecureTls = !useTls,
+            nwcUri = nwcUri,
+            clnRune = clnRune,
+        )
+    }
+
+    fun setLightningNodeConfig(
+        walletId: String,
+        config: LightningNodeConfig,
+    ) {
+        val useTls = config.tlsEnabled
+        regularPrefs.edit {
+            putString("${KEY_LN_NODE_TYPE_PREFIX}$walletId", config.type.name)
+            putString("${KEY_LN_NODE_HOST_PREFIX}$walletId", config.host.trim())
+            putInt("${KEY_LN_NODE_PORT_PREFIX}$walletId", config.port)
+            putBoolean("${KEY_LN_NODE_USE_TOR_PREFIX}$walletId", config.useTor)
+            putBoolean("${KEY_LN_NODE_USE_TLS_PREFIX}$walletId", useTls)
+            putBoolean("${KEY_LN_NODE_ALLOW_INSECURE_TLS_PREFIX}$walletId", !useTls)
+        }
+        if (config.macaroonHex.isNotBlank()) {
+            putSpendSecret("${KEY_LN_NODE_MACAROON_PREFIX}$walletId", config.macaroonHex.trim())
+        } else {
+            removeSpendSecret("${KEY_LN_NODE_MACAROON_PREFIX}$walletId")
+        }
+        if (config.tlsCertPem.isNotBlank()) {
+            putSpendSecret("${KEY_LN_NODE_TLS_CERT_PREFIX}$walletId", config.tlsCertPem.trim())
+        } else {
+            removeSpendSecret("${KEY_LN_NODE_TLS_CERT_PREFIX}$walletId")
+        }
+        if (config.nwcUri.isNotBlank()) {
+            putSpendSecret("${KEY_LN_NODE_NWC_URI_PREFIX}$walletId", config.nwcUri.trim())
+        } else {
+            removeSpendSecret("${KEY_LN_NODE_NWC_URI_PREFIX}$walletId")
+        }
+        if (config.clnRune.isNotBlank()) {
+            putSpendSecret("${KEY_LN_NODE_CLN_RUNE_PREFIX}$walletId", config.clnRune.trim())
+        } else {
+            removeSpendSecret("${KEY_LN_NODE_CLN_RUNE_PREFIX}$walletId")
+        }
+    }
+
+    fun clearLightningNodeConfig(walletId: String) {
+        regularPrefs.edit {
+            remove("${KEY_LN_NODE_TYPE_PREFIX}$walletId")
+            remove("${KEY_LN_NODE_HOST_PREFIX}$walletId")
+            remove("${KEY_LN_NODE_PORT_PREFIX}$walletId")
+            remove("${KEY_LN_NODE_USE_TOR_PREFIX}$walletId")
+            remove("${KEY_LN_NODE_USE_TLS_PREFIX}$walletId")
+            remove("${KEY_LN_NODE_ALLOW_INSECURE_TLS_PREFIX}$walletId")
+            remove("${KEY_LN_NODE_LIGHTNING_ADDRESS_PREFIX}$walletId")
+        }
+        removeSpendSecret("${KEY_LN_NODE_MACAROON_PREFIX}$walletId")
+        removeSpendSecret("${KEY_LN_NODE_TLS_CERT_PREFIX}$walletId")
+        removeSpendSecret("${KEY_LN_NODE_NWC_URI_PREFIX}$walletId")
+        removeSpendSecret("${KEY_LN_NODE_CLN_RUNE_PREFIX}$walletId")
+    }
+
+    /**
+     * Saved public Lightning Address (LUD-16 style, e.g. user@domain.com) for LN Node receive UI.
+     * Display-only share string; settlement still happens on the remote node.
+     */
+    fun getLightningNodeLightningAddress(walletId: String): String =
+        regularPrefs.getString("${KEY_LN_NODE_LIGHTNING_ADDRESS_PREFIX}$walletId", "").orEmpty()
+
+    fun setLightningNodeLightningAddress(
+        walletId: String,
+        address: String,
+    ) {
+        val trimmed = address.trim()
+        regularPrefs.edit {
+            if (trimmed.isBlank()) {
+                remove("${KEY_LN_NODE_LIGHTNING_ADDRESS_PREFIX}$walletId")
+            } else {
+                putString("${KEY_LN_NODE_LIGHTNING_ADDRESS_PREFIX}$walletId", trimmed)
+            }
+        }
+    }
+
+    fun clearLightningNodeLightningAddress(walletId: String) {
+        regularPrefs.edit { remove("${KEY_LN_NODE_LIGHTNING_ADDRESS_PREFIX}$walletId") }
     }
 
     /** Per-wallet Liquid gap limit (derivation index for fullScanToIndex) */

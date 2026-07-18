@@ -181,14 +181,14 @@ class SideSwapApiClient(
     }
 
     /**
-     * Build and send a JSON-RPC 2.0 request with a 15s timeout.
+     * Build and send a JSON-RPC 2.0 request with a 30s timeout.
      * Format: {"id": N, "method": "method_name", "params": <params>}
      *
      * Method names use snake_case per SideSwap API docs:
      * server_status, peg, peg_status, etc.
      */
     private suspend fun rpcCall(method: String, params: Any?): JSONObject =
-        withTimeout(15_000L) {
+        withTimeout(30_000L) {
             suspendCancellableCoroutine { cont ->
                 val id = requestId.getAndIncrement()
 

@@ -18,6 +18,7 @@ import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
+import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
 import github.aeonbtc.ibiswallet.data.model.MultisigWalletConfig
 import github.aeonbtc.ibiswallet.data.model.PsbtSessionStatus
 import github.aeonbtc.ibiswallet.data.model.PsbtSigningSession
@@ -39,9 +40,11 @@ import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.WalletAddress
 import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
+import github.aeonbtc.ibiswallet.data.model.WalletKind
 import github.aeonbtc.ibiswallet.data.model.WalletPolicyType
 import github.aeonbtc.ibiswallet.data.model.WalletResult
 import github.aeonbtc.ibiswallet.data.model.WalletState
+import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.util.BitcoinSendPreparationCacheKey
 import github.aeonbtc.ibiswallet.util.BitcoinSendPreparationState
@@ -154,6 +157,33 @@ class WalletRepository(context: Context) {
         val txCount: Int,
     )
 
+    private fun getWalletGapLimit(walletId: String?): Int =
+        walletId
+            ?.let(secureStorage::getWalletMetadata)
+            ?.gapLimit
+            ?: StoredWallet.DEFAULT_GAP_LIMIT
+
+    private fun revealConfiguredGapLimit(
+        currentWallet: Wallet,
+        walletId: String?,
+    ): Boolean {
+        val targetIndex = (getWalletGapLimit(walletId).coerceAtLeast(1) - 1).toUInt()
+        var revealed = false
+        for (keychain in listOf(KeychainKind.EXTERNAL, KeychainKind.INTERNAL)) {
+            try {
+                if (currentWallet.revealAddressesTo(keychain, targetIndex).isNotEmpty()) {
+                    revealed = true
+                }
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.d(TAG, "Could not reveal $keychain gap limit: ${e.message}")
+            }
+        }
+        if (revealed) {
+            walletPersister?.let { currentWallet.persist(it) }
+        }
+        return revealed
+    }
+
     private fun WalletState.hasPendingBitcoinTransactions(): Boolean =
         pendingIncomingSats > 0UL ||
             pendingOutgoingSats > 0UL ||
@@ -179,7 +209,8 @@ class WalletRepository(context: Context) {
     ): List<TransactionSearchDocument> {
         val transactionLabels = secureStorage.getAllTransactionLabels(walletId)
         val addressLabels = secureStorage.getAllAddressLabels(walletId)
-        return transactions.map { transaction ->
+        val hiddenTxids = secureStorage.getHiddenBitcoinTransactionIds(walletId)
+        return transactions.filterNot { it.txid in hiddenTxids }.map { transaction ->
             buildBitcoinTransactionSearchDocument(
                 walletId = walletId,
                 transaction = transaction,
@@ -187,6 +218,15 @@ class WalletRepository(context: Context) {
                 addressLabel = transaction.address?.let(addressLabels::get),
             )
         }
+    }
+
+    private fun filterHiddenBitcoinTransactions(
+        walletId: String?,
+        transactions: List<TransactionDetails>,
+    ): List<TransactionDetails> {
+        val hiddenTxids = walletId?.let(secureStorage::getHiddenBitcoinTransactionIds).orEmpty()
+        if (hiddenTxids.isEmpty()) return transactions
+        return transactions.filterNot { it.txid in hiddenTxids }
     }
 
     private fun scheduleBitcoinTransactionSearchIndexReplace(
@@ -1652,6 +1692,8 @@ class WalletRepository(context: Context) {
                     )
                 secureStorage.saveWalletMetadata(storedWallet)
 
+                revealConfiguredGapLimit(wallet!!, walletId)
+
                 // Save key material with wallet ID
                 if (isWif) {
                     secureStorage.savePrivateKey(walletId, config.keyMaterial.trim())
@@ -1733,6 +1775,7 @@ class WalletRepository(context: Context) {
                     }?.fingerprint,
             )
         secureStorage.saveWalletMetadata(storedWallet)
+        revealConfiguredGapLimit(wallet!!, walletId)
         secureStorage.saveMultisigWalletConfig(walletId, multisigConfig)
         localCosignerMaterial?.let { secureStorage.saveLocalCosignerKeyMaterial(walletId, it) }
         secureStorage.saveNetwork(importConfig.network)
@@ -1798,6 +1841,41 @@ class WalletRepository(context: Context) {
     }
 
     /**
+     * Create a standalone remote Lightning wallet. It has no local seed or BDK state;
+     * its spending authority is the configured LND macaroon or NWC capability.
+     */
+    suspend fun createLightningNodeWallet(
+        name: String,
+        config: LightningNodeConfig,
+    ): WalletResult<String> = withContext(Dispatchers.IO) {
+        try {
+            require(name.isNotBlank()) { "Wallet name is required" }
+            require(config.isConfigured) { "Incomplete Lightning Node connection" }
+            val walletId = UUID.randomUUID().toString()
+            val storedWallet = StoredWallet(
+                id = walletId,
+                name = name.trim(),
+                addressType = AddressType.SEGWIT,
+                derivationPath = "lightning_node",
+                isWatchOnly = true,
+                network = WalletNetwork.BITCOIN,
+                walletKind = WalletKind.LIGHTNING_NODE,
+            )
+            secureStorage.saveWalletMetadata(storedWallet)
+            secureStorage.setLightningNodeConfig(walletId, config)
+            secureStorage.setLayer2ProviderForWallet(walletId, Layer2Provider.LIGHTNING)
+            secureStorage.setActiveLayer(walletId, WalletLayer.LAYER2.name)
+            secureStorage.setNeedsFullSync(walletId, false)
+            clearLoadedWallet()
+            secureStorage.setActiveWalletId(walletId)
+            updateWalletState()
+            WalletResult.Success(walletId)
+        } catch (e: Exception) {
+            WalletResult.Error("Lightning Node wallet creation failed: ${e.message ?: e.javaClass.simpleName}", e)
+        }
+    }
+
+    /**
      * Switch to a different wallet
      */
     suspend fun switchWallet(walletId: String): WalletResult<Unit> =
@@ -1843,8 +1921,11 @@ class WalletRepository(context: Context) {
                     return@withContext WalletResult.Success(Unit)
                 }
 
-                // Liquid-only watch-only wallets have no BDK wallet
-                if (storedWallet.derivationPath == "liquid_ct") {
+                // Remote-provider-only wallets have no BDK wallet.
+                if (
+                    storedWallet.walletKind == WalletKind.LIGHTNING_NODE ||
+                    storedWallet.derivationPath == "liquid_ct"
+                ) {
                     updateWalletState()
                     return@withContext WalletResult.Success(Unit)
                 }
@@ -1878,6 +1959,7 @@ class WalletRepository(context: Context) {
                     walletExternalDescriptor = externalDescriptor
                     walletInternalDescriptor = internalDescriptor
                     walletIsSingleKey = false
+                    wallet?.let { revealConfiguredGapLimit(it, walletId) }
                     updateWalletStateLightweight()
                     wallet?.let { scheduleDetailedTransactionRefresh(walletId, it) }
                     return@withContext WalletResult.Success(Unit)
@@ -2001,6 +2083,7 @@ class WalletRepository(context: Context) {
                 }
 
                 val loadedWallet = wallet
+                loadedWallet?.let { revealConfiguredGapLimit(it, walletId) }
                 if (loadedWallet != null && hasWarmTransactionHistoryCache(loadedWallet, walletId)) {
                     updateWalletState()
                 } else {
@@ -2723,11 +2806,14 @@ class WalletRepository(context: Context) {
                 return@withContext syncWatchAddress(activeWalletId)
             }
 
-            // Liquid-only wallets have no BDK wallet — sync is handled by LiquidRepository
-            if (wallet == null) {
-                val meta = secureStorage.getWalletMetadata(activeWalletId)
-                if (meta?.derivationPath == "liquid_ct") {
-                    return@withContext WalletResult.Success(Unit)
+                // Provider-only wallets have no BDK wallet — their own repository owns sync.
+                if (wallet == null) {
+                    val meta = secureStorage.getWalletMetadata(activeWalletId)
+                    if (
+                        meta?.walletKind == WalletKind.LIGHTNING_NODE ||
+                        meta?.derivationPath == "liquid_ct"
+                    ) {
+                        return@withContext WalletResult.Success(Unit)
                 }
             }
 
@@ -2763,12 +2849,18 @@ class WalletRepository(context: Context) {
                     return@withContext WalletResult.Error("Server connection lost - try reconnecting")
                 }
 
+                val revealedGapLimitAddresses = revealConfiguredGapLimit(currentWallet, activeWalletId)
+
                 // Pre-check: skip sync if no new block AND no script hash changes.
                 // blockHeadersPop() is free (local queue), script hash check is one
                 // round-trip per sampled address. Together they make background syncs
                 // nearly free when nothing has changed.
                 val newBlockDetected = hasNewBlock(client)
-                if (!force && !newBlockDetected && scriptHashStatusCache.isNotEmpty()) {
+                if (!force &&
+                    !revealedGapLimitAddresses &&
+                    !newBlockDetected &&
+                    scriptHashStatusCache.isNotEmpty()
+                ) {
                     val hasChanges =
                         cachingProxy
                             ?.checkForScriptHashChanges(scriptHashStatusCache)
@@ -3018,9 +3110,7 @@ class WalletRepository(context: Context) {
                             // from scripthash history are needed; chasing input prevouts multiplies
                             // transaction.get traffic with little benefit for balance/UTXO correctness.
                             val needsPrevTxouts = false
-                            val walletGapLimit =
-                                (secureStorage.getWalletMetadata(activeWalletId)?.gapLimit
-                                    ?: StoredWallet.DEFAULT_GAP_LIMIT).toULong()
+                            val walletGapLimit = getWalletGapLimit(activeWalletId).toULong()
                             try {
                                 client.fullScan(
                                     request = buildFullScanRequest(),
@@ -3095,6 +3185,7 @@ class WalletRepository(context: Context) {
 
                     // Mark full sync as complete - future syncs will be quick
                     secureStorage.setNeedsFullSync(activeWalletId, false)
+                    revealConfiguredGapLimit(postSyncWallet, activeWalletId)
 
                     // Save the full sync timestamp
                     val now = System.currentTimeMillis()
@@ -3298,6 +3389,7 @@ class WalletRepository(context: Context) {
                     .thenByDescending { it.confirmationTime?.height ?: 0U },
             ) // then by height descending
                 ?: emptyList()
+        val visibleTransactions = filterHiddenBitcoinTransactions(walletId, transactions)
 
         return WalletState(
             isInitialized = true,
@@ -3306,7 +3398,7 @@ class WalletRepository(context: Context) {
             balanceSats = confirmed,
             pendingIncomingSats = if (unconfirmed > 0) unconfirmed.toULong() else 0UL,
             pendingOutgoingSats = if (unconfirmed < 0) (-unconfirmed).toULong() else 0UL,
-            transactions = transactions,
+            transactions = visibleTransactions,
             currentAddress = address,
             currentAddressInfo = buildCurrentReceiveAddressInfo(walletId, address),
         )
@@ -3413,9 +3505,9 @@ class WalletRepository(context: Context) {
                 val statuses = proxy.subscribeScriptHashes(subscribedScriptHashes.toList())
                 if (statuses.isNotEmpty()) {
                     scriptHashStatusCache.clear()
-                    scriptHashStatusCache.putAll(statuses)
+            scriptHashStatusCache.putAll(statuses)
                     if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "Refreshed full script hash cache with ${statuses.size} entries")
+                        Log.d(TAG, "Refreshed full script hash cache with ${scriptHashStatusCache.size} non-empty entries")
                     }
                 }
                 return
@@ -3428,11 +3520,26 @@ class WalletRepository(context: Context) {
             val statuses = proxy.subscribeScriptHashes(sampleHashes)
             if (statuses.isNotEmpty()) {
                 scriptHashStatusCache.clear()
-                scriptHashStatusCache.putAll(statuses)
-                if (BuildConfig.DEBUG) Log.d(TAG, "Refreshed script hash cache with ${statuses.size} entries")
+            scriptHashStatusCache.putAll(statuses)
+                if (BuildConfig.DEBUG) Log.d(TAG, "Refreshed script hash cache with ${scriptHashStatusCache.size} non-empty entries")
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to refresh script hash cache: ${e.message}")
+        }
+    }
+
+    private fun hasScriptHashStatusChanges(
+        currentStatuses: Map<String, String?>,
+        persistedStatuses: Map<String, String?>,
+    ): Boolean {
+        if (persistedStatuses.isEmpty()) {
+            return currentStatuses.values.any { !it.isNullOrBlank() }
+        }
+        persistedStatuses.forEach { (scriptHash, persistedStatus) ->
+            if (currentStatuses[scriptHash] != persistedStatus) return true
+        }
+        return currentStatuses.any { (scriptHash, currentStatus) ->
+            !currentStatus.isNullOrBlank() && persistedStatuses[scriptHash] != currentStatus
         }
     }
 
@@ -4108,6 +4215,8 @@ class WalletRepository(context: Context) {
                 // After full sync, re-read the wallet (addresses are now revealed)
             }
 
+            val revealedGapLimitAddresses = revealConfiguredGapLimit(currentWallet, activeWalletId)
+
             // Gather ALL revealed script hashes
             val allScriptHashes = getAllRevealedScriptHashes(currentWallet)
             if (allScriptHashes.isEmpty()) return@withContext SubscriptionResult.FAILED
@@ -4136,22 +4245,11 @@ class WalletRepository(context: Context) {
             // Compare against persisted statuses from previous session
             val persistedStatuses = electrumCache.loadScriptHashStatuses()
             val needsSync =
-                if (persistedStatuses.isEmpty()) {
-                    if (BuildConfig.DEBUG) Log.d(TAG, "No persisted statuses — sync needed")
+                if (revealedGapLimitAddresses) {
+                    if (BuildConfig.DEBUG) Log.d(TAG, "New gap-limit addresses revealed — sync needed")
                     true
                 } else {
-                    // Check if any status changed or if new addresses were added
-                    var changed = false
-                    for ((scriptHash, currentStatus) in currentStatuses) {
-                        val persistedStatus = persistedStatuses[scriptHash]
-                        // If the script hash is new (not in persisted), or status differs
-                        if (!persistedStatuses.containsKey(scriptHash) || persistedStatus != currentStatus) {
-                            if (BuildConfig.DEBUG) Log.d(TAG, "Status change detected for $scriptHash")
-                            changed = true
-                            break
-                        }
-                    }
-                    changed
+                    hasScriptHashStatusChanges(currentStatuses, persistedStatuses)
                 }
 
             val result: SubscriptionResult
@@ -4177,7 +4275,7 @@ class WalletRepository(context: Context) {
             scriptHashStatusCache.putAll(currentStatuses)
 
             // Persist current statuses for next app launch
-            electrumCache.saveScriptHashStatuses(currentStatuses)
+            electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
 
             if (BuildConfig.DEBUG) Log.d(TAG, "Starting notification collector (result=$result)")
 
@@ -4286,7 +4384,7 @@ class WalletRepository(context: Context) {
 
         if (BuildConfig.DEBUG) Log.d(TAG, "Subscribing ${newHashes.size} newly revealed addresses")
         val newStatuses = proxy.subscribeAdditionalScriptHashes(newHashes)
-        subscribedScriptHashes.addAll(newStatuses.keys)
+        subscribedScriptHashes.addAll(newHashes)
         scriptHashStatusCache.putAll(newStatuses)
     }
 
@@ -4390,7 +4488,10 @@ class WalletRepository(context: Context) {
     }
 
     /**
-     * Save a label for an address
+     * Save a label for an address.
+     * Non-blank labels reserve the address for future receive selection (skipped by
+     * resolveCurrentReceiveAddress / reclaim) but do not mark it Used in the address
+     * book and do not auto-advance the currently shown receive address.
      */
     fun saveAddressLabel(
         address: String,
@@ -4400,12 +4501,12 @@ class WalletRepository(context: Context) {
         secureStorage.saveAddressLabel(activeWalletId, address, label)
         updateBitcoinAddressLabelIndex(activeWalletId, address, label)
 
-        // Update state if this is the current address
+        // Update state if this is the current address (stay on it; do not advance).
         val currentState = _walletState.value
         if (currentState.currentAddress == address) {
             _walletState.value =
                 currentState.copy(
-                    currentAddressInfo = currentState.currentAddressInfo?.copy(label = label),
+                    currentAddressInfo = currentState.currentAddressInfo?.copy(label = label.ifBlank { null }),
                 )
         }
     }
@@ -4450,12 +4551,19 @@ class WalletRepository(context: Context) {
         limit: Int,
     ): TransactionSearchResult {
         val activeWalletId = secureStorage.getActiveWalletId() ?: return TransactionSearchResult(emptyList(), 0)
-        return electrumCache.searchTransactionTxids(
+        val hiddenTxids = secureStorage.getHiddenBitcoinTransactionIds(activeWalletId)
+        val result = electrumCache.searchTransactionTxids(
             walletId = activeWalletId,
             layer = TransactionSearchLayer.BITCOIN,
             query = query,
             limit = limit,
             filters = TransactionSearchFilters(swapOnly = showSwapTransactions),
+        )
+        if (hiddenTxids.isEmpty()) return result
+        val visibleTxids = result.txids.filterNot { it in hiddenTxids }
+        return result.copy(
+            txids = visibleTxids,
+            totalCount = (result.totalCount - (result.txids.size - visibleTxids.size)).coerceAtLeast(0),
         )
     }
 
@@ -4536,6 +4644,52 @@ class WalletRepository(context: Context) {
         )
     }
 
+    fun deleteTransactionFromHistory(txid: String) {
+        val activeWalletId = secureStorage.getActiveWalletId() ?: return
+        secureStorage.hideBitcoinTransaction(activeWalletId, txid)
+        secureStorage.purgeHiddenBitcoinTransactionMetadata(activeWalletId, txid)
+        electrumCache.deleteTransactionCache(txid, activeWalletId)
+        electrumCache.deleteTransactionSearchDocuments(
+            walletId = activeWalletId,
+            layer = TransactionSearchLayer.BITCOIN,
+            txids = listOf(txid),
+        )
+        val currentState = _walletState.value
+        val visibleTransactions = currentState.transactions.filterNot { it.txid == txid }
+        if (visibleTransactions.size != currentState.transactions.size) {
+            val checksum = buildWalletStateChecksum(currentState.balanceSats, visibleTransactions)
+            _walletState.value = currentState.copy(
+                pendingIncomingSats = checksum.pendingIncomingSats,
+                pendingOutgoingSats = checksum.pendingOutgoingSats,
+                transactions = visibleTransactions,
+            )
+        }
+    }
+
+    fun deleteAllTransactionsFromHistory() {
+        val activeWalletId = secureStorage.getActiveWalletId() ?: return
+        val currentState = _walletState.value
+        val txids = currentState.transactions.map { it.txid }.filter { it.isNotBlank() }.distinct()
+        if (txids.isEmpty()) return
+
+        txids.forEach { txid ->
+            secureStorage.hideBitcoinTransaction(activeWalletId, txid)
+            secureStorage.purgeHiddenBitcoinTransactionMetadata(activeWalletId, txid)
+            electrumCache.deleteTransactionCache(txid, activeWalletId)
+        }
+        electrumCache.deleteTransactionSearchDocuments(
+            walletId = activeWalletId,
+            layer = TransactionSearchLayer.BITCOIN,
+            txids = txids,
+        )
+        val checksum = buildWalletStateChecksum(currentState.balanceSats, emptyList())
+        _walletState.value = currentState.copy(
+            pendingIncomingSats = checksum.pendingIncomingSats,
+            pendingOutgoingSats = checksum.pendingOutgoingSats,
+            transactions = emptyList(),
+        )
+    }
+
     /**
      * Get wallet metadata for a specific wallet by ID
      */
@@ -4558,10 +4712,6 @@ class WalletRepository(context: Context) {
      */
     fun getAllTransactionLabelsForWallet(walletId: String): Map<String, String> {
         return secureStorage.getAllTransactionLabels(walletId)
-    }
-
-    fun getAllLiquidTransactionLabelsForWallet(walletId: String): Map<String, String> {
-        return secureStorage.getAllLiquidTransactionLabels(walletId)
     }
 
     fun getLiquidMetadataSnapshotForWallet(walletId: String): SecureStorage.LiquidMetadataSnapshot {
@@ -4594,14 +4744,6 @@ class WalletRepository(context: Context) {
 
     fun getAllSparkTransactionSourcesForWallet(walletId: String): Map<String, String> {
         return secureStorage.getAllSparkTransactionSources(walletId)
-    }
-
-    fun getAllLiquidTransactionSourcesForWallet(walletId: String): Map<String, LiquidTxSource> {
-        return secureStorage.getAllLiquidTransactionSources(walletId)
-    }
-
-    fun getAllLiquidSwapDetailsForWallet(walletId: String): Map<String, LiquidSwapDetails> {
-        return secureStorage.getAllLiquidSwapDetails(walletId)
     }
 
     fun getAllTransactionSwapDetailsForWallet(walletId: String): Map<String, LiquidSwapDetails> {
@@ -4869,17 +5011,17 @@ class WalletRepository(context: Context) {
             while (unused.size < limitPerSection) {
                 if (index !in usedIndexSet) {
                     val address = peekAddressStringCached(currentWallet, keychain, index)
-                    unused.add(
-                        WalletAddress(
-                            address = address,
-                            index = index,
-                            keychain = keychainType,
-                            label = labels[address],
-                            balanceSats = 0UL,
-                            transactionCount = 0,
-                            isUsed = false,
-                        ),
+                    val label = labels[address]
+                    val entry = WalletAddress(
+                        address = address,
+                        index = index,
+                        keychain = keychainType,
+                        label = label,
+                        balanceSats = 0UL,
+                        transactionCount = 0,
+                        isUsed = false,
                     )
+                    unused.add(entry)
                 }
                 index++
             }
@@ -4888,7 +5030,9 @@ class WalletRepository(context: Context) {
 
         val receiveAddresses = buildPreviewForKeychain(KeychainKind.EXTERNAL, KeychainType.EXTERNAL)
         val changeAddresses = buildPreviewForKeychain(KeychainKind.INTERNAL, KeychainType.INTERNAL)
-        return Triple(receiveAddresses, changeAddresses, usedAddresses)
+        // Used tab is display-only privacy: hide empty historical addresses, keep funded.
+        // Do not reclassify empty used into Receive/Change (still chain-used for gap/nextUnused).
+        return Triple(receiveAddresses, changeAddresses, usedAddresses.filter { it.balanceSats > 0UL })
     }
 
     /**
@@ -4898,6 +5042,9 @@ class WalletRepository(context: Context) {
         val currentWallet = wallet ?: return Triple(emptyList(), emptyList(), emptyList())
         val activeWalletId = secureStorage.getActiveWalletId() ?: return Triple(emptyList(), emptyList(), emptyList())
         val labels = secureStorage.getAllAddressLabels(activeWalletId)
+        // Same gap for receive and change: show at least the configured unused window on both.
+        val gapLimit = getWalletGapLimit(activeWalletId).coerceAtLeast(1)
+        val targetUnusedCount = maxOf(gapLimit, ADDRESS_PEEK_AHEAD)
 
         // Aggregate balances and output counts per (keychain, derivation index). `listOutput()`
         // returns only wallet-owned outputs with pre-resolved keychain/index metadata — avoids
@@ -4932,45 +5079,58 @@ class WalletRepository(context: Context) {
                 } catch (_: Exception) {
                     null
                 }
+            val highestUsedIndex =
+                outputCountByIndex.keys
+                    .asSequence()
+                    .filter { it.first == keychain }
+                    .maxOfOrNull { it.second.toInt() }
+                    ?: -1
+            // Cover gap past highest used even when BDK has not revealed that far yet.
+            val gapCoverageIndex = (highestUsedIndex + gapLimit).coerceAtLeast(gapLimit - 1)
+            val lastRevealedInt = lastRevealed?.toInt() ?: -1
+            val endIndex = maxOf(lastRevealedInt, gapCoverageIndex)
 
-            if (lastRevealed != null) {
+            if (endIndex >= 0) {
                 var i = 0u
-                while (i <= lastRevealed) {
+                while (i.toInt() <= endIndex) {
                     val addr = peekAddressStringCached(currentWallet, keychain, i)
                     val key = keychain to i
                     val count = outputCountByIndex[key] ?: 0
                     val balance = balanceByIndex[key] ?: 0UL
+                    val label = labels[addr]
+                    // Used = on-chain activity only. Labels reserve receive selection, not Used tab.
+                    val isUsed = count > 0
                     val entry =
                         WalletAddress(
                             address = addr,
                             index = i,
                             keychain = keychainType,
-                            label = labels[addr],
+                            label = label,
                             balanceSats = balance,
                             transactionCount = count,
-                            isUsed = count > 0,
+                            isUsed = isUsed,
                         )
-                    if (count > 0) usedAddresses.add(entry) else targetUnused.add(entry)
+                    if (isUsed) usedAddresses.add(entry) else targetUnused.add(entry)
                     i = i.inc()
                 }
             }
 
-            val startIndex = (lastRevealed?.plus(1u)) ?: 0u
-            val peekCount = maxOf(1, ADDRESS_PEEK_AHEAD - targetUnused.size)
+            val startIndex = (endIndex + 1).coerceAtLeast(0).toUInt()
+            val peekCount = maxOf(0, targetUnusedCount - targetUnused.size)
             for (offset in 0u until peekCount.toUInt()) {
                 val index = startIndex + offset
                 val addr = peekAddressStringCached(currentWallet, keychain, index)
-                targetUnused.add(
-                    WalletAddress(
-                        address = addr,
-                        index = index,
-                        keychain = keychainType,
-                        label = labels[addr],
-                        balanceSats = 0UL,
-                        transactionCount = 0,
-                        isUsed = false,
-                    ),
+                val label = labels[addr]
+                val entry = WalletAddress(
+                    address = addr,
+                    index = index,
+                    keychain = keychainType,
+                    label = label,
+                    balanceSats = 0UL,
+                    transactionCount = 0,
+                    isUsed = false,
                 )
+                targetUnused.add(entry)
             }
         }
 
@@ -4986,7 +5146,9 @@ class WalletRepository(context: Context) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Error getting change addresses: ${e.message}")
         }
 
-        return Triple(receiveAddresses, changeAddresses, usedAddresses)
+        // Used tab is display-only privacy: hide empty historical addresses, keep funded.
+        // Do not reclassify empty used into Receive/Change (still chain-used for gap/nextUnused).
+        return Triple(receiveAddresses, changeAddresses, usedAddresses.filter { it.balanceSats > 0UL })
     }
 
     /**
@@ -5008,17 +5170,18 @@ class WalletRepository(context: Context) {
             val utxos = currentWallet.listUnspent()
             utxos.mapNotNull { utxo ->
                 try {
+                    val txid = utxo.outpoint.txid.toString()
                     val addr = Address.fromScript(utxo.txout.scriptPubkey, network).toString()
                     val outpoint = "${utxo.outpoint.txid}:${utxo.outpoint.vout}"
 
                     // Use the wallet transaction list's chain position so confirmation updates
                     // stay consistent with the rest of the BTC UI.
                     val isConfirmed =
-                        txPositions[utxo.outpoint.txid.toString()] is ChainPosition.Confirmed
+                        txPositions[txid] is ChainPosition.Confirmed
 
                     UtxoInfo(
                         outpoint = outpoint,
-                        txid = utxo.outpoint.txid.toString(),
+                        txid = txid,
                         vout = utxo.outpoint.vout,
                         address = addr,
                         amountSats = utxo.txout.value.toSat(),
@@ -7170,6 +7333,13 @@ class WalletRepository(context: Context) {
         newFingerprint: String? = null,
     ) {
         if (secureStorage.editWallet(walletId, newName, newGapLimit, newFingerprint)) {
+            if (walletId == secureStorage.getActiveWalletId()) {
+                wallet?.let { currentWallet ->
+                    if (revealConfiguredGapLimit(currentWallet, walletId)) {
+                        clearScriptHashCache()
+                    }
+                }
+            }
             updateWalletState()
         }
     }
@@ -7342,13 +7512,6 @@ class WalletRepository(context: Context) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Failed to query server features: ${e.message}")
             null
         }
-    }
-
-    /**
-     * Get the minimum acceptable fee rate for the connected server
-     */
-    fun getMinFeeRate(): Double {
-        return _minFeeRate.value
     }
 
     /**
@@ -7671,6 +7834,14 @@ class WalletRepository(context: Context) {
         secureStorage.setThemeMode(themeMode)
     }
 
+    fun getTypeface(): String {
+        return secureStorage.getTypeface()
+    }
+
+    fun setTypeface(typeface: String) {
+        secureStorage.setTypeface(typeface)
+    }
+
     /**
      * Get persisted privacy mode state
      */
@@ -7903,6 +8074,10 @@ class WalletRepository(context: Context) {
     fun isLiquidAutoSwitchEnabled(): Boolean = secureStorage.isLiquidAutoSwitchEnabled()
 
     fun setLiquidAutoSwitchEnabled(enabled: Boolean) = secureStorage.setLiquidAutoSwitchEnabled(enabled)
+
+    fun hasUserSelectedElectrumServer(): Boolean = secureStorage.hasUserSelectedElectrumServer()
+
+    fun setUserSelectedElectrumServer(selected: Boolean) = secureStorage.setUserSelectedElectrumServer(selected)
 
     fun hasUserSelectedLiquidServer(): Boolean = secureStorage.hasUserSelectedLiquidServer()
 
@@ -8478,7 +8653,10 @@ class WalletRepository(context: Context) {
                                     return@buildTransactionDetailsList
                                 }
                                 val visiblePartialTransactions =
-                                    filterPendingReplacementTransactions(walletId, partialTransactions)
+                                    filterHiddenBitcoinTransactions(
+                                        walletId,
+                                        filterPendingReplacementTransactions(walletId, partialTransactions),
+                                    )
                                 val partialState = _walletState.value
                                 _walletState.value =
                                     partialState.copy(
@@ -8487,7 +8665,11 @@ class WalletRepository(context: Context) {
                                         error = null,
                                     )
                             }
-                        val visibleTransactions = filterPendingReplacementTransactions(walletId, transactions)
+                        val visibleTransactions =
+                            filterHiddenBitcoinTransactions(
+                                walletId,
+                                filterPendingReplacementTransactions(walletId, transactions),
+                            )
                         val currentState = _walletState.value
                         val checksum = buildWalletStateChecksum(currentState.balanceSats, visibleTransactions)
 
@@ -8585,7 +8767,11 @@ class WalletRepository(context: Context) {
                     currentWallet = currentWallet,
                     activeWalletId = activeWalletId,
                 )
-            val visibleTransactions = filterPendingReplacementTransactions(activeWalletId, transactions)
+            val visibleTransactions =
+                filterHiddenBitcoinTransactions(
+                    activeWalletId,
+                    filterPendingReplacementTransactions(activeWalletId, transactions),
+                )
             val stateChecksum = buildWalletStateChecksum(amountToSats(balance.total), visibleTransactions)
             if (BuildConfig.DEBUG) {
                 Log.d(
@@ -8743,9 +8929,12 @@ class WalletRepository(context: Context) {
             mergedTransactions.addAll(updatedTxDetails.values)
 
             val sortedTransactions =
-                filterPendingReplacementTransactions(
+                filterHiddenBitcoinTransactions(
                     activeWalletId,
-                    mergedTransactions.sortedByDescending { it.timestamp ?: Long.MAX_VALUE },
+                    filterPendingReplacementTransactions(
+                        activeWalletId,
+                        mergedTransactions.sortedByDescending { it.timestamp ?: Long.MAX_VALUE },
+                    ),
                 )
             val hiddenTxids =
                 mergedTransactions
@@ -8755,11 +8944,14 @@ class WalletRepository(context: Context) {
 
             if (shouldRunIncrementalReconcile()) {
                 val fullTransactions =
-                    filterPendingReplacementTransactions(
+                    filterHiddenBitcoinTransactions(
                         activeWalletId,
-                        buildTransactionDetailsList(
-                            currentWallet = currentWallet,
-                            activeWalletId = activeWalletId,
+                        filterPendingReplacementTransactions(
+                            activeWalletId,
+                            buildTransactionDetailsList(
+                                currentWallet = currentWallet,
+                                activeWalletId = activeWalletId,
+                            ),
                         ),
                     )
                 val fullChecksum = buildWalletStateChecksum(amountToSats(balance.total), fullTransactions)

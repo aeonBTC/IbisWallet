@@ -1,0 +1,1283 @@
+package github.aeonbtc.ibiswallet.data.lightning
+
+import android.util.Base64
+import github.aeonbtc.ibiswallet.data.model.DecodedLightningNodeInvoice
+import github.aeonbtc.ibiswallet.data.model.LightningNodeBalance
+import github.aeonbtc.ibiswallet.data.model.LightningNodeChannel
+import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
+import github.aeonbtc.ibiswallet.data.model.LightningNodeInfo
+import github.aeonbtc.ibiswallet.data.model.LightningNodeInvoice
+import github.aeonbtc.ibiswallet.data.model.LightningNodePayment
+import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentDirection
+import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentResult
+import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentStatus
+import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails
+import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.ConnectionPool
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.EOFException
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.util.concurrent.TimeUnit
+
+/**
+ * LND node client via HTTP REST API (lnd REST proxy / litd).
+ * Auth: macaroon + optional TLS. UI label: LND.
+ * REST maps 1:1 to lightning.proto methods and works cleanly over Tor SOCKS5.
+ */
+class LndRestClient(
+    private val torSocksPort: Int = 9050,
+) : LightningNodeBackend {
+    private var client: OkHttpClient? = null
+    private var baseUrl: String = ""
+    private var macaroonHex: String = ""
+    private var activeConfig: LightningNodeConfig? = null
+
+    /** Actual TLS mode used for the live session (after auto-upgrade if any). */
+    val sessionUseTls: Boolean
+        get() = activeConfig?.tlsEnabled == true
+
+    val sessionConfig: LightningNodeConfig?
+        get() = activeConfig
+
+    override suspend fun connect(config: LightningNodeConfig): LightningNodeInfo =
+        withContext(Dispatchers.IO) {
+            require(config.host.isNotBlank()) { "Host is required" }
+            require(config.port in 1..65535) { "Invalid port" }
+            require(config.macaroonHex.isNotBlank()) { "Macaroon is required" }
+
+            macaroonHex = normalizeMacaroon(config.macaroonHex)
+            val host =
+                config.host
+                    .trim()
+                    .removePrefix("https://")
+                    .removePrefix("http://")
+                    .substringBefore('/')
+                    .substringBefore(':') // strip accidental :port in host field
+                    .trimEnd('/')
+            require(host.isNotBlank()) { "Host is required" }
+            val needsTor = config.useTor || host.endsWith(".onion", ignoreCase = true)
+            if (host.endsWith(".onion", ignoreCase = true) && !needsTor) {
+                throw IllegalStateException("Onion hosts require Tor")
+            }
+            val normalized = config.copy(useTor = needsTor, host = host)
+
+            // Prefer configured TLS. If cleartext fails because the node expects HTTPS
+            // (common for LND REST :8080 / Tor), auto-retry once with TLS + trust-all.
+            // Also retry once after Tor stream flakiness (unexpected end of stream).
+            connectWithRetries(normalized)
+        }
+
+    private fun connectWithRetries(normalized: LightningNodeConfig): LightningNodeInfo {
+        var lastError: Exception? = null
+        val candidates =
+            buildList {
+                add(normalized)
+                if (!normalized.tlsEnabled) {
+                    add(
+                        normalized.copy(
+                            useTls = true,
+                            allowInsecureTls = false,
+                            tlsCertPem = normalized.tlsCertPem,
+                        ),
+                    )
+                }
+            }
+        for ((candidateIndex, candidate) in candidates.withIndex()) {
+            for (attempt in 0 until STREAM_RETRY_ATTEMPTS) {
+                try {
+                    openSession(candidate)
+                    return getInfo()
+                } catch (e: Exception) {
+                    lastError = e
+                    val forceTlsCandidate =
+                        !candidate.tlsEnabled && isHttpToHttpsMismatch(e)
+                    val streamRetry =
+                        isTransientStreamError(e) && attempt < STREAM_RETRY_ATTEMPTS - 1
+                    if (forceTlsCandidate) {
+                        // Use the next HTTPS candidate (if any).
+                        break
+                    }
+                    if (streamRetry) {
+                        closeClientQuietly()
+                        continue
+                    }
+                    if (candidateIndex == candidates.lastIndex) throw e
+                    // Fall through to next TLS/config candidate.
+                    break
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("Connection failed")
+    }
+
+    private fun openSession(config: LightningNodeConfig) {
+        closeClientQuietly()
+        val scheme = if (config.tlsEnabled) "https" else "http"
+        baseUrl = "$scheme://${config.host}:${config.port}"
+        client = buildHttpClient(config)
+        activeConfig = config
+    }
+
+    private fun closeClientQuietly() {
+        // Evict sockets only; do not shut down the shared dispatcher executor.
+        runCatching { client?.connectionPool?.evictAll() }
+        client = null
+        activeConfig = null
+    }
+
+    private fun isHttpToHttpsMismatch(error: Exception): Boolean {
+        val message = error.message.orEmpty().lowercase()
+        return message.contains("http request to an https") ||
+            message.contains("client sent an http request to an https server") ||
+            (
+                message.contains("http 400") &&
+                    message.contains("/v1/getinfo") &&
+                    message.contains("https")
+            )
+    }
+
+    private fun isTransientStreamError(error: Throwable): Boolean {
+        var current: Throwable? = error
+        while (current != null) {
+            if (current is EOFException) return true
+            val message = current.message.orEmpty().lowercase()
+            if (
+                message.contains("unexpected end of stream") ||
+                message.contains("connection reset") ||
+                message.contains("software caused connection abort") ||
+                message.contains("stream was reset") ||
+                message.contains("connection closed") ||
+                message.contains("socket closed")
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
+    }
+
+    override suspend fun getBalance(): LightningNodeBalance =
+        withContext(Dispatchers.IO) {
+            val channel = getJson("/v1/balance/channels")
+            val local = channel.optLong("balance", 0L)
+            val remote = channel.optLong("remote_balance", 0L)
+            // pending open balance fields may be present; local balance is spendable
+            LightningNodeBalance(
+                localBalanceSats = local,
+                remoteBalanceSats = remote,
+            )
+        }
+
+    override suspend fun listChannels(): List<LightningNodeChannel> =
+        withContext(Dispatchers.IO) {
+            val open =
+                runCatching { getJson("/v1/channels") }
+                    .getOrElse { JSONObject() }
+            val pending =
+                runCatching { getJson("/v1/channels/pending") }
+                    .getOrElse { JSONObject() }
+            val channels = mutableListOf<LightningNodeChannel>()
+            val seen = mutableSetOf<String>()
+
+            fun addUnique(channel: LightningNodeChannel) {
+                if (!seen.add(channel.id)) return
+                channels += channel
+            }
+
+            val openArr = open.optJSONArray("channels") ?: JSONArray()
+            for (i in 0 until openArr.length()) {
+                val ch = openArr.optJSONObject(i) ?: continue
+                val channelId =
+                    ch.optString("chan_id").ifBlank {
+                        ch.optString("channel_point")
+                    }
+                if (channelId.isBlank()) continue
+                val (capacity, local, remote) = readLndChannelBalances(ch)
+                val active = ch.optBoolean("active", false)
+                addUnique(
+                    LightningNodeChannel(
+                        id = channelId,
+                        remotePubkey =
+                            ch.optString("remote_pubkey").ifBlank {
+                                ch.optString("remote_node_pub")
+                            },
+                        remoteAlias = ch.optString("peer_alias").ifBlank { null },
+                        shortChannelId = ch.optString("chan_id").ifBlank { null },
+                        fundingTxid =
+                            ch.optString("channel_point")
+                                .substringBefore(':')
+                                .ifBlank { null },
+                        capacitySats = capacity,
+                        localBalanceSats = local,
+                        remoteBalanceSats = remote,
+                        isActive = active,
+                        isPrivate = ch.optBoolean("private", false),
+                        state = if (active) "ACTIVE" else "INACTIVE",
+                    ),
+                )
+            }
+
+            val tipHeight =
+                runCatching {
+                    val info = getJson("/v1/getinfo")
+                    info.optString("block_height").toIntOrNull()
+                        ?: info.optInt("block_height", 0)
+                }.getOrDefault(0)
+
+            // Pending open/closing/force-close/waiting — not returned by /v1/channels.
+            fun addPendingGroup(
+                arrayKey: String,
+                stateLabel: String,
+            ) {
+                val arr = pending.optJSONArray(arrayKey) ?: return
+                for (i in 0 until arr.length()) {
+                    val wrapper = arr.optJSONObject(i) ?: continue
+                    val ch = wrapper.optJSONObject("channel") ?: wrapper
+                    val channelPoint =
+                        ch.optString("channel_point").ifBlank {
+                            wrapper.optString("channel_point")
+                        }
+                    val channelId =
+                        channelPoint.ifBlank {
+                            ch.optString("chan_id")
+                        }.ifBlank {
+                            "${ch.optString("remote_node_pub")}-$stateLabel-$i"
+                        }
+                    if (channelId.isBlank()) continue
+                    // commit_fee lives on the PendingOpenChannel wrapper, not nested channel.
+                    val (capacity, local, remote) =
+                        readLndChannelBalances(
+                            channel = ch,
+                            commitFeeFallback = wrapper,
+                        )
+                    val confsUntilActive =
+                        wrapper.optString("confirmations_until_active").toIntOrNull()
+                            ?: wrapper.optInt("confirmations_until_active", 0)
+                    val confirmationHeight =
+                        wrapper.optString("confirmation_height").toIntOrNull()
+                            ?: wrapper.optInt("confirmation_height", 0)
+                    val fundingConfs =
+                        wrapper.optString("num_confirmations").toIntOrNull()
+                            ?: wrapper.optInt("num_confirmations", 0)
+                            .takeIf { it > 0 }
+                            ?: ch.optString("num_confirmations").toIntOrNull()
+                            ?: ch.optInt("num_confirmations", 0)
+                    val state =
+                        if (arrayKey == "pending_open_channels") {
+                            formatPendingOpenState(
+                                stateLabel = stateLabel,
+                                confsUntilActive = confsUntilActive,
+                                confirmationHeight = confirmationHeight,
+                                fundingConfs = fundingConfs,
+                                tipHeight = tipHeight,
+                            )
+                        } else {
+                            stateLabel
+                        }
+                    addUnique(
+                        LightningNodeChannel(
+                            id = channelId,
+                            remotePubkey =
+                                ch.optString("remote_node_pub").ifBlank {
+                                    ch.optString("remote_pubkey")
+                                },
+                            remoteAlias = null,
+                            shortChannelId = null,
+                            fundingTxid = channelPoint.substringBefore(':').ifBlank { null },
+                            capacitySats = capacity,
+                            localBalanceSats = local,
+                            remoteBalanceSats = remote,
+                            isActive = false,
+                            isPrivate = ch.optBoolean("private", false),
+                            state = state,
+                        ),
+                    )
+                }
+            }
+
+            addPendingGroup("pending_open_channels", "AWAITING LOCKIN")
+            addPendingGroup("pending_closing_channels", "CLOSING")
+            addPendingGroup("pending_force_closing_channels", "FORCE CLOSE")
+            addPendingGroup("waiting_close_channels", "WAIT CLOSE")
+
+            channels.sortedWith(
+                compareByDescending<LightningNodeChannel> {
+                    !it.isActive && (
+                        it.state?.contains("PENDING", ignoreCase = true) == true ||
+                            it.state?.contains("LOCKIN", ignoreCase = true) == true ||
+                            it.state?.contains("OPEN", ignoreCase = true) == true
+                        )
+                }.thenByDescending { it.isActive }
+                    .thenByDescending { it.capacitySats },
+            )
+        }
+
+    override suspend fun listPayments(limit: Int): List<LightningNodePayment> =
+        withContext(Dispatchers.IO) {
+            val payments = mutableListOf<LightningNodePayment>()
+            // Include incomplete / failed so FAILURE_REASON surfaces in history.
+            val paymentsJson =
+                runCatching {
+                    getJson("/v1/payments?include_incomplete=true&max_payments=$limit")
+                }.getOrElse {
+                    getJson("/v1/payments?include_incomplete=false&max_payments=$limit")
+                }
+            val paymentArr = paymentsJson.optJSONArray("payments") ?: JSONArray()
+            for (i in 0 until paymentArr.length()) {
+                val p = paymentArr.getJSONObject(i)
+                val status = mapPaymentStatus(p.optString("status"))
+                val value = p.optString("value", p.optString("value_sat", "0")).toLongOrNull() ?: 0L
+                val fee = p.optString("fee", p.optString("fee_sat", "0")).toLongOrNull() ?: 0L
+                val creation = p.optLong("creation_date", 0L) * 1000L
+                val hash = p.optString("payment_hash").ifBlank { null }
+                payments +=
+                    LightningNodePayment(
+                        id = hash ?: "pay-$i",
+                        direction = LightningNodePaymentDirection.OUTGOING,
+                        status = status,
+                        amountSats = value,
+                        feeSats = fee,
+                        timestamp = creation,
+                        paymentHash = hash,
+                        paymentRequest = p.optString("payment_request").ifBlank { null },
+                        memo = null,
+                        destination = extractLndPaymentDestination(p),
+                        failureReason =
+                            if (status == LightningNodePaymentStatus.FAILED) {
+                                extractLndPaymentFailureReason(p)
+                            } else {
+                                null
+                            },
+                    )
+            }
+
+            val invoicesJson = getJson("/v1/invoices?num_max_invoices=$limit&reversed=true")
+            val invArr = invoicesJson.optJSONArray("invoices") ?: JSONArray()
+            for (i in 0 until invArr.length()) {
+                val inv = invArr.getJSONObject(i)
+                val settled = inv.optBoolean("settled", false) || inv.optString("state") == "SETTLED"
+                if (!settled) continue
+                val value = inv.optString("value", inv.optString("amt_paid_sat", "0")).toLongOrNull() ?: 0L
+                val settleDate = inv.optLong("settle_date", inv.optLong("creation_date", 0L)) * 1000L
+                val hash = inv.optString("r_hash").ifBlank { inv.optString("payment_addr") }.ifBlank { null }
+                val decodedHash =
+                    hash?.let { decodePossibleBase64Hash(it) } ?: hash
+                payments +=
+                    LightningNodePayment(
+                        id = decodedHash ?: "inv-$i",
+                        direction = LightningNodePaymentDirection.INCOMING,
+                        status = LightningNodePaymentStatus.SUCCEEDED,
+                        amountSats = value,
+                        feeSats = 0,
+                        timestamp = settleDate,
+                        paymentHash = decodedHash,
+                        paymentRequest = inv.optString("payment_request").ifBlank { null },
+                        memo = inv.optString("memo").ifBlank { null },
+                        destination = null,
+                    )
+            }
+
+            payments
+                .sortedByDescending { it.timestamp }
+                .take(limit)
+        }
+
+    override suspend fun getOnchainBalance(): Long =
+        getOnchainBalanceDetails().spendableSats
+
+    override suspend fun getOnchainBalanceDetails(): LightningNodeOnchainBalanceDetails =
+        withContext(Dispatchers.IO) {
+            // total_balance includes inputs currently locked by a pending send. Split
+            // unlocked spendable UTXOs from locked/leased ones, then subtract residual
+            // unconfirmed outs that ListUnspent still reports as free.
+            val utxos =
+                runCatching { getJson("/v1/utxos?min_confs=0&max_confs=9999999") }
+                    .recoverCatching { getJson("/v2/wallet/utxos?min_confs=0&max_confs=9999999") }
+                    .getOrNull()
+                    ?.optJSONArray("utxos")
+            if (utxos != null) {
+                var available = 0L
+                var locked = 0L
+                for (i in 0 until utxos.length()) {
+                    val utxo = utxos.optJSONObject(i) ?: continue
+                    val amount = readLndAmount(utxo, "amount_sat").coerceAtLeast(0L)
+                    if (isLndUtxoUnavailable(utxo)) {
+                        locked += amount
+                    } else {
+                        available += amount
+                    }
+                }
+                val pendingOut = pendingLndOutgoingAmount()
+                val spendable = (available - pendingOut).coerceAtLeast(0L)
+                val reserved = locked + (available - spendable).coerceAtLeast(0L)
+                return@withContext LightningNodeOnchainBalanceDetails(
+                    spendableSats = spendable,
+                    reservedSats = reserved,
+                )
+            }
+            // Fallback for restricted LND runes that cannot list UTXOs.
+            val balance = getJson("/v1/balance/blockchain")
+            val confirmed = readLndAmount(balance, "confirmed_balance").coerceAtLeast(0L)
+            val pendingOut = pendingLndOutgoingAmount()
+            val spendable = (confirmed - pendingOut).coerceAtLeast(0L)
+            LightningNodeOnchainBalanceDetails(
+                spendableSats = spendable,
+                reservedSats = (confirmed - spendable).coerceAtLeast(0L),
+            )
+        }
+
+    override suspend fun newOnchainAddress(): String =
+        withContext(Dispatchers.IO) {
+            // LND REST: GET /v1/newaddress?type=… (not POST).
+            val response = getJson("/v1/newaddress?type=WITNESS_PUBKEY_HASH")
+            response.optString("address").takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("Node did not return an address")
+        }
+
+    override suspend fun listOnchainTransactions(limit: Int): List<LightningNodeOnchainTransaction> =
+        withContext(Dispatchers.IO) {
+            // LND REST uses max_transactions (proto field name).
+            val response =
+                runCatching { getJson("/v1/transactions?max_transactions=$limit") }
+                    .recoverCatching { getJson("/v1/transactions") }
+                    .getOrThrow()
+            val channelFundingTxids =
+                runCatching {
+                    listChannels()
+                        .mapNotNull { it.fundingTxid?.lowercase()?.takeIf(String::isNotBlank) }
+                        .toSet()
+                }.getOrDefault(emptySet())
+            val channelClosingTxids = loadLndChannelClosingTxids()
+            val transactions = response.optJSONArray("transactions") ?: JSONArray()
+            buildList {
+                for (i in 0 until transactions.length()) {
+                    val tx = transactions.optJSONObject(i) ?: continue
+                    val amount = readLndAmount(tx, "amount")
+                    val fees = readLndAmount(tx, "total_fees")
+                    val destinations = tx.optJSONArray("dest_addresses")
+                    val conf =
+                        tx.optString("num_confirmations").toIntOrNull()
+                            ?: tx.optInt("num_confirmations", 0)
+                    val stamp =
+                        tx.optString("time_stamp").toLongOrNull()
+                            ?: tx.optLong("time_stamp", 0L)
+                    val txid = tx.optString("tx_hash")
+                    val label = tx.optString("label")
+                    val outputDetails = tx.optJSONArray("output_details") ?: JSONArray()
+                    var recipientAddress: String? = null
+                    var recipientAmount: Long? = null
+                    var changeAddress: String? = null
+                    var changeAmount: Long? = null
+                    for (j in 0 until outputDetails.length()) {
+                        val detail = outputDetails.optJSONObject(j) ?: continue
+                        val address = detail.optString("address").ifBlank { null } ?: continue
+                        val outputAmount = readLndAmount(detail, "amount").takeIf { it > 0L }
+                        if (detail.optBoolean("is_our_address", false)) {
+                            if (changeAddress == null) {
+                                changeAddress = address
+                                changeAmount = outputAmount
+                            }
+                        } else if (recipientAddress == null) {
+                            recipientAddress = address
+                            recipientAmount = outputAmount
+                        }
+                    }
+                    val address = recipientAddress ?: destinations?.optString(0)?.ifBlank { null }
+                    val lowerTxid = txid.lowercase()
+                    val isChannelOpen =
+                        amount < 0L &&
+                            (
+                                lowerTxid in channelFundingTxids ||
+                                    label.contains("openchannel", ignoreCase = true) ||
+                                    label.contains("funding", ignoreCase = true)
+                            )
+                    val isChannelClose =
+                        !isChannelOpen &&
+                            (
+                                lowerTxid in channelClosingTxids ||
+                                    label.contains("closechannel", ignoreCase = true) ||
+                                    label.contains("coop close", ignoreCase = true) ||
+                                    label.contains("force close", ignoreCase = true) ||
+                                    label.contains("channel close", ignoreCase = true)
+                            )
+                    add(
+                        LightningNodeOnchainTransaction(
+                            txid = txid,
+                            amountSats = amount,
+                            feeSats = fees,
+                            vsize = transactionVsize(tx.optString("raw_tx_hex")),
+                            timestamp = stamp * 1000L,
+                            confirmations = conf,
+                            address = address,
+                            addressAmountSats = recipientAmount ?: kotlin.math.abs(amount).takeIf { address != null },
+                            changeAddress = changeAddress,
+                            changeAmountSats = changeAmount,
+                            isChannelOpen = isChannelOpen,
+                            isChannelClose = isChannelClose,
+                        ),
+                    )
+                }
+            }.sortedWith(
+                compareByDescending<LightningNodeOnchainTransaction> { it.confirmations <= 0 }
+                    .thenByDescending { it.timestamp }
+                    .thenByDescending { it.txid },
+            )
+                .take(limit.coerceAtLeast(1))
+        }
+
+    private fun loadLndChannelClosingTxids(): Set<String> {
+        val closing = linkedSetOf<String>()
+        fun addTxid(raw: String?) {
+            raw
+                ?.trim()
+                ?.substringBefore(':')
+                ?.lowercase()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { closing += it }
+        }
+        fun absorbPendingArray(pending: JSONObject, key: String) {
+            val arr = pending.optJSONArray(key) ?: return
+            for (i in 0 until arr.length()) {
+                val wrapper = arr.optJSONObject(i) ?: continue
+                addTxid(wrapper.optString("closing_txid"))
+                addTxid(wrapper.optString("closing_tx_hash"))
+                val commitments = wrapper.optJSONObject("commitments")
+                if (commitments != null) {
+                    addTxid(commitments.optString("local_txid"))
+                    addTxid(commitments.optString("remote_txid"))
+                    addTxid(commitments.optString("remote_pending_txid"))
+                }
+            }
+        }
+        runCatching {
+            val pending = getJson("/v1/channels/pending")
+            absorbPendingArray(pending, "pending_closing_channels")
+            absorbPendingArray(pending, "pending_force_closing_channels")
+            absorbPendingArray(pending, "waiting_close_channels")
+        }
+        runCatching {
+            val closed = getJson("/v1/channels/closed")
+            val arr = closed.optJSONArray("channels") ?: JSONArray()
+            for (i in 0 until arr.length()) {
+                val ch = arr.optJSONObject(i) ?: continue
+                addTxid(ch.optString("closing_tx_hash"))
+                addTxid(ch.optString("closing_txid"))
+            }
+        }
+        return closing
+    }
+
+    override suspend fun listOnchainUtxos(): List<github.aeonbtc.ibiswallet.data.model.UtxoInfo> =
+        withContext(Dispatchers.IO) {
+            // Prefer lightning ListUnspent; WalletKit endpoint as fallback.
+            val response =
+                runCatching { getJson("/v1/utxos?min_confs=0&max_confs=9999999") }
+                    .recoverCatching { getJson("/v2/wallet/utxos?min_confs=0&max_confs=9999999") }
+                    .getOrThrow()
+            val utxos = response.optJSONArray("utxos") ?: JSONArray()
+            buildList {
+                for (i in 0 until utxos.length()) {
+                    val u = utxos.optJSONObject(i) ?: continue
+                    val amount = readLndAmount(u, "amount_sat").coerceAtLeast(0L).toULong()
+                    val address = u.optString("address").orEmpty()
+                    val conf =
+                        u.optString("confirmations").toLongOrNull()
+                            ?: u.optLong("confirmations", 0L)
+                    val out = u.optJSONObject("outpoint")
+                    val txid =
+                        out?.optString("txid_str")?.ifBlank { null }
+                            ?: out?.optString("txid")?.ifBlank { null }
+                            ?: ""
+                    val vout =
+                        (
+                            out?.optString("output_index")?.toIntOrNull()
+                                ?: out?.optInt("output_index", 0)
+                                ?: 0
+                        ).coerceAtLeast(0).toUInt()
+                    if (txid.isBlank() || address.isBlank()) continue
+                    add(
+                        github.aeonbtc.ibiswallet.data.model.UtxoInfo(
+                            outpoint = "$txid:$vout",
+                            txid = txid,
+                            vout = vout,
+                            address = address,
+                            amountSats = amount,
+                            isConfirmed = conf > 0,
+                            isFrozen = false,
+                        ),
+                    )
+                }
+            }
+        }
+
+    private fun readLndAmount(
+        json: JSONObject,
+        key: String,
+    ): Long =
+        json.optString(key).toLongOrNull()
+            ?: json.optLong(key, 0L)
+
+    private fun isLndUtxoUnavailable(utxo: JSONObject): Boolean {
+        if (utxo.optBoolean("locked", false)) return true
+        if (utxo.has("spendable") && !utxo.optBoolean("spendable", true)) return true
+        return sequenceOf("lease_expiration", "lease_expiry", "lock_expiration")
+            .map { key ->
+                utxo.optString(key).toLongOrNull()
+                    ?: utxo.optLong(key, 0L)
+            }.any { it > 0L }
+    }
+
+    /**
+     * LND's balance / ListUnspent can retain a confirmed input until its spending tx confirms.
+     * Remove unconfirmed outgoing transaction deltas so L1 reflects funds available to send.
+     */
+    private fun pendingLndOutgoingAmount(): Long =
+        runCatching {
+            val transactions = getJson("/v1/transactions?max_transactions=200")
+                .optJSONArray("transactions")
+                ?: return@runCatching 0L
+            var total = 0L
+            for (i in 0 until transactions.length()) {
+                val tx = transactions.optJSONObject(i) ?: continue
+                val confirmations =
+                    tx.optString("num_confirmations").toIntOrNull()
+                        ?: tx.optInt("num_confirmations", 0)
+                val amount = readLndAmount(tx, "amount")
+                if (confirmations <= 0 && amount < 0L) {
+                    total += -amount
+                }
+            }
+            total
+        }.getOrDefault(0L)
+
+    /**
+     * LND reports [local_balance] exclusive of [commit_fee] for the initiator.
+     * Zeus / typical UIs treat commit-fee sats as still local (Send / Max Send), so:
+     * local + remote + commit_fee (+ anchors) ≈ capacity.
+     */
+    private fun readLndChannelBalances(
+        channel: JSONObject,
+        commitFeeFallback: JSONObject? = null,
+    ): Triple<Long, Long, Long> {
+        val capacity = readLndAmount(channel, "capacity").coerceAtLeast(0L)
+        val rawLocal = readLndAmount(channel, "local_balance").coerceAtLeast(0L)
+        val rawRemote = readLndAmount(channel, "remote_balance").coerceAtLeast(0L)
+        val commitFee =
+            readLndAmount(channel, "commit_fee")
+                .takeIf { it > 0L }
+                ?: commitFeeFallback?.let { readLndAmount(it, "commit_fee") }?.coerceAtLeast(0L)
+                ?: 0L
+        // Only fold commit fee into Send when it closes the capacity gap (initiator pays fees).
+        val residual = (capacity - rawLocal - rawRemote).coerceAtLeast(0L)
+        val local =
+            if (commitFee > 0L && residual >= commitFee) {
+                rawLocal + commitFee
+            } else {
+                rawLocal
+            }
+        val remote = rawRemote.coerceAtMost((capacity - local).coerceAtLeast(0L))
+        return Triple(capacity, local.coerceAtMost(capacity), remote)
+    }
+
+    override suspend fun sendOnchain(
+        address: String,
+        amountSats: Long?,
+        satPerVbyte: Long?,
+        sendAll: Boolean,
+        label: String?,
+        spendUnconfirmed: Boolean,
+        selectedOutpoints: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>?,
+    ): String =
+        withContext(Dispatchers.IO) {
+            require(address.isNotBlank()) { "Address is required" }
+            if (sendAll) {
+                require(amountSats == null || amountSats <= 0) {
+                    "Amount must be omitted for send_all"
+                }
+            } else {
+                require(amountSats != null && amountSats > 0) { "Amount must be positive" }
+            }
+            val body =
+                JSONObject().apply {
+                    put("addr", address.trim())
+                    if (sendAll) {
+                        put("send_all", true)
+                    } else {
+                        put("amount", amountSats!!.toString())
+                    }
+                    if (satPerVbyte != null && satPerVbyte > 0) {
+                        put("sat_per_vbyte", satPerVbyte.toString())
+                    }
+                    if (!label.isNullOrBlank()) {
+                        put("label", label.trim().take(500))
+                    }
+                    put("spend_unconfirmed", spendUnconfirmed)
+                    if (!selectedOutpoints.isNullOrEmpty()) {
+                        val arr = JSONArray()
+                        selectedOutpoints.forEach { utxo ->
+                            arr.put(
+                                JSONObject()
+                                    .put("txid_str", utxo.txid)
+                                    .put("output_index", utxo.vout.toInt()),
+                            )
+                        }
+                        put("outpoints", arr)
+                    }
+                }
+            val response = postJson("/v1/transactions", body)
+            response.optString("txid").takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("Node did not return a transaction ID")
+        }
+
+    override suspend fun sendOnchainMany(
+        addrToAmountSats: Map<String, Long>,
+        satPerVbyte: Long?,
+        label: String?,
+        spendUnconfirmed: Boolean,
+        selectedOutpoints: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>?,
+    ): String =
+        withContext(Dispatchers.IO) {
+            require(addrToAmountSats.isNotEmpty()) { "At least one recipient is required" }
+            require(addrToAmountSats.all { it.key.isNotBlank() && it.value > 0 }) {
+                "Each recipient needs a valid address and positive amount"
+            }
+            val amountMap = JSONObject()
+            addrToAmountSats.forEach { (addr, amount) ->
+                amountMap.put(addr.trim(), amount.toString())
+            }
+            val body =
+                JSONObject().apply {
+                    // LND REST uses camel-style map field names for this RPC.
+                    put("AddrToAmount", amountMap)
+                    if (satPerVbyte != null && satPerVbyte > 0) {
+                        put("sat_per_vbyte", satPerVbyte.toString())
+                    }
+                    if (!label.isNullOrBlank()) {
+                        put("label", label.trim().take(500))
+                    }
+                    put("spend_unconfirmed", spendUnconfirmed)
+                    if (!selectedOutpoints.isNullOrEmpty()) {
+                        val arr = JSONArray()
+                        selectedOutpoints.forEach { utxo ->
+                            arr.put(
+                                JSONObject()
+                                    .put("txid_str", utxo.txid)
+                                    .put("output_index", utxo.vout.toInt()),
+                            )
+                        }
+                        put("outpoints", arr)
+                    }
+                }
+            val response =
+                runCatching { postJson("/v1/transactions/many", body) }
+                    .recoverCatching {
+                        // Some proxies only accept snake_case map field.
+                        body.remove("AddrToAmount")
+                        body.put("addr_to_amount", amountMap)
+                        postJson("/v1/transactions/many", body)
+                    }.getOrThrow()
+            response.optString("txid").takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("Node did not return a transaction ID")
+        }
+
+    override suspend fun bumpOnchainFee(
+        outpoint: github.aeonbtc.ibiswallet.data.model.UtxoInfo,
+        satPerVbyte: Long?,
+        immediate: Boolean,
+        budgetSats: Long?,
+    ): String =
+        withContext(Dispatchers.IO) {
+            require(outpoint.txid.isNotBlank()) { "Outpoint txid is required" }
+            val body =
+                JSONObject().apply {
+                    put(
+                        "outpoint",
+                        JSONObject()
+                            .put("txid_str", outpoint.txid)
+                            .put("output_index", outpoint.vout.toInt()),
+                    )
+                    if (satPerVbyte != null && satPerVbyte > 0) {
+                        put("sat_per_vbyte", satPerVbyte.toString())
+                    }
+                    put("immediate", immediate)
+                    if (budgetSats != null && budgetSats > 0) {
+                        put("budget", budgetSats.toString())
+                    }
+                }
+            val response = postJson("/v2/wallet/bumpfee", body)
+            response.optString("status").ifBlank {
+                "Fee bump submitted"
+            }
+        }
+
+    override suspend fun createInvoice(
+        amountSats: Long?,
+        description: String?,
+    ): LightningNodeInvoice =
+        withContext(Dispatchers.IO) {
+            val body =
+                JSONObject().apply {
+                    if (amountSats != null && amountSats > 0) {
+                        put("value", amountSats.toString())
+                    }
+                    // Memo only when user explicitly set one — never default.
+                    description?.trim()?.takeIf { it.isNotBlank() }?.let { put("memo", it) }
+                    put("expiry", "3600")
+                }
+            val response = postJson("/v1/invoices", body)
+            val paymentRequest = response.optString("payment_request")
+            require(paymentRequest.isNotBlank()) { "Node did not return a BOLT11 invoice" }
+            val rHash = response.optString("r_hash")
+            LightningNodeInvoice(
+                paymentRequest = paymentRequest,
+                paymentHash = decodePossibleBase64Hash(rHash) ?: rHash.ifBlank { null },
+                amountSats = amountSats,
+                description = description,
+                expirySeconds = 3600,
+            )
+        }
+
+    override suspend fun decodeInvoice(bolt11: String): DecodedLightningNodeInvoice =
+        withContext(Dispatchers.IO) {
+            val request = bolt11.trim().removePrefix("lightning:").trim()
+            val response = getJson("/v1/payreq/${urlEncodePath(request)}")
+            val amount = response.optString("num_satoshis", "0").toLongOrNull()?.takeIf { it > 0 }
+            DecodedLightningNodeInvoice(
+                paymentRequest = request,
+                paymentHash = response.optString("payment_hash").ifBlank { null },
+                amountSats = amount,
+                description = response.optString("description").ifBlank { null },
+                destination = response.optString("destination").ifBlank { null },
+                expirySeconds = response.optString("expiry").toLongOrNull(),
+            )
+        }
+
+    override suspend fun payInvoice(
+        bolt11: String,
+        amountSats: Long?,
+        maxFeePercent: Double?,
+    ): LightningNodePaymentResult =
+        withContext(Dispatchers.IO) {
+            val request = bolt11.trim().removePrefix("lightning:").trim()
+            // The repository passes amount only for zero-amount invoices.
+            val payAmountSats = amountSats?.takeIf { it > 0 }
+            val routingAmountSats = payAmountSats ?: 0L
+            // LND classic REST: SendPaymentSync → /v1/channels/transactions
+            // Some proxies / litd reverse-proxies omit that route; fall back to Router.
+            val classicBody =
+                JSONObject().apply {
+                    put("payment_request", request)
+                    if (payAmountSats != null) {
+                        put("amt", payAmountSats.toString())
+                    }
+                    put("timeout_seconds", 60)
+                }
+            val classic =
+                runCatching { postJson("/v1/channels/transactions", classicBody) }
+                    .getOrElse { classicError ->
+                        if (!isNotFoundError(classicError)) throw classicError
+                        // Router SendPayment v2 REST: POST /v2/router/send
+                        val routerBody =
+                            JSONObject().apply {
+                                put("payment_request", request)
+                                if (payAmountSats != null) {
+                                    put("amt", payAmountSats.toString())
+                                    put("amt_msat", (payAmountSats * 1000L).toString())
+                                }
+                                put("timeout_seconds", 60)
+                                // Router defaults to a zero-fee budget, which only permits free
+                                // routes. Match normal wallet behavior with a 5% capped fee limit.
+                                put(
+                                    "fee_limit_sat",
+                                    routerFeeLimitSats(routingAmountSats, maxFeePercent).toString(),
+                                )
+                                // Router is streaming. Request only the final update so we do not
+                                // mistake its initial IN_FLIGHT/FAILURE_REASON_NONE event for a failure.
+                                put("no_inflight_updates", true)
+                                // Allow self-payments / local invoice loops for testing.
+                                put("allow_self_payment", true)
+                            }
+                        postJson("/v2/router/send", routerBody)
+                    }
+            if (classic.has("payment_error") && classic.optString("payment_error").isNotBlank()) {
+                throw IllegalStateException(classic.optString("payment_error"))
+            }
+            // Classic response vs router result payload.
+            val result = classic.optJSONObject("result") ?: classic
+            if (result.has("failure") && !result.isNull("failure")) {
+                val failure = result.optJSONObject("failure")
+                val code = failure?.optString("code").orEmpty()
+                val failMsg =
+                    failure?.optString("failure_source_index").orEmpty().ifBlank {
+                        failure?.toString().orEmpty()
+                    }
+                throw IllegalStateException(
+                    listOf(code, failMsg).filter { it.isNotBlank() }.joinToString(": ")
+                        .ifBlank { "Payment failed" },
+                )
+            }
+            val failureReason = result.optString("failure_reason").uppercase()
+            val hasFailureReason =
+                failureReason.isNotBlank() &&
+                    failureReason != "NONE" &&
+                    failureReason != "FAILURE_REASON_NONE" &&
+                    failureReason != "FAILURE_REASON_NONE_" // defensive
+            if (hasFailureReason) {
+                throw IllegalStateException(failureReason)
+            }
+            val status = result.optString("status").uppercase()
+            when (status) {
+                "FAILED" -> throw IllegalStateException("Payment failed")
+                "IN_FLIGHT", "INFLIGHT" ->
+                    throw IllegalStateException("Payment still in progress")
+                // SUCCEEDED or blank (classic SendPaymentSync) — resolved via preimage below.
+                else -> Unit
+            }
+            val hash =
+                result.optString("payment_hash").ifBlank {
+                    classic.optString("payment_hash")
+                }.ifBlank { null }
+            val fee =
+                result.optJSONObject("payment_route")
+                    ?.optString("total_fees", "0")
+                    ?.toLongOrNull()
+                    ?: result.optString("fee_sat", "0").toLongOrNull()
+                    ?: result.optString("fee", "0").toLongOrNull()
+                    ?: (result.optString("fee_msat", "0").toLongOrNull()?.div(1000L))
+                    ?: 0L
+            val preimage =
+                result.optString("payment_preimage").ifBlank {
+                    result.optString("preimage")
+                }.ifBlank {
+                    classic.optString("payment_preimage")
+                }.ifBlank { null }
+                    // Proof of success: never treat empty preimage as paid (IN_FLIGHT edge case).
+                    ?: throw IllegalStateException(
+                        when {
+                            status == "SUCCEEDED" -> "Payment missing preimage"
+                            status.isBlank() -> "Payment did not return a preimage"
+                            else -> "Payment not completed ($status)"
+                        },
+                    )
+            // Reject all-zero preimage placeholders some stacks return on failure paths.
+            if (preimage.matches(Regex("^0+$")) || preimage.matches(Regex("^(00)+$"))) {
+                throw IllegalStateException("Payment missing preimage")
+            }
+            LightningNodePaymentResult(
+                paymentId = hash,
+                paymentHash = hash,
+                feeSats = fee,
+                preimage = preimage,
+            )
+        }
+
+    private fun isNotFoundError(error: Throwable): Boolean {
+        val message = error.message.orEmpty().lowercase()
+        return message.contains("http 404") ||
+            message.contains("not found") ||
+            message.contains("unimplemented")
+    }
+
+    private fun routerFeeLimitSats(
+        amountSats: Long,
+        maxFeePercent: Double?,
+    ): Long {
+        val percent = (maxFeePercent ?: 5.0).coerceIn(0.0, 100.0)
+        return kotlin.math.ceil(amountSats.coerceAtLeast(1L) * percent / 100.0)
+            .toLong()
+            .coerceIn(0L, 100_000L)
+    }
+
+    override suspend fun disconnect() {
+        closeClientQuietly()
+        baseUrl = ""
+        macaroonHex = ""
+    }
+
+    override suspend fun ping(): Boolean =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                getJson("/v1/getinfo")
+                true
+            }.getOrDefault(false)
+        }
+
+    private fun getInfo(): LightningNodeInfo {
+        val json = getJson("/v1/getinfo")
+        return LightningNodeInfo(
+            alias = json.optString("alias").ifBlank { null },
+            pubkey = json.optString("identity_pubkey").ifBlank { null },
+            version = json.optString("version").ifBlank { null },
+            network =
+                when {
+                    json.optBoolean("testnet") -> "testnet"
+                    json.optJSONArray("chains")?.let { arr ->
+                        (0 until arr.length()).any {
+                            arr.optJSONObject(it)?.optString("network") == "testnet"
+                        }
+                    } == true -> "testnet"
+                    else -> "mainnet"
+                },
+            numActiveChannels = json.optInt("num_active_channels", 0),
+            syncedToChain = json.optBoolean("synced_to_chain", true),
+        )
+    }
+
+    private fun getJson(path: String): JSONObject = executeJson(path, methodGet = true, body = null)
+
+    private fun postJson(
+        path: String,
+        body: JSONObject,
+    ): JSONObject = executeJson(path, methodGet = false, body = body)
+
+    private fun executeJson(
+        path: String,
+        methodGet: Boolean,
+        body: JSONObject?,
+    ): JSONObject {
+        var lastError: Exception? = null
+        repeat(STREAM_RETRY_ATTEMPTS) { attempt ->
+            try {
+                val http = client ?: throw IllegalStateException("Not connected")
+                val builder =
+                    Request.Builder()
+                        .url("$baseUrl$path")
+                        .header("Grpc-Metadata-macaroon", macaroonHex)
+                val request =
+                    if (methodGet) {
+                        builder.get().build()
+                    } else {
+                        builder
+                            .post((body ?: JSONObject()).toString().toRequestBody(JSON_MEDIA))
+                            .header("Content-Type", "application/json")
+                            .build()
+                    }
+                http.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        throw IllegalStateException(extractError(responseBody, response.code, path))
+                    }
+                    return JSONObject(responseBody.ifBlank { "{}" })
+                }
+            } catch (e: Exception) {
+                lastError = e
+                if (!isTransientStreamError(e) || attempt == STREAM_RETRY_ATTEMPTS - 1) {
+                    throw e
+                }
+                // Drop pooled SOCKS/TLS sockets and rebuild from last known config.
+                val cfg = activeConfig
+                if (cfg != null) {
+                    openSession(cfg)
+                }
+            }
+        }
+        throw lastError ?: IllegalStateException("Request failed: $path")
+    }
+
+    private fun buildHttpClient(config: LightningNodeConfig): OkHttpClient {
+        val viaTor = config.useTor || config.host.endsWith(".onion", ignoreCase = true)
+        val timeoutSeconds = if (viaTor) 90L else 30L
+        val builder =
+            OkHttpClient.Builder()
+                .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
+                .callTimeout(timeoutSeconds + 30, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
+
+        if (viaTor) {
+            applyTorProxy(builder, torSocksPort)
+            // HTTP/2 + connection reuse over Tor SOCKS is a common source of
+            // "unexpected end of stream" after the first successful RPC.
+            builder.protocols(listOf(Protocol.HTTP_1_1))
+            builder.connectionPool(ConnectionPool(0, 1, TimeUnit.MILLISECONDS))
+        }
+
+        if (config.tlsEnabled) {
+            when {
+                config.tlsCertPem.isNotBlank() ->
+                    TlsCertMaterial.applyToOkHttp(builder, config.tlsCertPem)
+                // Self-signed LND is common; empty PEM still means HTTPS with trust-all.
+                else -> TlsCertMaterial.applyInsecureTrust(builder)
+            }
+        }
+
+        return builder.build()
+    }
+
+    private fun applyTorProxy(
+        builder: OkHttpClient.Builder,
+        socksPort: Int,
+    ) {
+        builder.proxy(Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort)))
+        // Force hostname resolution through SOCKS so Tor handles .onion / remote DNS.
+        // Without this, Java tries local DNS first and .onion hosts fail.
+        builder.dns { hostname ->
+            listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
+        }
+    }
+
+    companion object {
+        private const val STREAM_RETRY_ATTEMPTS = 3
+        private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
+
+        fun normalizeMacaroon(raw: String): String {
+            val trimmed = raw.trim().replace("\\s".toRegex(), "")
+            if (trimmed.matches(Regex("^[0-9a-fA-F]+$")) && trimmed.length % 2 == 0) {
+                return trimmed.lowercase()
+            }
+            val decoded =
+                runCatching {
+                    java.util.Base64.getDecoder().decode(trimmed)
+                }.recoverCatching {
+                    java.util.Base64.getUrlDecoder().decode(trimmed)
+                }.getOrElse {
+                    // Fallback for Android-origin decoders in system context.
+                    runCatching {
+                        Base64.decode(trimmed, Base64.DEFAULT)
+                    }.getOrElse {
+                        Base64.decode(trimmed, Base64.URL_SAFE or Base64.NO_WRAP)
+                    }
+                }
+            return decoded.joinToString("") { b -> "%02x".format(b) }
+        }
+
+        private fun mapPaymentStatus(status: String): LightningNodePaymentStatus =
+            when (status.uppercase()) {
+                "SUCCEEDED", "COMPLETE" -> LightningNodePaymentStatus.SUCCEEDED
+                "FAILED" -> LightningNodePaymentStatus.FAILED
+                "IN_FLIGHT", "INFLIGHT" -> LightningNodePaymentStatus.PENDING
+                else -> LightningNodePaymentStatus.UNKNOWN
+            }
+
+        private fun extractLndPaymentFailureReason(payment: JSONObject): String? {
+            val reason = payment.optString("failure_reason").trim()
+            if (
+                reason.isNotBlank() &&
+                !reason.equals("NONE", ignoreCase = true) &&
+                !reason.equals("FAILURE_REASON_NONE", ignoreCase = true)
+            ) {
+                return humanizeLndFailureReason(reason)
+            }
+            payment.optString("payment_error").ifBlank { null }?.let { return it }
+            val htlcs = payment.optJSONArray("htlcs") ?: return null
+            for (i in htlcs.length() - 1 downTo 0) {
+                val htlc = htlcs.optJSONObject(i) ?: continue
+                val fail = htlc.optJSONObject("failure") ?: continue
+                val code = fail.optString("code").ifBlank { fail.optString("FailureCode") }
+                val msg = fail.optString("message").ifBlank { fail.optString("failure_details") }
+                val combined =
+                    listOf(code, msg).filter { it.isNotBlank() }.joinToString(": ")
+                if (combined.isNotBlank()) return combined
+            }
+            return null
+        }
+
+        private fun humanizeLndFailureReason(raw: String): String {
+            val key =
+                raw.uppercase()
+                    .removePrefix("FAILURE_REASON_")
+                    .replace('_', ' ')
+                    .trim()
+            return when (key) {
+                "TIMEOUT" -> "Timed out"
+                "NO ROUTE", "NOROUTE" -> "No route"
+                "ERROR" -> "Payment error"
+                "INCORRECT PAYMENT DETAILS", "INCORRECT_PAYMENT_DETAILS" ->
+                    "Incorrect payment details"
+                "INSUFFICIENT BALANCE", "INSUFFICIENT_BALANCE" ->
+                    "Insufficient balance"
+                else -> key.lowercase().replaceFirstChar { it.titlecase(java.util.Locale.US) }
+            }
+        }
+
+        private fun extractError(
+            body: String,
+            code: Int,
+            path: String = "",
+        ): String {
+            val message =
+                runCatching {
+                    JSONObject(body).optString("message").ifBlank {
+                        JSONObject(body).optString("error")
+                    }
+                }.getOrNull()
+                    ?.ifBlank { null }
+            val detail = message ?: body.take(180).ifBlank { null }
+            return buildString {
+                append("HTTP $code")
+                if (path.isNotBlank()) append(" $path")
+                if (detail != null) append(": $detail")
+            }
+        }
+
+        private fun urlEncodePath(value: String): String =
+            java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
+
+        private fun decodePossibleBase64Hash(value: String): String? {
+            if (value.isBlank()) return null
+            if (value.matches(Regex("^[0-9a-fA-F]{64}$"))) return value.lowercase()
+            return runCatching {
+                val bytes = Base64.decode(value, Base64.DEFAULT)
+                bytes.joinToString("") { "%02x".format(it) }
+            }.getOrNull()
+        }
+
+        private fun extractLndPaymentDestination(payment: JSONObject): String? {
+            payment.optString("destination").ifBlank { null }?.let { return it }
+            payment.optString("destination_pubkey").ifBlank { null }?.let { return it }
+            val htlcs = payment.optJSONArray("htlcs") ?: return null
+            for (i in 0 until htlcs.length()) {
+                val htlc = htlcs.optJSONObject(i) ?: continue
+                val route = htlc.optJSONObject("route") ?: continue
+                val hops = route.optJSONArray("hops") ?: continue
+                if (hops.length() == 0) continue
+                val last = hops.optJSONObject(hops.length() - 1) ?: continue
+                last.optString("pub_key").ifBlank { last.optString("pubkey") }
+                    .ifBlank { null }?.let { return it }
+            }
+            return null
+        }
+
+        /**
+         * Format pending channel open progress as `AWAITING LOCKIN 0/2`.
+         * Prefer explicit conf counts when present; otherwise derive from
+         * confirmation height + tip and remaining confs-until-active.
+         */
+        private fun formatPendingOpenState(
+            stateLabel: String,
+            confsUntilActive: Int,
+            confirmationHeight: Int,
+            fundingConfs: Int,
+            tipHeight: Int,
+        ): String {
+            val remaining = confsUntilActive.coerceAtLeast(0)
+            val current =
+                when {
+                    fundingConfs > 0 -> fundingConfs
+                    confirmationHeight > 0 && tipHeight >= confirmationHeight ->
+                        (tipHeight - confirmationHeight + 1).coerceAtLeast(0)
+                    remaining > 0 -> 0
+                    else -> return stateLabel
+                }
+            val total =
+                when {
+                    remaining > 0 -> (current + remaining).coerceAtLeast(current)
+                    current > 0 -> current
+                    else -> return stateLabel
+                }
+            val cappedCurrent = current.coerceAtMost(total)
+            return "$stateLabel $cappedCurrent/$total"
+        }
+    }
+}

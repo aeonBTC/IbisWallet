@@ -376,6 +376,30 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    fun deleteTransactionCache(
+        txid: String,
+        walletId: String? = null,
+    ) {
+        if (txid.isBlank()) return
+        try {
+            writableDatabase.transaction {
+                delete(TABLE_TX_RAW, "$COL_TXID = ?", arrayOf(txid))
+                delete(TABLE_TX_VERBOSE, "$COL_TXID = ?", arrayOf(txid))
+                if (walletId == null) {
+                    delete(TABLE_WALLET_TX_DETAILS, "$COL_TXID = ?", arrayOf(txid))
+                } else {
+                    delete(
+                        TABLE_WALLET_TX_DETAILS,
+                        "$COL_WALLET_ID = ? AND $COL_TXID = ?",
+                        arrayOf(walletId, txid),
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "Failed to delete transaction cache for $txid: ${e.message}")
+        }
+    }
+
     // ==================== Verbose Transaction JSON ====================
 
     /**
@@ -438,7 +462,10 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
      * Updates only changed entries and removes hashes that disappeared.
      */
     fun saveScriptHashStatuses(statuses: Map<String, String?>) {
-        if (statuses.isEmpty()) return
+        if (statuses.isEmpty()) {
+            clearScriptHashStatuses()
+            return
+        }
         try {
             writableDatabase.transaction {
                 val existing = loadScriptHashStatuses(this)

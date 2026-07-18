@@ -11,9 +11,15 @@ data class ConnectivityKeepAliveSnapshot(
     val liquidConnected: Boolean = false,
     val liquidElectrumUsesTor: Boolean = false,
     val liquidExternalTorRequired: Boolean = false,
+    val lightningConnected: Boolean = false,
+    val lightningUsesTor: Boolean = false,
+    val sparkConnected: Boolean = false,
 ) {
     val hasAnyElectrumConnection: Boolean
         get() = bitcoinConnected || liquidConnected
+
+    val hasAnyLayer2Connection: Boolean
+        get() = lightningConnected || sparkConnected
 
     val hasExternalTorRequirement: Boolean
         get() = bitcoinExternalTorRequired || liquidExternalTorRequired
@@ -22,6 +28,7 @@ data class ConnectivityKeepAliveSnapshot(
         get() =
             (bitcoinConnected && bitcoinElectrumUsesTor) ||
                 (liquidConnected && liquidElectrumUsesTor) ||
+                (lightningConnected && lightningUsesTor) ||
                 hasExternalTorRequirement
 
     val shouldRunForegroundService: Boolean
@@ -30,6 +37,7 @@ data class ConnectivityKeepAliveSnapshot(
                 foregroundConnectivityEnabled &&
                 (
                     hasAnyElectrumConnection ||
+                        hasAnyLayer2Connection ||
                         hasExternalTorRequirement
                 )
 }
@@ -45,6 +53,9 @@ object ConnectivityKeepAlivePolicy {
     private var liquidConnected = false
     private var liquidElectrumUsesTor = false
     private var liquidExternalTorRequired = false
+    private var lightningConnected = false
+    private var lightningUsesTor = false
+    private var sparkConnected = false
 
     fun updateForegroundConnectivityEnabled(
         context: Context,
@@ -94,6 +105,28 @@ object ConnectivityKeepAlivePolicy {
         }
     }
 
+    fun updateLightningState(
+        context: Context,
+        connected: Boolean,
+        usesTor: Boolean,
+    ) {
+        synchronized(lock) {
+            lightningConnected = connected
+            lightningUsesTor = usesTor
+            syncForegroundServiceLocked(context)
+        }
+    }
+
+    fun updateSparkState(
+        context: Context,
+        connected: Boolean,
+    ) {
+        synchronized(lock) {
+            sparkConnected = connected
+            syncForegroundServiceLocked(context)
+        }
+    }
+
     fun currentSnapshot(): ConnectivityKeepAliveSnapshot =
         synchronized(lock) {
             snapshotLocked()
@@ -101,9 +134,9 @@ object ConnectivityKeepAlivePolicy {
 
     /**
      * Returns true when the user has opted in to the background foreground
-     * service that keeps Electrum sockets alive. ViewModels check this to
-     * decide whether to keep heartbeats / reconnect loops running while the
-     * app is backgrounded.
+     * service that keeps Electrum / Lightning / Spark sockets alive. ViewModels
+     * check this to decide whether to keep heartbeats / reconnect loops running
+     * while the app is backgrounded.
      */
     fun isForegroundConnectivityEnabled(): Boolean =
         synchronized(lock) {
@@ -117,12 +150,16 @@ object ConnectivityKeepAlivePolicy {
 
     fun hasTorRequirementOutsideBitcoin(): Boolean =
         synchronized(lock) {
-            (liquidConnected && liquidElectrumUsesTor) || liquidExternalTorRequired
+            (liquidConnected && liquidElectrumUsesTor) ||
+                liquidExternalTorRequired ||
+                (lightningConnected && lightningUsesTor)
         }
 
     fun hasTorRequirementOutsideLiquid(): Boolean =
         synchronized(lock) {
-            (bitcoinConnected && bitcoinElectrumUsesTor) || bitcoinExternalTorRequired
+            (bitcoinConnected && bitcoinElectrumUsesTor) ||
+                bitcoinExternalTorRequired ||
+                (lightningConnected && lightningUsesTor)
         }
 
     private fun syncForegroundServiceLocked(context: Context) {
@@ -144,5 +181,8 @@ object ConnectivityKeepAlivePolicy {
             liquidConnected = liquidConnected,
             liquidElectrumUsesTor = liquidElectrumUsesTor,
             liquidExternalTorRequired = liquidExternalTorRequired,
+            lightningConnected = lightningConnected,
+            lightningUsesTor = lightningUsesTor,
+            sparkConnected = sparkConnected,
         )
 }

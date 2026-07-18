@@ -69,6 +69,7 @@ import github.aeonbtc.ibiswallet.data.remote.Bolt12OfferVerifier
 import github.aeonbtc.ibiswallet.data.remote.BoltzApiClient
 import github.aeonbtc.ibiswallet.data.remote.LnurlPayResolver
 import github.aeonbtc.ibiswallet.data.remote.SideSwapApiClient
+import github.aeonbtc.ibiswallet.tor.BoltzTorRelay
 import github.aeonbtc.ibiswallet.tor.CachingElectrumProxy
 import github.aeonbtc.ibiswallet.tor.ElectrumNotification
 import github.aeonbtc.ibiswallet.tor.TorManager
@@ -86,6 +87,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -170,13 +172,23 @@ class LiquidRepository(
         transactions: Collection<LiquidTransaction>,
     ) = run {
         val labels = secureStorage.getAllLiquidTransactionLabels(walletId)
-        transactions.map { transaction ->
+        val hiddenTxids = secureStorage.getHiddenLiquidTransactionIds(walletId)
+        transactions.filterNot { it.txid in hiddenTxids }.map { transaction ->
             buildLiquidTransactionSearchDocument(
                 walletId = walletId,
                 transaction = transaction,
                 transactionLabel = labels[transaction.txid],
             )
         }
+    }
+
+    private fun filterHiddenLiquidTransactions(
+        walletId: String?,
+        transactions: List<LiquidTransaction>,
+    ): List<LiquidTransaction> {
+        val hiddenTxids = walletId?.let(secureStorage::getHiddenLiquidTransactionIds).orEmpty()
+        if (hiddenTxids.isEmpty()) return transactions
+        return transactions.filterNot { it.txid in hiddenTxids }
     }
 
     private fun scheduleLiquidTransactionSearchIndexRefresh(
@@ -201,6 +213,7 @@ class LiquidRepository(
         transaction: LiquidTransaction,
     ) {
         val resolvedWalletId = walletId ?: return
+        if (transaction.txid in secureStorage.getHiddenLiquidTransactionIds(resolvedWalletId)) return
         electrumCache.upsertTransactionSearchDocuments(
             listOf(
                 buildLiquidTransactionSearchDocument(
@@ -230,8 +243,13 @@ class LiquidRepository(
         private const val BOLTZ_METADATA_CACHE_MS = 30_000L
         private const val BOLTZ_LIGHTNING_RESOLUTION_CACHE_MS = 120_000L
         private const val BOLTZ_OPERATION_LOCK_LOG_THRESHOLD_MS = 250L
-        private const val BOLTZ_SESSION_TIMEOUT_CLEARNET_SECS = 5u
-        private const val BOLTZ_SESSION_TIMEOUT_TOR_SECS = 12u
+        // LWK chain create can hang until this timeout even when the session is warm
+        // and the provider later succeeds immediately on retry. Keep this aggressive
+        // so exact-order review fails over quickly instead of blocking the UI for 45s+.
+        private const val BOLTZ_SESSION_TIMEOUT_CLEARNET_SECS = 12u
+        private const val BOLTZ_SESSION_TIMEOUT_TOR_SECS = 35u
+        private const val BOLTZ_SESSION_KEEP_ALIVE_MS = 10 * 60_000L
+        private const val BOLTZ_NEXT_INDEX_COLLISION_MAX_RETRIES = 3
         private const val BOLTZ_RESCUE_MNEMONIC_WORD_COUNT = 12u
         private const val BOLTZ_RESCUE_MNEMONIC_BIP85_INDEX = 26_589u
         private const val BOLTZ_RESCUE_SUBMARINE_KEY_PATH_PREFIX = "m/44/0/0/0/"
@@ -266,6 +284,7 @@ class LiquidRepository(
     private var lwkBoltzSession: BoltzSession? = null
     private var lwkBoltzAnyClient: AnyClient? = null
     private var liquidElectrumProxy: CachingElectrumProxy? = null
+    private var boltzTorRelay: BoltzTorRelay? = null
     private val invoiceResponses = mutableMapOf<String, InvoiceResponse>()
     private val preparePayResponses = mutableMapOf<String, PreparePayResponse>()
     private val lockupResponses = mutableMapOf<String, LockupResponse>()
@@ -290,6 +309,7 @@ class LiquidRepository(
     private val electrumCache = ElectrumCache(context)
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var boltzSessionKeepAliveUntilMs = 0L
+    private var boltzSessionKeepAliveExpiryJob: Job? = null
     private var currentWalletId: String? = null
     private var notificationCollectorJob: Job? = null
     private var transactionRefreshJob: Job? = null
@@ -321,6 +341,11 @@ class LiquidRepository(
 
     private var cachedMetadataSnapshot: SecureStorage.LiquidMetadataSnapshot? = null
     private var metadataSnapshotWalletId: String? = null
+
+    private fun getConfiguredLiquidGapLimit(walletId: String? = currentWalletId): Int =
+        walletId
+            ?.let(secureStorage::getLiquidGapLimit)
+            ?: StoredWallet.DEFAULT_GAP_LIMIT
 
     // API clients — initialized lazily (fallback for custom Boltz REST + SideSwap)
     private val okHttpClient: OkHttpClient by lazy {
@@ -800,28 +825,31 @@ class LiquidRepository(
                 null
             }
 
-            val transactions = wollet.transactions().mapNotNull { walletTx ->
-                try {
-                    val txid = walletTx.txid().toString()
-                    val lbtcDelta = walletTx.balance()[policyAsset] ?: 0L
-                    val txType = walletTx.type()
-                    LiquidTransaction(
-                        txid = txid,
-                        balanceSatoshi = lbtcDelta,
-                        fee = walletTx.fee().toLong(),
-                        height = walletTx.height()?.toInt(),
-                        timestamp = walletTx.timestamp()?.toLong(),
-                        type = when {
-                            txType == "incoming" -> LiquidTxType.RECEIVE
-                            txType == "outgoing" -> LiquidTxType.SEND
-                            lbtcDelta >= 0 -> LiquidTxType.RECEIVE
-                            else -> LiquidTxType.SEND
-                        },
-                    )
-                } catch (_: Exception) {
-                    null
-                }
-            }.sortedByDescending { it.timestamp ?: Long.MIN_VALUE }
+            val transactions = filterHiddenLiquidTransactions(
+                walletId,
+                wollet.transactions().mapNotNull { walletTx ->
+                    try {
+                        val txid = walletTx.txid().toString()
+                        val lbtcDelta = walletTx.balance()[policyAsset] ?: 0L
+                        val txType = walletTx.type()
+                        LiquidTransaction(
+                            txid = txid,
+                            balanceSatoshi = lbtcDelta,
+                            fee = walletTx.fee().toLong(),
+                            height = walletTx.height()?.toInt(),
+                            timestamp = walletTx.timestamp()?.toLong(),
+                            type = when {
+                                txType == "incoming" -> LiquidTxType.RECEIVE
+                                txType == "outgoing" -> LiquidTxType.SEND
+                                lbtcDelta >= 0 -> LiquidTxType.RECEIVE
+                                else -> LiquidTxType.SEND
+                            },
+                        )
+                    } catch (_: Exception) {
+                        null
+                    }
+                }.sortedByDescending { it.timestamp ?: Long.MIN_VALUE },
+            )
 
             walletSwitchGeneration++
             stopNotificationCollector()
@@ -1246,7 +1274,11 @@ class LiquidRepository(
             )
         }.sortedByDescending { it.asset.isPolicyAsset }
 
-        val transactions = buildLiquidTransactionList(wollet, switchGeneration) ?: return
+        val transactions =
+            filterHiddenLiquidTransactions(
+                walletId,
+                buildLiquidTransactionList(wollet, switchGeneration) ?: return,
+            )
 
         val existingState = _liquidState.value
         val derivedCurrentAddress = try {
@@ -1351,8 +1383,10 @@ class LiquidRepository(
         transactionRefreshJob?.cancel()
         transactionRefreshJob = repositoryScope.launch {
             try {
-                val builtTransactions = buildLiquidTransactionList(wollet, switchGeneration)
-                    ?: return@launch
+                val builtTransactions = filterHiddenLiquidTransactions(
+                    currentWalletId,
+                    buildLiquidTransactionList(wollet, switchGeneration) ?: return@launch,
+                )
                 if (switchGeneration != walletSwitchGeneration) return@launch
                 _liquidState.value = _liquidState.value.copy(
                     transactions = builtTransactions,
@@ -1561,6 +1595,42 @@ class LiquidRepository(
         updateTransactionInPlace(txid) { it.copy(memo = "") }
     }
 
+    fun deleteLiquidTransactionFromHistory(txid: String) {
+        val walletId = currentWalletId ?: return
+        secureStorage.hideLiquidTransaction(walletId, txid)
+        secureStorage.purgeHiddenLiquidTransactionMetadata(walletId, txid)
+        electrumCache.deleteTransactionCache(txid)
+        electrumCache.deleteTransactionSearchDocuments(
+            walletId = walletId,
+            layer = TransactionSearchLayer.LIQUID,
+            txids = listOf(txid),
+        )
+        val currentState = _liquidState.value
+        val visibleTransactions = currentState.transactions.filterNot { it.txid == txid }
+        if (visibleTransactions.size != currentState.transactions.size) {
+            _liquidState.value = currentState.copy(transactions = visibleTransactions)
+        }
+    }
+
+    fun deleteAllLiquidTransactionsFromHistory() {
+        val walletId = currentWalletId ?: return
+        val currentState = _liquidState.value
+        val txids = currentState.transactions.map { it.txid }.filter { it.isNotBlank() }.distinct()
+        if (txids.isEmpty()) return
+
+        txids.forEach { txid ->
+            secureStorage.hideLiquidTransaction(walletId, txid)
+            secureStorage.purgeHiddenLiquidTransactionMetadata(walletId, txid)
+            electrumCache.deleteTransactionCache(txid)
+        }
+        electrumCache.deleteTransactionSearchDocuments(
+            walletId = walletId,
+            layer = TransactionSearchLayer.LIQUID,
+            txids = txids,
+        )
+        _liquidState.value = currentState.copy(transactions = emptyList())
+    }
+
     fun searchLiquidTransactionTxids(
         query: String,
         includeSwap: Boolean,
@@ -1570,7 +1640,8 @@ class LiquidRepository(
         limit: Int,
     ): TransactionSearchResult {
         val walletId = currentWalletId ?: return TransactionSearchResult(emptyList(), 0)
-        return electrumCache.searchTransactionTxids(
+        val hiddenTxids = secureStorage.getHiddenLiquidTransactionIds(walletId)
+        val result = electrumCache.searchTransactionTxids(
             walletId = walletId,
             layer = TransactionSearchLayer.LIQUID,
             query = query,
@@ -1582,6 +1653,12 @@ class LiquidRepository(
                     includeNative = includeNative,
                     includeUsdt = includeUsdt,
                 ),
+        )
+        if (hiddenTxids.isEmpty()) return result
+        val visibleTxids = result.txids.filterNot { it in hiddenTxids }
+        return result.copy(
+            txids = visibleTxids,
+            totalCount = (result.totalCount - (result.txids.size - visibleTxids.size)).coerceAtLeast(0),
         )
     }
 
@@ -1609,6 +1686,7 @@ class LiquidRepository(
         resolvedPaymentInput: String? = null,
         invoice: String? = null,
         status: String? = null,
+        failureReason: String? = null,
         timeoutBlockHeight: Int? = null,
         refundPublicKey: String? = null,
         claimPublicKey: String? = null,
@@ -1629,6 +1707,7 @@ class LiquidRepository(
             resolvedPaymentInput = resolvedPaymentInput,
             invoice = invoice,
             status = status,
+            failureReason = failureReason,
             timeoutBlockHeight = timeoutBlockHeight,
             refundPublicKey = refundPublicKey,
             claimPublicKey = claimPublicKey,
@@ -1683,6 +1762,13 @@ class LiquidRepository(
     }
 
     private fun buildLightningSendSwapDetails(session: PendingLightningPaymentSession): LiquidSwapDetails {
+        val markFailed =
+            session.phase == PendingLightningPaymentPhase.FAILED ||
+                session.refundState == BoltzSubmarineRefundState.FAILED ||
+                session.status.contains("fail", ignoreCase = true)
+        val failure =
+            session.refundError?.takeIf { it.isNotBlank() }
+                ?: session.status.takeIf { markFailed && it.isNotBlank() }
         return buildLiquidSwapDetails(
             service = SwapService.BOLTZ,
             direction = SwapDirection.LBTC_TO_BTC,
@@ -1696,6 +1782,7 @@ class LiquidRepository(
             resolvedPaymentInput = session.resolvedPaymentInput,
             invoice = session.fetchedInvoice,
             status = session.status,
+            failureReason = failure,
             timeoutBlockHeight = session.timeoutBlockHeight,
             refundPublicKey = session.refundPublicKey,
             claimPublicKey = session.boltzClaimPublicKey,
@@ -1746,6 +1833,7 @@ class LiquidRepository(
                 session = "shared",
             )
         lwkBoltzSession?.let {
+            armBoltzSessionKeepAlive()
             logBoltzTrace(
                 "reuse",
                 trace.copy(session = "warm"),
@@ -1783,12 +1871,18 @@ class LiquidRepository(
                 mnemonic = boltzMnemonic,
                 nextIndexToUse = cachedNextIndex,
                 timeout = sessionTimeoutSecs.toULong(),
+                apiUrl = boltzSessionApiUrl(usesTor),
+                // LWK always runs its native Boltz WebSocket. polling=true only
+                // makes advance() drain queued updates without blocking while
+                // boltzOperationMutex is held; blocking here would serialize all
+                // swap/invoice operations for up to timeoutAdvance.
                 polling = true,
                 bitcoinElectrumClientUrl = getBitcoinElectrumUrl(),
             )
 
             BoltzSession.fromBuilder(builder).also {
                 lwkBoltzSession = it
+                armBoltzSessionKeepAlive()
                 persistBoltzSessionNextIndex(walletId, it)
                 logBoltzTrace(
                     "success",
@@ -1809,6 +1903,7 @@ class LiquidRepository(
                 runCatching { anyClient.destroy() }
             }
             lwkBoltzAnyClient = null
+            stopBoltzTorRelay()
             val sessionError = normalizeBoltzSessionInitFailure(e)
             logBoltzTrace(
                 "failed",
@@ -1828,6 +1923,7 @@ class LiquidRepository(
                 runCatching { anyClient.destroy() }
             }
             lwkBoltzAnyClient = null
+            stopBoltzTorRelay()
             val sessionError = normalizeBoltzSessionInitFailure(e)
             logBoltzTrace(
                 "failed",
@@ -1909,6 +2005,18 @@ class LiquidRepository(
         logBoltzTrace("success", trace, "elapsedMs" to boltzElapsedMs(startedAt))
     }
 
+    private fun boltzSessionApiUrl(usesTor: Boolean): String? {
+        if (!usesTor) return null
+        // LWK's Boltz HTTP/WebSocket clients don't expose SOCKS5 proxy settings.
+        // Route them through a localhost relay that dials Boltz's onion over Tor.
+        return (boltzTorRelay ?: BoltzTorRelay().also { boltzTorRelay = it }).start()
+    }
+
+    private fun stopBoltzTorRelay() {
+        runCatching { boltzTorRelay?.stop() }
+        boltzTorRelay = null
+    }
+
     // ════════════════════════════════════════════
     // Sync
     // ════════════════════════════════════════════
@@ -1972,46 +2080,89 @@ class LiquidRepository(
         if (walletId == null) return emptySet()
 
         val reservedAddresses = linkedSetOf<String>()
+        fun addLiquidOnly(address: String?) {
+            address
+                ?.takeIf { it.isNotBlank() && isLikelyLiquidAddress(it) }
+                ?.let(reservedAddresses::add)
+        }
 
         secureStorage.getAllPendingLightningReceives(walletId).forEach { pendingReceive ->
-            reservedAddresses.add(pendingReceive.claimAddress)
+            addLiquidOnly(pendingReceive.claimAddress)
         }
 
         secureStorage.getPendingLightningPaymentSession(walletId)
             ?.refundAddress
-            ?.takeIf { it.isNotBlank() }
-            ?.let(reservedAddresses::add)
+            ?.let(::addLiquidOnly)
 
         secureStorage.getPendingSwaps(walletId).forEach { pendingSwap ->
-            pendingSwap.receiveAddress
-                ?.takeIf { it.isNotBlank() }
-                ?.let(reservedAddresses::add)
-            pendingSwap.refundAddress
-                ?.takeIf { it.isNotBlank() }
-                ?.let(reservedAddresses::add)
+            // Swap sessions store both sides: Liquid claim/refund and Bitcoin payouts.
+            // Only Liquid addresses may occupy the LWK external gap; BTC bc1… values
+            // parse-fail in lwk.Address (Base58 InvalidCharacterError on '0').
+            when (pendingSwap.direction) {
+                SwapDirection.BTC_TO_LBTC -> {
+                    addLiquidOnly(pendingSwap.receiveAddress)
+                    if (pendingSwap.service != SwapService.BOLTZ && pendingSwap.service != SwapService.SIDESWAP) {
+                        addLiquidOnly(pendingSwap.refundAddress)
+                    } else {
+                        // Peg/chain receive is Liquid; refund on peg-in is typically BTC.
+                        addLiquidOnly(pendingSwap.refundAddress)
+                    }
+                }
+                SwapDirection.LBTC_TO_BTC -> {
+                    // Receive/payout is Bitcoin; refund is Liquid.
+                    addLiquidOnly(pendingSwap.refundAddress)
+                }
+            }
         }
 
         synchronized(boltzChainSwapDrafts) {
             boltzChainSwapDrafts.values.forEach { draft ->
-                draft.liquidAddress
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let(reservedAddresses::add)
-                draft.receiveAddress
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let(reservedAddresses::add)
-                draft.refundAddress
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let(reservedAddresses::add)
+                addLiquidOnly(draft.liquidAddress)
+                when (draft.direction) {
+                    SwapDirection.BTC_TO_LBTC -> addLiquidOnly(draft.receiveAddress)
+                    SwapDirection.LBTC_TO_BTC -> addLiquidOnly(draft.refundAddress)
+                }
             }
         }
 
         secureStorage.getAllLiquidAddressLabels(walletId).forEach { (address, label) ->
             if (label.isNotBlank()) {
-                reservedAddresses.add(address)
+                addLiquidOnly(address)
             }
         }
 
         return reservedAddresses
+    }
+
+    /**
+     * Cheap prefilter before constructing lwk.Address.
+     * Rejects Bitcoin bech32 (bc1/tb1). Accepts Liquid/Elements bech32 and Base58
+     * confidential addresses (Base58 alphabet excludes 0/O/I/l — so '0' is a hard reject).
+     */
+    private fun isLikelyLiquidAddress(address: String): Boolean {
+        val trimmed = address.trim()
+        if (trimmed.isEmpty()) return false
+        val lower = trimmed.lowercase()
+        if (
+            lower.startsWith("bc1") ||
+            lower.startsWith("tb1") ||
+            lower.startsWith("bcrt1")
+        ) {
+            return false
+        }
+        if (
+            lower.startsWith("lq1") ||
+            lower.startsWith("ex1") ||
+            lower.startsWith("tex1") ||
+            lower.startsWith("tlq1") ||
+            lower.startsWith("el1") ||
+            lower.startsWith("ert1")
+        ) {
+            return true
+        }
+        // Confidential Base58 Liquid addresses cannot contain Base58-invalid chars.
+        // InvalidCharacterError { invalid: 48 } is ASCII '0' — common in bc1 leftovers.
+        return trimmed.none { c -> c == '0' || c == 'O' || c == 'I' || c == 'l' }
     }
 
     private fun resolveEarliestUnusedLiquidExternalAddress(
@@ -2135,6 +2286,36 @@ class LiquidRepository(
         )
     }
 
+    private fun hasLiquidScriptHashStatusChanges(
+        currentStatuses: Map<String, String?>,
+        persistedStatuses: Map<String, String?>,
+    ): Boolean {
+        if (persistedStatuses.isEmpty()) {
+            return currentStatuses.values.any { !it.isNullOrBlank() }
+        }
+        persistedStatuses.forEach { (scriptHash, persistedStatus) ->
+            if (currentStatuses[scriptHash] != persistedStatus) return true
+        }
+        return currentStatuses.any { (scriptHash, currentStatus) ->
+            !currentStatus.isNullOrBlank() && persistedStatuses[scriptHash] != currentStatus
+        }
+    }
+
+    private fun saveLiquidScriptHashStatusSnapshot(
+        walletId: String,
+        statuses: Map<String, String?>,
+    ) {
+        secureStorage.saveLiquidScriptHashStatuses(
+            walletId = walletId,
+            statuses = statuses.filterValues { !it.isNullOrBlank() },
+        )
+    }
+
+    private fun rememberLiquidScriptHashStatuses(statuses: Map<String, String?>) {
+        scriptHashStatusCache.clear()
+        scriptHashStatusCache.putAll(statuses.filterValues { !it.isNullOrBlank() })
+    }
+
     suspend fun sync(
         forceFullScan: Boolean = false,
         showFullSyncProgress: Boolean = false,
@@ -2206,8 +2387,24 @@ class LiquidRepository(
                 total = 0UL,
             )
 
-            if (!forceFullScan && !newBlockDetected && scriptHashStatusCache.isNotEmpty()) {
-                val hasChanges = liquidElectrumProxy?.checkForScriptHashChanges(scriptHashStatusCache) ?: true
+            val hasUntrackedScriptHashes =
+                subscribedScriptHashes.isNotEmpty() &&
+                    getAllRevealedLiquidScriptHashes(wollet).any { it !in subscribedScriptHashes }
+            val shouldRefreshScriptHashStatusCache =
+                forceFullScan || subscribedScriptHashes.isEmpty() || hasUntrackedScriptHashes
+
+            val canUseCachedStatuses =
+                !forceFullScan &&
+                    !newBlockDetected &&
+                    subscribedScriptHashes.isNotEmpty() &&
+                    !hasUntrackedScriptHashes
+            if (canUseCachedStatuses) {
+                val hasChanges =
+                    if (scriptHashStatusCache.isEmpty()) {
+                        false
+                    } else {
+                        liquidElectrumProxy?.checkForScriptHashChanges(scriptHashStatusCache) ?: true
+                    }
                 if (!hasChanges) {
                     if (syncGeneration != walletSwitchGeneration) return false
                     if (currentTipHeight != null) {
@@ -2226,11 +2423,7 @@ class LiquidRepository(
             prewarmLiquidTransactionHistoryCache(wollet)
 
             val walletId = currentWalletId
-            val liquidGapLimit = if (walletId != null) {
-                secureStorage.getLiquidGapLimit(walletId)
-            } else {
-                StoredWallet.DEFAULT_GAP_LIMIT
-            }
+            val liquidGapLimit = getConfiguredLiquidGapLimit(walletId)
             val hadChanges = try {
                 runFullScanWithTimeout(
                     client = client,
@@ -2291,6 +2484,10 @@ class LiquidRepository(
                         error = null,
                     )
                 }
+                if (shouldRefreshScriptHashStatusCache) {
+                    refreshScriptHashStatusCache(wollet)
+                    subscribeNewlyRevealedAddresses()
+                }
             }
 
             SecureLog.d(
@@ -2304,6 +2501,18 @@ class LiquidRepository(
                 _liquidState.value = _liquidState.value.copy(
                     isSyncing = false,
                     error = "Sync failed: ${e.message}",
+                )
+            }
+            false
+        } catch (e: TimeoutCancellationException) {
+            logError("LWK sync timed out", e)
+            if (syncGeneration == walletSwitchGeneration) {
+                _liquidState.value = _liquidState.value.copy(
+                    isSyncing = false,
+                    isFullSyncing = false,
+                    isTransactionHistoryLoading = false,
+                    syncProgress = null,
+                    error = "Liquid sync timed out",
                 )
             }
             false
@@ -2346,6 +2555,7 @@ class LiquidRepository(
     ) {
         val currentState = _liquidState.value
         if (currentState.currentAddress != address || currentState.currentAddressLabel == label) return
+        // Stay on the current receive address; labels only update display here.
         _liquidState.value = currentState.copy(currentAddressLabel = label)
     }
 
@@ -2418,18 +2628,14 @@ class LiquidRepository(
             subscribedScriptHashes.addAll(currentStatuses.keys)
 
             val persistedStatuses = secureStorage.getLiquidScriptHashStatuses(walletId)
-            val needsSync =
-                persistedStatuses.isEmpty() ||
-                    currentStatuses.any { (scriptHash, currentStatus) ->
-                        !persistedStatuses.containsKey(scriptHash) || persistedStatuses[scriptHash] != currentStatus
-                    }
+            val needsSync = hasLiquidScriptHashStatusChanges(currentStatuses, persistedStatuses)
 
             val result =
                 if (needsSync) {
                     scriptHashStatusCache.clear()
                     if (sync()) {
                         if (scriptHashStatusCache.isEmpty()) {
-                            scriptHashStatusCache.putAll(currentStatuses)
+                            rememberLiquidScriptHashStatuses(currentStatuses)
                         }
                         subscribeNewlyRevealedAddresses()
                         SubscriptionResult.SYNCED
@@ -2437,14 +2643,11 @@ class LiquidRepository(
                         SubscriptionResult.FAILED
                     }
                 } else {
-                    scriptHashStatusCache.clear()
-                    scriptHashStatusCache.putAll(currentStatuses)
+                    rememberLiquidScriptHashStatuses(currentStatuses)
                     SubscriptionResult.NO_CHANGES
                 }
 
-            if (scriptHashStatusCache.isNotEmpty()) {
-                secureStorage.saveLiquidScriptHashStatuses(walletId, scriptHashStatusCache.toMap())
-            }
+            saveLiquidScriptHashStatusSnapshot(walletId, scriptHashStatusCache.toMap())
             startNotificationCollector(proxy)
             result
         }
@@ -2488,7 +2691,7 @@ class LiquidRepository(
                             subscribeNewlyRevealedAddresses()
                             currentWalletId?.let { walletId ->
                                 if (scriptHashStatusCache.isNotEmpty()) {
-                                    secureStorage.saveLiquidScriptHashStatuses(walletId, scriptHashStatusCache.toMap())
+                                    saveLiquidScriptHashStatusSnapshot(walletId, scriptHashStatusCache.toMap())
                                 }
                             }
                         }
@@ -2511,9 +2714,8 @@ class LiquidRepository(
         val statuses = proxy.subscribeScriptHashes(allScriptHashes)
         if (statuses.isEmpty()) return
 
-        scriptHashStatusCache.clear()
-        scriptHashStatusCache.putAll(statuses)
-        secureStorage.saveLiquidScriptHashStatuses(walletId, statuses)
+        rememberLiquidScriptHashStatuses(statuses)
+        saveLiquidScriptHashStatusSnapshot(walletId, statuses)
     }
 
     private fun subscribeNewlyRevealedAddresses() {
@@ -2524,26 +2726,41 @@ class LiquidRepository(
         if (newHashes.isEmpty()) return
 
         val newStatuses = proxy.subscribeAdditionalScriptHashes(newHashes)
-        subscribedScriptHashes.addAll(newStatuses.keys)
-        scriptHashStatusCache.putAll(newStatuses)
+        subscribedScriptHashes.addAll(newHashes)
+        scriptHashStatusCache.putAll(newStatuses.filterValues { !it.isNullOrBlank() })
     }
 
     private fun getAllRevealedLiquidScriptHashes(wollet: Wollet): List<String> {
         val scriptHashes = linkedSetOf<String>()
         val usedIndices = collectLiquidUsedIndices(wollet)
         val reservedAddresses = collectReservedLiquidExternalAddresses(currentWalletId)
+        val gapLimit = getConfiguredLiquidGapLimit().coerceAtLeast(1)
         val currentReceive =
             runCatching {
                 resolveEarliestUnusedLiquidExternalAddress(wollet)
             }.getOrNull()
 
         runCatching {
-            val coverageIndex = maxOf(currentReceive?.index?.toInt() ?: -1, usedIndices.highestExternalUsedIndex)
-            if (coverageIndex < 0) return@runCatching
-            for (i in 0..coverageIndex) {
-                val address = wollet.address(i.toUInt()).address().toString()
-                computeLiquidScriptHashForAddress(address)?.let(scriptHashes::add)
-            }
+            val descriptor = wollet.descriptor()
+            addLiquidScriptHashesForKeychain(
+                scriptHashes = scriptHashes,
+                descriptor = descriptor,
+                chain = Chain.EXTERNAL,
+                coverageIndex = maxOf(
+                    currentReceive?.index?.toInt() ?: -1,
+                    usedIndices.highestExternalUsedIndex + gapLimit,
+                    gapLimit - 1,
+                ),
+            )
+            addLiquidScriptHashesForKeychain(
+                scriptHashes = scriptHashes,
+                descriptor = descriptor,
+                chain = Chain.INTERNAL,
+                coverageIndex = maxOf(
+                    usedIndices.highestInternalUsedIndex + gapLimit,
+                    gapLimit - 1,
+                ),
+            )
         }
 
         reservedAddresses.forEach { address ->
@@ -2561,12 +2778,40 @@ class LiquidRepository(
         return scriptHashes.toList()
     }
 
-    private fun computeLiquidScriptHashForAddress(address: String): String? {
-        return try {
-            val scriptBytes = Address(address).scriptPubkey().bytes()
+    private fun addLiquidScriptHashesForKeychain(
+        scriptHashes: MutableSet<String>,
+        descriptor: WolletDescriptor,
+        chain: Chain,
+        coverageIndex: Int,
+    ) {
+        if (coverageIndex < 0) return
+        for (i in 0..coverageIndex) {
+            runCatching {
+                descriptor.scriptPubkey(chain, i.toUInt()).bytes()
+            }.getOrNull()
+                ?.let(::computeLiquidScriptHashForBytes)
+                ?.let(scriptHashes::add)
+        }
+    }
+
+    private fun computeLiquidScriptHashForBytes(scriptBytes: ByteArray): String? =
+        try {
             BitcoinUtils.computeScriptHash(scriptBytes)
         } catch (e: Exception) {
             logWarn("Failed to derive Liquid script hash", e)
+            null
+        }
+
+    private fun computeLiquidScriptHashForAddress(address: String): String? {
+        if (!isLikelyLiquidAddress(address)) {
+            return null
+        }
+        return try {
+            val scriptBytes = Address(address).scriptPubkey().bytes()
+            computeLiquidScriptHashForBytes(scriptBytes)
+        } catch (e: Exception) {
+            // Only log unexpected liquid parse failures; BTC leftovers are filtered above.
+            logWarn("Failed to derive Liquid script hash for ${summarizeValue(address)}", e)
             null
         }
     }
@@ -2696,7 +2941,6 @@ class LiquidRepository(
             if (BuildConfig.DEBUG) Log.e(TAG, "Error listing Liquid UTXOs for address preview", e)
         }
 
-        val usedSummary = collectLiquidUsedIndices(wollet)
         try {
             wollet.txos().forEach { txo ->
                 val idx = txo.wildcardIndex()
@@ -2710,8 +2954,9 @@ class LiquidRepository(
         }
 
         val usedAddresses = mutableListOf<WalletAddress>()
+        val externalUsedIndices = externalTxCountByIndex.keys
 
-        usedSummary.externalUsedIndices.sorted().take(limitPerSection).forEach { index ->
+        externalUsedIndices.sorted().take(limitPerSection).forEach { index ->
             val address = liquidExternalAddressAt(wollet, index)
             usedAddresses.add(
                 WalletAddress(
@@ -2729,19 +2974,19 @@ class LiquidRepository(
         val receiveAddresses = mutableListOf<WalletAddress>()
         var externalIndex = 0u
         while (receiveAddresses.size < limitPerSection) {
-            if (externalIndex !in usedSummary.externalUsedIndices) {
+            if (externalIndex !in externalUsedIndices) {
                 val address = liquidExternalAddressAt(wollet, externalIndex)
-                receiveAddresses.add(
-                    WalletAddress(
-                        address = address,
-                        index = externalIndex,
-                        keychain = KeychainType.EXTERNAL,
-                        label = labels[address],
-                        balanceSats = 0UL,
-                        transactionCount = 0,
-                        isUsed = false,
-                    ),
+                val label = labels[address]
+                val entry = WalletAddress(
+                    address = address,
+                    index = externalIndex,
+                    keychain = KeychainType.EXTERNAL,
+                    label = label,
+                    balanceSats = 0UL,
+                    transactionCount = 0,
+                    isUsed = false,
                 )
+                receiveAddresses.add(entry)
             }
             externalIndex++
         }
@@ -2770,17 +3015,17 @@ class LiquidRepository(
                 if (internalIndex !in internalTxCountByIndex) {
                     val address = liquidInternalAddressAt(descriptor, isMainnet, internalIndex)
                     if (address != null) {
-                        changeAddresses.add(
-                            WalletAddress(
-                                address = address,
-                                index = internalIndex,
-                                keychain = KeychainType.INTERNAL,
-                                label = labels[address],
-                                balanceSats = 0UL,
-                                transactionCount = 0,
-                                isUsed = false,
-                            ),
+                        val label = labels[address]
+                        val entry = WalletAddress(
+                            address = address,
+                            index = internalIndex,
+                            keychain = KeychainType.INTERNAL,
+                            label = label,
+                            balanceSats = 0UL,
+                            transactionCount = 0,
+                            isUsed = false,
                         )
+                        changeAddresses.add(entry)
                     }
                 }
                 internalIndex++
@@ -2789,7 +3034,13 @@ class LiquidRepository(
             if (BuildConfig.DEBUG) Log.e(TAG, "Error deriving Liquid address preview", e)
         }
 
-        return Triple(receiveAddresses, changeAddresses, usedAddresses)
+        // Used tab is display-only privacy: hide empty historical addresses, keep any with UTXOs.
+        // Do not reclassify empty used into Receive/Change (LWK indices still occupy for next receive).
+        val displayUsed =
+            usedAddresses.filter {
+                it.balanceSats > 0UL || it.address in addressesWithUtxos
+            }
+        return Triple(receiveAddresses, changeAddresses, displayUsed)
     }
 
     fun getAllAddresses(): Triple<List<WalletAddress>, List<WalletAddress>, List<WalletAddress>> {
@@ -2844,25 +3095,35 @@ class LiquidRepository(
         val receiveAddresses = mutableListOf<WalletAddress>()
         val changeAddresses = mutableListOf<WalletAddress>()
         val usedAddresses = mutableListOf<WalletAddress>()
+        // Same gap for receive and change lists (mirrors sync subscription coverage).
+        val gapLimit = getConfiguredLiquidGapLimit(walletId).coerceAtLeast(1)
+        val targetUnusedCount = maxOf(gapLimit, ADDRESS_PEEK_AHEAD)
 
         // ── Change (internal) keychain ─────────────────────────────────
         val internalByIndex = linkedMapOf<UInt, WalletAddress>()
         try {
             val descriptor = wollet.descriptor()
             val isMainnet = network.isMainnet()
-            val peekEnd = maxInternalIndex + ADDRESS_INTERNAL_PEEK_AHEAD
+            // Cover gap past highest used change index; also honor peek floor for empty wallets.
+            val peekEnd = maxOf(
+                maxInternalIndex + gapLimit,
+                gapLimit - 1,
+                maxInternalIndex + ADDRESS_INTERNAL_PEEK_AHEAD,
+            )
             for (i in 0..peekEnd) {
                 val idx = i.toUInt()
                 val txCount = internalTxCountByIndex[idx] ?: 0
                 val address = liquidInternalAddressAt(descriptor, isMainnet, idx) ?: continue
                 val balance = balanceByAddress[address] ?: 0UL
+                val label = labels[address]
+                // Used = on-chain activity only. Labels reserve receive selection, not Used tab.
                 val isUsed = txCount > 0 || address in addressesWithUtxos
                 internalByIndex[idx] =
                     WalletAddress(
                         address = address,
                         index = idx,
                         keychain = KeychainType.INTERNAL,
-                        label = labels[address],
+                        label = label,
                         balanceSats = balance,
                         transactionCount = txCount,
                         isUsed = isUsed,
@@ -2883,10 +3144,16 @@ class LiquidRepository(
             }.getOrNull()
 
         try {
-            val lastExternalIndex = maxOf(
-                currentReceive?.index?.toInt() ?: -1,
+            val highestExternalUsed = maxOf(
                 usedSummary.highestExternalUsedIndex,
                 maxExternalIndexFromTxos,
+            )
+            val lastExternalIndex = maxOf(
+                currentReceive?.index?.toInt() ?: -1,
+                highestExternalUsed,
+                // Gap window past last used receive (same rule as change).
+                highestExternalUsed + gapLimit,
+                gapLimit - 1,
             )
 
             if (lastExternalIndex >= 0) {
@@ -2894,6 +3161,8 @@ class LiquidRepository(
                     val index = i.toUInt()
                     val address = liquidExternalAddressAt(wollet, index)
                     val txCount = externalTxCountByIndex[index] ?: 0
+                    val label = labels[address]
+                    // Used = on-chain activity only. Labels reserve receive selection, not Used tab.
                     val isUsed = txCount > 0 || address in addressesWithUtxos
                     val balance = balanceByAddress[address] ?: 0UL
                     val entry =
@@ -2901,7 +3170,7 @@ class LiquidRepository(
                             address = address,
                             index = index,
                             keychain = KeychainType.EXTERNAL,
-                            label = labels[address],
+                            label = label,
                             balanceSats = balance,
                             transactionCount = txCount,
                             isUsed = isUsed,
@@ -2911,21 +3180,21 @@ class LiquidRepository(
             }
 
             val nextIndex = (lastExternalIndex + 1).coerceAtLeast(0).toUInt()
-            val extraCount = maxOf(1, ADDRESS_PEEK_AHEAD - receiveAddresses.size)
+            val extraCount = maxOf(0, targetUnusedCount - receiveAddresses.size)
             for (offset in 0 until extraCount) {
                 val index = nextIndex + offset.toUInt()
                 val address = liquidExternalAddressAt(wollet, index)
-                receiveAddresses.add(
-                    WalletAddress(
-                        address = address,
-                        index = index,
-                        keychain = KeychainType.EXTERNAL,
-                        label = labels[address],
-                        balanceSats = 0UL,
-                        transactionCount = 0,
-                        isUsed = false,
-                    ),
+                val label = labels[address]
+                val entry = WalletAddress(
+                    address = address,
+                    index = index,
+                    keychain = KeychainType.EXTERNAL,
+                    label = label,
+                    balanceSats = 0UL,
+                    transactionCount = 0,
+                    isUsed = false,
                 )
+                receiveAddresses.add(entry)
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Error deriving Liquid receive addresses", e)
@@ -2934,7 +3203,47 @@ class LiquidRepository(
         val sortedChangeAddresses = internalByIndex.entries.sortedBy { it.key }.map { it.value }
         changeAddresses.addAll(sortedChangeAddresses.filter { !it.isUsed })
         usedAddresses.addAll(sortedChangeAddresses.filter { it.isUsed })
-        return Triple(receiveAddresses, changeAddresses, usedAddresses)
+
+        // Top up change unused to the same target as receive when labels collapse early.
+        if (changeAddresses.size < targetUnusedCount) {
+            try {
+                val descriptor = wollet.descriptor()
+                val isMainnet = network.isMainnet()
+                var nextChangeIndex =
+                    (
+                        (internalByIndex.keys.maxOrNull()?.toInt() ?: -1) + 1
+                    ).coerceAtLeast(0).toUInt()
+                var attempts = 0
+                while (changeAddresses.size < targetUnusedCount && attempts < MAX_LIQUID_ADDRESS_SCAN_ATTEMPTS) {
+                    attempts++
+                    val address =
+                        liquidInternalAddressAt(descriptor, isMainnet, nextChangeIndex) ?: break
+                    val label = labels[address]
+                    val entry =
+                        WalletAddress(
+                            address = address,
+                            index = nextChangeIndex,
+                            keychain = KeychainType.INTERNAL,
+                            label = label,
+                            balanceSats = 0UL,
+                            transactionCount = 0,
+                            isUsed = false,
+                        )
+                    changeAddresses.add(entry)
+                    nextChangeIndex = nextChangeIndex.inc()
+                }
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.e(TAG, "Error topping up Liquid change addresses", e)
+            }
+        }
+
+        // Used tab is display-only privacy: hide empty historical addresses, keep any with UTXOs.
+        // Do not reclassify empty used into Receive/Change (LWK indices still occupy for next receive).
+        val displayUsed =
+            usedAddresses.filter {
+                it.balanceSats > 0UL || it.address in addressesWithUtxos
+            }
+        return Triple(receiveAddresses, changeAddresses, displayUsed)
     }
 
     fun getAllUtxos(): List<UtxoInfo> {
@@ -4004,6 +4313,29 @@ class LiquidRepository(
         return error.message?.contains("RetryBroadcastFailed", ignoreCase = true) == true
     }
 
+    /**
+     * Extends the warm-session window and (re)schedules a single idle-expiry
+     * cleanup so an unused session does not linger forever.
+     * Called on every session creation/reuse (sliding keep-alive).
+     */
+    private fun armBoltzSessionKeepAlive() {
+        boltzSessionKeepAliveUntilMs = System.currentTimeMillis() + BOLTZ_SESSION_KEEP_ALIVE_MS
+        boltzSessionKeepAliveExpiryJob?.cancel()
+        var expiryJob: Job? = null
+        expiryJob = repositoryScope.launch {
+            delay(BOLTZ_SESSION_KEEP_ALIVE_MS)
+            // Clear own reference (if still current) so destroyBoltzSession() does
+            // not self-cancel; a newer arm call may have replaced it already.
+            if (boltzSessionKeepAliveExpiryJob === expiryJob) {
+                boltzSessionKeepAliveExpiryJob = null
+            }
+            // destroyBoltzSessionIfIdle re-checks boltzSessionKeepAliveUntilMs, so a
+            // stale job firing after a re-arm keeps the session warm anyway.
+            destroyBoltzSessionIfIdle("keep_alive_expired")
+        }
+        boltzSessionKeepAliveExpiryJob = expiryJob
+    }
+
     private suspend fun destroyBoltzSession(persistNextIndex: Boolean = true) = boltzSessionMutex.withLock {
         if (persistNextIndex) {
             currentWalletId?.let { walletId ->
@@ -4020,6 +4352,9 @@ class LiquidRepository(
             lwkBoltzAnyClient?.destroy()
         } catch (_: Exception) {}
         lwkBoltzAnyClient = null
+        stopBoltzTorRelay()
+        boltzSessionKeepAliveExpiryJob?.cancel()
+        boltzSessionKeepAliveExpiryJob = null
         boltzSessionKeepAliveUntilMs = 0L
     }
 
@@ -4072,33 +4407,38 @@ class LiquidRepository(
     }
 
     private fun shouldRetryLightningInvoiceCreation(error: Exception): Boolean {
-        val message = error.message ?: return false
         return error is LwkException &&
             (
-                message.contains("Invoice failed: Timeout(") ||
+                boltzErrorDetails(error).contains("Invoice failed: Timeout(", ignoreCase = true) ||
                     isBoltzNextIndexCollision(error)
             )
     }
 
     private fun shouldRetryBoltzChainSwapCreation(error: Exception): Boolean {
-        val message = error.message ?: return false
         return error is LwkException &&
             (
-                message.contains("Timeout(", ignoreCase = true) ||
+                boltzErrorDetails(error).contains("Timeout(", ignoreCase = true) ||
+                    isBoltzNextIndexCollision(error)
+            )
+    }
+
+    private fun shouldRetryLightningPaymentPreparation(error: Exception): Boolean {
+        return error is LwkException &&
+            (
+                boltzErrorDetails(error).contains("Timeout(", ignoreCase = true) ||
                     isBoltzNextIndexCollision(error)
             )
     }
 
     private fun isBoltzNextIndexCollision(error: Exception): Boolean {
-        val message = error.message ?: return false
         return error is LwkException &&
-            message.contains("preimage hash exists already", ignoreCase = true)
+            boltzErrorDetails(error).contains("preimage hash exists already", ignoreCase = true)
     }
 
-    private fun clearBoltzSessionNextIndexCache() {
-        currentWalletId?.let { walletId ->
-            secureStorage.setBoltzSessionNextIndex(walletId, null)
-        }
+    private fun boltzErrorDetails(error: Throwable): String {
+        return generateSequence(error) { it.cause }
+            .mapNotNull { throwable -> throwable.message?.trim()?.takeIf { it.isNotEmpty() } }
+            .joinToString(separator = " | ")
     }
 
     private fun hasActiveBoltzResponses(): Boolean {
@@ -4135,6 +4475,22 @@ class LiquidRepository(
     private fun persistBoltzSessionNextIndex(walletId: String, session: BoltzSession) {
         val nextIndex = runCatching { session.nextIndexToUse().toInt() }.getOrNull()
         secureStorage.setBoltzSessionNextIndex(walletId, nextIndex)
+    }
+
+    /**
+     * Advances the live session's preimage/key derivation index after a
+     * "preimage hash exists already" collision, then persists the new index.
+     * This recovers without tearing down the session (which is expensive and
+     * was the previous, heavier collision handling).
+     */
+    private fun bumpBoltzNextIndex(walletId: String, session: BoltzSession) {
+        val bumped = session.nextIndexToUse() + 1u
+        session.setNextIndexToUse(bumped)
+        secureStorage.setBoltzSessionNextIndex(walletId, bumped.toInt())
+        logWarn(
+            "Boltz next-index collision detected, bumped derivation index to $bumped",
+            Exception("preimage hash collision"),
+        )
     }
 
     private fun deriveBoltzRescueMnemonic(signer: Signer): Mnemonic {
@@ -4306,61 +4662,84 @@ class LiquidRepository(
                 }
             }
             try {
-                createInvoiceWithSession(ensureBoltzSession(), attempt = 1)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (!shouldRetryLightningInvoiceCreation(e)) {
-                    logBoltzTrace(
-                        "failed",
-                        trace.copy(attempt = 1),
-                        level = BoltzTraceLevel.WARN,
-                        throwable = e,
-                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                        "invoiceAmountSats" to invoiceAmountSats,
-                    )
-                    throw e
+                var attempt = 1
+                var collisionRetries = 0
+                var result: InvoiceResponse? = null
+                while (result == null) {
+                    val session = ensureBoltzSession()
+                    result =
+                        try {
+                            createInvoiceWithSession(session, attempt = attempt)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            when {
+                                // Collision: bump the derivation index on the live session and
+                                // retry in place — no session teardown needed. Safe even with
+                                // other active swap responses since the session survives.
+                                isBoltzNextIndexCollision(e) &&
+                                    collisionRetries < BOLTZ_NEXT_INDEX_COLLISION_MAX_RETRIES -> {
+                                    collisionRetries++
+                                    logBoltzTrace(
+                                        "retrying",
+                                        trace.copy(attempt = attempt + 1),
+                                        level = BoltzTraceLevel.WARN,
+                                        throwable = e,
+                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                        "invoiceAmountSats" to invoiceAmountSats,
+                                        "reason" to "next_index_collision",
+                                        "collisionRetries" to collisionRetries,
+                                    )
+                                    bumpBoltzNextIndex(walletId, session)
+                                    attempt++
+                                    null
+                                }
+                                // Timeout: the underlying connection may be dead — rebuild the
+                                // session once, unless other swaps are actively using it.
+                                shouldRetryLightningInvoiceCreation(e) &&
+                                    !isBoltzNextIndexCollision(e) &&
+                                    attempt == 1 -> {
+                                    logBoltzTrace(
+                                        "retrying",
+                                        trace.copy(attempt = 2),
+                                        level = BoltzTraceLevel.WARN,
+                                        throwable = e,
+                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                        "invoiceAmountSats" to invoiceAmountSats,
+                                        "reason" to "timeout",
+                                    )
+                                    if (hasActiveBoltzResponses()) {
+                                        logBoltzTrace(
+                                            "retry_skipped",
+                                            trace.copy(attempt = 2),
+                                            level = BoltzTraceLevel.WARN,
+                                            throwable = e,
+                                            "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                            "invoiceAmountSats" to invoiceAmountSats,
+                                            "reason" to "timeout.active_responses",
+                                        )
+                                        throw e
+                                    }
+                                    logWarn("Boltz invoice creation timed out, retrying with fresh session", e)
+                                    destroyBoltzSession()
+                                    attempt++
+                                    null
+                                }
+                                else -> {
+                                    logBoltzTrace(
+                                        "failed",
+                                        trace.copy(attempt = attempt),
+                                        level = BoltzTraceLevel.WARN,
+                                        throwable = e,
+                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                        "invoiceAmountSats" to invoiceAmountSats,
+                                    )
+                                    throw e
+                                }
+                            }
+                        }
                 }
-                val retryReason =
-                    if (isBoltzNextIndexCollision(e)) {
-                        "next_index_collision"
-                    } else {
-                        "timeout"
-                    }
-                logBoltzTrace(
-                    "retrying",
-                    trace.copy(attempt = 2),
-                    level = BoltzTraceLevel.WARN,
-                    throwable = e,
-                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                    "invoiceAmountSats" to invoiceAmountSats,
-                    "reason" to retryReason,
-                )
-                if (isBoltzNextIndexCollision(e)) {
-                    clearBoltzSessionNextIndexCache()
-                }
-                if (hasActiveBoltzResponses()) {
-                    logBoltzTrace(
-                        "retry_skipped",
-                        trace.copy(attempt = 2),
-                        level = BoltzTraceLevel.WARN,
-                        throwable = e,
-                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                        "invoiceAmountSats" to invoiceAmountSats,
-                        "reason" to "$retryReason.active_responses",
-                    )
-                    throw e
-                }
-                logWarn(
-                    if (isBoltzNextIndexCollision(e)) {
-                        "Boltz invoice creation hit a stale next-index collision, retrying with uncached session state"
-                    } else {
-                        "Boltz invoice creation timed out, retrying with fresh session"
-                    },
-                    e,
-                )
-                destroyBoltzSession(persistNextIndex = !isBoltzNextIndexCollision(e))
-                createInvoiceWithSession(ensureBoltzSession(), attempt = 2)
+                result
             } finally {
                 logTiming("createBoltzLightningInvoiceResponse", startedAt)
             }
@@ -4609,9 +4988,82 @@ class LiquidRepository(
             )
             return@withContext withBoltzOperationLock(operation = "prepareLightningPaymentExecutionPlan") {
                 val walletId = currentWalletId ?: throw Exception("Wallet not loaded")
-                val boltzSession = ensureBoltzSession()
-                val response = boltzSession.preparePay(payment, Address(refundAddress), null)
-                persistBoltzSessionNextIndex(walletId, boltzSession)
+                var attempt = 1
+                var collisionRetries = 0
+                var preparedResponse: PreparePayResponse? = null
+                while (preparedResponse == null) {
+                    val boltzSession = ensureBoltzSession()
+                    preparedResponse =
+                        try {
+                            boltzSession.preparePay(payment, Address(refundAddress), null).also {
+                                persistBoltzSessionNextIndex(walletId, boltzSession)
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            if (
+                                isBoltzNextIndexCollision(e) &&
+                                collisionRetries < BOLTZ_NEXT_INDEX_COLLISION_MAX_RETRIES
+                            ) {
+                                collisionRetries++
+                                logBoltzTrace(
+                                    "retrying",
+                                    trace.copy(
+                                        backend = LightningPaymentBackend.LWK_PREPARE_PAY.name,
+                                        source = "lwk",
+                                        attempt = attempt + 1,
+                                    ),
+                                    level = BoltzTraceLevel.WARN,
+                                    throwable = e,
+                                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                    "reason" to "next_index_collision",
+                                    "collisionRetries" to collisionRetries,
+                                )
+                                bumpBoltzNextIndex(walletId, boltzSession)
+                                attempt++
+                                null
+                            } else if (
+                                shouldRetryLightningPaymentPreparation(e) &&
+                                !isBoltzNextIndexCollision(e) &&
+                                attempt == 1
+                            ) {
+                                logBoltzTrace(
+                                    "retrying",
+                                    trace.copy(
+                                        backend = LightningPaymentBackend.LWK_PREPARE_PAY.name,
+                                        source = "lwk",
+                                        attempt = 2,
+                                    ),
+                                    level = BoltzTraceLevel.WARN,
+                                    throwable = e,
+                                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                    "reason" to "timeout",
+                                )
+                                if (hasActiveBoltzResponses()) {
+                                    logBoltzTrace(
+                                        "retry_skipped",
+                                        trace.copy(
+                                            backend = LightningPaymentBackend.LWK_PREPARE_PAY.name,
+                                            source = "lwk",
+                                            attempt = 2,
+                                        ),
+                                        level = BoltzTraceLevel.WARN,
+                                        throwable = e,
+                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                        "reason" to "timeout.active_responses",
+                                    )
+                                    throw e
+                                }
+                                logWarn("Boltz Lightning payment preparation timed out, retrying with fresh session", e)
+                                destroyBoltzSession()
+                                attempt++
+                                null
+                            } else {
+                                throw e
+                            }
+                        }
+                }
+                val response = preparedResponse ?: throw Exception("Boltz Lightning payment preparation did not return a response")
                 val swapId = response.swapId()
                 val snapshot = response.serialize()
                 val quotedLockupAmountSats = response.uriAmount().toLong()
@@ -5156,6 +5608,21 @@ class LiquidRepository(
             logTiming("resolveBoltzLightningPaymentInput", startedAt)
             return lightningInput
         }
+        // Prefer handing the raw offer to LWK preparePay so Boltz can return Magic Routing
+        // Hints (direct Liquid) for destinations like aqua.net / breez.fun. REST bolt12/fetch
+        // is only required when the active provider cannot execute native BOLT12 offers.
+        if (boltzProvider.capabilities.supportsNativeBolt12Offers) {
+            cacheLightningPaymentResolution(paymentInput, requestedAmountSats, lightningInput)
+            logBoltzTrace(
+                "resolved_native_bolt12_offer",
+                trace.copy(source = if (bip353Address != null) "bip353" else "offer"),
+                "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                "amountSats" to lightningInput.requestedAmountSats,
+                "input" to summarizeValue(lightningInput.paymentInput),
+            )
+            logTiming("resolveBoltzLightningPaymentInput[native_offer]", startedAt)
+            return lightningInput
+        }
         ensureBoltzTorReadyIfNeeded()
         logBoltzTrace(
             "fetch_bolt12_start",
@@ -5201,6 +5668,30 @@ class LiquidRepository(
                     "source=${if (bip353Address != null) "BIP353" else "offer"} amount=${lightningInput.requestedAmountSats}",
                 e,
             )
+            // Last resort for providers that cannot run native offers: LUD-16 LNURL-pay
+            // for lightning-address-shaped inputs.
+            val lightningAddress =
+                bip353Address?.takeIf { isLightningAddress(it) }
+                    ?: paymentInput.takeIf { isLightningAddress(it) }
+            if (lightningAddress != null) {
+                logBoltzTrace(
+                    "bolt12_failed_fallback_lnurl",
+                    trace.copy(source = "lnurl"),
+                    level = BoltzTraceLevel.WARN,
+                    throwable = e,
+                    "address" to summarizeValue(lightningAddress),
+                    "bolt12Error" to (e.message ?: "unknown"),
+                )
+                val lnurlResolved =
+                    resolveLightningAddressInput(
+                        address = lightningAddress,
+                        requestedAmountSats = requestedAmountSats,
+                        trace = trace,
+                    )
+                cacheLightningPaymentResolution(paymentInput, requestedAmountSats, lnurlResolved)
+                logTiming("resolveBoltzLightningPaymentInput[lnurl_after_bolt12]", startedAt)
+                return lnurlResolved
+            }
             throw e
         }
     }
@@ -5753,9 +6244,28 @@ class LiquidRepository(
     ): BoltzChainSwapDraft = withContext(Dispatchers.IO) {
         ensureBoltzEnabled()
         val existingDraft = getBoltzChainSwapDraftByRequestKey(requestKey)
+        val reusableDraft =
+            existingDraft?.takeIf { candidate ->
+                boltzChainWorkflow.canReuseDraft(candidate) &&
+                    candidate.direction == direction &&
+                    candidate.sendAmount == amountSats &&
+                    candidate.orderAmountSats == amountSats &&
+                    candidate.usesMaxAmount == usesMaxAmount &&
+                    candidate.selectedFundingOutpoints == selectedFundingOutpoints &&
+                    candidate.bitcoinAddress == bitcoinAddress &&
+                    candidate.liquidAddress == liquidReceiveAddressOverride &&
+                    kotlin.math.abs(candidate.fundingLiquidFeeRate - fundingLiquidFeeRate) < 0.000_001
+            }
+        if (reusableDraft != null) {
+            logDebug(
+                "createBoltzChainSwapDraft reusing requestKey=$requestKey swapId=${reusableDraft.swapId} " +
+                    "state=${reusableDraft.state}",
+            )
+            return@withContext reusableDraft.copy(estimatedTerms = estimatedTerms)
+        }
         existingDraft?.let {
             logDebug(
-                "createBoltzChainSwapDraft discarding stale runtime draft requestKey=$requestKey " +
+                "createBoltzChainSwapDraft discarding non-reusable draft requestKey=$requestKey " +
                     "swapId=${it.swapId} state=${it.state}",
             )
             deleteBoltzChainSwapDraft(it.draftId)
@@ -5767,29 +6277,7 @@ class LiquidRepository(
                 "existingSwapId=${existingDraft?.swapId}",
         )
         val creatingDraft =
-            existingDraft?.copy(
-                sendAmount = amountSats,
-                orderAmountSats = amountSats,
-                maxOrderAmountVerified = false,
-                usesMaxAmount = usesMaxAmount,
-                selectedFundingOutpoints = selectedFundingOutpoints,
-                estimatedTerms = estimatedTerms,
-                fundingLiquidFeeRate = fundingLiquidFeeRate,
-                bitcoinAddress = bitcoinAddress,
-                liquidAddress = liquidReceiveAddressOverride,
-                swapId = null,
-                depositAddress = null,
-                receiveAddress = null,
-                refundAddress = null,
-                state = BoltzChainSwapDraftState.CREATING,
-                fundingPreview = null,
-                fundingTxid = null,
-                settlementTxid = null,
-                reviewExpiresAt = 0L,
-                snapshot = null,
-                updatedAt = System.currentTimeMillis(),
-                lastError = null,
-            ) ?: BoltzChainSwapDraft(
+            BoltzChainSwapDraft(
                 draftId = requestKey,
                 requestKey = requestKey,
                 direction = direction,
@@ -5804,6 +6292,9 @@ class LiquidRepository(
             )
 
         try {
+            // Warm session before order create so cold BIP85/session build is not
+            // paid under the createBoltzChainSwapOrder operation lock.
+            runCatching { ensureBoltzSession() }
             val result =
                 boltzChainWorkflow.createOrRecoverDraft(
                 existingDraft = null,
@@ -5901,23 +6392,10 @@ class LiquidRepository(
                     viaTor = secureStorage.getBoltzApiSource() == SecureStorage.BOLTZ_API_TOR,
                     source = "lwk",
                 )
-            val hadWarmSession =
-                boltzSessionMutex.withLock {
-                    lwkBoltzSession != null
-                }
-            if (direction == SwapDirection.LBTC_TO_BTC && hadWarmSession) {
-                logBoltzTrace(
-                    "reset_before_create",
-                    BoltzTraceContext(
-                        operation = "createBoltzChainSwapOrder",
-                        viaTor = secureStorage.getBoltzApiSource() == SecureStorage.BOLTZ_API_TOR,
-                        source = "lwk",
-                    ),
-                    "direction" to direction.name,
-                    "reason" to "warm_session",
-                )
-                resetBoltzSessionStateLocked()
-            }
+            // Note: this path previously destroyed a warm session before every
+            // LBTC->BTC creation to dodge "preimage hash exists already" errors.
+            // Collisions are now handled in-place via bumpBoltzNextIndex, so the
+            // warm session is reused for all directions.
             val walletId = currentWalletId ?: throw Exception("Wallet not loaded")
             if (getBitcoinElectrumUrl() == null) {
                 throw Exception("Chain swap requires a configured Bitcoin Electrum server. Set one in Settings before swapping.")
@@ -5956,46 +6434,100 @@ class LiquidRepository(
             }
 
             val sessionStartedAt = System.currentTimeMillis()
-            val session = ensureBoltzSession()
-            val sessionElapsedMs = System.currentTimeMillis() - sessionStartedAt
-            val (response, receiveAddress, refundAddress) =
-                try {
-                    createOrderWithSession(session, sessionElapsedMs, attempt = 1)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    if (shouldRetryBoltzChainSwapCreation(e)) {
-                        val resetReason =
-                            if (isBoltzNextIndexCollision(e)) {
-                                "next_index_collision"
-                            } else {
-                                "timeout"
+            var attempt = 1
+            var collisionRetries = 0
+            var order: Triple<LockupResponse, String, String>? = null
+            while (order == null) {
+                val session = ensureBoltzSession()
+                val sessionElapsedMs = System.currentTimeMillis() - sessionStartedAt
+                order =
+                    try {
+                        createOrderWithSession(session, sessionElapsedMs, attempt = attempt)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        when {
+                            // Collision: bump the derivation index on the live session and
+                            // retry in place — no session teardown needed.
+                            isBoltzNextIndexCollision(e) &&
+                                collisionRetries < BOLTZ_NEXT_INDEX_COLLISION_MAX_RETRIES -> {
+                                collisionRetries++
+                                logBoltzTrace(
+                                    "retrying",
+                                    trace.copy(attempt = attempt + 1),
+                                    level = BoltzTraceLevel.WARN,
+                                    throwable = e,
+                                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                    "direction" to direction.name,
+                                    "amountSats" to amountSats,
+                                    "reason" to "next_index_collision",
+                                    "collisionRetries" to collisionRetries,
+                                )
+                                bumpBoltzNextIndex(walletId, session)
+                                attempt++
+                                null
                             }
-                        logBoltzTrace(
-                            "reset_after_failure",
-                            trace.copy(attempt = 1),
-                            level = BoltzTraceLevel.WARN,
-                            throwable = e,
-                            "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                            "direction" to direction.name,
-                            "amountSats" to amountSats,
-                            "reason" to resetReason,
-                        )
-                        if (isBoltzNextIndexCollision(e)) {
-                            clearBoltzSessionNextIndexCache()
+                            // Timeout: rebuild the session once, matching Lightning invoice
+                            // / preparePay recovery, unless other Boltz responses are live.
+                            shouldRetryBoltzChainSwapCreation(e) &&
+                                !isBoltzNextIndexCollision(e) &&
+                                attempt == 1 -> {
+                                logBoltzTrace(
+                                    "retrying",
+                                    trace.copy(attempt = 2),
+                                    level = BoltzTraceLevel.WARN,
+                                    throwable = e,
+                                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                    "direction" to direction.name,
+                                    "amountSats" to amountSats,
+                                    "reason" to "timeout",
+                                )
+                                if (hasActiveBoltzResponses()) {
+                                    logBoltzTrace(
+                                        "retry_skipped",
+                                        trace.copy(attempt = 2),
+                                        level = BoltzTraceLevel.WARN,
+                                        throwable = e,
+                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                        "direction" to direction.name,
+                                        "amountSats" to amountSats,
+                                        "reason" to "timeout.active_responses",
+                                    )
+                                    destroyBoltzSession()
+                                    throw e
+                                }
+                                logWarn(
+                                    "Boltz chain swap creation timed out, retrying with fresh session",
+                                    e,
+                                )
+                                destroyBoltzSession()
+                                attempt++
+                                null
+                            }
+                            else -> {
+                                if (shouldRetryBoltzChainSwapCreation(e) && !isBoltzNextIndexCollision(e)) {
+                                    logBoltzTrace(
+                                        "reset_after_failure",
+                                        trace.copy(attempt = attempt),
+                                        level = BoltzTraceLevel.WARN,
+                                        throwable = e,
+                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                        "direction" to direction.name,
+                                        "amountSats" to amountSats,
+                                        "reason" to "timeout",
+                                    )
+                                    logWarn(
+                                        "Boltz chain swap creation timed out after retry; waiting for user retry on a fresh session",
+                                        e,
+                                    )
+                                    destroyBoltzSession()
+                                }
+                                throw e
+                            }
                         }
-                        logWarn(
-                            if (isBoltzNextIndexCollision(e)) {
-                                "Boltz chain swap creation hit a stale next-index collision; waiting for user retry on a fresh session"
-                            } else {
-                                "Boltz chain swap creation timed out; waiting for user retry on a fresh session"
-                            },
-                            e,
-                        )
-                        destroyBoltzSession(persistNextIndex = !isBoltzNextIndexCollision(e))
                     }
-                    throw e
-                }
+            }
+            val (response, receiveAddress, refundAddress) = order
 
             val swapId = response.swapId()
             logDebug(
@@ -6035,7 +6567,6 @@ class LiquidRepository(
         if (swapId.isNullOrBlank()) return@withContext
         logDebug("releasePreparedBoltzChainSwapRuntime swapId=$swapId reason=$reason")
         cleanupLockupResponse(swapId)
-        boltzSessionKeepAliveUntilMs = 0L
         destroyBoltzSessionIfIdle(reason)
     }
 
@@ -6669,6 +7200,7 @@ class LiquidRepository(
     fun close() {
         stopNotificationCollector()
         runCatching { boltzProvider.close() }
+        runCatching { stopBoltzTorRelay() }
         repositoryScope.cancel()
     }
 
