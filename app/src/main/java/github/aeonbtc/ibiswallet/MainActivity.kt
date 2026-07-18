@@ -91,6 +91,7 @@ class MainActivity : FragmentActivity() {
     private lateinit var walletViewModel: WalletViewModel
     private lateinit var liquidViewModel: LiquidViewModel
     private lateinit var sparkViewModel: SparkViewModel
+    private lateinit var lightningNodeViewModel: github.aeonbtc.ibiswallet.viewmodel.LightningNodeViewModel
     private var isUnlocked by mutableStateOf(false)
     private var appUnlockCounter by mutableIntStateOf(0)
     private var cloakBypassed by mutableStateOf(false)
@@ -500,6 +501,8 @@ class MainActivity : FragmentActivity() {
             walletViewModel = ViewModelProvider(this)[WalletViewModel::class.java]
             liquidViewModel = ViewModelProvider(this)[LiquidViewModel::class.java]
             sparkViewModel = ViewModelProvider(this)[SparkViewModel::class.java]
+            lightningNodeViewModel =
+                ViewModelProvider(this)[github.aeonbtc.ibiswallet.viewmodel.LightningNodeViewModel::class.java]
             nfcAdapter = NfcAdapter.getDefaultAdapter(this)
 
             // Apply pending icon swap before any UI
@@ -537,6 +540,7 @@ class MainActivity : FragmentActivity() {
         setContent {
             val appLocale by walletViewModel.appLocale.collectAsStateWithLifecycle()
             val themeMode by walletViewModel.themeModeState.collectAsStateWithLifecycle()
+            val typeface by walletViewModel.typefaceState.collectAsStateWithLifecycle()
             val localizedContext = remember(appLocale) {
                 AppLocale.createLocalizedContext(this, appLocale)
             }
@@ -548,7 +552,7 @@ class MainActivity : FragmentActivity() {
                 LocalConfiguration provides localizedContext.resources.configuration,
                 LocalResources provides localizedContext.resources,
             ) {
-                IbisWalletTheme(themeMode = themeMode) {
+                IbisWalletTheme(themeMode = themeMode, typeface = typeface) {
                     Surface(
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background,
@@ -625,6 +629,7 @@ class MainActivity : FragmentActivity() {
                                             lifecycleScope.launch {
                                                 liquidViewModel.prepareForFullWipe()
                                                 sparkViewModel.prepareForFullWipe()
+                                                lightningNodeViewModel.prepareForFullWipe()
                                                 walletViewModel.wipeAllData { result ->
                                                     // Always kill the process even on partial wipe — leaving
                                                     // a half-functional wallet reachable on the unlock screen
@@ -696,7 +701,6 @@ class MainActivity : FragmentActivity() {
                     val elapsedTime = System.currentTimeMillis() - lastBackgroundTime
                     if (elapsedTime >= lockTiming.timeoutMs) {
                         lockApp()
-                        if (isCloakActive) cloakBypassed = false
                     }
                 }
             }
@@ -725,7 +729,7 @@ class MainActivity : FragmentActivity() {
         super.onStop()
 
         val securityMethod = secureStorage.getSecurityMethod()
-        if (securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive) {
+        if (securityMethod == SecureStorage.SecurityMethod.NONE) {
             return
         }
         if (System.currentTimeMillis() <= skipBackgroundLockUntilMs) {
@@ -733,12 +737,6 @@ class MainActivity : FragmentActivity() {
             return
         }
         skipBackgroundLockUntilMs = 0L
-        // Cloak mode with no PIN: re-engage calculator immediately on background
-        if (securityMethod == SecureStorage.SecurityMethod.NONE && isCloakActive) {
-            lockApp()
-            cloakBypassed = false
-            return
-        }
 
         wasInBackground = true
         val lockTiming = secureStorage.getLockTiming()
@@ -748,9 +746,8 @@ class MainActivity : FragmentActivity() {
                 // Never lock when going to background
             }
             SecureStorage.LockTiming.WHEN_MINIMIZED -> {
-                // Lock immediately and re-engage cloak
+                // Lock immediately according to the user's security timing.
                 lockApp()
-                if (isCloakActive) cloakBypassed = false
             }
             else -> {
                 // Record the time we went to background
@@ -776,6 +773,7 @@ class MainActivity : FragmentActivity() {
         walletViewModel.onAppLocked()
         liquidViewModel.unloadLiquidWallet()
         sparkViewModel.unloadSparkWallet()
+        lightningNodeViewModel.unloadLightningWallet()
     }
 
     override fun onNewIntent(intent: Intent) {

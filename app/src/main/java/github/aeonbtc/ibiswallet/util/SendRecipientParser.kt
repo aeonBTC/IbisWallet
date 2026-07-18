@@ -1,7 +1,9 @@
 package github.aeonbtc.ibiswallet.util
 
-import github.aeonbtc.ibiswallet.data.model.WalletLayer
+import fr.acinq.lightning.wire.OfferTypes
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
+import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionType
+import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import java.math.BigDecimal
 import java.net.URLDecoder
@@ -93,7 +95,18 @@ fun normalizeSparkAddressLabelRef(addressOrRequest: String): String {
 }
 
 internal fun parseSendRecipient(input: String): ParsedSendRecipient {
-    val trimmed = input.trim()
+    return try {
+        parseSendRecipientInternal(input)
+    } catch (e: Exception) {
+        ParsedSendRecipient.Unknown(
+            rawInput = input.trim(),
+            errorMessage = e.message?.takeIf { it.isNotBlank() } ?: "Invalid payment URI",
+        )
+    }
+}
+
+private fun parseSendRecipientInternal(input: String): ParsedSendRecipient {
+    val trimmed = normalizePaymentUriInput(input.trim())
     if (trimmed.isEmpty()) {
         return ParsedSendRecipient.Empty()
     }
@@ -127,6 +140,7 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
     val payment = parsePayment(trimmed)
 
     if (payment == null) {
+        parseOpaqueBitcoinRecipient(trimmed, queryParams)?.let { return it }
         parseOpaqueLiquidRecipient(trimmed, queryParams)?.let { return it }
         parseSparkRecipient(trimmed, queryParams)?.let { return it }
         if (bip353Address != null) {
@@ -183,7 +197,9 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
                     rawInput = trimmed,
                     paymentInput = offer,
                     kind = LightningKind.BOLT12,
-                    amountSats = bip21.amount()?.toLong(),
+                    amountSats =
+                        bip21.amount()?.toLong()
+                            ?: extractBolt12OfferAmountSats(offer),
                     fallbackBitcoin = fallbackBitcoin,
                 )
             } ?: bip21.lightning()?.let { invoice ->
@@ -231,6 +247,7 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
                 rawInput = trimmed,
                 paymentInput = offer,
                 kind = LightningKind.BOLT12,
+                amountSats = extractBolt12OfferAmountSats(offer),
             )
         }
         PaymentKind.LN_URL -> {
@@ -394,6 +411,7 @@ internal fun resolveLayer2SendDraft(
 internal fun layer2RecipientValidationError(
     parsed: ParsedSendRecipient,
     provider: Layer2Provider? = null,
+    connectionType: LightningNodeConnectionType? = null,
 ): String? {
     return when (parsed) {
         is ParsedSendRecipient.Empty -> null
@@ -417,8 +435,17 @@ internal fun layer2RecipientValidationError(
             }
         is ParsedSendRecipient.Lightning ->
             when {
-                provider != Layer2Provider.SPARK && parsed.kind == LightningKind.BOLT11 && parsed.amountSats == null ->
+                provider != Layer2Provider.SPARK &&
+                    parsed.kind == LightningKind.BOLT11 &&
+                    parsed.amountSats == null ->
                     "Amountless Lightning invoices are not supported"
+                provider == Layer2Provider.SPARK && parsed.kind == LightningKind.BOLT12 ->
+                    "BOLT12 offers are not supported on Spark send"
+                provider == Layer2Provider.LIGHTNING &&
+                    parsed.kind == LightningKind.BOLT12 &&
+                    !isLightningAddressPayment(parsed) &&
+                    connectionType != LightningNodeConnectionType.CLN_REST ->
+                    "BOLT12 offers require a CLN connection"
                 else -> null
             }
         is ParsedSendRecipient.UnsupportedLightning -> parsed.errorMessage
@@ -426,10 +453,46 @@ internal fun layer2RecipientValidationError(
             when (provider) {
                 Layer2Provider.LIQUID -> "Enter a Liquid, BOLT 11/12, or LN Address"
                 Layer2Provider.SPARK -> "Enter a Spark, BOLT 11, LNURL, or Bitcoin address"
+                Layer2Provider.LIGHTNING ->
+                    lightningNodeRecipientHint(connectionType)
                 else -> "Enter a Liquid, Spark, BOLT 11/12, or LN Address"
             }
     }
 }
+
+/** True when a BOLT12-classified input is actually a LUD-16 / BIP353-style `user@domain`. */
+internal fun isLightningAddressPayment(parsed: ParsedSendRecipient.Lightning): Boolean {
+    val input = parsed.paymentInput.trim()
+    if (input.contains("://") || input.startsWith("lno", ignoreCase = true)) return false
+    val parts = input.split("@", limit = 3)
+    return parts.size == 2 && parts[0].isNotBlank() && parts[1].contains('.')
+}
+
+internal fun lightningNodeRecipientHint(
+    connectionType: LightningNodeConnectionType?,
+): String =
+    when (connectionType) {
+        LightningNodeConnectionType.CLN_REST ->
+            "Enter a BOLT11, BOLT12, LNURL, or LN Address"
+        LightningNodeConnectionType.LND_REST,
+        LightningNodeConnectionType.NWC,
+        LightningNodeConnectionType.NONE,
+        null,
+        -> "Enter a BOLT11, LNURL, or LN Address"
+    }
+
+internal fun lightningNodeRecipientPlaceholder(
+    connectionType: LightningNodeConnectionType?,
+): String =
+    when (connectionType) {
+        LightningNodeConnectionType.CLN_REST ->
+            "BOLT11 / BOLT12 / LN Address"
+        LightningNodeConnectionType.LND_REST,
+        LightningNodeConnectionType.NWC,
+        LightningNodeConnectionType.NONE,
+        null,
+        -> "BOLT11 / LN Address"
+    }
 
 private fun ParsedSendRecipient.Bitcoin.toLayer1Draft(useSats: Boolean): SendScreenDraft {
     return SendScreenDraft(
@@ -576,6 +639,35 @@ private fun normalizedBip353Address(input: String): String? {
     }
 }
 
+private fun parseOpaqueBitcoinRecipient(
+    input: String,
+    queryParams: Map<String, String>,
+): ParsedSendRecipient.Bitcoin? {
+    if (!input.startsWith("bitcoin:", ignoreCase = true)) {
+        return null
+    }
+
+    val address = input.substringAfter(':').substringBefore('?').trim()
+    if (!isRecognizedBitcoinAddress(address)) {
+        return null
+    }
+
+    return ParsedSendRecipient.Bitcoin(
+        rawInput = input,
+        address = address,
+        amountSats = queryParams["amount"]?.let(::parseBitcoinAmountToSats),
+        label = queryParams["label"]?.takeIf { it.isNotBlank() },
+        message = queryParams["message"]?.takeIf { it.isNotBlank() },
+    )
+}
+
+private fun isRecognizedBitcoinAddress(address: String): Boolean {
+    if (isValidBitcoinAddress(address)) {
+        return true
+    }
+    return parsePayment(address)?.kind() == PaymentKind.BITCOIN_ADDRESS
+}
+
 private fun parseUriQueryParameters(input: String): Map<String, String> {
     val queryIndex = input.indexOf('?')
     if (queryIndex == -1 || queryIndex == input.lastIndex) {
@@ -660,4 +752,24 @@ private fun parseBitcoinAmountToSats(amountText: String): Long? =
 private fun msatsToRoundedSats(amountMsats: ULong): Long {
     val value = amountMsats.toLong()
     return (value + 999L) / 1000L
+}
+
+/** Fixed msat amount encoded in a BOLT12 offer (`lno…`), decoded via lightning-kmp. */
+private fun extractBolt12OfferAmountSats(offer: String): Long? =
+    runCatching {
+        val cleaned =
+            offer
+                .trim()
+                .removePrefix("lightning:")
+                .removePrefix("LIGHTNING:")
+                .trim()
+        OfferTypes.Offer.decode(cleaned).get().amount?.let { msats ->
+            msatsToRoundedSats(msats.toLong().toULong())
+        }
+    }.getOrNull()
+
+private fun normalizePaymentUriInput(input: String): String {
+    val schemes = listOf("bitcoin", "lightning", "liquidnetwork", "liquid")
+    val scheme = schemes.firstOrNull { input.startsWith("$it://", ignoreCase = true) } ?: return input
+    return input.replaceRange(scheme.length + 1, scheme.length + 3, "")
 }

@@ -25,6 +25,68 @@ data class SparkBackupMetadata(
 }
 
 object BackupJsonAdapters {
+    object Server {
+        fun settingsFromBackup(backupJson: JSONObject): JSONObject {
+            val serverSettings = backupJson.optJSONObject("serverSettings")?.let { JSONObject(it.toString()) } ?: JSONObject()
+            fun putIfMissing(name: String, value: Any?) {
+                if (!serverSettings.has(name) && value != null) serverSettings.put(name, value)
+            }
+
+            putIfMissing("electrumServers", backupJson.optJSONArray("electrumServers"))
+            putIfMissing("liquidServers", backupJson.optJSONArray("liquidServers"))
+
+            val appSettings = backupJson.optJSONObject("appSettings") ?: return serverSettings
+            if (!serverSettings.has("blockExplorer") &&
+                (appSettings.has("mempoolServer") || appSettings.has("mempoolCustomUrl"))
+            ) {
+                serverSettings.put(
+                    "blockExplorer",
+                    JSONObject().apply {
+                        appSettings.optString("mempoolServer", "").takeIf { it.isNotBlank() }?.let {
+                            put("source", it)
+                        }
+                        appSettings.optString("mempoolCustomUrl", "").takeIf { it.isNotBlank() }?.let {
+                            put("customUrl", it)
+                        }
+                    },
+                )
+            }
+            if (!serverSettings.has("feeSource") &&
+                (appSettings.has("feeSource") || appSettings.has("feeSourceCustomUrl"))
+            ) {
+                serverSettings.put(
+                    "feeSource",
+                    JSONObject().apply {
+                        appSettings.optString("feeSource", "").takeIf { it.isNotBlank() }?.let { put("source", it) }
+                        appSettings.optString("feeSourceCustomUrl", "").takeIf { it.isNotBlank() }?.let {
+                            put("customUrl", it)
+                        }
+                    },
+                )
+            }
+
+            listOf(
+                "liquidTorEnabled",
+                "liquidAutoSwitch",
+                "liquidServerSelectedByUser",
+                "autoSwitchServer",
+                "priceSource",
+                "priceCurrency",
+                "historicalTxFiatEnabled",
+                "liquidExplorer",
+                "liquidExplorerCustomUrl",
+                "boltzApiSource",
+                "sideSwapApiSource",
+                "preferredSwapService",
+            ).forEach { name ->
+                if (!serverSettings.has(name) && appSettings.has(name)) {
+                    serverSettings.put(name, appSettings.get(name))
+                }
+            }
+            return serverSettings
+        }
+    }
+
     object Bitcoin {
         fun metadataToJson(
             transactionSources: Map<String, String> = emptyMap(),
@@ -197,6 +259,7 @@ object BackupJsonAdapters {
                         put("resolvedPaymentInput", details.resolvedPaymentInput)
                         put("invoice", details.invoice)
                         put("status", details.status)
+                        put("failureReason", details.failureReason)
                         put("timeoutBlockHeight", details.timeoutBlockHeight)
                         put("refundPublicKey", details.refundPublicKey)
                         put("claimPublicKey", details.claimPublicKey)
@@ -237,6 +300,7 @@ object BackupJsonAdapters {
                 resolvedPaymentInput = detailsJson.optString("resolvedPaymentInput").takeIf { it.isNotBlank() },
                 invoice = detailsJson.optString("invoice").takeIf { it.isNotBlank() },
                 status = detailsJson.optString("status").takeIf { it.isNotBlank() },
+                failureReason = detailsJson.optString("failureReason").takeIf { it.isNotBlank() },
                 timeoutBlockHeight =
                     detailsJson.optInt("timeoutBlockHeight").takeIf {
                         !detailsJson.isNull("timeoutBlockHeight")

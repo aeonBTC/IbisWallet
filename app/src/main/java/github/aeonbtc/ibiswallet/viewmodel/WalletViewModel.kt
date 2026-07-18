@@ -14,6 +14,8 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.DryRunResult
 import github.aeonbtc.ibiswallet.data.model.ElectrumConfig
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
+import github.aeonbtc.ibiswallet.data.model.KeychainType
+import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
 import github.aeonbtc.ibiswallet.data.model.PsbtDetails
 import github.aeonbtc.ibiswallet.data.model.PsbtSessionStatus
 import github.aeonbtc.ibiswallet.data.model.Recipient
@@ -25,6 +27,7 @@ import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.WalletAddress
 import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
 import github.aeonbtc.ibiswallet.data.model.WalletPolicyType
+import github.aeonbtc.ibiswallet.data.model.WalletKind
 import github.aeonbtc.ibiswallet.data.model.WalletResult
 import github.aeonbtc.ibiswallet.data.model.WalletState
 import github.aeonbtc.ibiswallet.localization.AppLocale
@@ -219,6 +222,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private val _themeModeState = MutableStateFlow(repository.getThemeMode())
     val themeModeState: StateFlow<String> = _themeModeState.asStateFlow()
 
+    private val _typefaceState = MutableStateFlow(repository.getTypeface())
+    val typefaceState: StateFlow<String> = _typefaceState.asStateFlow()
+
     // QR density for PSBT/PSET animated exports
     private val _psbtQrDensityState = MutableStateFlow(repository.getPsbtQrDensity())
     val psbtQrDensityState: StateFlow<SecureStorage.QrDensity> = _psbtQrDensityState.asStateFlow()
@@ -403,15 +409,23 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
 
-                if (!repository.isUserDisconnected()) {
+                if (isActiveLightningNodeWallet()) {
+                    // L2 Lightning Node wallets handle L1 via the node — no Electrum.
+                    disconnectBitcoinForLightningNodeWallet()
+                    _initialSyncComplete.value = true
+                } else if (
+                    !repository.isUserDisconnected() &&
+                    repository.hasUserSelectedElectrumServer()
+                ) {
                     repository.getElectrumConfig()?.let { config ->
                         connectToElectrum(config)
                     } ?: run {
                         _initialSyncComplete.value = true
                     }
                 } else {
-                    // No auto-connect — mark initial sync as complete so
-                    // persistent notified-txid tracking works for offline mode.
+                    // No auto-connect until the user has chosen an Electrum server
+                    // (or after explicit disconnect). Offline notified-txid tracking
+                    // still needs initial sync marked complete.
                     _initialSyncComplete.value = true
                 }
 
@@ -744,6 +758,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun reconnectOnForeground() {
         if (!isAppSessionUnlocked) return
         if (repository.isUserDisconnected()) return
+        if (!repository.hasUserSelectedElectrumServer()) return
         if (connectionJob?.isActive == true) return
         val config = repository.getElectrumConfig() ?: return
 
@@ -787,11 +802,24 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Refresh the servers state from storage
      */
     private fun refreshServersState() {
+        ensureElectrumServerSelectionMigrated()
         _serversState.value =
             ServersState(
                 servers = repository.getAllElectrumServers(),
                 activeServerId = repository.getActiveServerId(),
+                hasUserSelectedServer = repository.hasUserSelectedElectrumServer(),
             )
+    }
+
+    /**
+     * Existing installs that already have an active Electrum server should keep
+     * auto-connecting. Only installs with no selected server stay offline until connect.
+     */
+    private fun ensureElectrumServerSelectionMigrated() {
+        if (repository.hasUserSelectedElectrumServer()) return
+        if (repository.getActiveServerId() != null) {
+            repository.setUserSelectedElectrumServer(true)
+        }
     }
 
     /**
@@ -861,12 +889,55 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun createLightningNodeWallet(
+        name: String,
+        config: LightningNodeConfig,
+        navigateToWallet: Boolean = true,
+    ) {
+        viewModelScope.launch {
+            createLightningNodeWalletNow(name, config, navigateToWallet)
+        }
+    }
+
+    /**
+     * Create a standalone Lightning Node wallet. When [navigateToWallet] is false the form can
+     * stay open so the user can immediately add another node connection.
+     */
+    suspend fun createLightningNodeWalletNow(
+        name: String,
+        config: LightningNodeConfig,
+        navigateToWallet: Boolean = true,
+    ): WalletResult<String> {
+        _uiState.value = _uiState.value.copy(isLoading = true, error = null)
+        return when (val result = repository.createLightningNodeWallet(name, config)) {
+            is WalletResult.Success -> {
+                _uiState.value = _uiState.value.copy(isLoading = false)
+                if (navigateToWallet) {
+                    _events.emit(WalletEvent.WalletImported)
+                } else {
+                    _events.emit(WalletEvent.LightningNodeWalletCreated(result.data, name.trim()))
+                }
+                result
+            }
+            is WalletResult.Error -> {
+                _uiState.value = _uiState.value.copy(isLoading = false, error = result.message)
+                _events.emit(WalletEvent.Error(result.message))
+                result
+            }
+        }
+    }
+
     /**
      * Connect to an Electrum server
      * Automatically enables/disables Tor based on server type
      */
     fun connectToElectrum(config: ElectrumConfig) {
         if (!isAppSessionUnlocked) return
+        // Lightning Node wallets do not use Electrum for Layer 1.
+        if (isActiveLightningNodeWallet()) {
+            disconnectBitcoinForLightningNodeWallet()
+            return
+        }
         val serverRequiresTor = config.useTor || config.isOnionAddress()
         val previousJob = connectionJob
         val epoch = ++bitcoinConnectionEpoch
@@ -875,6 +946,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         stopHeartbeat()
         stopReconnectRetry()
         repository.setUserDisconnected(false)
+        repository.setUserSelectedElectrumServer(true)
         connectionJob =
             viewModelScope.launch {
                 val thisJob = currentCoroutineContext()[Job] ?: return@launch
@@ -1038,7 +1110,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 return@launch
             }
-            when (val result = repository.sync()) {
+            // A user-initiated refresh must bypass the status pre-check. Empty statuses from
+            // older cache snapshots may not include a just-funded receive address.
+            when (val result = repository.sync(force = true)) {
                 is WalletResult.Success -> {
                     refreshWalletLastFullSyncTime(repository.getActiveWalletId())
                     _events.emit(WalletEvent.SyncCompleted)
@@ -1206,6 +1280,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     private fun startReconnectRetry() {
         if (reconnectRetryJob?.isActive == true) return
+        if (repository.isUserDisconnected()) return
+        if (!repository.hasUserSelectedElectrumServer()) return
         reconnectRetryJob =
             viewModelScope.launch {
                 val config = repository.getElectrumConfig() ?: return@launch
@@ -1217,6 +1293,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
                     if (_uiState.value.isConnected) return@launch
                     if (repository.isUserDisconnected()) return@launch
+                    if (!repository.hasUserSelectedElectrumServer()) return@launch
 
                     attempt++
                     if (BuildConfig.DEBUG) {
@@ -1330,6 +1407,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             _events.emit(WalletEvent.Error("Wallet not found"))
                             return@launch
                         }
+                if (targetWallet.walletKind == WalletKind.LIGHTNING_NODE) {
+                    _initialSyncComplete.value = true
+                    return@launch
+                }
                 val shouldRestorePreviousWallet =
                     previousActiveWalletId != null && previousActiveWalletId != walletId
                 var switchedWalletForSync = false
@@ -1481,31 +1562,47 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Update the in-memory address book with a changed label without re-deriving every
-     * revealed address / re-scanning wallet outputs. Rebuilding the whole triple is expensive
-     * on large wallets (5–7s) and the only thing that changed is a single label.
+     * revealed address / re-scanning wallet outputs. Labels do not move addresses to Used;
+     * only on-chain activity does. Labeled unused addresses stay in Receive/Change.
      */
     private fun patchAddressLabelInPlace(address: String, label: String?) {
         val (receive, change, used) = _allAddresses.value
+        var matched: WalletAddress? = null
 
-        fun List<WalletAddress>.patched(): List<WalletAddress> {
+        fun List<WalletAddress>.withoutAddress(): List<WalletAddress> {
             var changed = false
             val result =
-                map { entry ->
-                    if (entry.address == address && entry.label != label) {
+                filter { entry ->
+                    if (entry.address == address) {
                         changed = true
-                        entry.copy(label = label)
+                        matched = entry.copy(
+                            label = label,
+                            isUsed = entry.transactionCount > 0,
+                        )
+                        false
                     } else {
-                        entry
+                        true
                     }
                 }
             return if (changed) result else this
         }
 
-        val patched =
-            Triple(receive.patched(), change.patched(), used.patched())
-        if (patched !== _allAddresses.value) {
-            _allAddresses.value = patched
+        val patchedReceive = receive.withoutAddress().toMutableList()
+        val patchedChange = change.withoutAddress().toMutableList()
+        val patchedUsed = used.withoutAddress().toMutableList()
+        val patchedAddress = matched ?: return
+
+        when {
+            patchedAddress.isUsed -> patchedUsed.add(patchedAddress)
+            patchedAddress.keychain == KeychainType.EXTERNAL -> patchedReceive.add(patchedAddress)
+            else -> patchedChange.add(patchedAddress)
         }
+
+        _allAddresses.value = Triple(
+            patchedReceive.sortedBy { it.index },
+            patchedChange.sortedBy { it.index },
+            patchedUsed.sortedWith(compareBy<WalletAddress> { it.keychain }.thenBy { it.index }),
+        )
     }
 
     /**
@@ -1536,6 +1633,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun deleteTransactionLabel(txid: String) {
         repository.deleteTransactionLabel(txid)
         refreshLabelSnapshots()
+    }
+
+    fun deleteTransactionFromHistory(txid: String) {
+        repository.deleteTransactionFromHistory(txid)
+    }
+
+    fun deleteAllTransactionsFromHistory() {
+        repository.deleteAllTransactionsFromHistory()
     }
 
     suspend fun searchTransactions(
@@ -2561,7 +2666,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     refreshCurrentWalletSnapshots()
                     refreshWalletLastFullSyncTimes()
                     _events.emit(WalletEvent.WalletSwitched)
-                    if (_uiState.value.isConnected) {
+                    val isLightningNode =
+                        repository.getWalletMetadata(walletId)?.walletKind == WalletKind.LIGHTNING_NODE
+                    if (isLightningNode) {
+                        disconnectBitcoinForLightningNodeWallet()
+                        _initialSyncComplete.value = true
+                    } else if (_uiState.value.isConnected) {
                         when (val syncResult = repository.sync()) {
                             is WalletResult.Success -> {
                                 refreshWalletLastFullSyncTime(walletId)
@@ -2580,6 +2690,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     } else {
                         _initialSyncComplete.value = true
+                        // Returning from a Lightning Node wallet: restore Electrum if needed.
+                        if (
+                            !repository.isUserDisconnected() &&
+                            repository.hasUserSelectedElectrumServer()
+                        ) {
+                            repository.getElectrumConfig()?.let { connectToElectrum(it) }
+                        }
                     }
                 }
                 is WalletResult.Error -> {
@@ -2642,6 +2759,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun connectToServer(serverId: String) {
         if (!isAppSessionUnlocked) return
+        // Lightning Node wallets do not use Electrum for Layer 1.
+        if (isActiveLightningNodeWallet()) {
+            disconnectBitcoinForLightningNodeWallet()
+            return
+        }
         val servers = repository.getAllElectrumServers()
         val serverConfig = servers.find { it.id == serverId }
         val serverRequiresTor = serverConfig?.let { it.useTor || it.isOnionAddress() } == true
@@ -2652,8 +2774,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         stopHeartbeat()
         stopReconnectRetry()
         repository.setUserDisconnected(false)
+        repository.setUserSelectedElectrumServer(true)
         // Update active server immediately so the UI shows the new server while connecting
-        _serversState.value = _serversState.value.copy(activeServerId = serverId)
+        _serversState.value =
+            _serversState.value.copy(
+                activeServerId = serverId,
+                hasUserSelectedServer = true,
+            )
         connectionJob =
             viewModelScope.launch {
                 val thisJob = currentCoroutineContext()[Job] ?: return@launch
@@ -2804,7 +2931,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 val labelWalletIdSet = labelWalletIds.toSet()
                 for (walletId in walletIds) {
                     val metadata = repository.getWalletMetadata(walletId) ?: continue
-                    val keyMaterial = repository.getKeyMaterial(walletId) ?: continue
+                    val keyMaterial = repository.getKeyMaterial(walletId)
+                    if (metadata.walletKind != WalletKind.LIGHTNING_NODE && keyMaterial == null) continue
 
                     val walletEntry = JSONObject().apply {
                         put("wallet", JSONObject().apply {
@@ -2817,6 +2945,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             put("createdAt", metadata.createdAt)
                             put("seedFormat", metadata.seedFormat.name)
                             put("policyType", metadata.policyType.name)
+                            put("walletKind", metadata.walletKind.name)
                             if (metadata.gapLimit != StoredWallet.DEFAULT_GAP_LIMIT) {
                                 put("gapLimit", metadata.gapLimit)
                             }
@@ -2827,18 +2956,26 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             metadata.localCosignerFingerprint?.let { put("localCosignerFingerprint", it) }
                         })
                         put("keyMaterial", JSONObject().apply {
-                            keyMaterial.mnemonic?.let { put("mnemonic", it) }
-                            keyMaterial.passphrase?.let { put("passphrase", it) }
-                            keyMaterial.extendedPublicKey?.let { put("extendedPublicKey", it) }
-                            keyMaterial.watchAddress?.let { put("watchAddress", it) }
-                            keyMaterial.privateKey?.let { put("privateKey", it) }
-                            keyMaterial.multisigConfig?.let {
+                            keyMaterial?.mnemonic?.let { put("mnemonic", it) }
+                            keyMaterial?.passphrase?.let { put("passphrase", it) }
+                            keyMaterial?.extendedPublicKey?.let { put("extendedPublicKey", it) }
+                            keyMaterial?.watchAddress?.let { put("watchAddress", it) }
+                            keyMaterial?.privateKey?.let { put("privateKey", it) }
+                            keyMaterial?.multisigConfig?.let {
                                 put("multisigConfig", secureStorage.multisigConfigToJson(it))
                             }
-                            keyMaterial.localCosignerKeyMaterial?.let {
+                            keyMaterial?.localCosignerKeyMaterial?.let {
                                 put("localCosignerKeyMaterial", it)
                             }
                         })
+
+                        if (metadata.walletKind == WalletKind.LIGHTNING_NODE) {
+                            put("lightningNodeConfig", lightningNodeConfigToJson(secureStorage.getLightningNodeConfig(walletId)))
+                            secureStorage
+                                .getLightningNodeLightningAddress(walletId)
+                                .takeIf { it.isNotBlank() }
+                                ?.let { put("lightningAddress", it) }
+                        }
 
                         put("walletSettings", JSONObject().apply {
                             put("liquidEnabled", repository.isLiquidEnabledForWallet(walletId))
@@ -2921,35 +3058,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     put("wallets", walletsArray)
 
                     if (includeServers) {
-                        val servers = repository.getAllElectrumServers()
-                        val activeId = repository.getActiveServerId()
-                        put("electrumServers", org.json.JSONArray().apply {
-                            servers.forEach { server ->
-                                put(JSONObject().apply {
-                                    put("name", server.name ?: "")
-                                    put("url", server.url)
-                                    put("port", server.port)
-                                    put("useSsl", server.useSsl)
-                                    put("useTor", server.useTor)
-                                    if (server.id == activeId) put("isActive", true)
-                                })
-                            }
-                        })
-
-                        val liquidServers = repository.getAllLiquidServers()
-                        val activeLiquidId = repository.getActiveLiquidServerId()
-                        put("liquidServers", org.json.JSONArray().apply {
-                            liquidServers.forEach { server ->
-                                put(JSONObject().apply {
-                                    put("name", server.name)
-                                    put("url", server.url)
-                                    put("port", server.port)
-                                    put("useSsl", server.useSsl)
-                                    put("useTor", server.useTor)
-                                    if (server.id == activeLiquidId) put("isActive", true)
-                                })
-                            }
-                        })
+                        val serverSettings = buildServerSettingsJson()
+                        put("serverSettings", serverSettings)
+                        put("electrumServers", serverSettings.getJSONArray("electrumServers"))
+                        put("liquidServers", serverSettings.getJSONArray("liquidServers"))
                     }
 
                     if (includeAppSettings) {
@@ -2961,6 +3073,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             put("swipeMode", repository.getSwipeMode())
                             put("balanceDateFormat", repository.getBalanceDateFormat())
                             put("themeMode", repository.getThemeMode())
+                            put("typeface", repository.getTypeface())
                             put("autoSwitchServer", repository.isAutoSwitchServerEnabled())
                             put("torEnabled", repository.isTorEnabled())
                             put("spendUnconfirmed", repository.getSpendUnconfirmed())
@@ -2982,11 +3095,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             put("historicalTxFiatEnabled", repository.isHistoricalTxFiatEnabled())
                             put("layer2Enabled", repository.isLayer2Enabled())
                             put("sparkLayer2Enabled", repository.isSparkLayer2Enabled())
+                            put("lightningNodeLayer2Enabled", secureStorage.isLightningNodeLayer2Enabled())
                             put("liquidTorEnabled", repository.isLiquidTorEnabled())
                             put("boltzApiSource", repository.getBoltzApiSource())
                             put("sideSwapApiSource", repository.getSideSwapApiSource())
                             put("preferredSwapService", repository.getPreferredSwapService().name)
                             put("liquidAutoSwitch", repository.isLiquidAutoSwitchEnabled())
+                            put("electrumServerSelectedByUser", repository.hasUserSelectedElectrumServer())
                             put("liquidServerSelectedByUser", repository.hasUserSelectedLiquidServer())
                             put("liquidExplorer", repository.getLiquidExplorer())
                             repository.getCustomLiquidExplorerUrl()?.let { put("liquidExplorerCustomUrl", it) }
@@ -3172,14 +3287,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             if (importServers) {
-                val serverSettingsObj = backupJson.optJSONObject("serverSettings")
-                    ?: JSONObject().apply {
-                        backupJson.optJSONArray("electrumServers")?.let { put("electrumServers", it) }
-                    }
+                val serverSettingsObj = BackupJsonAdapters.Server.settingsFromBackup(backupJson)
                 if (serverSettingsObj.length() > 0) {
                     restoreServerSettings(serverSettingsObj)
                 }
-                restoreLiquidServers(backupJson.optJSONArray("liquidServers"))
             }
 
             if (importAppSettings) {
@@ -3263,6 +3374,124 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             if (value == "null" || value.isBlank()) null else value
         }
 
+    private fun lightningNodeConfigToJson(config: LightningNodeConfig): JSONObject =
+        JSONObject().apply {
+            put("type", config.type.name)
+            put("host", config.host)
+            put("port", config.port)
+            put("useTor", config.useTor)
+            put("macaroonHex", config.macaroonHex)
+            put("tlsCertPem", config.tlsCertPem)
+            put("useTls", config.tlsEnabled)
+            put("allowInsecureTls", !config.tlsEnabled)
+            put("nwcUri", config.nwcUri)
+            put("clnRune", config.clnRune)
+        }
+
+    private fun lightningNodeConfigFromJson(json: JSONObject): LightningNodeConfig {
+        val tlsCertPem = json.optString("tlsCertPem", "")
+        val type =
+            github.aeonbtc.ibiswallet.data.model.parseLightningNodeConnectionType(
+                json.optString("type"),
+            )
+        val hasUseTls = json.has("useTls")
+        val useTls =
+            if (hasUseTls) {
+                json.optBoolean("useTls", false)
+            } else {
+                // Pre-useTls backups: TLS only when a cert was saved or allowInsecure was false.
+                tlsCertPem.isNotBlank() || !json.optBoolean("allowInsecureTls", true)
+            }
+        val defaultPort =
+            if (type == github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionType.CLN_REST) {
+                LightningNodeConfig.DEFAULT_CLN_REST_PORT
+            } else {
+                LightningNodeConfig.DEFAULT_LND_REST_PORT
+            }
+        return LightningNodeConfig(
+            type = type,
+            host = json.optString("host", ""),
+            port = json.optInt("port", defaultPort),
+            useTor = json.optBoolean("useTor", false),
+            macaroonHex = json.optString("macaroonHex", ""),
+            tlsCertPem = if (useTls) tlsCertPem else "",
+            useTls = useTls,
+            allowInsecureTls = !useTls,
+            nwcUri = json.optString("nwcUri", ""),
+            clnRune = json.optString("clnRune", ""),
+        )
+    }
+
+    private fun buildServerSettingsJson(): JSONObject {
+        val activeId = repository.getActiveServerId()
+        val activeLiquidId = repository.getActiveLiquidServerId()
+        return JSONObject().apply {
+            put(
+                "electrumServers",
+                org.json.JSONArray().apply {
+                    repository.getAllElectrumServers().forEach { server ->
+                        put(
+                            JSONObject().apply {
+                                put("name", server.name ?: "")
+                                put("url", server.url)
+                                put("port", server.port)
+                                put("useSsl", server.useSsl)
+                                put("useTor", server.useTor)
+                                if (server.id == activeId) put("isActive", true)
+                            },
+                        )
+                    }
+                },
+            )
+            put(
+                "liquidServers",
+                org.json.JSONArray().apply {
+                    repository.getAllLiquidServers().forEach { server ->
+                        put(
+                            JSONObject().apply {
+                                put("name", server.name)
+                                put("url", server.url)
+                                put("port", server.port)
+                                put("useSsl", server.useSsl)
+                                put("useTor", server.useTor)
+                                if (server.id == activeLiquidId) put("isActive", true)
+                            },
+                        )
+                    }
+                },
+            )
+            put(
+                "blockExplorer",
+                JSONObject().apply {
+                    put("source", repository.getMempoolServer())
+                    repository.getCustomMempoolUrl()?.takeIf { it.isNotBlank() }?.let { put("customUrl", it) }
+                },
+            )
+            put(
+                "feeSource",
+                JSONObject().apply {
+                    put("source", repository.getFeeSource())
+                    repository.getCustomFeeSourceUrl()?.takeIf { it.isNotBlank() }?.let { put("customUrl", it) }
+                },
+            )
+            put("priceSource", repository.getPriceSource())
+            put("priceCurrency", repository.getPriceCurrency())
+            put("historicalTxFiatEnabled", repository.isHistoricalTxFiatEnabled())
+            put("liquidExplorer", repository.getLiquidExplorer())
+            repository.getCustomLiquidExplorerUrl()?.takeIf { it.isNotBlank() }?.let {
+                put("liquidExplorerCustomUrl", it)
+            }
+            put("liquidTorEnabled", repository.isLiquidTorEnabled())
+            put("liquidAutoSwitch", repository.isLiquidAutoSwitchEnabled())
+            put("electrumServerSelectedByUser", repository.hasUserSelectedElectrumServer())
+            put("liquidServerSelectedByUser", repository.hasUserSelectedLiquidServer())
+            put("autoSwitchServer", repository.isAutoSwitchServerEnabled())
+            put("boltzApiSource", repository.getBoltzApiSource())
+            put("sideSwapApiSource", repository.getSideSwapApiSource())
+            put("preferredSwapService", repository.getPreferredSwapService().name)
+        }
+    }
+
     private fun restoreLabelsForWallet(walletId: String, walletEntry: JSONObject) {
         val labelsObj = walletEntry.optJSONObject("labels")
         val addrLabels = labelsObj?.optJSONObject("addresses")
@@ -3338,7 +3567,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         if (serversArray == null || serversArray.length() == 0) return
         val existing = repository.getAllLiquidServers()
         val existingKeys = existing.map { "${it.cleanUrl()}:${it.port}" }.toSet()
-        val activeLiquidId = repository.getActiveLiquidServerId()
+        var restoredActiveId: String? = null
 
         for (i in 0 until serversArray.length()) {
             val obj = serversArray.getJSONObject(i)
@@ -3369,7 +3598,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             }
             val key = "${github.aeonbtc.ibiswallet.data.model.LiquidElectrumConfig(url = url, port = port).cleanUrl()}:$port"
 
-            if (key in existingKeys) continue
+            if (key in existingKeys) {
+                if (obj.optBoolean("isActive", false)) {
+                    restoredActiveId = existing.firstOrNull {
+                        "${it.cleanUrl()}:${it.port}" == key
+                    }?.id
+                }
+                continue
+            }
 
             val config = github.aeonbtc.ibiswallet.data.model.LiquidElectrumConfig(
                 name = obj.optString("name", ""),
@@ -3379,9 +3615,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 useTor = useTor,
             )
             repository.saveLiquidServer(config)
-            if (obj.optBoolean("isActive", false) && activeLiquidId == null) {
-                repository.setActiveLiquidServerId(config.id)
+            if (obj.optBoolean("isActive", false)) {
+                restoredActiveId = config.id
             }
+        }
+        if (restoredActiveId != null) {
+            repository.setActiveLiquidServerId(restoredActiveId)
+            repository.setUserSelectedLiquidServer(true)
         }
     }
 
@@ -3399,9 +3639,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             ?.let { repository.setBalanceDateFormat(it) }
         settings.optString("themeMode", "").takeIf { it.isNotBlank() }
             ?.let { repository.setThemeMode(it) }
-        if (settings.has("autoSwitchServer")) {
-            repository.setAutoSwitchServerEnabled(settings.getBoolean("autoSwitchServer"))
-        }
+        settings.optString("typeface", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setTypeface(it) }
         if (settings.has("torEnabled")) repository.setTorEnabled(settings.getBoolean("torEnabled"))
         if (settings.has("spendUnconfirmed")) repository.setSpendUnconfirmed(settings.getBoolean("spendUnconfirmed"))
         settings.optString("psbtQrDensity", "").takeIf { it.isNotBlank() }?.let { name ->
@@ -3427,70 +3666,31 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 settings.optString("seenAppUpdateVersion", "").ifBlank { null },
             )
         }
-        settings.optString("mempoolServer", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setMempoolServer(it) }
-        settings.optString("mempoolCustomUrl", "").takeIf { it.isNotBlank() }
-            ?.let { value ->
-                if (ServerUrlValidator.validate(value) == null) {
-                    repository.setCustomMempoolUrl(value)
-                } else {
-                    SecureLog.w(
-                        TAG,
-                        "Skipping mempoolCustomUrl from backup app settings: failed validation",
-                        releaseMessage = "Backup contained an invalid mempool URL",
-                    )
-                }
-            }
-        settings.optString("feeSource", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setFeeSource(it) }
-        settings.optString("feeSourceCustomUrl", "").takeIf { it.isNotBlank() }
-            ?.let { value ->
-                if (ServerUrlValidator.validate(value) == null) {
-                    repository.setCustomFeeSourceUrl(value)
-                } else {
-                    SecureLog.w(
-                        TAG,
-                        "Skipping feeSourceCustomUrl from backup app settings: failed validation",
-                        releaseMessage = "Backup contained an invalid fee source URL",
-                    )
-                }
-            }
-        settings.optString("priceSource", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setPriceSource(it) }
-        settings.optString("priceCurrency", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setPriceCurrency(it) }
-        if (settings.has("historicalTxFiatEnabled")) {
-            repository.setHistoricalTxFiatEnabled(settings.getBoolean("historicalTxFiatEnabled"))
-        }
         if (settings.has("layer2Enabled")) repository.setLayer2Enabled(settings.getBoolean("layer2Enabled"))
         if (settings.has("sparkLayer2Enabled")) {
             repository.setSparkLayer2Enabled(settings.getBoolean("sparkLayer2Enabled"))
         }
-        if (settings.has("liquidTorEnabled")) {
-            repository.setLiquidTorEnabled(settings.getBoolean("liquidTorEnabled"))
+        if (settings.has("lightningNodeLayer2Enabled")) {
+            secureStorage.setLightningNodeLayer2Enabled(settings.getBoolean("lightningNodeLayer2Enabled"))
         }
-        settings.optString("boltzApiSource", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setBoltzApiSource(it) }
-        settings.optString("sideSwapApiSource", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setSideSwapApiSource(it) }
-        settings.optString("preferredSwapService", "").takeIf { it.isNotBlank() }?.let { name ->
-            try { repository.setPreferredSwapService(SwapService.valueOf(name)) } catch (_: Exception) {}
-        }
-        if (settings.has("liquidAutoSwitch")) {
-            repository.setLiquidAutoSwitchEnabled(settings.getBoolean("liquidAutoSwitch"))
-        }
-        if (settings.has("liquidServerSelectedByUser")) {
-            repository.setUserSelectedLiquidServer(settings.getBoolean("liquidServerSelectedByUser"))
-        }
-        settings.optString("liquidExplorer", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setLiquidExplorer(it) }
-        settings.optString("liquidExplorerCustomUrl", "").takeIf { it.isNotBlank() }
-            ?.let { repository.setCustomLiquidExplorerUrl(it) }
     }
 
     private fun restoreWalletSettings(walletId: String, walletEntry: JSONObject) {
-        val settingsObj = walletEntry.optJSONObject("walletSettings") ?: return
-        restoreWalletSettingsObject(walletId, settingsObj)
+        val settingsObj = walletEntry.optJSONObject("walletSettings")
+        if (settingsObj != null) {
+            restoreWalletSettingsObject(walletId, settingsObj)
+        }
+
+        // Lightning Node connection + optional public Lightning Address share string
+        walletEntry.optJSONObject("lightningNodeConfig")?.let { configJson ->
+            secureStorage.setLightningNodeConfig(walletId, lightningNodeConfigFromJson(configJson))
+            secureStorage.setLightningNodeEnabledForWallet(walletId, true)
+            secureStorage.setLayer2ProviderForWallet(
+                walletId,
+                github.aeonbtc.ibiswallet.data.model.Layer2Provider.LIGHTNING,
+            )
+        }
+        restoreLightningNodeWalletExtras(walletId, walletEntry)
 
         val walletObj = walletEntry.optJSONObject("wallet")
         if (walletObj != null && walletObj.optBoolean("isLocked", false)) {
@@ -3527,6 +3727,16 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         if (frozenArr != null && frozenArr.length() > 0) {
             val outpoints = (0 until frozenArr.length()).map { frozenArr.getString(it) }.toSet()
             repository.setFrozenUtxosForWallet(walletId, outpoints)
+        }
+    }
+
+    fun restoreLightningNodeWalletExtras(
+        walletId: String,
+        walletEntry: JSONObject,
+    ) {
+        // Config is restored elsewhere when present; handle optional LN Address.
+        walletEntry.optString("lightningAddress", "").takeIf { it.isNotBlank() }?.let { address ->
+            secureStorage.setLightningNodeLightningAddress(walletId, address.trim())
         }
     }
 
@@ -3642,11 +3852,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
             // Restore server settings before import so the imported wallet can use them immediately.
             if (importServerSettings) {
-                val serverSettingsObj = backupJson.optJSONObject("serverSettings")
-                if (serverSettingsObj != null) {
+                val serverSettingsObj = BackupJsonAdapters.Server.settingsFromBackup(backupJson)
+                if (serverSettingsObj.length() > 0) {
                     restoreServerSettings(serverSettingsObj)
-                } else {
-                    restoreLiquidServers(backupJson.optJSONArray("liquidServers"))
                 }
             }
 
@@ -3863,65 +4071,96 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 }
 
                 // Refresh the servers state flow
-                _serversState.value = ServersState(
-                    servers = repository.getAllElectrumServers(),
-                    activeServerId = restoredActiveId ?: repository.getActiveServerId(),
-                )
+                restoredActiveId?.let {
+                    secureStorage.setActiveServerId(it)
+                    repository.setUserSelectedElectrumServer(true)
+                }
+                refreshServersState()
             }
 
             restoreLiquidServers(serverSettingsObj.optJSONArray("liquidServers"))
+            if (serverSettingsObj.has("autoSwitchServer")) {
+                repository.setAutoSwitchServerEnabled(serverSettingsObj.getBoolean("autoSwitchServer"))
+            }
+            serverSettingsObj.optString("priceSource", "").takeIf { it.isNotBlank() }
+                ?.let { repository.setPriceSource(it) }
+            serverSettingsObj.optString("priceCurrency", "").takeIf { it.isNotBlank() }
+                ?.let { repository.setPriceCurrency(it) }
+            if (serverSettingsObj.has("historicalTxFiatEnabled")) {
+                repository.setHistoricalTxFiatEnabled(serverSettingsObj.getBoolean("historicalTxFiatEnabled"))
+            }
             if (serverSettingsObj.has("liquidTorEnabled")) {
                 repository.setLiquidTorEnabled(serverSettingsObj.getBoolean("liquidTorEnabled"))
             }
             if (serverSettingsObj.has("liquidAutoSwitch")) {
                 repository.setLiquidAutoSwitchEnabled(serverSettingsObj.getBoolean("liquidAutoSwitch"))
             }
+            if (serverSettingsObj.has("electrumServerSelectedByUser")) {
+                repository.setUserSelectedElectrumServer(
+                    serverSettingsObj.getBoolean("electrumServerSelectedByUser"),
+                )
+            }
             if (serverSettingsObj.has("liquidServerSelectedByUser")) {
                 repository.setUserSelectedLiquidServer(serverSettingsObj.getBoolean("liquidServerSelectedByUser"))
             }
+            refreshServersState()
             serverSettingsObj.optString("liquidExplorer", "").takeIf { it.isNotBlank() }
                 ?.let { repository.setLiquidExplorer(it) }
-            serverSettingsObj.optString("liquidExplorerCustomUrl", "").takeIf { it.isNotBlank() }
-                ?.let { repository.setCustomLiquidExplorerUrl(it) }
-
-            // Restore block explorer custom URL only — don't restore the type
-            // selection so we never silently enable an external service on import.
-            val explorerObj = serverSettingsObj.optJSONObject("blockExplorer")
-            if (explorerObj != null) {
-                val customUrl = explorerObj.optString("customUrl", "")
-                if (customUrl.isNotBlank()) {
-                    if (ServerUrlValidator.validate(customUrl) == null) {
-                        repository.setCustomMempoolUrl(customUrl)
-                    } else {
-                        SecureLog.w(
-                            TAG,
-                            "Skipping custom mempool URL from backup: failed validation",
-                            releaseMessage = "Backup contained an invalid block explorer URL",
-                        )
-                    }
-                }
+            restoreValidatedUrl(
+                value = serverSettingsObj.optString("liquidExplorerCustomUrl", ""),
+                onValid = repository::setCustomLiquidExplorerUrl,
+                debugMessage = "Skipping custom Liquid explorer URL from backup: failed validation",
+                releaseMessage = "Backup contained an invalid Liquid explorer URL",
+            )
+            serverSettingsObj.optString("boltzApiSource", "").takeIf { it.isNotBlank() }
+                ?.let { repository.setBoltzApiSource(it) }
+            serverSettingsObj.optString("sideSwapApiSource", "").takeIf { it.isNotBlank() }
+                ?.let { repository.setSideSwapApiSource(it) }
+            serverSettingsObj.optString("preferredSwapService", "").takeIf { it.isNotBlank() }?.let { name ->
+                try { repository.setPreferredSwapService(SwapService.valueOf(name)) } catch (_: Exception) {}
             }
 
-            // Restore fee source custom URL only — same rationale as above.
+            val explorerObj = serverSettingsObj.optJSONObject("blockExplorer")
+            if (explorerObj != null) {
+                explorerObj.optString("source", "").takeIf { it.isNotBlank() }
+                    ?.let { repository.setMempoolServer(it) }
+                restoreValidatedUrl(
+                    value = explorerObj.optString("customUrl", ""),
+                    onValid = repository::setCustomMempoolUrl,
+                    debugMessage = "Skipping custom mempool URL from backup: failed validation",
+                    releaseMessage = "Backup contained an invalid block explorer URL",
+                )
+            }
+
             val feeObj = serverSettingsObj.optJSONObject("feeSource")
             if (feeObj != null) {
-                val customUrl = feeObj.optString("customUrl", "")
-                if (customUrl.isNotBlank()) {
-                    if (ServerUrlValidator.validate(customUrl) == null) {
-                        repository.setCustomFeeSourceUrl(customUrl)
-                    } else {
-                        SecureLog.w(
-                            TAG,
-                            "Skipping custom fee source URL from backup: failed validation",
-                            releaseMessage = "Backup contained an invalid fee source URL",
-                        )
-                    }
-                }
+                feeObj.optString("source", "").takeIf { it.isNotBlank() }
+                    ?.let { repository.setFeeSource(it) }
+                restoreValidatedUrl(
+                    value = feeObj.optString("customUrl", ""),
+                    onValid = repository::setCustomFeeSourceUrl,
+                    debugMessage = "Skipping custom fee source URL from backup: failed validation",
+                    releaseMessage = "Backup contained an invalid fee source URL",
+                )
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
                 android.util.Log.w("WalletViewModel", "Failed to restore server settings: ${e.message}")
             }
+        }
+    }
+
+    private fun restoreValidatedUrl(
+        value: String,
+        onValid: (String) -> Unit,
+        debugMessage: String,
+        releaseMessage: String,
+    ) {
+        if (value.isBlank()) return
+        if (ServerUrlValidator.validate(value) == null) {
+            onValid(value)
+        } else {
+            SecureLog.w(TAG, debugMessage, releaseMessage = releaseMessage)
         }
     }
 
@@ -4148,6 +4387,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun setThemeMode(themeMode: String) {
         repository.setThemeMode(themeMode)
         _themeModeState.value = themeMode
+    }
+
+    fun setTypeface(typeface: String) {
+        repository.setTypeface(typeface)
+        _typefaceState.value = typeface
     }
 
     // ==================== Mempool Server Settings ====================
@@ -4444,9 +4688,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         _swipeMode.value = repository.getSwipeMode()
         _balanceDateFormatState.value = repository.getBalanceDateFormat()
         _themeModeState.value = repository.getThemeMode()
+        _typefaceState.value = repository.getTypeface()
         _psbtQrDensityState.value = repository.getPsbtQrDensity()
         _psbtQrBrightnessState.value = repository.getPsbtQrBrightness()
         _autoSwitchServer.value = repository.isAutoSwitchServerEnabled()
+        _serversState.value = ServersState(
+            servers = repository.getAllElectrumServers(),
+            activeServerId = repository.getActiveServerId(),
+        )
 
         if (_feeSourceState.value == SecureStorage.FEE_SOURCE_OFF) {
             _feeEstimationState.value = FeeEstimationResult.Disabled
@@ -4999,15 +5248,50 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     fun isWifPrivateKey(input: String): Boolean = repository.isWifPrivateKey(input)
 
+    private fun isActiveLightningNodeWallet(): Boolean {
+        val activeId = repository.getActiveWalletId()
+        if (activeId != null) {
+            val meta = repository.getWalletMetadata(activeId)
+            if (meta?.walletKind == WalletKind.LIGHTNING_NODE) return true
+        }
+        return walletState.value.activeWallet?.walletKind == WalletKind.LIGHTNING_NODE
+    }
+
+    private fun disconnectBitcoinForLightningNodeWallet() {
+        stopBackgroundSync()
+        stopHeartbeat()
+        stopReconnectRetry()
+        connectionJob?.cancel()
+        connectionJob = null
+        bitcoinConnectionEpoch++
+        _uiState.value =
+            _uiState.value.copy(
+                isConnecting = false,
+                isConnected = false,
+                serverVersion = null,
+                error = null,
+            )
+        ConnectivityKeepAlivePolicy.updateBitcoinState(
+            context = appContext,
+            connected = false,
+            electrumUsesTor = false,
+            externalTorRequired = isFeeSourceOnion() || isPriceSourceOnion(),
+        )
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.disconnect() }
+        }
+    }
+
     private fun syncForegroundConnectivityPolicy() {
         ConnectivityKeepAlivePolicy.updateForegroundConnectivityEnabled(
             context = appContext,
             enabled = repository.isForegroundConnectivityEnabled(),
         )
+        val lightningOnly = isActiveLightningNodeWallet()
         ConnectivityKeepAlivePolicy.updateBitcoinState(
             context = appContext,
-            connected = _uiState.value.isConnected,
-            electrumUsesTor = isBitcoinElectrumTorRequired(),
+            connected = !lightningOnly && _uiState.value.isConnected,
+            electrumUsesTor = !lightningOnly && isBitcoinElectrumTorRequired(),
             externalTorRequired = isFeeSourceOnion() || isPriceSourceOnion(),
         )
     }
@@ -5091,6 +5375,12 @@ sealed class AppUpdateStatus {
 sealed class WalletEvent {
     data object WalletImported : WalletEvent()
 
+    /** Lightning Node wallet added without leaving the configure screen. */
+    data class LightningNodeWalletCreated(
+        val walletId: String,
+        val walletName: String,
+    ) : WalletEvent()
+
     data object WalletDeleted : WalletEvent()
 
     data object WalletSwitched : WalletEvent()
@@ -5147,6 +5437,8 @@ data class SweepState(
 data class ServersState(
     val servers: List<ElectrumConfig> = emptyList(),
     val activeServerId: String? = null,
+    /** True after the user has connected to / selected an Electrum server. */
+    val hasUserSelectedServer: Boolean = false,
 )
 
 /**

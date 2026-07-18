@@ -9,15 +9,17 @@ import java.util.zip.Inflater
  * See https://bbqr.org and https://github.com/coinkite/BBQr/blob/master/BBQr.md
  *
  * Encodes binary data into a series of QR-code-friendly alphanumeric strings
- * with an 8-char header per frame. Supports Hex, Base32, and Zlib+Base32 encodings.
+ * with an 8-char header per frame. Supports Hex, Base32, and Zlib+Base32 decoding.
+ * Base32 is the default creator encoding for hardware-wallet compatibility.
  *
- * Used for BIP 329 label export/import via animated QR codes.
+ * Used for PSBT and BIP 329 label export/import via animated QR codes.
  */
 object Bbqr {
 
     /** BBQr file type codes per spec */
     const val FILE_TYPE_JSON = 'J'
     const val FILE_TYPE_PSBT = 'P'
+    const val FILE_TYPE_TXN = 'T'
 
     /** Encoding mode codes per spec */
     const val ENCODING_HEX = 'H'
@@ -67,7 +69,7 @@ object Bbqr {
      *
      * @param data       Raw binary data to encode
      * @param fileType   One-char file type code (J, U, P, T, etc.)
-     * @param encoding   Preferred encoding: 'Z' (Zlib+Base32, default), '2' (Base32), 'H' (Hex)
+     * @param encoding   Preferred encoding: '2' (Base32, default), 'Z' (Zlib+Base32), 'H' (Hex)
      * @param minVersion Minimum QR version to consider (1-40, default 5)
      * @param maxVersion Maximum QR version to consider (1-40, default 40)
      * @param minSplit   Minimum number of QR codes (default 1)
@@ -76,7 +78,7 @@ object Bbqr {
     fun split(
         data: ByteArray,
         fileType: Char = FILE_TYPE_JSON,
-        encoding: Char = ENCODING_ZLIB,
+        encoding: Char = ENCODING_BASE32,
         minVersion: Int = 5,
         maxVersion: Int = 40,
         minSplit: Int = 1,
@@ -103,14 +105,18 @@ object Bbqr {
             }
 
         var offset = 0
-        var n = 0
-        while (offset < encoded.length) {
-            val end = minOf(offset + perEach, encoded.length)
+        for (n in 0 until count) {
+            val end =
+                if (n == count - 1) {
+                    encoded.length
+                } else {
+                    minOf(offset + perEach, encoded.length)
+                }
             val part = header + intToBase36(n) + encoded.substring(offset, end)
             parts.add(part)
             offset = end
-            n++
         }
+        require(offset == encoded.length) { "BBQr split did not consume the full payload" }
 
         return SplitResult(parts = parts, encoding = actualEncoding, version = version)
     }
@@ -306,10 +312,7 @@ object Bbqr {
 
     private fun numQrNeeded(encodedLen: Int, baseCap: Int, adjustedCap: Int): Int {
         if (encodedLen <= baseCap) return 1
-        val estimate = (encodedLen + adjustedCap - 1) / adjustedCap
-        // Verify: (estimate-1) frames at adjustedCap + last frame at baseCap
-        val totalCap = (estimate - 1).toLong() * adjustedCap + baseCap
-        return if (totalCap >= encodedLen) estimate else estimate + 1
+        return ((encodedLen - baseCap + adjustedCap - 1) / adjustedCap) + 1
     }
 
     // ── Joining ─────────────────────────────────────────────────────────
@@ -414,24 +417,16 @@ object Bbqr {
         return output.toByteArray()
     }
 
-    // ── Zlib (wbits=10, raw deflate, no header) ────────────────────────
+    // ── Zlib (raw deflate, no header) ──────────────────────────────────
 
     /**
-     * Compress with Zlib raw deflate, wbits=10 as required by BBQr spec.
-     * Maximum compression effort (level 9).
+     * Compress with raw deflate. JVM/Android Deflater does not expose the BBQr-required
+     * wbits=10 setting, so creators should prefer Base32 for hardware-wallet exports.
      */
     private fun zlibCompress(data: ByteArray): ByteArray {
         // Deflater with nowrap=true gives raw deflate (no zlib/gzip header)
-        // wbits=10 means window size = 2^10 = 1024
         val deflater = Deflater(Deflater.BEST_COMPRESSION, true)
         try {
-            // Set window bits via internal implementation:
-            // Java's Deflater with nowrap=true uses wbits=15 by default.
-            // BBQr spec requires wbits=10 for embedded device compatibility.
-            // However, Java's Deflater API doesn't expose wbits directly.
-            // We use nowrap=true (raw deflate) which decoders with wbits>=10 can handle.
-            // The BBQr spec says receivers MUST support all encodings — a receiver
-            // with wbits=10 can decompress our output since it will fit in the window.
             deflater.setInput(data)
             deflater.finish()
 

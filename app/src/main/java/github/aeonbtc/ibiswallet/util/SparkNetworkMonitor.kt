@@ -4,14 +4,13 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Handler
 import android.os.Looper
 import github.aeonbtc.ibiswallet.data.repository.SPARK_NETWORK_RECONNECT_DEBOUNCE_MS
 
 /**
- * Observes default-network changes (including VPN IP switches) and notifies
- * after a short debounce so Spark can recycle its SDK session.
+ * Observes validated default-network changes and notifies after a short debounce
+ * so Spark can recycle its SDK session only when Android actually changes routes.
  */
 class SparkNetworkMonitor(
     context: Context,
@@ -31,23 +30,24 @@ class SparkNetworkMonitor(
     private val callback =
         object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                scheduleIfChanged(network)
+                scheduleIfValidatedChanged(network)
             }
 
             override fun onLost(network: Network) {
-                if (activeValidatedNetwork == network) {
-                    activeValidatedNetwork = null
-                }
-                scheduleDebounced()
+                if (activeValidatedNetwork != network) return
+                activeValidatedNetwork = currentValidatedNetwork()
+                if (activeValidatedNetwork != null) scheduleDebounced()
             }
 
             override fun onCapabilitiesChanged(
                 network: Network,
                 networkCapabilities: NetworkCapabilities,
             ) {
-                if (!networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return
-                if (!networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) return
-                scheduleIfChanged(network)
+                if (networkCapabilities.isValidatedInternet()) {
+                    scheduleIfChanged(network)
+                } else if (activeValidatedNetwork == network) {
+                    activeValidatedNetwork = null
+                }
             }
         }
 
@@ -55,12 +55,7 @@ class SparkNetworkMonitor(
         if (isRegistered) return
         isRegistered = true
         activeValidatedNetwork = currentValidatedNetwork()
-        connectivityManager.registerNetworkCallback(
-            NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .build(),
-            callback,
-        )
+        connectivityManager.registerDefaultNetworkCallback(callback)
     }
 
     fun stop() {
@@ -77,6 +72,11 @@ class SparkNetworkMonitor(
         scheduleDebounced()
     }
 
+    private fun scheduleIfValidatedChanged(network: Network) {
+        if (connectivityManager.getNetworkCapabilities(network)?.isValidatedInternet() != true) return
+        scheduleIfChanged(network)
+    }
+
     private fun scheduleDebounced() {
         pendingRunnable?.let { handler.removeCallbacks(it) }
         val runnable =
@@ -89,10 +89,11 @@ class SparkNetworkMonitor(
     }
 
     private fun currentValidatedNetwork(): Network? =
-        connectivityManager.allNetworks.firstOrNull { network ->
-            connectivityManager.getNetworkCapabilities(network)?.let { capabilities ->
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-            } == true
+        connectivityManager.activeNetwork?.takeIf { network ->
+            connectivityManager.getNetworkCapabilities(network)?.isValidatedInternet() == true
         }
+
+    private fun NetworkCapabilities.isValidatedInternet(): Boolean =
+        hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }

@@ -5,12 +5,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
+import github.aeonbtc.ibiswallet.data.model.SparkEvent
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeSpeed
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.SparkSendState
 import github.aeonbtc.ibiswallet.data.repository.SPARK_NETWORK_RECONNECT_DEBOUNCE_MS
 import github.aeonbtc.ibiswallet.data.repository.SparkReconnectDebouncer
 import github.aeonbtc.ibiswallet.data.repository.SparkRepository
+import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy
 import github.aeonbtc.ibiswallet.util.Bip329LabelNetwork
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.Bip329Labels
@@ -20,22 +22,28 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 class SparkViewModel(application: Application) : AndroidViewModel(application) {
+    private val appContext = getApplication<Application>()
     private val secureStorage = SecureStorage.getInstance(application)
     private val repository = SparkRepository(application, secureStorage)
 
     val sparkState = repository.sparkState
     val sendState = repository.sendState
     val receiveState = repository.receiveState
+    val events: SharedFlow<SparkEvent> = repository.events
     val sparkTransactionLabels = repository.sparkTransactionLabels
     val sparkAddressLabels = repository.sparkAddressLabels
     val loadedWalletId = repository.loadedWalletId
     val isSparkConnected = repository.isConnected
+    val isSparkConnecting = repository.isConnecting
 
     private val _isSparkLayer2Enabled = MutableStateFlow(secureStorage.isSparkLayer2Enabled())
     val isSparkLayer2Enabled: StateFlow<Boolean> = _isSparkLayer2Enabled.asStateFlow()
@@ -49,32 +57,135 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     private var walletLifecycleJob: Job? = null
     private var pendingWalletLoadId: String? = null
     private var reconnectJob: Job? = null
+    private var heartbeatJob: Job? = null
+    private var isAppInBackground = false
     private val reconnectDebouncer = SparkReconnectDebouncer()
     private val networkMonitor =
         SparkNetworkMonitor(
             context = getApplication(),
-            onNetworkChanged = { scheduleReconnect() },
+            onNetworkChanged = {
+                if (!isAppInBackground || isBackgroundKeepAliveActive()) {
+                    scheduleReconnect()
+                }
+            },
         )
 
     private val lifecycleCoordinator =
         AppLifecycleCoordinator(
             scope = viewModelScope,
             onBackgrounded = {
+                isAppInBackground = true
+                ConnectivityKeepAlivePolicy.updateAppForegroundState(
+                    context = appContext,
+                    isInForeground = false,
+                )
+                if (!isBackgroundKeepAliveActive()) {
+                    stopHeartbeat()
+                }
                 loadedWalletId.value != null && isSparkConnected.value
             },
             onForegrounded = { wasConnectedBeforeBackground, _ ->
+                isAppInBackground = false
+                ConnectivityKeepAlivePolicy.updateAppForegroundState(
+                    context = appContext,
+                    isInForeground = true,
+                )
                 if (
                     wasConnectedBeforeBackground &&
                     loadedWalletId.value != null &&
                     isSparkLayer2Enabled.value
                 ) {
-                    scheduleReconnect()
+                    if (isSparkConnected.value) {
+                        startHeartbeat()
+                    } else {
+                        scheduleReconnect(force = true)
+                    }
                 }
             },
         )
 
     init {
         networkMonitor.start()
+        viewModelScope.launch {
+            combine(
+                isSparkConnected,
+                _isSparkLayer2Enabled,
+            ) { connected, enabled ->
+                connected && enabled
+            }
+                .distinctUntilChanged()
+                .collect { keepAliveConnected ->
+                    syncForegroundConnectivityPolicy()
+                    if (keepAliveConnected) {
+                        startHeartbeat()
+                    } else {
+                        stopHeartbeat()
+                    }
+                }
+        }
+    }
+
+    private fun isBackgroundKeepAliveActive(): Boolean =
+        ConnectivityKeepAlivePolicy.isForegroundConnectivityEnabled()
+
+    private fun syncForegroundConnectivityPolicy() {
+        ConnectivityKeepAlivePolicy.updateForegroundConnectivityEnabled(
+            context = appContext,
+            enabled = secureStorage.isForegroundConnectivityEnabled(),
+        )
+        ConnectivityKeepAlivePolicy.updateSparkState(
+            context = appContext,
+            connected = isSparkConnected.value && isSparkLayer2Enabled.value,
+        )
+    }
+
+    private fun startHeartbeat() {
+        if (isAppInBackground && !isBackgroundKeepAliveActive()) return
+        if (heartbeatJob?.isActive == true) return
+        heartbeatJob?.cancel()
+        var consecutiveFailures = 0
+        heartbeatJob =
+            viewModelScope.launch {
+                while (true) {
+                    val interval =
+                        if (consecutiveFailures == 0) {
+                            HEARTBEAT_INTERVAL_MS
+                        } else {
+                            HEARTBEAT_RETRY_INTERVAL_MS
+                        }
+                    delay(interval)
+                    if (!isSparkConnected.value) break
+                    if (isAppInBackground && !isBackgroundKeepAliveActive()) break
+
+                    val alive =
+                        withTimeoutOrNull(HEARTBEAT_PING_TIMEOUT_MS) {
+                            runCatching { repository.refreshState() }.isSuccess &&
+                                isSparkConnected.value
+                        } ?: false
+
+                    if (alive) {
+                        consecutiveFailures = 0
+                    } else {
+                        consecutiveFailures++
+                        if (consecutiveFailures >= HEARTBEAT_MAX_FAILURES) {
+                            handleConnectionLost()
+                            break
+                        }
+                    }
+                }
+            }
+    }
+
+    private fun stopHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+    }
+
+    private fun handleConnectionLost() {
+        if (isAppInBackground && !isBackgroundKeepAliveActive()) return
+        if (!isSparkConnected.value) return
+        stopHeartbeat()
+        scheduleReconnect(force = true)
     }
 
     fun loadSparkWallet(walletId: String) {
@@ -140,12 +251,18 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refresh() {
-        scheduleReconnect(force = true)
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.refreshState() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                }
+        }
     }
 
     fun scheduleReconnect(force: Boolean = false) {
         val walletLoaded = loadedWalletId.value != null
         if (!walletLoaded) return
+        if (isAppInBackground && !isBackgroundKeepAliveActive() && !force) return
         val now = System.currentTimeMillis()
         if (!force && !reconnectDebouncer.recordScheduleRequest(now)) return
         if (!force) {
@@ -154,6 +271,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
                 viewModelScope.launch(Dispatchers.IO) {
                     delay(SPARK_NETWORK_RECONNECT_DEBOUNCE_MS)
                     if (!reconnectDebouncer.shouldRunReconnect()) return@launch
+                    if (isAppInBackground && !isBackgroundKeepAliveActive()) return@launch
                     runReconnectAttempt()
                 }
             return
@@ -167,6 +285,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun runReconnectAttempt() {
         if (loadedWalletId.value == null) return
+        if (isAppInBackground && !isBackgroundKeepAliveActive()) return
         runCatching { repository.reconnectWallet() }
             .onFailure { error ->
                 if (error is CancellationException) throw error
@@ -188,7 +307,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
                 previousLifecycleJob?.cancelAndJoinWithinSwitchTimeout()
                 runCatching {
                     if (loadedWalletId.value == walletId && isSparkConnected.value) {
-                        repository.reconnectWallet()
+                        repository.refreshState()
                     } else {
                         repository.loadWallet(walletId)
                     }
@@ -344,11 +463,29 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         repository.saveSparkAddressLabel(walletId, addressOrRequest, label)
     }
 
+    fun deleteSparkAddressLabel(
+        walletId: String,
+        addressOrRequest: String,
+    ) {
+        repository.deleteSparkAddressLabel(walletId, addressOrRequest)
+    }
+
     fun deleteSparkTransactionLabel(
         walletId: String,
         paymentId: String,
     ) {
         repository.deleteSparkTransactionLabel(walletId, paymentId)
+    }
+
+    fun deleteSparkHistoryItem(
+        walletId: String,
+        itemId: String,
+    ) {
+        repository.deleteSparkHistoryItem(walletId, itemId)
+    }
+
+    fun deleteAllSparkHistory(walletId: String) {
+        repository.deleteAllSparkHistory(walletId)
     }
 
     fun isSparkEnabledForWallet(walletId: String): Boolean =
@@ -390,7 +527,19 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         lifecycleCoordinator.dispose()
         networkMonitor.stop()
         reconnectJob?.cancel()
+        stopHeartbeat()
+        ConnectivityKeepAlivePolicy.updateSparkState(
+            context = appContext,
+            connected = false,
+        )
         super.onCleared()
+    }
+
+    companion object {
+        private const val HEARTBEAT_INTERVAL_MS = 60_000L
+        private const val HEARTBEAT_RETRY_INTERVAL_MS = 15_000L
+        private const val HEARTBEAT_PING_TIMEOUT_MS = 15_000L
+        private const val HEARTBEAT_MAX_FAILURES = 3
     }
 }
 

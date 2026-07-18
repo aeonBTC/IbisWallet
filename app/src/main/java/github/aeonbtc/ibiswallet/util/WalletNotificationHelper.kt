@@ -134,6 +134,12 @@ object WalletNotificationHelper {
         if (snapshot.liquidConnected) {
             statusParts += context.getString(R.string.foreground_connectivity_status_liquid)
         }
+        if (snapshot.lightningConnected) {
+            statusParts += context.getString(R.string.foreground_connectivity_status_lightning)
+        }
+        if (snapshot.sparkConnected) {
+            statusParts += context.getString(R.string.foreground_connectivity_status_spark)
+        }
         if (snapshot.hasAnyTorRequirement) {
             statusParts += context.getString(R.string.foreground_connectivity_status_tor)
         }
