@@ -1,7 +1,8 @@
 package github.aeonbtc.ibiswallet.util
 
-import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
+import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionType
+import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -77,6 +78,23 @@ class SendRecipientParserTest : FunSpec({
 
             (parsed is ParsedSendRecipient.Unknown) shouldBe true
             (parsed as ParsedSendRecipient.Unknown).errorMessage shouldBe BitcoinUtils.UNSUPPORTED_NON_MAINNET_MESSAGE
+        }
+    }
+
+    context("external payment URI handling") {
+        test("browser-style bitcoin URI with double slash parses as BIP21") {
+            val parsed = parseSendRecipient("bitcoin://3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy?amount=0.00010000")
+
+            parsed.shouldBeInstanceOf<ParsedSendRecipient.Bitcoin>()
+            parsed.address shouldBe "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy"
+            parsed.amountSats shouldBe 10_000L
+        }
+
+        test("malformed external payment URI does not throw") {
+            val parsed = parseSendRecipient("bitcoin:%zz")
+
+            parsed.shouldBeInstanceOf<ParsedSendRecipient.Unknown>()
+            isRecognizedSendInput("bitcoin:%zz") shouldBe false
         }
     }
 
@@ -271,6 +289,86 @@ class SendRecipientParserTest : FunSpec({
 
             val error = layer2RecipientValidationError(recipient)
             error shouldBe "Enter a Liquid, Spark, BOLT 11/12, or LN Address"
+        }
+
+        test("Lightning Node LND/NWC accept LN Address and reject BOLT12 offers") {
+            val address =
+                ParsedSendRecipient.Lightning(
+                    rawInput = "user@example.com",
+                    paymentInput = "user@example.com",
+                    kind = LightningKind.BOLT12,
+                )
+            val offer =
+                ParsedSendRecipient.Lightning(
+                    rawInput = "lno1example",
+                    paymentInput = "lno1example",
+                    kind = LightningKind.BOLT12,
+                )
+
+            layer2RecipientValidationError(
+                address,
+                Layer2Provider.LIGHTNING,
+                LightningNodeConnectionType.LND_REST,
+            ) shouldBe null
+            layer2RecipientValidationError(
+                offer,
+                Layer2Provider.LIGHTNING,
+                LightningNodeConnectionType.LND_REST,
+            ) shouldBe "BOLT12 offers require a CLN connection"
+            layer2RecipientValidationError(
+                offer,
+                Layer2Provider.LIGHTNING,
+                LightningNodeConnectionType.NWC,
+            ) shouldBe "BOLT12 offers require a CLN connection"
+        }
+
+        test("Lightning Node CLN accepts BOLT12 offers and LN Address") {
+            val address =
+                ParsedSendRecipient.Lightning(
+                    rawInput = "user@example.com",
+                    paymentInput = "user@example.com",
+                    kind = LightningKind.BOLT12,
+                )
+            val offer =
+                ParsedSendRecipient.Lightning(
+                    rawInput = "lno1example",
+                    paymentInput = "lno1example",
+                    kind = LightningKind.BOLT12,
+                )
+
+            layer2RecipientValidationError(
+                offer,
+                Layer2Provider.LIGHTNING,
+                LightningNodeConnectionType.CLN_REST,
+            ) shouldBe null
+            layer2RecipientValidationError(
+                address,
+                Layer2Provider.LIGHTNING,
+                LightningNodeConnectionType.CLN_REST,
+            ) shouldBe null
+            lightningNodeRecipientHint(LightningNodeConnectionType.CLN_REST) shouldBe
+                "Enter a BOLT11, BOLT12, LNURL, or LN Address"
+            lightningNodeRecipientPlaceholder(LightningNodeConnectionType.LND_REST) shouldBe
+                "BOLT11 / LN Address"
+        }
+
+        test("Lightning Node unknown input uses connection-aware hint") {
+            val recipient =
+                ParsedSendRecipient.Unknown(
+                    rawInput = "garbage",
+                    errorMessage = "Unsupported payment format",
+                )
+
+            layer2RecipientValidationError(
+                recipient,
+                Layer2Provider.LIGHTNING,
+                LightningNodeConnectionType.NWC,
+            ) shouldBe "Enter a BOLT11, LNURL, or LN Address"
+            layer2RecipientValidationError(
+                recipient,
+                Layer2Provider.LIGHTNING,
+                LightningNodeConnectionType.CLN_REST,
+            ) shouldBe "Enter a BOLT11, BOLT12, LNURL, or LN Address"
         }
     }
 

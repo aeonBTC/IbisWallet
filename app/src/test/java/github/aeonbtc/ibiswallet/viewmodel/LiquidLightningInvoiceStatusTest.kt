@@ -43,4 +43,14 @@ class LiquidLightningInvoiceStatusTest : FunSpec({
             previousUpdate = previous,
         ) shouldBe null
     }
+
+    test("treats Boltz server lockup states as chain swap claimable") {
+        isBoltzChainSwapClaimableStatus("transaction.server.mempool") shouldBe true
+        isBoltzChainSwapClaimableStatus("transaction.server.confirmed") shouldBe true
+    }
+
+    test("does not treat client lockup states as chain swap claimable") {
+        isBoltzChainSwapClaimableStatus("transaction.mempool") shouldBe false
+        isBoltzChainSwapClaimableStatus("transaction.confirmed") shouldBe false
+    }
 })

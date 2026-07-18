@@ -15,6 +15,79 @@ import io.kotest.matchers.shouldBe
 import org.json.JSONObject
 
 class BackupJsonAdaptersTest : FunSpec({
+    test("normalizes legacy app settings into server settings") {
+        val backupJson = JSONObject(
+            """
+            {
+              "electrumServers": [
+                {"name":"L1","url":"electrum.example.com","port":50002,"useSsl":true,"isActive":true}
+              ],
+              "liquidServers": [
+                {"name":"Liquid","url":"liquid.example.com","port":995,"useSsl":true,"isActive":true}
+              ],
+              "appSettings": {
+                "mempoolServer": "MEMPOOL_CUSTOM",
+                "mempoolCustomUrl": "https://mempool.example.com",
+                "feeSource": "CUSTOM",
+                "feeSourceCustomUrl": "https://fees.example.com",
+                "priceSource": "YADIO",
+                "priceCurrency": "EUR",
+                "historicalTxFiatEnabled": true,
+                "autoSwitchServer": true,
+                "liquidTorEnabled": true,
+                "liquidAutoSwitch": true,
+                "liquidServerSelectedByUser": true,
+                "liquidExplorer": "LIQUID_EXPLORER_CUSTOM",
+                "liquidExplorerCustomUrl": "https://liquid.example.com/explorer",
+                "boltzApiSource": "BOLTZ_API_TOR",
+                "sideSwapApiSource": "SIDESWAP_API_TOR",
+                "preferredSwapService": "SIDESWAP"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val settings = BackupJsonAdapters.Server.settingsFromBackup(backupJson)
+
+        settings.getJSONArray("electrumServers").length() shouldBe 1
+        settings.getJSONArray("liquidServers").length() shouldBe 1
+        settings.getJSONObject("blockExplorer").getString("customUrl") shouldBe "https://mempool.example.com"
+        settings.getJSONObject("feeSource").getString("customUrl") shouldBe "https://fees.example.com"
+        settings.getString("priceSource") shouldBe "YADIO"
+        settings.getString("priceCurrency") shouldBe "EUR"
+        settings.getBoolean("historicalTxFiatEnabled") shouldBe true
+        settings.getBoolean("autoSwitchServer") shouldBe true
+        settings.getString("liquidExplorerCustomUrl") shouldBe "https://liquid.example.com/explorer"
+        settings.getString("boltzApiSource") shouldBe "BOLTZ_API_TOR"
+        settings.getString("sideSwapApiSource") shouldBe "SIDESWAP_API_TOR"
+        settings.getString("preferredSwapService") shouldBe "SIDESWAP"
+    }
+
+    test("server settings block takes precedence over app settings") {
+        val backupJson = JSONObject(
+            """
+            {
+              "serverSettings": {
+                "blockExplorer": {"source":"MEMPOOL_CUSTOM","customUrl":"https://server-settings.example.com"},
+                "feeSource": {"source":"CUSTOM","customUrl":"https://fees-server-settings.example.com"},
+                "boltzApiSource": "BOLTZ_API_CLEARNET"
+              },
+              "appSettings": {
+                "mempoolCustomUrl": "https://app-settings.example.com",
+                "feeSourceCustomUrl": "https://fees-app-settings.example.com",
+                "boltzApiSource": "BOLTZ_API_TOR"
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val settings = BackupJsonAdapters.Server.settingsFromBackup(backupJson)
+
+        settings.getJSONObject("blockExplorer").getString("customUrl") shouldBe "https://server-settings.example.com"
+        settings.getJSONObject("feeSource").getString("customUrl") shouldBe "https://fees-server-settings.example.com"
+        settings.getString("boltzApiSource") shouldBe "BOLTZ_API_CLEARNET"
+    }
+
     test("round-trips Bitcoin transaction source and swap metadata") {
         val details = sampleSwapDetails()
         val metadataJson =

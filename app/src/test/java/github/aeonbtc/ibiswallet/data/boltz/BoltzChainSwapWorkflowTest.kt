@@ -37,7 +37,7 @@ class BoltzChainSwapWorkflowTest : FunSpec({
         createCalls shouldBe 0
     }
 
-    test("does not retry a timeout automatically") {
+    test("does not retry createOrder itself after timeout; resets session for provider recovery") {
         val workflow = BoltzChainSwapWorkflow()
         var createCalls = 0
         var resetCalls = 0
@@ -56,6 +56,7 @@ class BoltzChainSwapWorkflowTest : FunSpec({
             )
         }
 
+        // One workflow-level call; LiquidRepository.createBoltzChainSwapOrder owns timeout retries.
         createCalls shouldBe 1
         resetCalls shouldBe 1
     }
