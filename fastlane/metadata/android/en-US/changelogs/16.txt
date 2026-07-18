@@ -1,0 +1,5 @@
+- Native Lightning Network support: Connect a remote node over LND (REST + macaroon), CLN (clnrest + Rune), or NWC.
+- Locally wipe specific wallet transactions or entire history
+- Typeface style selection setting 
+
+See full changelogs on GitHub.
