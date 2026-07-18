@@ -17,8 +17,8 @@ android {
         applicationId = "github.aeonbtc.ibiswallet"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "4.3"
+        versionCode = 16
+        versionName = "4.5-beta"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -120,7 +120,6 @@ dependencies {
     // Compose
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
-    implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.navigation.compose)
@@ -134,7 +133,6 @@ dependencies {
     // Security & Storage
     implementation(libs.androidx.security.crypto)
     implementation(libs.androidx.biometric)
-    implementation(libs.google.material)
 
     // Coroutines
     implementation(libs.kotlinx.coroutines.android)
