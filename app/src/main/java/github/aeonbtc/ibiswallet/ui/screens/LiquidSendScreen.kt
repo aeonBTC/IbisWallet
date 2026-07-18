@@ -107,6 +107,7 @@ import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.LiquidConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
@@ -242,6 +243,11 @@ fun LiquidSendScreen(
     onClearDraft: () -> Unit = {},
     onResetSend: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
+    isLiquidConnected: Boolean = false,
+    isLiquidConnecting: Boolean = false,
+    hasLiquidServerConfigured: Boolean = false,
+    onConnectLiquidServer: () -> Unit = {},
+    onOpenLiquidServerSettings: () -> Unit = {},
 ) {
     var recipientAddress by remember { mutableStateOf(draft.recipientAddress) }
     var amountInput by remember { mutableStateOf(draft.amountInput) }
@@ -887,6 +893,16 @@ fun LiquidSendScreen(
                 privacyMode = privacyMode,
                 useSats = useSats,
                 onRetryLightningRefund = onRetryPendingLightningRefund,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        if (!isLiquidConnected) {
+            LiquidConnectionBanner(
+                isConnecting = isLiquidConnecting,
+                hasServerConfigured = hasLiquidServerConfigured,
+                onConnect = onConnectLiquidServer,
+                onOpenServerSettings = onOpenLiquidServerSettings,
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -1827,31 +1843,6 @@ private fun LiquidSendConfirmationDialog(
                 }
 
                 is LiquidSendState.Sending -> {
-                    val isVerboseButtonText =
-                        preview?.kind != LiquidSendKind.LBTC && preview?.kind != LiquidSendKind.LIQUID_ASSET && sendState.status.isNotBlank()
-                    val buttonText =
-                        if (isVerboseButtonText) {
-                            sendState.status
-                        } else if (preview?.kind == LiquidSendKind.LIQUID_ASSET) {
-                            "Send ${preview.resolvedAsset.ticker}"
-                        } else if (preview?.kind == LiquidSendKind.LBTC) {
-                            "Send L-BTC"
-                        } else {
-                            "Pay Lightning"
-                        }
-                    val buttonTextStyle =
-                        if (isVerboseButtonText) {
-                            MaterialTheme.typography.labelLarge
-                        } else {
-                            MaterialTheme.typography.titleMedium
-                        }
-                    val sendingDetail =
-                        sendState.detail?.takeIf { it.isNotBlank() }
-                            ?: if (sendState.canDismiss) {
-                                "Close anytime. Payment continues in background."
-                            } else {
-                                null
-                            }
                     Button(
                         onClick = { },
                         modifier =
@@ -1863,39 +1854,18 @@ private fun LiquidSendConfirmationDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal, contentColor = DarkBackground),
                     ) {
                         CircularProgressIndicator(
-                            modifier = Modifier.size(if (isVerboseButtonText) 18.dp else 20.dp),
+                            modifier = Modifier.size(20.dp),
                             color = DarkBackground,
                             strokeWidth = 2.dp,
                         )
-                        Spacer(modifier = Modifier.width(if (isVerboseButtonText) 6.dp else 8.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = buttonText,
-                            modifier = if (isVerboseButtonText) Modifier.weight(1f) else Modifier,
-                            style = buttonTextStyle,
+                            text = stringResource(R.string.liquid_send_status_sending),
+                            style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             softWrap = false,
                             textAlign = TextAlign.Center,
-                        )
-                    }
-                    if (preview?.kind == LiquidSendKind.LBTC && sendState.status.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = sendState.status,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
-                    sendingDetail?.let { detail ->
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = detail,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextTertiary,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                     Spacer(modifier = Modifier.height(10.dp))
@@ -1983,13 +1953,7 @@ private fun LiquidSendConfirmationDialog(
                         privacyMode = privacyMode,
                     )
 
-                    is LiquidSendState.Sending -> LiquidSendReviewContent(
-                        preview = preview ?: return@ScrollableDialogSurface,
-                        useSats = useSats,
-                        btcPrice = btcPrice,
-                        fiatCurrency = fiatCurrency,
-                        privacyMode = privacyMode,
-                    )
+                    is LiquidSendState.Sending -> LiquidSendProgressContent(sendState)
 
                     is LiquidSendState.Success -> {
                         Text(
@@ -2021,7 +1985,23 @@ private fun LiquidSendConfirmationDialog(
 
                     is LiquidSendState.Failed -> {
                         Text(
-                            text = sendState.error,
+                            text = stringResource(R.string.ln_node_status_failed),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = AccentRed,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(R.string.ln_node_failure_reason),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text =
+                                sendState.error.ifBlank {
+                                    stringResource(R.string.ln_node_status_failed)
+                                },
                             style = MaterialTheme.typography.bodyMedium,
                             color = AccentRed,
                         )
@@ -2277,7 +2257,7 @@ private fun LiquidSendReviewContent(
 
     preview.selectedUtxoCount.takeIf { it > 0 }?.let { count ->
         Text(
-            text = stringResource(R.string.loc_f9bcfb07, count, if (count > 1) "s" else ""),
+            text = stringResource(R.string.loc_f9bcfb07, count),
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
         )
@@ -2383,7 +2363,7 @@ private fun AssetSendReviewContent(
 
     preview.selectedUtxoCount.takeIf { it > 0 }?.let { count ->
         Text(
-            text = stringResource(R.string.loc_c7ee4baa, count, if (count > 1) "s" else ""),
+            text = stringResource(R.string.loc_c7ee4baa, count),
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary,
         )
@@ -2549,7 +2529,7 @@ private fun LightningSendReviewContent(
 
     preview.selectedUtxoCount.takeIf { it > 0 }?.let { count ->
         Text(
-            text = stringResource(R.string.loc_c7ee4baa, count, if (count > 1) "s" else ""),
+            text = stringResource(R.string.loc_c7ee4baa, count),
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary,
         )
@@ -3424,9 +3404,9 @@ private fun liquidSendDialogTitle(
 
         is LiquidSendState.Sending ->
             if (kind == LiquidSendKind.LBTC || kind == LiquidSendKind.LIQUID_ASSET) {
-                "Sending..."
+                "Sending Liquid"
             } else {
-                "Paying Lightning"
+                "Sending Lightning Payment"
             }
 
         is LiquidSendState.Success ->
@@ -3444,6 +3424,119 @@ private fun liquidSendDialogTitle(
             }
     }
 }
+
+@Composable
+private fun LiquidSendProgressContent(sendState: LiquidSendState.Sending) {
+    val preview = sendState.preview
+    val isLightning = preview.kind != LiquidSendKind.LBTC && preview.kind != LiquidSendKind.LIQUID_ASSET
+    Text(
+        text = stringResource(R.string.liquid_send_status_message),
+        style = MaterialTheme.typography.bodyMedium,
+        color = TextPrimary,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(modifier = Modifier.height(16.dp))
+    LiquidSendProgressStep(
+        title = stringResource(R.string.liquid_send_status_step_review_title),
+        detail = stringResource(R.string.liquid_send_status_step_review_detail),
+        complete = true,
+    )
+    LiquidSendProgressStep(
+        title = liquidSendProgressTargetTitle(preview),
+        detail = sendState.status.ifBlank { stringResource(R.string.liquid_send_status_step_sending_detail) },
+        active = true,
+    )
+    LiquidSendProgressStep(
+        title = stringResource(R.string.liquid_send_status_step_result_title),
+        detail = stringResource(
+            if (isLightning) {
+                R.string.liquid_send_status_step_result_detail_lightning
+            } else {
+                R.string.liquid_send_status_step_result_detail_liquid
+            },
+        ),
+    )
+    val detail = sendState.detail?.takeIf { it.isNotBlank() }
+        ?: if (sendState.canDismiss) stringResource(R.string.liquid_send_status_background_detail) else null
+    detail?.let {
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = it,
+            style = MaterialTheme.typography.bodySmall,
+            color = TextTertiary,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun LiquidSendProgressStep(
+    title: String,
+    detail: String,
+    complete: Boolean = false,
+    active: Boolean = false,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .padding(top = 3.dp)
+                    .size(18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                active -> CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    color = LiquidTeal,
+                    strokeWidth = 2.dp,
+                )
+                complete -> Box(
+                    modifier =
+                        Modifier
+                            .size(10.dp)
+                            .background(LiquidTeal, RoundedCornerShape(2.dp)),
+                )
+                else -> Box(
+                    modifier =
+                        Modifier
+                            .size(10.dp)
+                            .background(BorderColor, RoundedCornerShape(2.dp)),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (complete || active) TextPrimary else TextSecondary,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+            )
+        }
+    }
+}
+
+private fun liquidSendProgressTargetTitle(preview: LiquidSendPreview): String =
+    when (preview.kind) {
+        LiquidSendKind.LBTC -> "Sending L-BTC"
+        LiquidSendKind.LIQUID_ASSET -> "Sending ${preview.resolvedAsset.ticker}"
+        LiquidSendKind.LIGHTNING_BOLT11,
+        LiquidSendKind.LIGHTNING_BOLT12,
+        LiquidSendKind.LIGHTNING_LNURL,
+        -> "Sending Lightning payment"
+    }
 
 private data class RecipientModeBadge(
     val label: String,
@@ -3856,6 +3949,19 @@ private fun PendingLightningPaymentDetails(
                             text = session.status,
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary,
+                        )
+                    }
+                    session.refundError?.takeIf { it.isNotBlank() }?.let { refundError ->
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = stringResource(R.string.ln_node_failure_reason),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondary,
+                        )
+                        Text(
+                            text = refundError,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = AccentRed,
                         )
                     }
                     if (session.swapFeeSats > 0 && !privacyMode) {

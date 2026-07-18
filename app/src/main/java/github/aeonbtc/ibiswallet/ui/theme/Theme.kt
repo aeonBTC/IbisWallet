@@ -50,6 +50,7 @@ private fun darkColorSchemeFor(themeColors: IbisThemeColors): ColorScheme =
 @Suppress("DEPRECATION")
 fun IbisWalletTheme(
     themeMode: String = SecureStorage.THEME_MODE_DARK,
+    typeface: String = SecureStorage.TYPEFACE_SYSTEM,
     content: @Composable () -> Unit,
 ) {
     val themeColors =
@@ -83,7 +84,7 @@ fun IbisWalletTheme(
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = Typography,
+            typography = ibisTypography(typeface),
             content = content,
         )
     }

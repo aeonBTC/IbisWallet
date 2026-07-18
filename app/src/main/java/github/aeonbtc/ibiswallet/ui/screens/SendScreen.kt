@@ -80,6 +80,7 @@ import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
+import github.aeonbtc.ibiswallet.ui.components.ElectrumConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
@@ -173,6 +174,9 @@ fun SendScreen(
     onHandleScannedInput: (String) -> Boolean = { false },
     onHandleRecipientInput: (String) -> Boolean = { false },
     onToggleDenomination: () -> Unit = {},
+    hasElectrumServerConfigured: Boolean = false,
+    onConnectElectrumServer: () -> Unit = {},
+    onOpenElectrumServerSettings: () -> Unit = {},
 ) {
     // Initialize state from draft
     var recipientAddress by remember { mutableStateOf(draft.recipientAddress) }
@@ -665,6 +669,16 @@ fun SendScreen(
                 .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (walletState.isInitialized && !uiState.isConnected && !isWatchOnly) {
+            ElectrumConnectionBanner(
+                isConnecting = uiState.isConnecting,
+                hasServerConfigured = hasElectrumServerConfigured,
+                onConnect = onConnectElectrumServer,
+                onOpenServerSettings = onOpenElectrumServerSettings,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         // Send Form Card
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -1409,27 +1423,6 @@ fun SendScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        if (walletState.isInitialized && !uiState.isConnected && !isWatchOnly) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor = WarningYellow.copy(alpha = 0.1f),
-                    ),
-            ) {
-                Text(
-                    text = stringResource(R.string.loc_0165575b),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = WarningYellow,
-                    modifier = Modifier.padding(16.dp),
-                    textAlign = TextAlign.Center,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-        }
-
         if (!walletState.isInitialized) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1528,11 +1521,98 @@ fun SendScreen(
     }
 }
 
+@Composable
+private fun BitcoinSendProgressContent(sendStatus: String?) {
+    Text(
+        text = stringResource(R.string.l1_send_status_message),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onBackground,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(modifier = Modifier.height(16.dp))
+    BitcoinSendProgressStep(
+        title = stringResource(R.string.l1_send_status_step_review_title),
+        detail = stringResource(R.string.l1_send_status_step_review_detail),
+        complete = true,
+    )
+    BitcoinSendProgressStep(
+        title = stringResource(R.string.l1_send_status_step_sign_title),
+        detail = stringResource(R.string.l1_send_status_step_sign_detail),
+        complete = !sendStatus.isNullOrBlank(),
+        active = sendStatus.isNullOrBlank(),
+    )
+    BitcoinSendProgressStep(
+        title = stringResource(R.string.l1_send_status_step_broadcast_title),
+        detail = sendStatus?.takeIf { it.isNotBlank() }
+            ?: stringResource(R.string.l1_send_status_step_broadcast_detail),
+        active = !sendStatus.isNullOrBlank(),
+    )
+}
+
+@Composable
+private fun BitcoinSendProgressStep(
+    title: String,
+    detail: String,
+    complete: Boolean = false,
+    active: Boolean = false,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .padding(top = 3.dp)
+                    .size(18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                active -> CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    color = BitcoinOrange,
+                    strokeWidth = 2.dp,
+                )
+                complete -> Box(
+                    modifier =
+                        Modifier
+                            .size(10.dp)
+                            .background(BitcoinOrange, RoundedCornerShape(2.dp)),
+                )
+                else -> Box(
+                    modifier =
+                        Modifier
+                            .size(10.dp)
+                            .background(BorderColor, RoundedCornerShape(2.dp)),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (complete || active) MaterialTheme.colorScheme.onBackground else TextSecondary,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+            )
+        }
+    }
+}
+
 /**
  * Coin Control Dialog - allows user to select specific UTXOs to spend
  */
 @Composable
-private fun CoinControlDialog(
+internal fun CoinControlDialog(
     utxos: List<UtxoInfo>,
     selectedUtxos: List<UtxoInfo>,
     useSats: Boolean,
@@ -1885,6 +1965,11 @@ private fun SendConfirmationDialog(
                         color = DarkBackground,
                         strokeWidth = 2.dp,
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.loc_57cf7ca4),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 } else {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
@@ -1902,17 +1987,6 @@ private fun SendConfirmationDialog(
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
-            }
-
-            if (isSending && sendStatus != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = sendStatus,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextSecondary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -1933,7 +2007,9 @@ private fun SendConfirmationDialog(
     ) {
                 Text(
                     text =
-                        if (isWatchOnly) {
+                        if (isSending) {
+                            stringResource(R.string.l1_send_status_title)
+                        } else if (isWatchOnly) {
                             stringResource(R.string.loc_35504dec)
                         } else {
                             stringResource(R.string.loc_81f5c0cf)
@@ -1944,6 +2020,11 @@ private fun SendConfirmationDialog(
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                if (isSending) {
+                    BitcoinSendProgressContent(sendStatus)
+                    return@ScrollableDialogSurface
+                }
 
                 // Recipient
                 Row(
@@ -2183,7 +2264,6 @@ private fun SendConfirmationDialog(
                                     stringResource(
                                         R.string.loc_485306ed,
                                         selectedUtxos.size,
-                                        if (selectedUtxos.size > 1) "s" else "",
                                     ),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
@@ -2321,7 +2401,7 @@ internal fun parseBip21Uri(input: String): Bip21Uri {
  * Validate a Bitcoin address checksum
  * Returns null if valid, or an error message if invalid
  */
-private fun validateBitcoinAddress(address: String): String? {
+internal fun validateBitcoinAddress(address: String): String? {
     if (address.isBlank()) return null // Empty is not an error yet
 
     val trimmed = address.trim()
@@ -2482,7 +2562,7 @@ private fun validateBech32Address(
  * Scrollable list of address+amount rows with add/remove.
  */
 @Composable
-private fun MultiRecipientDialog(
+internal fun MultiRecipientDialog(
     recipients: MutableList<Pair<String, String>>,
     useSats: Boolean,
     isUsdMode: Boolean,
@@ -2909,6 +2989,11 @@ private fun MultiRecipientConfirmationDialog(
                         color = DarkBackground,
                         strokeWidth = 2.dp,
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.loc_57cf7ca4),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
                 } else {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.Send,
@@ -2926,17 +3011,6 @@ private fun MultiRecipientConfirmationDialog(
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
-            }
-
-            if (isSending && sendStatus != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = sendStatus,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -2957,7 +3031,9 @@ private fun MultiRecipientConfirmationDialog(
     ) {
                 Text(
                     text =
-                        if (isWatchOnly) {
+                        if (isSending) {
+                            stringResource(R.string.l1_send_status_title)
+                        } else if (isWatchOnly) {
                             stringResource(R.string.loc_d515634f)
                         } else {
                             stringResource(R.string.loc_8c7cfb7b)
@@ -2968,6 +3044,11 @@ private fun MultiRecipientConfirmationDialog(
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                if (isSending) {
+                    BitcoinSendProgressContent(sendStatus)
+                    return@ScrollableDialogSurface
+                }
 
                 // Sending To
                 Text(
@@ -3200,7 +3281,6 @@ private fun MultiRecipientConfirmationDialog(
                                     stringResource(
                                         R.string.loc_485306ed,
                                         selectedUtxos.size,
-                                        if (selectedUtxos.size > 1) "s" else "",
                                     ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = TextSecondary,

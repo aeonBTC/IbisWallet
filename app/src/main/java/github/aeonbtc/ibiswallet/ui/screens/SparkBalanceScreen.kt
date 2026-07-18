@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CurrencyBitcoin
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Schedule
@@ -95,7 +97,9 @@ import github.aeonbtc.ibiswallet.data.model.TransactionDetails
 import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.TransactionHistoryHideAllDialog
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -106,9 +110,11 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
+import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
+import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
 import github.aeonbtc.ibiswallet.util.startActivityWithTaskFallback
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -135,6 +141,7 @@ fun SparkBalanceScreen(
     showHistoricalTxPrices: Boolean = false,
     onShowHistoricalTxPricesChange: (Boolean) -> Unit = {},
     privacyMode: Boolean,
+    sparkAddressLabels: Map<String, String> = emptyMap(),
     sparkTransactionLabels: Map<String, String> = emptyMap(),
     onTogglePrivacy: () -> Unit,
     onRefresh: () -> Unit,
@@ -142,13 +149,19 @@ fun SparkBalanceScreen(
     onQuickReceive: () -> Unit = {},
     onScanQrResult: (String) -> Unit = {},
     onSaveSparkTransactionLabel: (String, String) -> Unit = { _, _ -> },
+    onSaveSparkAddressLabel: (String, String) -> Unit = { _, _ -> },
     onDeleteSparkTransactionLabel: (String) -> Unit = {},
+    onDeleteSparkAddressLabel: (String) -> Unit = {},
+    onDeleteSparkHistoryItem: (String) -> Unit = {},
+    onDeleteAllSparkHistory: () -> Unit = {},
 ) {
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     val showQrScanner = remember { mutableStateOf(false) }
     val showQuickReceive = remember { mutableStateOf(false) }
     val selectedSparkPayment = remember { mutableStateOf<SparkPayment?>(null) }
     val selectedSparkDeposit = remember { mutableStateOf<SparkUnclaimedDeposit?>(null) }
+    var historyItemPendingDelete by remember { mutableStateOf<SparkHistoryItem?>(null) }
+    var showDeleteAllHistoryDialog by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
     var showSparkTransactions by remember { mutableStateOf(false) }
     var showLightningTransactions by remember { mutableStateOf(false) }
@@ -163,6 +176,46 @@ fun SparkBalanceScreen(
             isPullRefreshing.value = false
         }
     }
+
+    historyItemPendingDelete?.let { item ->
+        IbisConfirmDialog(
+            onDismissRequest = { historyItemPendingDelete = null },
+            title = stringResource(R.string.transaction_history_hide_title),
+            message = stringResource(R.string.transaction_history_hide_message),
+            confirmText = stringResource(R.string.transaction_history_hide_confirm),
+            onConfirm = {
+                onDeleteSparkHistoryItem(item.id)
+                historyItemPendingDelete = null
+                when (item) {
+                    is SparkHistoryItem.Payment -> {
+                        if (selectedSparkPayment.value?.id == item.payment.id) {
+                            selectedSparkPayment.value = null
+                        }
+                    }
+                    is SparkHistoryItem.Deposit -> {
+                        if (
+                            selectedSparkDeposit.value?.txid == item.deposit.txid &&
+                            selectedSparkDeposit.value?.vout == item.deposit.vout
+                        ) {
+                            selectedSparkDeposit.value = null
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    if (showDeleteAllHistoryDialog) {
+        TransactionHistoryHideAllDialog(
+            entryCount = sparkState.payments.size + sparkState.unclaimedDeposits.size,
+            onDismissRequest = { showDeleteAllHistoryDialog = false },
+            onConfirm = {
+                onDeleteAllSparkHistory()
+                showDeleteAllHistoryDialog = false
+            },
+        )
+    }
+
     LaunchedEffect(
         isSearchActive,
         searchQuery.trim(),
@@ -207,14 +260,29 @@ fun SparkBalanceScreen(
         }
     val trimmedSearchQuery = searchQuery.trim()
     val searchedHistoryItems =
-        remember(railFilteredPayments, railFilteredDeposits, sparkTransactionLabels, trimmedSearchQuery) {
+        remember(
+            railFilteredPayments,
+            railFilteredDeposits,
+            sparkAddressLabels,
+            sparkTransactionLabels,
+            trimmedSearchQuery,
+            layer1Transactions,
+        ) {
+            fun depositSortTimestamp(deposit: SparkUnclaimedDeposit): Long =
+                deposit.timestamp?.let(::sparkNormalizeTimestampMillis)
+                    ?: layer1Transactions
+                        .firstOrNull { it.txid.equals(deposit.txid, ignoreCase = true) }
+                        ?.timestamp
+                        ?.let(::sparkNormalizeTimestampMillis)
+                    ?: Long.MIN_VALUE
+
             val paymentItems =
                 if (trimmedSearchQuery.isBlank()) {
                     railFilteredPayments.map(SparkHistoryItem::Payment)
                 } else {
                     val query = trimmedSearchQuery.lowercase(Locale.US)
                     railFilteredPayments.filter { payment ->
-                        val label = sparkPaymentLabel(payment, sparkTransactionLabels).orEmpty()
+                        val label = sparkPaymentLabel(payment, sparkAddressLabels, sparkTransactionLabels).orEmpty()
                         val badge = sparkRailBadge(payment)
                         val date = formatSparkTimestamp(payment.timestamp, dateFormat)
                         listOf(
@@ -232,7 +300,9 @@ fun SparkBalanceScreen(
                 }
             val depositItems =
                 if (trimmedSearchQuery.isBlank()) {
-                    railFilteredDeposits.map(SparkHistoryItem::Deposit)
+                    railFilteredDeposits.map { deposit ->
+                        SparkHistoryItem.Deposit(deposit, depositSortTimestamp(deposit))
+                    }
                 } else {
                     val query = trimmedSearchQuery.lowercase(Locale.US)
                     railFilteredDeposits.filter { deposit ->
@@ -244,12 +314,14 @@ fun SparkBalanceScreen(
                             "Received",
                             "Bitcoin",
                             "On-chain",
-                            if (deposit.isMature) "Ready to claim" else "Waiting for confirmations",
+                            if (deposit.isMature) "Confirmed" else "Waiting for confirmations",
                             deposit.claimError.orEmpty(),
                         ).any { it.lowercase(Locale.US).contains(query) }
-                    }.map(SparkHistoryItem::Deposit)
+                    }.map { deposit ->
+                        SparkHistoryItem.Deposit(deposit, depositSortTimestamp(deposit))
+                    }
                 }
-            depositItems + paymentItems
+            (depositItems + paymentItems).sortedByDescending { it.sortTimestampMillis }
         }
     val visibleHistoryItems = remember(searchedHistoryItems, displayLimit) { searchedHistoryItems.take(displayLimit) }
     val totalHistoryCount = searchedHistoryItems.size
@@ -273,7 +345,9 @@ fun SparkBalanceScreen(
     }
 
     selectedSparkPayment.value?.let { payment ->
-        val paymentLabel = sparkPaymentLabel(payment, sparkTransactionLabels)
+        val linkedPaymentRef = sparkPaymentLabelRef(payment)
+        val explicitPaymentLabel = sparkPaymentTransactionLabel(payment, sparkTransactionLabels)
+        val paymentLabel = sparkPaymentLabel(payment, sparkAddressLabels, sparkTransactionLabels)
         val linkedLayer1Transaction = remember(payment, layer1Transactions) { sparkResolveLayer1Transaction(payment, layer1Transactions) }
         SparkPaymentDetailDialog(
             payment = payment,
@@ -288,14 +362,32 @@ fun SparkBalanceScreen(
             privacyMode = privacyMode,
             label = paymentLabel,
             onSaveLabel = { label ->
-                onSaveSparkTransactionLabel(payment.id, label)
-                onSaveSparkTransactionLabel(sparkPaymentLabelKey(payment), label)
+                if (linkedPaymentRef != null) {
+                    onSaveSparkAddressLabel(linkedPaymentRef, label)
+                    if (explicitPaymentLabel != null) {
+                        onDeleteSparkTransactionLabel(payment.id)
+                        onDeleteSparkTransactionLabel(sparkPaymentLabelKey(payment))
+                    }
+                } else {
+                    onSaveSparkTransactionLabel(payment.id, label)
+                    onSaveSparkTransactionLabel(sparkPaymentLabelKey(payment), label)
+                }
             },
             onDeleteLabel = paymentLabel?.let {
                 {
-                    onDeleteSparkTransactionLabel(payment.id)
-                    onDeleteSparkTransactionLabel(sparkPaymentLabelKey(payment))
+                    linkedPaymentRef?.let(onDeleteSparkAddressLabel)
+                        ?: run {
+                            onDeleteSparkTransactionLabel(payment.id)
+                            onDeleteSparkTransactionLabel(sparkPaymentLabelKey(payment))
+                        }
+                    if (explicitPaymentLabel != null) {
+                        onDeleteSparkTransactionLabel(payment.id)
+                        onDeleteSparkTransactionLabel(sparkPaymentLabelKey(payment))
+                    }
                 }
+            },
+            onHideFromHistory = {
+                historyItemPendingDelete = SparkHistoryItem.Payment(payment)
             },
             onDismiss = { selectedSparkPayment.value = null },
         )
@@ -313,6 +405,12 @@ fun SparkBalanceScreen(
             fiatCurrency = fiatCurrency,
             historicalBtcPrice = historicalBtcPrices[deposit.txid],
             privacyMode = privacyMode,
+            onHideFromHistory = {
+                historyItemPendingDelete = SparkHistoryItem.Deposit(
+                    deposit = deposit,
+                    sortTimestampMillis = 0L,
+                )
+            },
             onDismiss = { selectedSparkDeposit.value = null },
         )
     }
@@ -373,6 +471,16 @@ fun SparkBalanceScreen(
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
+                        if (sparkState.payments.isNotEmpty() || sparkState.unclaimedDeposits.isNotEmpty()) {
+                            SparkTransactionFilterButton(
+                                icon = Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.transaction_history_hide_all_content_description),
+                                tint = TextSecondary,
+                                isSelected = true,
+                                onClick = { showDeleteAllHistoryDialog = true },
+                                matchLayer1Style = true,
+                            )
+                        }
                         if (historicalBtcPrices.isNotEmpty()) {
                             SparkTransactionFilterButton(
                                 icon = Icons.Default.Schedule,
@@ -523,7 +631,7 @@ fun SparkBalanceScreen(
                 items(visibleHistoryItems, key = { it.id }) { item ->
                     when (item) {
                         is SparkHistoryItem.Payment -> {
-                            val paymentLabel = sparkPaymentLabel(item.payment, sparkTransactionLabels)
+                            val paymentLabel = sparkPaymentLabel(item.payment, sparkAddressLabels, sparkTransactionLabels)
                             SparkTransactionRow(
                                 payment = item.payment,
                                 useSats = useSats,
@@ -541,13 +649,15 @@ fun SparkBalanceScreen(
                                 onClick = { selectedSparkPayment.value = item.payment },
                             )
                         }
-                        is SparkHistoryItem.Deposit ->
+                        is SparkHistoryItem.Deposit -> {
+                            val layer1Transaction =
+                                layer1Transactions.firstOrNull {
+                                    it.txid.equals(item.deposit.txid, ignoreCase = true)
+                                }
                             SparkPendingDepositRow(
                                 deposit = item.deposit,
-                                layer1Timestamp =
-                                    layer1Transactions.firstOrNull {
-                                        it.txid.equals(item.deposit.txid, ignoreCase = true)
-                                    }?.timestamp,
+                                layer1Transaction = layer1Transaction,
+                                layer1BlockHeight = layer1BlockHeight,
                                 useSats = useSats,
                                 dateFormat = dateFormat,
                                 btcPrice = btcPrice,
@@ -557,10 +667,11 @@ fun SparkBalanceScreen(
                                         historicalBtcPrices[item.deposit.txid]
                                     } else {
                                         null
-                                    },
+                                },
                                 privacyMode = privacyMode,
                                 onClick = { selectedSparkDeposit.value = item.deposit },
                             )
+                        }
                     }
                     Spacer(modifier = Modifier.height(4.dp))
                 }
@@ -765,12 +876,17 @@ private fun SparkBalanceCard(
 
 private sealed interface SparkHistoryItem {
     val id: String
+    val sortTimestampMillis: Long
 
     data class Payment(val payment: SparkPayment) : SparkHistoryItem {
         override val id: String = payment.id
+        override val sortTimestampMillis: Long = sparkNormalizeTimestampMillis(payment.timestamp)
     }
 
-    data class Deposit(val deposit: SparkUnclaimedDeposit) : SparkHistoryItem {
+    data class Deposit(
+        val deposit: SparkUnclaimedDeposit,
+        override val sortTimestampMillis: Long,
+    ) : SparkHistoryItem {
         override val id: String = "deposit:${deposit.txid}:${deposit.vout}"
     }
 }
@@ -778,7 +894,8 @@ private sealed interface SparkHistoryItem {
 @Composable
 private fun SparkPendingDepositRow(
     deposit: SparkUnclaimedDeposit,
-    layer1Timestamp: Long?,
+    layer1Transaction: TransactionDetails?,
+    layer1BlockHeight: UInt?,
     useSats: Boolean,
     dateFormat: String,
     btcPrice: Double?,
@@ -786,13 +903,18 @@ private fun SparkPendingDepositRow(
     historicalBtcPrice: Double?,
     privacyMode: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
-    val formattedTimestamp = (deposit.timestamp ?: layer1Timestamp)?.let { formatSparkTimestamp(it, dateFormat) }.orEmpty()
+    val isConfirmed = sparkDepositHasRequiredConfirmations(deposit, layer1Transaction, layer1BlockHeight)
+    val formattedTimestamp = (deposit.timestamp ?: layer1Transaction?.timestamp)?.let { formatSparkTimestamp(it, dateFormat) }.orEmpty()
     Card(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick),
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                ),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = DarkCard),
     ) {
@@ -831,27 +953,13 @@ private fun SparkPendingDepositRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Spacer(modifier = Modifier.size(3.dp))
-                    Box(
-                        modifier =
-                            Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(BitcoinOrange.copy(alpha = 0.16f))
-                                .padding(horizontal = 5.dp, vertical = 2.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.loc_197cebf2),
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
-                            color = BitcoinOrange,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                        )
-                    }
+                    SparkHistoryRailBadge(railBadge = SparkRailBadge(BitcoinOrange, SparkRail.SWAP))
                 }
                 Text(
                     text =
                         formattedTimestamp.ifBlank {
-                            if (deposit.isMature) {
-                                stringResource(R.string.spark_deposit_status_ready_to_claim)
+                            if (isConfirmed) {
+                                stringResource(R.string.loc_4ab75d7f)
                             } else {
                                 ""
                             }
@@ -881,7 +989,7 @@ private fun SparkPendingDepositRow(
                         isHistorical = historicalBtcPrice != null,
                     )
                 }
-                if (!deposit.isMature) {
+                if (!isConfirmed) {
                     SparkPendingBadge(text = stringResource(R.string.loc_1b684325))
                 }
             }
@@ -902,15 +1010,24 @@ private fun SparkPendingDepositDetailDialog(
     fiatCurrency: String,
     historicalBtcPrice: Double?,
     privacyMode: Boolean,
+    onHideFromHistory: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
     val depositTxidCopyLabel = stringResource(R.string.spark_deposit_txid_copy_label)
     val depositAddressCopyLabel = stringResource(R.string.spark_deposit_address_copy_label)
+    val depositAmountText =
+        if (privacyMode) {
+            SPARK_HIDDEN_AMOUNT
+        } else {
+            "+${formatAmount(deposit.amountSats.toULong(), useSats, includeUnit = true)}"
+        }
+    var showCopiedAmount by remember { mutableStateOf(false) }
     var showCopiedTxid by remember { mutableStateOf(false) }
     var showCopiedAddress by remember { mutableStateOf(false) }
     val showTorBrowserError = remember { mutableStateOf(false) }
     val confirmationProgress = sparkDepositConfirmationProgress(deposit, layer1Transaction, layer1BlockHeight)
+    val isConfirmed = sparkDepositHasRequiredConfirmations(deposit, layer1Transaction, layer1BlockHeight)
     val formattedTimestamp =
         (deposit.timestamp ?: layer1Transaction?.timestamp)?.let { formatSparkFullTimestamp(it, dateFormat) }.orEmpty()
     val explorerTxid = deposit.txid.takeIf { mempoolServer != SecureStorage.MEMPOOL_DISABLED && mempoolUrl.isNotBlank() }
@@ -919,6 +1036,12 @@ private fun SparkPendingDepositDetailDialog(
         SparkTorBrowserErrorDialog(onDismiss = { showTorBrowserError.value = false })
     }
 
+    LaunchedEffect(showCopiedAmount) {
+        if (showCopiedAmount) {
+            kotlinx.coroutines.delay(3000)
+            showCopiedAmount = false
+        }
+    }
     LaunchedEffect(showCopiedTxid) {
         if (showCopiedTxid) {
             kotlinx.coroutines.delay(3000)
@@ -991,6 +1114,22 @@ private fun SparkPendingDepositDetailDialog(
                             .padding(12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkCard.copy(alpha = 0.72f))
+                            .clickable(onClick = onHideFromHistory),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.transaction_history_hide_confirm),
+                            tint = TextSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.CallReceived,
@@ -1006,16 +1145,27 @@ private fun SparkPendingDepositDetailDialog(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text =
-                                if (privacyMode) {
-                                    SPARK_HIDDEN_AMOUNT
-                                } else {
-                                    "+${formatAmount(deposit.amountSats.toULong(), useSats, includeUnit = true)}"
-                                },
+                            text = depositAmountText,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             color = AccentGreen,
+                            modifier =
+                                if (privacyMode) {
+                                    Modifier
+                                } else {
+                                    Modifier.clickable {
+                                        SecureClipboard.copyAndScheduleClear(context, depositAmountText)
+                                        showCopiedAmount = true
+                                    }
+                                },
                         )
+                        if (showCopiedAmount) {
+                            Text(
+                                text = stringResource(R.string.loc_e287255d),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SparkPurple,
+                            )
+                        }
                         if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
@@ -1089,24 +1239,21 @@ private fun SparkPendingDepositDetailDialog(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = if (deposit.isMature) Icons.Default.CheckCircle else Icons.Default.Schedule,
+                                    imageVector = if (isConfirmed) Icons.Default.CheckCircle else Icons.Default.Schedule,
                                     contentDescription = null,
-                                    tint = if (deposit.isMature) AccentGreen else BitcoinOrange,
+                                    tint = if (isConfirmed) AccentGreen else BitcoinOrange,
                                     modifier = Modifier.size(18.dp),
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text =
-                                        if (deposit.isMature) {
-                                            stringResource(R.string.spark_deposit_status_ready_to_claim)
+                                        if (isConfirmed) {
+                                            stringResource(R.string.loc_4ab75d7f)
                                         } else {
-                                            stringResource(
-                                                R.string.spark_deposit_status_confirmations_format,
-                                                confirmationProgress,
-                                            )
+                                            "${stringResource(R.string.loc_1b684325)} $confirmationProgress"
                                         },
                                     style = MaterialTheme.typography.bodyLarge,
-                                    color = if (deposit.isMature) AccentGreen else BitcoinOrange,
+                                    color = if (isConfirmed) AccentGreen else BitcoinOrange,
                                 )
                             }
                             if (formattedTimestamp.isNotBlank()) {
@@ -1184,8 +1331,8 @@ private fun SparkPendingDepositDetailDialog(
                         } else {
                             Text(
                                 text =
-                                    if (deposit.isMature) {
-                                        stringResource(R.string.spark_deposit_status_awaiting_claim)
+                                    if (isConfirmed) {
+                                        stringResource(R.string.loc_4ab75d7f)
                                     } else {
                                         stringResource(R.string.spark_deposit_status_awaiting_confirmations)
                                     },
@@ -1213,12 +1360,17 @@ private fun SparkPendingDepositDetailDialog(
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = stringResource(R.string.spark_deposit_note_message),
+                            text =
+                                if (isConfirmed) {
+                                    stringResource(R.string.spark_deposit_note_confirmed_message)
+                                } else {
+                                    stringResource(R.string.spark_deposit_note_message)
+                                },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
 
-                        deposit.claimError?.let {
+                        if (!isConfirmed) deposit.claimError?.let {
                             HorizontalDivider(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 color = TextSecondary.copy(alpha = 0.1f),
@@ -1316,25 +1468,28 @@ private fun SparkTransactionRow(
     privacyMode: Boolean,
     label: String?,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val isReceive = payment.type.equals("RECEIVE", ignoreCase = true)
-    val isPending = !payment.status.equals("COMPLETE", ignoreCase = true) &&
-        !payment.status.equals("SUCCEEDED", ignoreCase = true) &&
-        !payment.status.equals("SUCCESS", ignoreCase = true) &&
-        !payment.status.equals("COMPLETED", ignoreCase = true)
+    val isFailed = sparkPaymentIsFailed(payment.status)
+    val isPending = !sparkPaymentIsConfirmed(payment.status) && !isFailed
+    val railBadge = sparkRailBadge(payment)
+    val isFailedLightningPayment = isFailed && railBadge.rail == SparkRail.LIGHTNING
     val icon = if (isReceive) Icons.AutoMirrored.Filled.CallReceived else Icons.AutoMirrored.Filled.CallMade
     val iconTint = if (isReceive) AccentGreen else AccentRed
     val iconBackground = if (isReceive) AccentGreen.copy(alpha = 0.1f) else AccentRed.copy(alpha = 0.1f)
-    val amountColor = if (isReceive) AccentGreen else AccentRed
+    val amountColor = if (isFailedLightningPayment) TextSecondary else if (isReceive) AccentGreen else AccentRed
     val formattedTimestamp = remember(payment.timestamp, dateFormat) { formatSparkTimestamp(payment.timestamp, dateFormat) }
     val displayLabel = label?.takeIf { it.isNotBlank() }
-    val railBadge = sparkRailBadge(payment)
 
     Card(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick),
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                ),
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = DarkCard),
     ) {
@@ -1406,6 +1561,8 @@ private fun SparkTransactionRow(
                     text =
                         if (privacyMode) {
                             SPARK_HIDDEN_AMOUNT
+                        } else if (isFailedLightningPayment) {
+                            formatAmount(payment.amountSats.toULong(), useSats, includeUnit = true)
                         } else {
                             "${if (isReceive) "+" else "-"}${formatAmount(payment.amountSats.toULong(), useSats, includeUnit = true)}"
                         },
@@ -1421,7 +1578,12 @@ private fun SparkTransactionRow(
                         isHistorical = historicalBtcPrice != null,
                     )
                 }
-                if (isPending) {
+                if (isFailed) {
+                    SparkPendingBadge(
+                        text = sparkPaymentDisplayStatus(payment.status),
+                        color = ErrorRed,
+                    )
+                } else if (isPending) {
                     SparkPendingBadge(text = stringResource(R.string.loc_1b684325))
                 }
             }
@@ -1470,19 +1632,22 @@ private fun SparkHistoricalFiatText(
 }
 
 @Composable
-private fun SparkPendingBadge(text: String) {
+private fun SparkPendingBadge(
+    text: String,
+    color: Color = BitcoinOrange,
+) {
     Box(
         modifier =
             Modifier
                 .padding(top = 2.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(BitcoinOrange.copy(alpha = 0.16f))
+                .background(color.copy(alpha = 0.16f))
                 .padding(horizontal = 6.dp, vertical = 2.dp),
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall.copy(fontSize = 12.sp, lineHeight = 17.sp),
-            color = BitcoinOrange,
+            color = color,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
@@ -1504,6 +1669,7 @@ private fun SparkPaymentDetailDialog(
     label: String?,
     onSaveLabel: (String) -> Unit,
     onDeleteLabel: (() -> Unit)?,
+    onHideFromHistory: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -1515,22 +1681,34 @@ private fun SparkPaymentDetailDialog(
     val receivedAtCopyLabel = stringResource(R.string.spark_received_at_copy_label)
     val recipientCopyLabel = stringResource(R.string.spark_recipient_copy_label)
     val recipientValueCopyLabel = if (isReceive) receivedAtCopyLabel else recipientCopyLabel
-    val isConfirmed = payment.status.equals("COMPLETE", ignoreCase = true) ||
-        payment.status.equals("SUCCEEDED", ignoreCase = true) ||
-        payment.status.equals("SUCCESS", ignoreCase = true) ||
-        payment.status.equals("COMPLETED", ignoreCase = true)
-    val statusLabel =
-        if (isConfirmed) {
-            stringResource(R.string.loc_4ab75d7f)
-        } else {
-            payment.status.lowercase(Locale.US).replaceFirstChar {
-                if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString()
-            }
+    val isConfirmed = sparkPaymentIsConfirmed(payment.status)
+    val isFailed = sparkPaymentIsFailed(payment.status)
+    val statusColor =
+        when {
+            isFailed -> ErrorRed
+            isConfirmed -> AccentGreen
+            else -> BitcoinOrange
         }
+    val statusLabel =
+        when {
+            isFailed -> stringResource(R.string.ln_node_status_failed)
+            isConfirmed -> stringResource(R.string.loc_4ab75d7f)
+            else -> sparkPaymentDisplayStatus(payment.status)
+        }
+    val failureReasonText =
+        payment.failureReason?.takeIf { it.isNotBlank() }
+            ?: sparkPaymentFailureReasonFallback(payment.status).takeIf { isFailed }
     val formattedTimestamp = formatSparkFullTimestamp(payment.timestamp, dateFormat)
     val recipient = payment.recipient?.takeIf { it.isNotBlank() }
     val feeColor = if (railBadge.rail == SparkRail.LIGHTNING) LightningYellow else BitcoinOrange
+    val paymentAmountText =
+        if (privacyMode) {
+            SPARK_HIDDEN_AMOUNT
+        } else {
+            "${if (isReceive) "+" else "-"}${formatAmount(payment.amountSats.toULong(), useSats, includeUnit = true)}"
+        }
     val scrollState = rememberScrollState()
+    var showCopiedAmount by remember { mutableStateOf(false) }
     var showCopiedId by remember { mutableStateOf(false) }
     var showCopiedRecipient by remember { mutableStateOf(false) }
     var showCopiedBitcoinTxid by remember { mutableStateOf(false) }
@@ -1547,6 +1725,12 @@ private fun SparkPaymentDetailDialog(
         SparkTorBrowserErrorDialog(onDismiss = { showTorBrowserError.value = false })
     }
 
+    LaunchedEffect(showCopiedAmount) {
+        if (showCopiedAmount) {
+            kotlinx.coroutines.delay(3000)
+            showCopiedAmount = false
+        }
+    }
     LaunchedEffect(showCopiedId) {
         if (showCopiedId) {
             kotlinx.coroutines.delay(3000)
@@ -1626,6 +1810,22 @@ private fun SparkPaymentDetailDialog(
                             .padding(12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkCard.copy(alpha = 0.72f))
+                            .clickable(onClick = onHideFromHistory),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.transaction_history_hide_confirm),
+                            tint = TextSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector =
@@ -1648,23 +1848,34 @@ private fun SparkPaymentDetailDialog(
                                     } else {
                                         stringResource(R.string.loc_1af68597)
                                     },
-                                    stringResource(railBadge.labelRes),
+                                    stringResource(sparkRailLabelRes(railBadge.rail)),
                                 ),
                             style = MaterialTheme.typography.titleSmall,
                             color = accentColor,
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text =
-                                if (privacyMode) {
-                                    SPARK_HIDDEN_AMOUNT
-                                } else {
-                                    "${if (isReceive) "+" else "-"}${formatAmount(payment.amountSats.toULong(), useSats, includeUnit = true)}"
-                                },
+                            text = paymentAmountText,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             color = accentColor,
+                            modifier =
+                                if (privacyMode) {
+                                    Modifier
+                                } else {
+                                    Modifier.clickable {
+                                        SecureClipboard.copyAndScheduleClear(context, paymentAmountText)
+                                        showCopiedAmount = true
+                                    }
+                                },
                         )
+                        if (showCopiedAmount) {
+                            Text(
+                                text = stringResource(R.string.loc_e287255d),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = SparkPurple,
+                            )
+                        }
                         if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                             Spacer(modifier = Modifier.height(2.dp))
                             SparkHistoricalFiatText(
@@ -1734,16 +1945,21 @@ private fun SparkPaymentDetailDialog(
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        imageVector = if (isConfirmed) Icons.Default.CheckCircle else Icons.Default.Schedule,
+                                        imageVector =
+                                            when {
+                                                isFailed -> Icons.Default.Close
+                                                isConfirmed -> Icons.Default.CheckCircle
+                                                else -> Icons.Default.Schedule
+                                            },
                                         contentDescription = null,
-                                        tint = if (isConfirmed) AccentGreen else BitcoinOrange,
+                                        tint = statusColor,
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = statusLabel,
                                         style = MaterialTheme.typography.bodyLarge,
-                                        color = if (isConfirmed) AccentGreen else BitcoinOrange,
+                                        color = statusColor,
                                     )
                                 }
                                 if (formattedTimestamp.isNotBlank()) {
@@ -1753,6 +1969,24 @@ private fun SparkPaymentDetailDialog(
                                         color = TextSecondary,
                                     )
                                 }
+                            }
+
+                            failureReasonText?.let { reason ->
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    color = TextSecondary.copy(alpha = 0.1f),
+                                )
+                                Text(
+                                    text = stringResource(R.string.ln_node_failure_reason),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = reason,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = ErrorRed,
+                                )
                             }
                         }
 
@@ -2039,7 +2273,7 @@ private fun SparkHistoryRailBadge(railBadge: SparkRailBadge) {
                         SparkRail.SWAP -> Icons.Default.CurrencyBitcoin
                         SparkRail.SPARK -> Icons.Default.Bolt
                     },
-                contentDescription = stringResource(railBadge.labelRes),
+                contentDescription = null,
                 tint = railBadge.color,
                 modifier =
                     Modifier.size(
@@ -2121,6 +2355,36 @@ private fun SparkExplorerBadge(
     }
 }
 
+private fun sparkPaymentIsConfirmed(status: String): Boolean =
+    status.equals("COMPLETE", ignoreCase = true) ||
+        status.equals("SUCCEEDED", ignoreCase = true) ||
+        status.equals("SUCCESS", ignoreCase = true) ||
+        status.equals("COMPLETED", ignoreCase = true)
+
+private fun sparkPaymentIsFailed(status: String): Boolean {
+    val normalized = status.trim().lowercase(Locale.US)
+    return normalized == "failed" ||
+        normalized == "failure" ||
+        normalized.contains("fail")
+}
+
+private fun sparkPaymentDisplayStatus(status: String): String =
+    status.trim().lowercase(Locale.US).replaceFirstChar {
+        if (it.isLowerCase()) it.titlecase(Locale.US) else it.toString()
+    }
+
+/** Fallback when SDK only reports FAILED with no detail text. */
+private fun sparkPaymentFailureReasonFallback(status: String): String? {
+    val normalized = status.trim()
+    if (normalized.isBlank()) return null
+    if (normalized.equals("FAILED", ignoreCase = true) ||
+        normalized.equals("FAILURE", ignoreCase = true)
+    ) {
+        return null
+    }
+    return sparkPaymentDisplayStatus(normalized)
+}
+
 private fun sparkPaymentLabelKey(payment: SparkPayment): String =
     listOf(
         payment.type,
@@ -2130,11 +2394,24 @@ private fun sparkPaymentLabelKey(payment: SparkPayment): String =
         payment.method,
     ).joinToString(separator = "|")
 
-private fun sparkPaymentLabel(
+private fun sparkPaymentLabelRef(payment: SparkPayment): String? =
+    payment.recipient
+        ?.takeIf { it.isNotBlank() }
+        ?.let(::normalizeSparkAddressLabelRef)
+        ?.takeIf { it.isNotBlank() }
+
+private fun sparkPaymentTransactionLabel(
     payment: SparkPayment,
     labels: Map<String, String>,
 ): String? =
     labels[sparkPaymentLabelKey(payment)] ?: labels[payment.id]
+
+private fun sparkPaymentLabel(
+    payment: SparkPayment,
+    addressLabels: Map<String, String>,
+    transactionLabels: Map<String, String>,
+): String? =
+    sparkPaymentLabelRef(payment)?.let { addressLabels[it] } ?: sparkPaymentTransactionLabel(payment, transactionLabels)
 
 private enum class SparkRail {
     SPARK,
@@ -2143,7 +2420,6 @@ private enum class SparkRail {
 }
 
 private data class SparkRailBadge(
-    val labelRes: Int,
     val color: Color,
     val rail: SparkRail,
 )
@@ -2166,23 +2442,43 @@ private fun sparkDepositConfirmationProgress(
     return "$confirmations/3"
 }
 
+private fun sparkDepositHasRequiredConfirmations(
+    deposit: SparkUnclaimedDeposit,
+    layer1Transaction: TransactionDetails?,
+    layer1BlockHeight: UInt?,
+): Boolean {
+    if (deposit.isMature) return true
+    val transaction = layer1Transaction ?: return false
+    if (!transaction.isConfirmed) return false
+    val confirmationHeight = transaction.confirmationTime?.height ?: return false
+    val blockHeight = layer1BlockHeight ?: return false
+    return blockHeight.toLong() - confirmationHeight.toLong() + 1L >= 3L
+}
+
 private fun sparkRailBadge(payment: SparkPayment): SparkRailBadge {
     val method = "${payment.method} ${payment.methodDetails} ${payment.type}".lowercase(Locale.US)
     return when {
         method.contains("bolt") || method.contains("lightning") || method.contains("lnurl") ->
-            SparkRailBadge(R.string.loc_03b82433, LightningYellow, SparkRail.LIGHTNING)
+            SparkRailBadge(LightningYellow, SparkRail.LIGHTNING)
         method.contains("bitcoin") ||
             method.contains("onchain") ||
             method.contains("on-chain") ||
             method.contains("on_chain") ||
             method.contains("deposit") ||
             method.contains("withdraw") ->
-            SparkRailBadge(R.string.loc_197cebf2, BitcoinOrange, SparkRail.SWAP)
+            SparkRailBadge(BitcoinOrange, SparkRail.SWAP)
         method.contains("spark") ->
-            SparkRailBadge(R.string.loc_85f5955f, SparkPurple, SparkRail.SPARK)
-        else -> SparkRailBadge(R.string.loc_85f5955f, SparkPurple, SparkRail.SPARK)
+            SparkRailBadge(SparkPurple, SparkRail.SPARK)
+        else -> SparkRailBadge(SparkPurple, SparkRail.SPARK)
     }
 }
+
+private fun sparkRailLabelRes(rail: SparkRail): Int =
+    when (rail) {
+        SparkRail.SPARK -> R.string.loc_85f5955f
+        SparkRail.LIGHTNING -> R.string.loc_03b82433
+        SparkRail.SWAP -> R.string.loc_197cebf2
+    }
 
 private fun sparkExtractLayer1Txid(payment: SparkPayment): String? {
     if (sparkRailBadge(payment).rail != SparkRail.SWAP) return null
@@ -2349,6 +2645,10 @@ private fun formatSparkTimestamp(
     return formatBalanceTimestamp(timestamp, dateFormat)
 }
 
+private fun sparkNormalizeTimestampMillis(timestamp: Long): Long {
+    return if (timestamp > 10_000_000_000L) timestamp else timestamp * 1000L
+}
+
 private fun formatSparkFullTimestamp(
     timestamp: Long,
     dateFormat: String,
@@ -2486,6 +2786,11 @@ private fun SparkQuickReceiveDialog(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    is SparkReceiveState.Paid ->
+                        Text(
+                            text = stringResource(R.string.loc_739b859d),
+                            color = SuccessGreen,
+                        )
                     SparkReceiveState.Idle ->
                         Text(
                             text = stringResource(R.string.spark_preparing_address),

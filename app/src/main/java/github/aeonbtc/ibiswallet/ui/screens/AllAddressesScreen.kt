@@ -243,14 +243,18 @@ fun AllAddressesScreen(
             }
         }
 
-    // Used: sort funded addresses to top (L-BTC or any asset), then empty
+    // Used tab shows only currently funded addresses (privacy). Empty historical used
+    // are never moved to Receive/Change by the repository, so gap/nextUnused stay intact.
     val sortedUsedAddresses =
         remember(usedAddresses, assetBalancesByAddress) {
-            usedAddresses.sortedWith(
-                compareByDescending<WalletAddress> {
+            usedAddresses
+                .filter {
                     it.balanceSats > 0UL || assetBalancesByAddress.containsKey(it.address)
-                }.thenByDescending { it.balanceSats },
-            )
+                }.sortedWith(
+                    compareByDescending<WalletAddress> {
+                        it.balanceSats > 0UL || assetBalancesByAddress.containsKey(it.address)
+                    }.thenByDescending { it.balanceSats },
+                )
         }
     val filteredUsedAddresses =
         remember(sortedUsedAddresses, searchQuery) {

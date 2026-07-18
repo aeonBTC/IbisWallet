@@ -242,7 +242,6 @@ fun SweepPrivateKeyScreen(
                         stringResource(
                             R.string.loc_fe79714b,
                             sweepState.sweepTxids.size,
-                            if (sweepState.sweepTxids.size > 1) "s" else "",
                         ),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onBackground,

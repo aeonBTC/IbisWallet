@@ -31,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -99,6 +100,7 @@ import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.MultisigWalletConfig
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
+import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.WalletResult
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
@@ -112,6 +114,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
+import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
@@ -147,6 +150,15 @@ data class WalletInfo(
     val gapLimit: Int = 20,
     val liquidGapLimit: Int = 20,
     val isLiquidWatchOnly: Boolean = false,
+    val isLightningNode: Boolean = false,
+    /** Short connection type for Lightning Node wallets (e.g. LND, NWC). */
+    val lightningTypeLabel: String? = null,
+    /** Non-secret connection detail (host or NWC relay). */
+    val lightningDetail: String? = null,
+    /** LND only: Port: N */
+    val lightningPort: String? = null,
+    /** Extra meta (NWC pubkey, Mode) — non-secret. */
+    val lightningMeta: String? = null,
 )
 
 /**
@@ -194,10 +206,14 @@ fun ManageWalletsScreen(
     layer2Enabled: Boolean = false,
     liquidLayer2Enabled: Boolean = layer2Enabled,
     sparkLayer2Enabled: Boolean = layer2Enabled,
+    lightningNodeLayer2Enabled: Boolean = false,
     isLiquidEnabledForWallet: (walletId: String) -> Boolean = { false },
     onSetLiquidEnabledForWallet: (walletId: String, Boolean) -> Unit = { _, _ -> },
     isSparkEnabledForWallet: (walletId: String) -> Boolean = { false },
     onSetSparkEnabledForWallet: (walletId: String, Boolean) -> Unit = { _, _ -> },
+    isLightningNodeEnabledForWallet: (walletId: String) -> Boolean = { false },
+    onSetLightningNodeEnabledForWallet: (walletId: String, Boolean) -> Unit = { _, _ -> },
+    onEditLightningNodeConnection: (walletId: String) -> Unit = {},
     onEditLiquidGapLimit: (walletId: String, newGapLimit: Int) -> Unit = { _, _ -> },
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (walletId: String, Boolean) -> Unit = { _, _ -> },
@@ -308,7 +324,7 @@ fun ManageWalletsScreen(
         val fingerprintRegex = remember { Regex("^[0-9a-fA-F]{0,8}$") }
         val fingerprintValid = editFingerprint.isBlank() || editFingerprint.length == 8
         val gapLimitInt = editGapLimit.toIntOrNull()
-        val gapLimitValid = gapLimitInt != null && gapLimitInt in 1..10000
+        val gapLimitValid = gapLimitInt != null && gapLimitInt in 1..StoredWallet.MAX_GAP_LIMIT
 
         val showLiquidGapLimit = layer2Enabled && isLiquidEnabledForWallet(walletToEdit!!.id)
         var editLiquidGapLimit by remember(walletToEdit) {
@@ -317,19 +333,32 @@ fun ManageWalletsScreen(
         val liquidGapLimitInt = editLiquidGapLimit.toIntOrNull()
         val liquidGapLimitValid = !showLiquidGapLimit ||
             editLiquidGapLimit.isEmpty() ||
-            (liquidGapLimitInt != null && liquidGapLimitInt in 1..10000)
+            (liquidGapLimitInt != null && liquidGapLimitInt in 1..StoredWallet.MAX_GAP_LIMIT)
 
+        val isLightningNodeEdit = walletToEdit!!.isLightningNode
         val nameChanged = editName.trim().isNotBlank() && editName.trim() != walletToEdit?.name
-        val gapLimitChanged = gapLimitValid && gapLimitInt != walletToEdit?.gapLimit
-        val liquidGapLimitChanged = showLiquidGapLimit &&
-            liquidGapLimitValid && liquidGapLimitInt != null &&
-            liquidGapLimitInt != walletToEdit?.liquidGapLimit
+        val gapLimitChanged =
+            !isLightningNodeEdit && gapLimitValid && gapLimitInt != walletToEdit?.gapLimit
+        val liquidGapLimitChanged =
+            !isLightningNodeEdit &&
+                showLiquidGapLimit &&
+                liquidGapLimitValid &&
+                liquidGapLimitInt != null &&
+                liquidGapLimitInt != walletToEdit?.liquidGapLimit
         val fingerprintChanged =
-            showFingerprint &&
+            !isLightningNodeEdit &&
+                showFingerprint &&
                 editFingerprint.trim().lowercase() != (walletToEdit?.masterFingerprint ?: "").lowercase()
         val canSave =
-            editName.trim().isNotBlank() && gapLimitValid && fingerprintValid && liquidGapLimitValid &&
-                (nameChanged || gapLimitChanged || liquidGapLimitChanged || fingerprintChanged)
+            if (isLightningNodeEdit) {
+                nameChanged
+            } else {
+                editName.trim().isNotBlank() &&
+                    gapLimitValid &&
+                    fingerprintValid &&
+                    liquidGapLimitValid &&
+                    (nameChanged || gapLimitChanged || liquidGapLimitChanged || fingerprintChanged)
+            }
 
         ScrollableAlertDialog(
             onDismissRequest = { walletToEdit = null },
@@ -356,6 +385,31 @@ fun ManageWalletsScreen(
                             ),
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    if (isLightningNodeEdit) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(R.string.ln_node_manage_rename_hint),
+                            color = TextSecondary,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = {
+                                val id = walletToEdit!!.id
+                                walletToEdit = null
+                                onEditLightningNodeConnection(id)
+                            },
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, BorderColor),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                        ) {
+                            Text(stringResource(R.string.ln_node_setup_connection))
+                        }
+                    } else {
                     Spacer(modifier = Modifier.height(12.dp))
                     // Gap Limit
                     OutlinedTextField(
@@ -437,12 +491,27 @@ fun ManageWalletsScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
+                    }
                 }
             },
             confirmButton = {
                 TextButton(
                     onClick = {
                         val trimmedName = editName.trim()
+                        if (isLightningNodeEdit) {
+                            if (trimmedName.isNotBlank() && nameChanged) {
+                                walletToEdit?.let {
+                                    onEditWallet(
+                                        it.id,
+                                        trimmedName,
+                                        it.gapLimit,
+                                        null,
+                                    )
+                                }
+                            }
+                            walletToEdit = null
+                            return@TextButton
+                        }
                         val newGap = gapLimitInt ?: walletToEdit!!.gapLimit
                         val trimmedFp = if (showFingerprint) editFingerprint.trim().lowercase() else null
                         if (trimmedName.isNotBlank() && gapLimitValid) {
@@ -934,7 +1003,9 @@ fun ManageWalletsScreen(
                                 },
                                 onDelete = { walletToDelete = wallet },
                                 onMessages = { walletForMessages = wallet },
-                                onEdit = { walletToEdit = wallet },
+                                onEdit = {
+                                    walletToEdit = wallet
+                                },
                                 onClick = {
                                     if (draggedIndex == null) onSelectWallet(wallet)
                                 },
@@ -948,6 +1019,7 @@ fun ManageWalletsScreen(
                                 layer2Enabled = layer2Enabled,
                                 liquidLayer2Enabled = liquidLayer2Enabled,
                                 sparkLayer2Enabled = sparkLayer2Enabled,
+                                lightningNodeLayer2Enabled = lightningNodeLayer2Enabled,
                                 isLiquidEnabled = isLiquidEnabledForWallet(wallet.id),
                                 onSetLiquidEnabled = { enabled ->
                                     onSetLiquidEnabledForWallet(wallet.id, enabled)
@@ -955,6 +1027,10 @@ fun ManageWalletsScreen(
                                 isSparkEnabled = isSparkEnabledForWallet(wallet.id),
                                 onSetSparkEnabled = { enabled ->
                                     onSetSparkEnabledForWallet(wallet.id, enabled)
+                                },
+                                isLightningNodeEnabled = isLightningNodeEnabledForWallet(wallet.id),
+                                onSetLightningNodeEnabled = { enabled ->
+                                    onSetLightningNodeEnabledForWallet(wallet.id, enabled)
                                 },
                                 isWalletLockAvailable = isWalletLockAvailable,
                                 onSetWalletLocked = { locked ->
@@ -2431,10 +2507,13 @@ private fun WalletCard(
     layer2Enabled: Boolean = false,
     liquidLayer2Enabled: Boolean = layer2Enabled,
     sparkLayer2Enabled: Boolean = layer2Enabled,
+    lightningNodeLayer2Enabled: Boolean = false,
     isLiquidEnabled: Boolean = false,
     onSetLiquidEnabled: (Boolean) -> Unit = {},
     isSparkEnabled: Boolean = false,
     onSetSparkEnabled: (Boolean) -> Unit = {},
+    isLightningNodeEnabled: Boolean = false,
+    onSetLightningNodeEnabled: (Boolean) -> Unit = {},
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (Boolean) -> Unit = {},
 ) {
@@ -2459,19 +2538,26 @@ private fun WalletCard(
             wallet.seedFormat == SeedFormat.BIP39
     val showLiquidToggle = wallet.isLiquidWatchOnly || (liquidLayer2Enabled && isBip39Wallet)
     val showSparkToggle = sparkLayer2Enabled && isBip39Wallet
+    // Lightning Node entries are created from Layer 2 connection setup rather than
+    // being attached to a Bitcoin wallet with unrelated local key material.
+    val showLightningNodeToggle = wallet.isLightningNode
     val managementActionsEnabled = !wallet.isLocked
     val liquidToggleEnabled = !wallet.isLocked && !wallet.isLiquidWatchOnly
     val sparkToggleEnabled = !wallet.isLocked
+    val lightningNodeToggleEnabled = !wallet.isLocked
     val liquidChecked = wallet.isLiquidWatchOnly || isLiquidEnabled
     val showWalletLockButton = isWalletLockAvailable || wallet.isLocked
     val lockedPrimaryTextColor = ErrorRed.copy(alpha = 0.85f)
     val lockedSecondaryTextColor = ErrorRed.copy(alpha = 0.6f)
+    // LN wallets have no local seed/labels/message signing.
+    val seedActionsEnabled = managementActionsEnabled && !wallet.isLightningNode
     val actionTint =
         if (managementActionsEnabled) {
             TextSecondary
         } else {
             TextSecondary.copy(alpha = 0.35f)
         }
+    val disabledActionTint = TextSecondary.copy(alpha = 0.35f)
 
     Card(
         onClick = onClick,
@@ -2496,7 +2582,7 @@ private fun WalletCard(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (showWalletLockButton) {
                             Box(
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(28.dp),
                                 contentAlignment = Alignment.CenterStart,
                             ) {
                                 Icon(
@@ -2515,7 +2601,7 @@ private fun WalletCard(
                                         },
                                     modifier =
                                         Modifier
-                                            .size(20.dp)
+                                            .size(24.dp)
                                             .clickable(enabled = isWalletLockAvailable) {
                                                 onSetWalletLocked(!wallet.isLocked)
                                             },
@@ -2530,6 +2616,12 @@ private fun WalletCard(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         when {
+                            wallet.isLightningNode -> Icon(
+                                imageVector = Icons.Default.Bolt,
+                                contentDescription = stringResource(R.string.ln_node_title),
+                                tint = if (wallet.isLocked) lockedPrimaryTextColor else LightningYellow,
+                                modifier = Modifier.size(16.dp),
+                            )
                             wallet.isMultisig -> Icon(
                                 imageVector = Icons.Default.QrCode,
                                 contentDescription = stringResource(R.string.loc_6dfe3462),
@@ -2555,6 +2647,7 @@ private fun WalletCard(
 
                     val walletKind =
                         when {
+                            wallet.isLightningNode -> stringResource(R.string.ln_node_title)
                             wallet.isMultisig -> "Multisig"
                             wallet.isWatchAddress -> "Watch Address"
                             wallet.isPrivateKey -> "Private Key"
@@ -2562,14 +2655,71 @@ private fun WalletCard(
                             else -> "Seed Phrase"
                         }
                     Text(
-                        text = "${wallet.typeDescription} - $walletKind",
+                        text =
+                            if (wallet.isLightningNode) {
+                                val typeLabel =
+                                    wallet.lightningTypeLabel
+                                        ?: wallet.typeDescription.ifBlank { "Lightning" }
+                                "$typeLabel - $walletKind"
+                            } else {
+                                "${wallet.typeDescription} - $walletKind"
+                            },
                         style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
                         color = if (wallet.isLocked) lockedSecondaryTextColor else TextSecondary,
                     )
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    if (wallet.derivationPath != "single") {
+                    if (wallet.isLightningNode) {
+                        val metaColor =
+                            if (wallet.isLocked) {
+                                lockedSecondaryTextColor
+                            } else {
+                                TextSecondary.copy(alpha = 0.92f)
+                            }
+                        wallet.lightningDetail?.takeIf { it.isNotBlank() }?.let { detail ->
+                            Text(
+                                text = detail,
+                                style =
+                                    MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 14.sp,
+                                        lineHeight = 18.sp,
+                                    ),
+                                color = metaColor,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                        wallet.lightningPort?.takeIf { it.isNotBlank() }?.let { portLine ->
+                            Text(
+                                text = portLine,
+                                style =
+                                    MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 14.sp,
+                                        lineHeight = 18.sp,
+                                    ),
+                                color = metaColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                        wallet.lightningMeta?.takeIf { it.isNotBlank() }?.let { meta ->
+                            Text(
+                                text = meta,
+                                style =
+                                    MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = 14.sp,
+                                        lineHeight = 18.sp,
+                                    ),
+                                color = metaColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                        }
+                    } else if (wallet.derivationPath != "single") {
                         Text(
                             text = stringResource(R.string.common_derivation_path_format, wallet.derivationPath),
                             style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
@@ -2590,23 +2740,25 @@ private fun WalletCard(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    if (!wallet.isLightningNode) {
+                        Spacer(modifier = Modifier.height(4.dp))
 
-                    val lastSyncFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
-                    val lastSyncText =
-                        if (wallet.lastFullSyncTime != null) {
-                            stringResource(
-                                R.string.wallet_last_full_sync_format,
-                                lastSyncFormatter.format(Date(wallet.lastFullSyncTime)),
-                            )
-                        } else {
-                            "Never fully synced"
-                        }
-                    Text(
-                        text = lastSyncText,
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                        color = if (wallet.isLocked) lockedSecondaryTextColor else TextSecondary.copy(alpha = 0.92f),
-                    )
+                        val lastSyncFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
+                        val lastSyncText =
+                            if (wallet.lastFullSyncTime != null) {
+                                stringResource(
+                                    R.string.wallet_last_full_sync_format,
+                                    lastSyncFormatter.format(Date(wallet.lastFullSyncTime)),
+                                )
+                            } else {
+                                "Never fully synced"
+                            }
+                        Text(
+                            text = lastSyncText,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                            color = if (wallet.isLocked) lockedSecondaryTextColor else TextSecondary.copy(alpha = 0.92f),
+                        )
+                    }
                     if (showWalletLockButton || showLiquidToggle || showSparkToggle) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Row(
@@ -2680,6 +2832,38 @@ private fun WalletCard(
                                     thumbPadding = 3.dp,
                                 )
                             }
+                            if ((showLiquidToggle || showSparkToggle) && showLightningNodeToggle) {
+                                Spacer(modifier = Modifier.width(16.dp))
+                            }
+                            if (showLightningNodeToggle) {
+                                Text(
+                                    text = stringResource(R.string.ln_node_title),
+                                    modifier =
+                                        Modifier.clickable(enabled = lightningNodeToggleEnabled) {
+                                            onSetLightningNodeEnabled(!isLightningNodeEnabled)
+                                        },
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                                    color =
+                                        if (wallet.isLocked) {
+                                            lockedSecondaryTextColor
+                                        } else if (isLightningNodeEnabled) {
+                                            LightningYellow
+                                        } else {
+                                            TextSecondary.copy(alpha = if (lightningNodeToggleEnabled) 0.8f else 0.55f)
+                                        },
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                SquareToggle(
+                                    checked = isLightningNodeEnabled,
+                                    onCheckedChange = onSetLightningNodeEnabled,
+                                    enabled = lightningNodeToggleEnabled,
+                                    checkedColor = LightningYellow,
+                                    trackWidth = 36.dp,
+                                    trackHeight = 20.dp,
+                                    thumbSize = 14.dp,
+                                    thumbPadding = 3.dp,
+                                )
+                            }
                         }
                     }
                 }
@@ -2740,12 +2924,12 @@ private fun WalletCard(
                                     .size(30.dp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurface)
-                                    .clickable(enabled = managementActionsEnabled) { onView() },
+                                    .clickable(enabled = seedActionsEnabled) { onView() },
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Key,
                                 contentDescription = stringResource(R.string.loc_85a65da2),
-                                tint = actionTint,
+                                tint = if (seedActionsEnabled) actionTint else disabledActionTint,
                                 modifier =
                                     Modifier
                                         .size(16.dp)
@@ -2765,12 +2949,12 @@ private fun WalletCard(
                                     .size(30.dp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurface)
-                                    .clickable(enabled = managementActionsEnabled) { onLabels() },
+                                    .clickable(enabled = seedActionsEnabled) { onLabels() },
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Bookmark,
                                 contentDescription = stringResource(R.string.loc_2282451b),
-                                tint = actionTint,
+                                tint = if (seedActionsEnabled) actionTint else disabledActionTint,
                                 modifier = Modifier.size(16.dp),
                             )
                         }
@@ -2781,12 +2965,12 @@ private fun WalletCard(
                                     .size(30.dp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurface)
-                                    .clickable(enabled = managementActionsEnabled) { onMessages() },
+                                    .clickable(enabled = seedActionsEnabled) { onMessages() },
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Edit,
                                 contentDescription = stringResource(R.string.loc_b137001),
-                                tint = actionTint,
+                                tint = if (seedActionsEnabled) actionTint else disabledActionTint,
                                 modifier = Modifier.size(16.dp),
                             )
                         }

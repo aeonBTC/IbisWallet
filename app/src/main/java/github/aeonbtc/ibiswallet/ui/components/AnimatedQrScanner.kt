@@ -9,6 +9,7 @@ import androidx.compose.runtime.setValue
 import com.sparrowwallet.hummingbird.ResultType
 import com.sparrowwallet.hummingbird.URDecoder
 import github.aeonbtc.ibiswallet.data.model.AddressType
+import github.aeonbtc.ibiswallet.util.Bbqr
 import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.UrAccountParser
 
@@ -23,6 +24,7 @@ fun AnimatedQrScannerDialog(
 ) {
     CameraPermissionGate(onDismiss = onDismiss) { lifecycleOwner ->
         val urDecoder = remember { URDecoder() }
+        val bbqrJoiner = remember { Bbqr.ContinuousJoiner() }
         var scanProgress by remember { mutableFloatStateOf(0f) }
         var isComplete by remember { mutableStateOf(false) }
 
@@ -38,6 +40,7 @@ fun AnimatedQrScannerDialog(
                     handleScannedQrData(
                         scannedText = scannedText,
                         urDecoder = urDecoder,
+                        bbqrJoiner = bbqrJoiner,
                         onProgress = { progress -> scanProgress = progress },
                         onComplete = { decodedData ->
                             isComplete = true
@@ -224,13 +227,41 @@ private fun handleLabelsQrData(
     }
 }
 
-private fun handleScannedQrData(
+internal fun handleScannedQrData(
     scannedText: String,
     urDecoder: URDecoder,
+    bbqrJoiner: Bbqr.ContinuousJoiner,
     onProgress: (Float) -> Unit,
     onComplete: (String) -> Unit,
 ) {
     val trimmed = scannedText.trim()
+
+    if (Bbqr.isBbqrPart(trimmed)) {
+        val accepted =
+            try {
+                bbqrJoiner.addPart(trimmed)
+            } catch (_: Exception) {
+                false
+            }
+        if (!accepted) return
+
+        onProgress(bbqrJoiner.progress)
+        val result = bbqrJoiner.result ?: return
+        if (result.data.size > InputLimits.QR_PAYLOAD_BYTES) return
+
+        when (result.fileType) {
+            Bbqr.FILE_TYPE_PSBT -> {
+                onComplete(
+                    android.util.Base64.encodeToString(
+                        result.data,
+                        android.util.Base64.NO_WRAP,
+                    ),
+                )
+            }
+            Bbqr.FILE_TYPE_TXN -> onComplete(result.data.toHexString())
+        }
+        return
+    }
 
     if (trimmed.lowercase().startsWith("ur:")) {
         try {
@@ -269,3 +300,5 @@ private fun handleScannedQrData(
         onComplete(trimmed)
     }
 }
+
+private fun ByteArray.toHexString(): String = joinToString("") { byte -> "%02x".format(byte) }

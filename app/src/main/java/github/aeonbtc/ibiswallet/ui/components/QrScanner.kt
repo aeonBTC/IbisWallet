@@ -4,6 +4,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.aspectRatio
@@ -12,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
@@ -22,13 +22,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -38,10 +43,15 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Observer
+import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
+import com.google.zxing.DecodeHintType
 import com.google.zxing.MultiFormatReader
 import com.google.zxing.RGBLuminanceSource
+import com.google.zxing.Result
 import com.google.zxing.common.GlobalHistogramBinarizer
+import com.google.zxing.common.HybridBinarizer
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
@@ -198,9 +208,26 @@ internal fun QrCameraPreview(
     }
 
     val analyzerExecutor = remember { Executors.newSingleThreadExecutor() }
+    var cameraControl by remember { mutableStateOf<androidx.camera.core.CameraControl?>(null) }
+    var zoomRatio by remember { mutableFloatStateOf(1f) }
+    var minZoomRatio by remember { mutableFloatStateOf(1f) }
+    var maxZoomRatio by remember { mutableFloatStateOf(1f) }
+    var hasZoom by remember { mutableStateOf(false) }
+    val currentCameraControl by rememberUpdatedState(cameraControl)
+    val currentZoomRatio by rememberUpdatedState(zoomRatio)
+    val currentPauseScanning by rememberUpdatedState(pauseScanning)
+
     DisposableEffect(lifecycleOwner, singleShot) {
         val scanned = if (singleShot) AtomicBoolean(false) else null
         val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        var zoomStateLiveData: androidx.lifecycle.LiveData<androidx.camera.core.ZoomState>? = null
+        val zoomObserver =
+            Observer<androidx.camera.core.ZoomState> { zoomState ->
+                minZoomRatio = zoomState.minZoomRatio
+                maxZoomRatio = zoomState.maxZoomRatio
+                zoomRatio = zoomState.zoomRatio.coerceIn(zoomState.minZoomRatio, zoomState.maxZoomRatio)
+                hasZoom = zoomState.maxZoomRatio > zoomState.minZoomRatio
+            }
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
@@ -217,7 +244,7 @@ internal fun QrCameraPreview(
                     .build()
                     .also {
                         it.setAnalyzer(analyzerExecutor) { imageProxy ->
-                            if (pauseScanning) {
+                            if (currentPauseScanning) {
                                 imageProxy.close()
                                 return@setAnalyzer
                             }
@@ -232,18 +259,26 @@ internal fun QrCameraPreview(
 
             try {
                 cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
+                val camera = cameraProvider.bindToLifecycle(
                     lifecycleOwner,
                     CameraSelector.DEFAULT_BACK_CAMERA,
                     preview,
                     imageAnalyzer,
                 )
+                cameraControl = camera.cameraControl
+                zoomStateLiveData = camera.cameraInfo.zoomState
+                zoomStateLiveData?.observe(lifecycleOwner, zoomObserver)
             } catch (_: Exception) {
+                cameraControl = null
+                hasZoom = false
                 // Camera binding failed
             }
         }, ContextCompat.getMainExecutor(context))
 
         onDispose {
+            zoomStateLiveData?.removeObserver(zoomObserver)
+            cameraControl = null
+            hasZoom = false
             try {
                 cameraProviderFuture.get().unbindAll()
             } catch (_: Exception) {
@@ -253,10 +288,27 @@ internal fun QrCameraPreview(
         }
     }
 
-    Box(modifier = modifier.clipToBounds()) {
+    Box(
+        modifier = modifier.clipToBounds(),
+    ) {
         AndroidView(
             factory = { previewView },
             modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .pointerInput(hasZoom, minZoomRatio, maxZoomRatio) {
+                        if (hasZoom) {
+                            detectTransformGestures { _, _, zoomChange, _ ->
+                                val targetZoom =
+                                    (currentZoomRatio * zoomChange)
+                                        .coerceIn(minZoomRatio, maxZoomRatio)
+                                currentCameraControl?.setZoomRatio(targetZoom)
+                            }
+                        }
+                    },
         )
     }
 }
@@ -268,24 +320,33 @@ private fun decodeQrFrame(
     onFrameScanned: (String) -> Unit,
 ) {
     try {
-        val buffer = imageProxy.planes[0].buffer
-        val data = ByteArray(buffer.remaining())
-        buffer.get(data)
-
+        val plane = imageProxy.planes[0]
+        val buffer = plane.buffer.duplicate()
+        val rowStride = plane.rowStride
+        val pixelStride = plane.pixelStride.coerceAtLeast(1)
         val width = imageProxy.width
         val height = imageProxy.height
+        // Dense connection QRs (clnrest/lndconnect with large cert bundles) need
+        // TRY_HARDER + HybridBinarizer; GlobalHistogram alone often fails on phone cameras.
         val pixels = IntArray(width * height)
-
-        for (i in data.indices) {
-            val y = data[i].toInt() and 0xFF
-            pixels[i] = (0xFF shl 24) or (y shl 16) or (y shl 8) or y
+        val row = ByteArray(rowStride)
+        var out = 0
+        for (y in 0 until height) {
+            buffer.position(y * rowStride)
+            buffer.get(row, 0, rowStride.coerceAtMost(buffer.remaining()))
+            var x = 0
+            while (x < width) {
+                val luminance = row[x * pixelStride].toInt() and 0xFF
+                pixels[out++] = (0xFF shl 24) or (luminance shl 16) or (luminance shl 8) or luminance
+                x++
+            }
         }
 
-        val source = RGBLuminanceSource(width, height, pixels)
-        val binaryBitmap = BinaryBitmap(GlobalHistogramBinarizer(source))
-        val result = MultiFormatReader().decode(binaryBitmap)
+        val result = decodeQrFromPixels(pixels, width, height) ?: return
+        val text = result.text.trim()
+        if (text.isBlank()) return
         val deliverResult = {
-            onFrameScanned(result.text)
+            onFrameScanned(text)
         }
         when {
             scanned == null -> deliverResult()
@@ -296,4 +357,33 @@ private fun decodeQrFrame(
     } finally {
         imageProxy.close()
     }
+}
+
+private fun decodeQrFromPixels(
+    pixels: IntArray,
+    width: Int,
+    height: Int,
+): Result? {
+    val hints =
+        mapOf(
+            DecodeHintType.TRY_HARDER to true,
+            DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+            DecodeHintType.CHARACTER_SET to "UTF-8",
+        )
+    val reader = MultiFormatReader().apply { setHints(hints) }
+    val source = RGBLuminanceSource(width, height, pixels)
+    val attempts =
+        listOf(
+            { BinaryBitmap(HybridBinarizer(source)) },
+            { BinaryBitmap(GlobalHistogramBinarizer(source)) },
+            { BinaryBitmap(HybridBinarizer(source.invert())) },
+            { BinaryBitmap(GlobalHistogramBinarizer(source.invert())) },
+        )
+    for (build in attempts) {
+        runCatching {
+            reader.reset()
+            return reader.decodeWithState(build())
+        }
+    }
+    return null
 }

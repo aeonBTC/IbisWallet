@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -38,6 +39,7 @@ import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.AccentBlue
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
+import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
@@ -48,10 +50,18 @@ import androidx.compose.ui.res.stringResource
 import github.aeonbtc.ibiswallet.R
 
 /**
- * Pill-style layer switcher with Swap button in the center.
- * Layout: [ Layer 1 ] [ Swap ] [ Layer 2 ]
+ * Pill-style layer switcher with transfer/channels control in the center.
+ * Layout: [ Layer 1 ] [ Swap | Channels ] [ Layer 2 ]
  * Selected tab is highlighted with the layer's accent color.
+ *
+ * [centerMode] = [LayerSwitcherCenterMode.SWAP] (default) or [LayerSwitcherCenterMode.CHANNELS]
+ * for Lightning Node wallets (no L1↔L2 swap UI).
  */
+enum class LayerSwitcherCenterMode {
+    SWAP,
+    CHANNELS,
+}
+
 @Composable
 fun LayerSwitcher(
     activeLayer: WalletLayer,
@@ -62,6 +72,7 @@ fun LayerSwitcher(
     isLayer1Enabled: Boolean = true,
     layer2Color: Color = LiquidTeal,
     layer2Label: String = stringResource(R.string.loc_2f73501f),
+    centerMode: LayerSwitcherCenterMode = LayerSwitcherCenterMode.SWAP,
     onSwap: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
@@ -96,12 +107,22 @@ fun LayerSwitcher(
                 },
             )
             Spacer(modifier = Modifier.width(2.dp))
-            SwapPill(
-                isSelected = isSwapSelected,
-                enabled = isSwapEnabled || isSwapSelected,
-                layer2Accent = layer2Color,
-                onClick = onSwap,
-            )
+            when (centerMode) {
+                LayerSwitcherCenterMode.CHANNELS ->
+                    ChannelsPill(
+                        isSelected = isSwapSelected,
+                        enabled = isSwapEnabled || isSwapSelected,
+                        layer2Accent = layer2Color,
+                        onClick = onSwap,
+                    )
+                LayerSwitcherCenterMode.SWAP ->
+                    SwapPill(
+                        isSelected = isSwapSelected,
+                        enabled = isSwapEnabled || isSwapSelected,
+                        layer2Accent = layer2Color,
+                        onClick = onSwap,
+                    )
+            }
             Spacer(modifier = Modifier.width(2.dp))
             LayerPill(
                 label = layer2Label,
@@ -187,6 +208,69 @@ private fun SwapPill(
             contentDescription = null,
             tint = textColor,
             modifier = Modifier.size(13.dp),
+        )
+    }
+}
+
+@Composable
+private fun ChannelsPill(
+    isSelected: Boolean,
+    enabled: Boolean,
+    layer2Accent: Color,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(16.dp)
+    val accent = if (layer2Accent == LiquidTeal) LightningYellow else layer2Accent
+    val bgColor by animateColorAsState(
+        targetValue =
+            when {
+                isSelected -> accent.copy(alpha = 0.28f)
+                enabled -> TextSecondary.copy(alpha = 0.10f)
+                else -> TextSecondary.copy(alpha = 0.05f)
+            },
+        label = "channelsPillBg",
+    )
+    val textColor by animateColorAsState(
+        targetValue =
+            when {
+                isSelected -> TextPrimary
+                enabled -> TextSecondary
+                else -> TextSecondary.copy(alpha = 0.4f)
+            },
+        label = "channelsPillText",
+    )
+    val borderColor by animateColorAsState(
+        targetValue =
+            when {
+                isSelected -> accent.copy(alpha = 0.75f)
+                enabled -> BorderColor.copy(alpha = 0.45f)
+                else -> BorderColor.copy(alpha = 0.10f)
+            },
+        label = "channelsPillBorder",
+    )
+    Row(
+        modifier = Modifier
+            .heightIn(min = 32.dp)
+            .clip(shape)
+            .background(bgColor)
+            .border(width = 1.dp, color = borderColor, shape = shape)
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 5.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.Hub,
+            contentDescription = null,
+            tint = textColor,
+            modifier = Modifier.size(13.dp),
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(
+            text = stringResource(R.string.ln_node_channels_title),
+            color = textColor,
+            style = MaterialTheme.typography.labelMedium.copy(lineHeight = 16.sp),
+            fontWeight = FontWeight.SemiBold,
         )
     }
 }

@@ -931,7 +931,7 @@ private fun SparkSendConfirmationDialog(
                             strokeWidth = 2.dp,
                         )
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.loc_57cf7ca4), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.spark_send_status_submitting), style = MaterialTheme.typography.titleMedium)
                     }
                 }
                 is SparkSendState.Error,
@@ -954,7 +954,7 @@ private fun SparkSendConfirmationDialog(
         },
     ) {
         Text(
-            text = stringResource(R.string.loc_81f5c0cf),
+            text = stringResource(sparkSendDialogTitle(sendState)),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = TextPrimary,
@@ -987,13 +987,7 @@ private fun SparkSendConfirmationDialog(
                 fiatCurrency = fiatCurrency,
                 privacyMode = privacyMode,
             )
-            SparkSendState.Sending -> SparkSendReviewContent(
-                preview = null,
-                useSats = useSats,
-                btcPrice = btcPrice,
-                fiatCurrency = fiatCurrency,
-                privacyMode = privacyMode,
-            )
+            SparkSendState.Sending -> SparkSendProgressContent()
             is SparkSendState.Sent -> {
                 Text(
                     text = stringResource(R.string.loc_d90f9485),
@@ -1011,10 +1005,120 @@ private fun SparkSendConfirmationDialog(
                     )
                 }
             }
-            is SparkSendState.Error -> Text(
-                text = sendState.message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = ErrorRed,
+            is SparkSendState.Error -> {
+                Text(
+                    text = stringResource(R.string.ln_node_status_failed),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ErrorRed,
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = stringResource(R.string.ln_node_failure_reason),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text =
+                        sendState.message.ifBlank {
+                            stringResource(R.string.ln_node_status_failed)
+                        },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ErrorRed,
+                )
+            }
+        }
+    }
+}
+
+private fun sparkSendDialogTitle(sendState: SparkSendState): Int =
+    when (sendState) {
+        SparkSendState.Sending -> R.string.spark_send_status_title
+        is SparkSendState.Sent -> R.string.spark_send_status_sent_title
+        is SparkSendState.Error -> R.string.spark_send_status_failed_title
+        else -> R.string.loc_81f5c0cf
+    }
+
+@Composable
+private fun SparkSendProgressContent() {
+    Text(
+        text = stringResource(R.string.spark_send_status_message),
+        style = MaterialTheme.typography.bodyMedium,
+        color = TextPrimary,
+        modifier = Modifier.fillMaxWidth(),
+    )
+    Spacer(modifier = Modifier.height(16.dp))
+    SparkSendProgressStep(
+        title = stringResource(R.string.spark_send_status_step_review_title),
+        detail = stringResource(R.string.spark_send_status_step_review_detail),
+        complete = true,
+    )
+    SparkSendProgressStep(
+        title = stringResource(R.string.spark_send_status_step_submit_title),
+        detail = stringResource(R.string.spark_send_status_step_submit_detail),
+        active = true,
+    )
+    SparkSendProgressStep(
+        title = stringResource(R.string.spark_send_status_step_settle_title),
+        detail = stringResource(R.string.spark_send_status_step_settle_detail),
+    )
+}
+
+@Composable
+private fun SparkSendProgressStep(
+    title: String,
+    detail: String,
+    complete: Boolean = false,
+    active: Boolean = false,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .padding(top = 3.dp)
+                    .size(18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                active -> CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    color = SparkPurple,
+                    strokeWidth = 2.dp,
+                )
+                complete -> Box(
+                    modifier =
+                        Modifier
+                            .size(10.dp)
+                            .background(SparkPurple, RoundedCornerShape(2.dp)),
+                )
+                else -> Box(
+                    modifier =
+                        Modifier
+                            .size(10.dp)
+                            .background(BorderColor, RoundedCornerShape(2.dp)),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (complete || active) TextPrimary else TextSecondary,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = detail,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
             )
         }
     }
@@ -1212,19 +1316,6 @@ private fun abbreviateSparkReviewText(
     } else {
         value.take(prefix) + "..." + value.takeLast(suffix)
     }
-
-@Composable
-private fun ReviewRow(label: String, value: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(label, color = TextSecondary, modifier = Modifier.weight(1f))
-        Text(value, color = TextPrimary)
-    }
-}
 
 private fun filterSparkAmountInput(
     value: String,

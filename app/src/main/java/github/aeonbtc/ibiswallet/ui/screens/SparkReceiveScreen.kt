@@ -76,6 +76,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
+import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
@@ -150,6 +151,7 @@ fun SparkReceiveScreen(
                 (requestedAmountSats != null || embeddedLabel != null) -> SparkReceiveKind.SPARK_INVOICE
             else -> activeKind
         }
+    val paid = receiveState as? SparkReceiveState.Paid
     val ready = receiveState as? SparkReceiveState.Ready
     val baseRequestText = ready?.takeIf { it.kind == requestKind }?.paymentRequest
     val requestText =
@@ -187,7 +189,11 @@ fun SparkReceiveScreen(
         }
     val lightningRequestDescription = descriptionText.trim().takeIf { showLabelField && embedLabelInQr && it.isNotBlank() }.orEmpty()
     val lightningAmountSats = amountSats?.takeIf { isLightningMode && it > 0 }
-    val isLightningReady = isLightningMode && requestText != null
+    val isLightningPaid =
+        isLightningMode &&
+            paid != null &&
+            paid.kind == SparkReceiveKind.BOLT11_INVOICE
+    val isLightningReady = isLightningMode && requestText != null && !isLightningPaid
     val isLightningLoading = isLightningMode && receiveState is SparkReceiveState.Loading
     val lightningError = if (isLightningMode && receiveState is SparkReceiveState.Error) receiveState.message else null
     val canGenerateNewRequest =
@@ -327,7 +333,43 @@ fun SparkReceiveScreen(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                if (isLightningMode && !isLightningReady) {
+                if (isLightningMode && isLightningPaid) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+                        border = BorderStroke(1.dp, BorderColor.copy(alpha = 0.5f)),
+                    ) {
+                        Column(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 20.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.loc_739b859d),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = SuccessGreen,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            paid?.amountSats?.takeIf { it > 0 }?.let { amount ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text =
+                                        if (privacyMode) {
+                                            "****"
+                                        } else {
+                                            "${formatSparkAmountForReceive(amount, useSats)} ${sparkDisplayUnit(useSats)}"
+                                        },
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                            }
+                        }
+                    }
+                } else if (isLightningMode && !isLightningReady) {
                     when {
                         isLightningLoading -> {
                             Spacer(modifier = Modifier.height(16.dp))
@@ -857,7 +899,7 @@ fun SparkReceiveScreen(
             }
         }
 
-        if (isLightningMode && isLightningReady) {
+        if (isLightningMode && (isLightningReady || isLightningPaid)) {
             Spacer(modifier = Modifier.height(8.dp))
             Button(
                 onClick = {
@@ -886,7 +928,7 @@ fun SparkReceiveScreen(
             }
         }
 
-        if (isLightningMode && !isLightningReady && !isLightningLoading) {
+        if (isLightningMode && !isLightningReady && !isLightningLoading && !isLightningPaid) {
             Spacer(modifier = Modifier.height(8.dp))
             Button(
                 onClick = {

@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
@@ -60,8 +61,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
+import github.aeonbtc.ibiswallet.data.model.LightningNodeListCopy
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
+import github.aeonbtc.ibiswallet.data.model.WalletKind
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
@@ -74,6 +78,48 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import androidx.compose.material3.Text
+
+@Composable
+private fun rememberLightningNodeListCopy(): LightningNodeListCopy {
+    val serverFormat = stringResource(R.string.ln_node_list_server_format)
+    val serverNotConfigured = stringResource(R.string.ln_node_list_server_not_configured)
+    val portFormat = stringResource(R.string.ln_node_list_port_format)
+    val relayFormat = stringResource(R.string.ln_node_list_relay_format)
+    val configured = stringResource(R.string.ln_node_list_configured)
+    val notConfigured = stringResource(R.string.ln_node_list_not_configured)
+    val modeHttp = stringResource(R.string.ln_node_list_mode_http)
+    val modeSsl = stringResource(R.string.ln_node_list_mode_ssl)
+    val modeSslPin = stringResource(R.string.ln_node_list_mode_ssl_pin)
+    val pubkeyFormat = stringResource(R.string.ln_node_list_pubkey_format)
+    val addressFormat = stringResource(R.string.ln_node_list_address_format)
+    return remember(
+        serverFormat,
+        serverNotConfigured,
+        portFormat,
+        relayFormat,
+        configured,
+        notConfigured,
+        modeHttp,
+        modeSsl,
+        modeSslPin,
+        pubkeyFormat,
+        addressFormat,
+    ) {
+        LightningNodeListCopy(
+            serverFormat = serverFormat,
+            serverNotConfigured = serverNotConfigured,
+            portFormat = portFormat,
+            relayFormat = relayFormat,
+            configured = configured,
+            notConfigured = notConfigured,
+            modeHttp = modeHttp,
+            modeSsl = modeSsl,
+            modeSslPin = modeSslPin,
+            pubkeyFormat = pubkeyFormat,
+            addressFormat = addressFormat,
+        )
+    }
+}
 
 /**
  * Wallet name + chevron that sits inside the TopAppBar title slot.
@@ -147,9 +193,14 @@ fun WalletSelectorPanel(
     onSetSparkEnabledForWallet: (String, Boolean) -> Unit = { _, _ -> },
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (String, Boolean) -> Unit = { _, _ -> },
+    lightningConfigForWallet: (String) -> LightningNodeConfig? = { null },
+    /** Bump when a node connection config is saved so Server/Port/Mode lines refresh. */
+    lightningConfigRevision: Int = 0,
 ) {
     val dismissThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
     var accumulatedSwipeUpPx by remember(expanded) { mutableFloatStateOf(0f) }
+    val lightningNodeTitle = stringResource(R.string.ln_node_title)
+    val lightningListCopy = rememberLightningNodeListCopy()
 
     AnimatedVisibility(
         visible = expanded,
@@ -238,6 +289,15 @@ fun WalletSelectorPanel(
                     ) {
                         items(wallets, key = { it.id }) { wallet ->
                             val isActive = wallet.id == activeWallet?.id
+                            // read revision so host/port/mode update without reconnect
+                            @Suppress("UNUSED_EXPRESSION")
+                            lightningConfigRevision
+                            val lnConfig =
+                                if (wallet.walletKind == WalletKind.LIGHTNING_NODE) {
+                                    lightningConfigForWallet(wallet.id)
+                                } else {
+                                    null
+                                }
                             WalletPanelItem(
                                 wallet = wallet,
                                 isActive = isActive,
@@ -250,6 +310,10 @@ fun WalletSelectorPanel(
                                 isSparkEnabled = isSparkEnabledForWallet(wallet.id),
                                 isLiquidWatchOnly = isLiquidWatchOnlyForWallet(wallet.id),
                                 isWalletLockAvailable = isWalletLockAvailable,
+                                lightningTypeLabel = lnConfig?.listTypeLabel(lightningNodeTitle),
+                                lightningDetail = lnConfig?.listDetailLine(lightningListCopy),
+                                lightningPort = lnConfig?.listPortLine(lightningListCopy),
+                                lightningMeta = lnConfig?.listMetaLine(lightningListCopy),
                                 onClick = {
                                     if (!isActive) {
                                         onSelectWallet(wallet.id)
@@ -323,6 +387,10 @@ private fun WalletPanelItem(
     sparkLayer2Enabled: Boolean = layer2Enabled,
     isLiquidEnabled: Boolean = false,
     isSparkEnabled: Boolean = false,
+    lightningTypeLabel: String? = null,
+    lightningDetail: String? = null,
+    lightningPort: String? = null,
+    lightningMeta: String? = null,
     isLiquidWatchOnly: Boolean = false,
     isWalletLockAvailable: Boolean = false,
     onClick: () -> Unit,
@@ -358,7 +426,7 @@ private fun WalletPanelItem(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (showWalletLockButton) {
                     Box(
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(28.dp),
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         Icon(
@@ -377,7 +445,7 @@ private fun WalletPanelItem(
                                 },
                             modifier =
                                 Modifier
-                                    .size(20.dp)
+                                    .size(24.dp)
                                     .clickable(enabled = isWalletLockAvailable) {
                                         onSetWalletLocked(!wallet.isLocked)
                                     },
@@ -406,6 +474,12 @@ private fun WalletPanelItem(
                 val isWatchAddress = wallet.derivationPath == "single" && wallet.isWatchOnly
                 val isPrivateKey = wallet.derivationPath == "single" && !wallet.isWatchOnly
                 when {
+                    wallet.walletKind == WalletKind.LIGHTNING_NODE -> Icon(
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = stringResource(R.string.ln_node_title),
+                        tint = TextSecondary,
+                        modifier = Modifier.size(14.dp),
+                    )
                     isWatchAddress || wallet.isWatchOnly -> Icon(
                         imageVector = Icons.Default.Visibility,
                         contentDescription = if (isWatchAddress) "Watch Address" else "Watch Only",
@@ -436,35 +510,87 @@ private fun WalletPanelItem(
             }
 
             val walletKind = when {
+                wallet.walletKind == WalletKind.LIGHTNING_NODE -> stringResource(R.string.ln_node_title)
                 wallet.derivationPath == "single" && wallet.isWatchOnly -> "Watch Address"
                 wallet.derivationPath == "single" && !wallet.isWatchOnly -> "Private Key"
                 wallet.isWatchOnly -> "Watch Only"
                 else -> "Seed Phrase"
             }
+            val detailColor =
+                if (wallet.isLocked) {
+                    lockedSecondaryTextColor
+                } else if (isActive) {
+                    BitcoinOrange
+                } else {
+                    TextSecondary
+                }
+            val metaColor =
+                if (wallet.isLocked) {
+                    lockedSecondaryTextColor
+                } else if (isActive) {
+                    BitcoinOrange.copy(alpha = 0.9f)
+                } else {
+                    TextTertiary
+                }
             Text(
-                text = "${wallet.addressType.displayName} - $walletKind",
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
-                color =
-                    if (wallet.isLocked) {
-                        lockedSecondaryTextColor
-                    } else if (isActive) {
-                        BitcoinOrange
+                text =
+                    if (wallet.walletKind == WalletKind.LIGHTNING_NODE) {
+                        val typeLabel = lightningTypeLabel ?: "Lightning"
+                        "$typeLabel - $walletKind"
                     } else {
-                        TextSecondary
+                        "${wallet.addressType.displayName} - $walletKind"
                     },
+                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+                color = detailColor,
             )
-            if (wallet.derivationPath != "single" && wallet.masterFingerprint != null) {
+            if (wallet.walletKind == WalletKind.LIGHTNING_NODE) {
+                lightningDetail?.takeIf { it.isNotBlank() }?.let { detail ->
+                    Text(
+                        text = detail,
+                        style =
+                            MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp,
+                            ),
+                        color = metaColor,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                lightningPort?.takeIf { it.isNotBlank() }?.let { portLine ->
+                    Text(
+                        text = portLine,
+                        style =
+                            MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp,
+                            ),
+                        color = metaColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                lightningMeta?.takeIf { it.isNotBlank() }?.let { meta ->
+                    Text(
+                        text = meta,
+                        style =
+                            MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp,
+                            ),
+                        color = metaColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            } else if (
+                wallet.derivationPath != "single" &&
+                wallet.masterFingerprint != null
+            ) {
                 Text(
                     text = "Fingerprint: ${wallet.masterFingerprint}",
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                    color =
-                        if (wallet.isLocked) {
-                            lockedSecondaryTextColor
-                        } else if (isActive) {
-                            BitcoinOrange.copy(alpha = 0.9f)
-                        } else {
-                            TextTertiary
-                        },
+                    color = metaColor,
                 )
             }
             val syncDateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
@@ -490,18 +616,13 @@ private fun WalletPanelItem(
                     !wallet.isWatchOnly &&
                     wallet.derivationPath != "single" &&
                     wallet.seedFormat == SeedFormat.BIP39
-            Text(
-                text = syncText,
-                style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                color =
-                    if (wallet.isLocked) {
-                        lockedSecondaryTextColor
-                    } else if (isActive) {
-                        BitcoinOrange.copy(alpha = 0.9f)
-                    } else {
-                        TextTertiary
-                    },
-            )
+            if (wallet.walletKind != WalletKind.LIGHTNING_NODE) {
+                Text(
+                    text = syncText,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                    color = metaColor,
+                )
+            }
             if (showWalletLockButton || showLiquidToggle || showSparkToggle) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(

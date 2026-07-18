@@ -1589,7 +1589,8 @@ fun ImportWalletScreen(
                             Column(modifier = Modifier.bringIntoViewRequester(customGapLimitBringIntoViewRequester)) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 val gapLimitInt = gapLimitText.toIntOrNull()
-                                val gapLimitValid = gapLimitText.isEmpty() || (gapLimitInt != null && gapLimitInt in 1..10000)
+                                val gapLimitValid = gapLimitText.isEmpty() ||
+                                    (gapLimitInt != null && gapLimitInt in 1..StoredWallet.MAX_GAP_LIMIT)
                                 OutlinedTextField(
                                     value = gapLimitText,
                                     onValueChange = { value ->
@@ -1662,7 +1663,7 @@ fun ImportWalletScreen(
                 val finalName = walletName.trim().ifBlank { autoWalletName }
                 val customGapLimit =
                     if (useCustomGapLimit && gapLimitText.isNotBlank()) {
-                        gapLimitText.toIntOrNull()?.coerceIn(1, 10000)
+                        gapLimitText.toIntOrNull()?.coerceIn(1, StoredWallet.MAX_GAP_LIMIT)
                             ?: StoredWallet.DEFAULT_GAP_LIMIT
                     } else {
                         StoredWallet.DEFAULT_GAP_LIMIT

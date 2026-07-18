@@ -592,7 +592,7 @@ fun ElectrumConfigScreen(
  * Protocol badge (SSL / TCP)
  */
 @Composable
-private fun ProtocolBadge(useSsl: Boolean) {
+internal fun ProtocolBadge(useSsl: Boolean) {
     Surface(
         shape = RoundedCornerShape(4.dp),
         color = if (useSsl) LightningYellow.copy(alpha = 0.15f) else TextSecondary.copy(alpha = 0.15f),
@@ -611,7 +611,7 @@ private fun ProtocolBadge(useSsl: Boolean) {
  * Tor badge
  */
 @Composable
-private fun TorBadge() {
+internal fun TorBadge() {
     val purple = androidx.compose.ui.graphics.Color(0xFF9B59B6)
     Surface(
         shape = RoundedCornerShape(4.dp),
@@ -631,7 +631,7 @@ private fun TorBadge() {
  * Labeled detail row for server info
  */
 @Composable
-private fun ServerDetailRow(
+internal fun ServerDetailRow(
     label: String,
     value: String,
     monospace: Boolean = false,

@@ -65,6 +65,7 @@ import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.ElectrumConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
@@ -96,6 +97,11 @@ fun ReceiveScreen(
     onShowAllAddresses: () -> Unit = {},
     onShowAllUtxos: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
+    isElectrumConnected: Boolean = false,
+    isElectrumConnecting: Boolean = false,
+    hasElectrumServerConfigured: Boolean = false,
+    onConnectElectrumServer: () -> Unit = {},
+    onOpenElectrumServerSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val copyReceiveToast = stringResource(R.string.loc_b6b10bfe)
@@ -207,12 +213,9 @@ fun ReceiveScreen(
         }
     }
 
-    LaunchedEffect(walletState.isInitialized, walletState.currentAddress, savedAddressLabel) {
-        when {
-            walletState.isInitialized && walletState.currentAddress == null -> onGenerateAddress()
-            walletState.isInitialized &&
-                walletState.currentAddress != null &&
-                savedAddressLabel.isNotBlank() -> onGenerateAddress()
+    LaunchedEffect(walletState.isInitialized, walletState.currentAddress) {
+        if (walletState.isInitialized && walletState.currentAddress == null) {
+            onGenerateAddress()
         }
     }
 
@@ -268,6 +271,16 @@ fun ReceiveScreen(
                 .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (!isElectrumConnected) {
+            ElectrumConnectionBanner(
+                isConnecting = isElectrumConnecting,
+                hasServerConfigured = hasElectrumServerConfigured,
+                onConnect = onConnectElectrumServer,
+                onOpenServerSettings = onOpenElectrumServerSettings,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         // ════════════════════════════════════════════
         // Layer 1 Receive (existing Bitcoin content)
         // ════════════════════════════════════════════

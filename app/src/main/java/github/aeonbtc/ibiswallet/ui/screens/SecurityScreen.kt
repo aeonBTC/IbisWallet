@@ -1495,10 +1495,11 @@ private fun DuressSetupScreen(
             unsupportedNestedSegwitReason == null &&
             (isWatchOnlyKey || isExtendedKey || isValidImportMnemonic || isWifKey || isBitcoinAddress)
     val gapLimitInt = gapLimitText.toIntOrNull()
-    val gapLimitValid = !useCustomGapLimit || gapLimitText.isEmpty() || (gapLimitInt != null && gapLimitInt in 1..10000)
+    val gapLimitValid = !useCustomGapLimit || gapLimitText.isEmpty() ||
+        (gapLimitInt != null && gapLimitInt in 1..StoredWallet.MAX_GAP_LIMIT)
     val duressGapLimit =
         if (useCustomGapLimit && gapLimitText.isNotBlank()) {
-            gapLimitInt?.coerceIn(1, 10000) ?: StoredWallet.DEFAULT_GAP_LIMIT
+            gapLimitInt?.coerceIn(1, StoredWallet.MAX_GAP_LIMIT) ?: StoredWallet.DEFAULT_GAP_LIMIT
         } else {
             StoredWallet.DEFAULT_GAP_LIMIT
         }
@@ -2634,7 +2635,7 @@ private fun DuressSetupScreen(
                                         isError = gapLimitText.isNotEmpty() && !gapLimitValid,
                                         supportingText = {
                                             Text(
-                                                "Default: ${StoredWallet.DEFAULT_GAP_LIMIT}. Scan limit for empty addresses (1-10000)",
+                                                "Default: ${StoredWallet.DEFAULT_GAP_LIMIT}. Scan limit for empty addresses (1-${StoredWallet.MAX_GAP_LIMIT})",
                                                 color = TextSecondary.copy(alpha = 0.5f),
                                             )
                                         },

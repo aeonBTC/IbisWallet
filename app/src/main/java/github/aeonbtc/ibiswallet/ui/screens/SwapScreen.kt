@@ -94,6 +94,7 @@ import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
 import github.aeonbtc.ibiswallet.ui.components.FeeRateOption
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.LiquidConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
@@ -160,6 +161,12 @@ fun SwapScreen(
     onResetSwap: () -> Unit = {},
     onDismissFailedSwap: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
+    onOpenLayer2Options: () -> Unit = {},
+    isLiquidConnected: Boolean = false,
+    isLiquidConnecting: Boolean = false,
+    hasLiquidServerConfigured: Boolean = false,
+    onConnectLiquidServer: () -> Unit = {},
+    onOpenLiquidServerSettings: () -> Unit = {},
 ) {
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     val unit = if (useSats) "sats" else "BTC"
@@ -476,6 +483,7 @@ fun SwapScreen(
         maxOf(0L, availableBalance - estimatedLiquidFundingFee)
     }
     val sourceAvailableBalance = if (isPegIn) availableBalance else estimatedSpendableBalance
+    val hasSwapApi = boltzEnabled || sideSwapEnabled
     val transientExecutingSwap =
         reviewDialogSwap?.takeIf { swap ->
             swap.swapId == executingReviewSwapId || swap.swapId == broadcastingSwapId
@@ -526,6 +534,7 @@ fun SwapScreen(
     val amountWarnings = listOfNotNull(balanceWarning, limitWarning)
     val canRequestQuote =
         !isSwapLocked &&
+            selectedProvider.enabled &&
             amountSats != null &&
             amountSats > 0 &&
             balanceWarning == null &&
@@ -724,6 +733,21 @@ fun SwapScreen(
                 unit = unit,
                 privacyMode = privacyMode,
             )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        if (!isLiquidConnected) {
+            LiquidConnectionBanner(
+                isConnecting = isLiquidConnecting,
+                hasServerConfigured = hasLiquidServerConfigured,
+                onConnect = onConnectLiquidServer,
+                onOpenServerSettings = onOpenLiquidServerSettings,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+
+        if (!hasSwapApi) {
+            SwapApiRequiredCard(onOpenLayer2Options = onOpenLayer2Options)
             Spacer(modifier = Modifier.height(12.dp))
         }
 
@@ -1810,6 +1834,48 @@ private fun resolveInitialSwapService(
 // ════════════════════════════════════════════
 // Private composables
 // ════════════════════════════════════════════
+
+@Composable
+private fun SwapApiRequiredCard(
+    onOpenLayer2Options: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        border = BorderStroke(1.dp, LiquidTeal.copy(alpha = 0.45f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.swap_api_required_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = stringResource(R.string.swap_api_required_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(
+                onClick = onOpenLayer2Options,
+                contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.loc_56d9acd0),
+                    color = LiquidTeal,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun CopyableDetailRow(

@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -89,6 +90,8 @@ fun SettingsScreen(
     onBalanceDateFormatChange: (String) -> Unit = {},
     currentThemeMode: String = SecureStorage.THEME_MODE_DARK,
     onThemeModeChange: (String) -> Unit = {},
+    currentTypeface: String = SecureStorage.TYPEFACE_SYSTEM,
+    onTypefaceChange: (String) -> Unit = {},
     isLiquidAvailable: Boolean = false,
     torStatus: TorStatus = TorStatus.DISCONNECTED,
     onOpenBitcoinElectrum: () -> Unit = {},
@@ -276,6 +279,30 @@ fun SettingsScreen(
                 ThemeModeDropdown(
                     currentThemeMode = currentThemeMode,
                     onThemeModeSelected = onThemeModeChange,
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.TextFields,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.settings_typeface_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = TextSecondary,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                TypefaceDropdown(
+                    currentTypeface = currentTypeface,
+                    onTypefaceSelected = onTypefaceChange,
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -793,6 +820,9 @@ fun Layer2OptionsScreen(
     onLiquidEnabledChange: (Boolean) -> Unit = {},
     sparkEnabled: Boolean = false,
     onSparkEnabledChange: (Boolean) -> Unit = {},
+    lightningNodeEnabled: Boolean = false,
+    onLightningNodeEnabledChange: (Boolean) -> Unit = {},
+    onOpenLightningNodeConnection: () -> Unit = {},
     currentDenomination: String = SecureStorage.DENOMINATION_BTC,
     onDenominationChange: (String) -> Unit = {},
     currentBoltzApiSource: String = SecureStorage.BOLTZ_API_DISABLED,
@@ -807,7 +837,7 @@ fun Layer2OptionsScreen(
     onOpenLiquidElectrum: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
-    val layer2Enabled = liquidEnabled || sparkEnabled
+    val layer2Enabled = liquidEnabled || sparkEnabled || lightningNodeEnabled
     Column(
         modifier =
             Modifier
@@ -844,19 +874,18 @@ fun Layer2OptionsScreen(
             onLiquidEnabledChange = onLiquidEnabledChange,
             sparkEnabled = sparkEnabled,
             onSparkEnabledChange = onSparkEnabledChange,
+            lightningNodeEnabled = lightningNodeEnabled,
+            onLightningNodeEnabledChange = onLightningNodeEnabledChange,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        Layer2DisplayCard(
-            layer2Enabled = layer2Enabled,
-            currentDenomination = currentDenomination,
-            onDenominationChange = onDenominationChange,
-        )
+        if (lightningNodeEnabled) {
+            LightningNodeConnectionCard(onOpenLightningNodeConnection)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
 
         if (liquidEnabled) {
-            Spacer(modifier = Modifier.height(8.dp))
-
             Layer2ExternalServicesCard(
                 currentBoltzApiSource = currentBoltzApiSource,
                 onBoltzApiSourceChange = onBoltzApiSourceChange,
@@ -869,9 +898,50 @@ fun Layer2OptionsScreen(
                 layer2TorStatus = layer2TorStatus,
                 onOpenLiquidElectrum = onOpenLiquidElectrum,
             )
+            Spacer(modifier = Modifier.height(8.dp))
         }
 
+        Layer2DisplayCard(
+            layer2Enabled = layer2Enabled,
+            currentDenomination = currentDenomination,
+            onDenominationChange = onDenominationChange,
+        )
+
         Spacer(modifier = Modifier.height(32.dp))
+    }
+}
+
+@Composable
+private fun LightningNodeConnectionCard(onOpenConnection: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.ln_node_connection_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = BitcoinOrange,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            Button(
+                onClick = onOpenConnection,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
+            ) {
+                Text(stringResource(R.string.ln_node_setup_connection))
+            }
+        }
     }
 }
 
@@ -881,6 +951,8 @@ private fun Layer2OptionsCard(
     onLiquidEnabledChange: (Boolean) -> Unit,
     sparkEnabled: Boolean,
     onSparkEnabledChange: (Boolean) -> Unit,
+    lightningNodeEnabled: Boolean,
+    onLightningNodeEnabledChange: (Boolean) -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -894,12 +966,33 @@ private fun Layer2OptionsCard(
                     .padding(16.dp),
         ) {
             Text(
-                text = stringResource(R.string.loc_56d9acd0),
+                text = stringResource(R.string.protocols_title),
                 style = MaterialTheme.typography.titleMedium,
                 color = BitcoinOrange,
             )
 
             Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ToggleOptionText(
+                    title = stringResource(R.string.ln_node_pill_label),
+                    subtitle = stringResource(R.string.settings_lightning_subtitle),
+                    titleColor = TextPrimary,
+                    subtitleColor = TextSecondary,
+                    modifier = Modifier.weight(1f),
+                )
+                SquareToggle(
+                    checked = lightningNodeEnabled,
+                    onCheckedChange = onLightningNodeEnabledChange,
+                    checkedColor = LightningYellow,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1332,6 +1425,12 @@ private data class ThemeModeOption(
     val description: String,
 )
 
+private data class TypefaceOption(
+    val id: String,
+    val name: String,
+    val description: String,
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SwipeModeDropdown(
@@ -1553,6 +1652,79 @@ private fun ThemeModeDropdown(
                     },
                     leadingIcon = {
                         if (option.id == currentThemeMode) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(R.string.common_selected),
+                                tint = BitcoinOrange,
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TypefaceDropdown(
+    currentTypeface: String,
+    onTypefaceSelected: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val options =
+        listOf(
+            TypefaceOption(
+                id = SecureStorage.TYPEFACE_SYSTEM,
+                name = stringResource(R.string.settings_typeface_system),
+                description = stringResource(R.string.settings_typeface_system_description),
+            ),
+            TypefaceOption(
+                id = SecureStorage.TYPEFACE_ATKINSON_HYPERLEGIBLE,
+                name = stringResource(R.string.settings_typeface_atkinson_hyperlegible),
+                description = stringResource(R.string.settings_typeface_atkinson_hyperlegible_description),
+            ),
+            TypefaceOption(
+                id = SecureStorage.TYPEFACE_OPEN_RUNDE,
+                name = stringResource(R.string.settings_typeface_open_runde),
+                description = stringResource(R.string.settings_typeface_open_runde_description),
+            ),
+        )
+    val selectedOption = options.find { it.id == currentTypeface } ?: options.first()
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        CompactDropdownField(
+            value = selectedOption.name,
+            expanded = expanded,
+            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier =
+                Modifier
+                    .exposedDropdownSize(true)
+                    .background(DarkSurface),
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        DropdownOptionText(
+                            title = option.name,
+                            subtitle = option.description,
+                            selected = option.id == currentTypeface,
+                        )
+                    },
+                    onClick = {
+                        onTypefaceSelected(option.id)
+                        expanded = false
+                    },
+                    leadingIcon = {
+                        if (option.id == currentTypeface) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = stringResource(R.string.common_selected),

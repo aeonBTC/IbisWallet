@@ -82,6 +82,7 @@ import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.LiquidConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
@@ -132,6 +133,12 @@ fun LiquidReceiveScreen(
     onFetchLightningLimits: () -> Unit = {},
     onResetLightningInvoice: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
+    onOpenLayer2Options: () -> Unit = {},
+    isLiquidConnected: Boolean = false,
+    isLiquidConnecting: Boolean = false,
+    hasLiquidServerConfigured: Boolean = false,
+    onConnectLiquidServer: () -> Unit = {},
+    onOpenLiquidServerSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val receiveShareRequestTitle = stringResource(R.string.receive_share_request_title)
@@ -240,10 +247,10 @@ fun LiquidReceiveScreen(
         }
 
     val activeQrContent =
-        remember(liquidReceiveTab, liquidRequestContent, lightningInvoiceState) {
+        remember(liquidReceiveTab, liquidRequestContent, lightningInvoiceState, boltzEnabled) {
             when (liquidReceiveTab) {
                 1 ->
-                    if (lightningInvoiceState is LightningInvoiceState.Ready) {
+                    if (boltzEnabled && lightningInvoiceState is LightningInvoiceState.Ready) {
                         lightningInvoiceState.invoice
                     } else {
                         null
@@ -274,10 +281,9 @@ fun LiquidReceiveScreen(
             }
     }
 
-    LaunchedEffect(liquidAddress, currentAddressLabel) {
-        when {
-            liquidAddress == null -> onEnsureLiquidAddress()
-            !currentAddressLabel.isNullOrBlank() -> onEnsureLiquidAddress()
+    LaunchedEffect(liquidAddress) {
+        if (liquidAddress == null) {
+            onEnsureLiquidAddress()
         }
     }
 
@@ -301,13 +307,6 @@ fun LiquidReceiveScreen(
         }
     }
 
-    LaunchedEffect(boltzEnabled) {
-        if (!boltzEnabled && liquidReceiveTab == 1) {
-            liquidReceiveTab = 0
-            onResetLightningInvoice()
-        }
-    }
-
     LaunchedEffect(liquidReceiveTab, lightningInvoiceState) {
         if (liquidReceiveTab == 1 && lightningInvoiceState is LightningInvoiceState.Claimed) {
             onResetLightningInvoice()
@@ -318,7 +317,7 @@ fun LiquidReceiveScreen(
     val nfcShareOwner = remember { Any() }
     val nfcAvailable = context.getNfcAvailability().canBroadcast
     val hasNfcSharePayload = nfcAvailable && activeQrContent != null
-    val wantsLightningNfcBadge = liquidReceiveTab == 1 && nfcAvailable
+    val wantsLightningNfcBadge = liquidReceiveTab == 1 && boltzEnabled && nfcAvailable
     val wantsPreferredHceService = hasNfcSharePayload || wantsLightningNfcBadge
     val nfcShareState by NfcRuntimeStatus.shareState.collectAsState()
     DisposableEffect(mainActivity, wantsPreferredHceService) {
@@ -408,6 +407,16 @@ fun LiquidReceiveScreen(
             .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
+        if (!isLiquidConnected) {
+            LiquidConnectionBanner(
+                isConnecting = isLiquidConnecting,
+                hasServerConfigured = hasLiquidServerConfigured,
+                onConnect = onConnectLiquidServer,
+                onOpenServerSettings = onOpenLiquidServerSettings,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
@@ -460,7 +469,6 @@ fun LiquidReceiveScreen(
                         val isSelected = liquidReceiveTab == idx
                         val selectedColor = if (idx == 1) LightningYellow else LiquidTeal
                         val inactiveTint = if (idx == 1) LightningYellow.copy(alpha = 0.12f) else LiquidTeal.copy(alpha = 0.12f)
-                        val isEnabled = idx == 0 || boltzEnabled
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -470,7 +478,7 @@ fun LiquidReceiveScreen(
                                     if (isSelected) selectedColor
                                     else inactiveTint,
                                 )
-                                .clickable(enabled = isEnabled) {
+                                .clickable {
                                     liquidReceiveTab = idx
                                     if (idx == 0) {
                                         onResetLightningInvoice()
@@ -481,9 +489,7 @@ fun LiquidReceiveScreen(
                             Text(
                                 text = label,
                                 color =
-                                    if (!isEnabled) {
-                                        TextSecondary.copy(alpha = 0.4f)
-                                    } else if (isSelected) {
+                                    if (isSelected) {
                                         TextPrimary
                                     } else {
                                         TextSecondary
@@ -843,7 +849,10 @@ fun LiquidReceiveScreen(
                         onDeleteRequest = { pendingInvoiceToDelete = it },
                     )
 
-                    when (lightningInvoiceState) {
+                    if (!boltzEnabled) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LiquidLightningApiRequiredCard(onOpenLayer2Options = onOpenLayer2Options)
+                    } else when (lightningInvoiceState) {
                         is LightningInvoiceState.Generating -> {
                             Spacer(modifier = Modifier.height(16.dp))
                             CircularProgressIndicator(
@@ -1101,6 +1110,7 @@ fun LiquidReceiveScreen(
         }
 
         if (liquidReceiveTab == 1 &&
+            boltzEnabled &&
             lightningInvoiceState is LightningInvoiceState.Ready
         ) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -1130,6 +1140,7 @@ fun LiquidReceiveScreen(
         }
 
         if (liquidReceiveTab == 1 &&
+            boltzEnabled &&
             (lightningInvoiceState is LightningInvoiceState.Idle || lightningInvoiceState is LightningInvoiceState.Failed)
         ) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -1201,6 +1212,45 @@ fun LiquidReceiveScreen(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+private fun LiquidLightningApiRequiredCard(
+    onOpenLayer2Options: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurface),
+        border = BorderStroke(1.dp, LightningYellow.copy(alpha = 0.45f)),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.liquid_lightning_api_required_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = TextPrimary,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = stringResource(R.string.liquid_lightning_api_required_message),
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onOpenLayer2Options) {
+                Text(
+                    text = stringResource(R.string.loc_56d9acd0),
+                    color = LightningYellow,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
         }
     }
 }

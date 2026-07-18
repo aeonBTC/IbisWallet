@@ -26,8 +26,6 @@ fun AddressType.descriptionRes(): Int =
 
 fun AddressType.localizedTitle(context: Context): String = context.getString(titleRes())
 
-fun AddressType.localizedDescription(context: Context): String = context.getString(descriptionRes())
-
 @Composable
 fun AddressType.titleText(): String = stringResource(titleRes())
 

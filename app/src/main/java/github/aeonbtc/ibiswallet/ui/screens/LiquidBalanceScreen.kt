@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.QrCode
@@ -96,10 +97,12 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidAssetBalance
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
+import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentPhase
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentSession
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
 import github.aeonbtc.ibiswallet.data.model.SwapService
@@ -111,9 +114,12 @@ import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
+import github.aeonbtc.ibiswallet.ui.components.LiquidConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.LiquidTransactionItem
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.TransactionHistoryHideAllDialog
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.components.shouldShowBoltzRescueKey
@@ -126,6 +132,7 @@ import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
+import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
@@ -150,10 +157,13 @@ fun LiquidBalanceScreen(
     liquidExplorer: String = SecureStorage.LIQUID_EXPLORER_DISABLED,
     liquidExplorerUrl: String = "",
     onTogglePrivacy: () -> Unit = {},
+    liquidAddressLabels: Map<String, String> = emptyMap(),
     liquidTransactionLabels: Map<String, String> = emptyMap(),
     lookupPendingLightningPayment: (String) -> PendingLightningPaymentSession? = { null },
     onSaveLiquidTransactionLabel: (String, String) -> Unit = { _, _ -> },
     onDeleteLiquidTransactionLabel: (String) -> Unit = {},
+    onDeleteLiquidTransactionFromHistory: (String) -> Unit = {},
+    onDeleteAllLiquidTransactionsFromHistory: () -> Unit = {},
     onSaveLiquidAddressLabelFromTransaction: (String, String) -> Unit = { _, _ -> },
     onDeleteLiquidAddressLabelFromTransaction: (String) -> Unit = {},
     searchTransactions: suspend (String, Boolean, Boolean, Boolean, Boolean, Int) -> TransactionSearchResult =
@@ -163,8 +173,15 @@ fun LiquidBalanceScreen(
     boltzRescueMnemonic: String? = null,
     liquidState: LiquidWalletState = LiquidWalletState(),
     onSyncLiquid: () -> Unit = {},
+    isLiquidConnected: Boolean = false,
+    isLiquidConnecting: Boolean = false,
+    hasLiquidServerConfigured: Boolean = false,
+    onConnectLiquidServer: () -> Unit = {},
+    onOpenLiquidServerSettings: () -> Unit = {},
 ) {
     var selectedLiquidTransaction by remember { mutableStateOf<LiquidTransaction?>(null) }
+    var liquidTransactionPendingHistoryDelete by remember { mutableStateOf<LiquidTransaction?>(null) }
+    var showDeleteAllHistoryDialog by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showQuickReceive by remember { mutableStateOf(false) }
     var isSearchActive by remember { mutableStateOf(false) }
@@ -206,6 +223,8 @@ fun LiquidBalanceScreen(
             tx.walletAddress
                 ?.takeIf { it.isNotBlank() }
                 ?: tx.recipientAddress?.takeIf { it.isNotBlank() }
+        val explicitTxLabel = liquidTransactionLabels[tx.txid]
+        val txLabel = linkedAddress?.let { liquidAddressLabels[it] } ?: explicitTxLabel
         LiquidTransactionDetailDialog(
             transaction = tx,
             useSats = useSats,
@@ -216,21 +235,56 @@ fun LiquidBalanceScreen(
             privacyMode = privacyMode,
             liquidExplorer = liquidExplorer,
             liquidExplorerUrl = liquidExplorerUrl,
-            label = liquidTransactionLabels[tx.txid],
+            label = txLabel,
             pendingLightningPayment = lookupPendingLightningPayment(tx.txid),
             onSaveLabel = { label ->
-                onSaveLiquidTransactionLabel(tx.txid, label)
-                linkedAddress?.let { onSaveLiquidAddressLabelFromTransaction(it, label) }
+                if (linkedAddress != null) {
+                    onSaveLiquidAddressLabelFromTransaction(linkedAddress, label)
+                    if (explicitTxLabel != null) onDeleteLiquidTransactionLabel(tx.txid)
+                } else {
+                    onSaveLiquidTransactionLabel(tx.txid, label)
+                }
             },
             onDeleteLabel =
-                liquidTransactionLabels[tx.txid]?.let {
+                txLabel?.let {
                     {
-                        onDeleteLiquidTransactionLabel(tx.txid)
                         linkedAddress?.let(onDeleteLiquidAddressLabelFromTransaction)
+                            ?: onDeleteLiquidTransactionLabel(tx.txid)
+                        if (explicitTxLabel != null) onDeleteLiquidTransactionLabel(tx.txid)
                     }
-                },
+            },
             boltzRescueMnemonic = boltzRescueMnemonic,
+            onHideFromHistory = {
+                liquidTransactionPendingHistoryDelete = tx
+            },
             onDismiss = { selectedLiquidTransaction = null },
+        )
+    }
+
+    liquidTransactionPendingHistoryDelete?.let { tx ->
+        IbisConfirmDialog(
+            onDismissRequest = { liquidTransactionPendingHistoryDelete = null },
+            title = stringResource(R.string.transaction_history_hide_title),
+            message = stringResource(R.string.transaction_history_hide_message),
+            confirmText = stringResource(R.string.transaction_history_hide_confirm),
+            onConfirm = {
+                onDeleteLiquidTransactionFromHistory(tx.txid)
+                liquidTransactionPendingHistoryDelete = null
+                if (selectedLiquidTransaction?.txid == tx.txid) {
+                    selectedLiquidTransaction = null
+                }
+            },
+        )
+    }
+
+    if (showDeleteAllHistoryDialog) {
+        TransactionHistoryHideAllDialog(
+            entryCount = liquidState.transactions.size,
+            onDismissRequest = { showDeleteAllHistoryDialog = false },
+            onConfirm = {
+                onDeleteAllLiquidTransactionsFromHistory()
+                showDeleteAllHistoryDialog = false
+            },
         )
     }
 
@@ -367,6 +421,17 @@ fun LiquidBalanceScreen(
                     },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            if (!isLiquidConnected) {
+                item {
+                    LiquidConnectionBanner(
+                        isConnecting = isLiquidConnecting,
+                        hasServerConfigured = hasLiquidServerConfigured,
+                        onConnect = onConnectLiquidServer,
+                        onOpenServerSettings = onOpenLiquidServerSettings,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
             item {
                 Card(
                     modifier =
@@ -586,6 +651,15 @@ fun LiquidBalanceScreen(
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
+                        if (liquidState.transactions.isNotEmpty()) {
+                            LiquidTransactionFilterButton(
+                                icon = Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.transaction_history_hide_all_content_description),
+                                tint = TextSecondary,
+                                isSelected = true,
+                                onClick = { showDeleteAllHistoryDialog = true },
+                            )
+                        }
                         if (historicalBtcPrices.isNotEmpty()) {
                             LiquidTransactionFilterButton(
                                 icon = Icons.Default.Schedule,
@@ -745,6 +819,10 @@ fun LiquidBalanceScreen(
                 }
             } else {
                 items(visibleTransactions, key = { it.txid }) { tx ->
+                    val linkedAddress =
+                        tx.walletAddress
+                            ?.takeIf { it.isNotBlank() }
+                            ?: tx.recipientAddress?.takeIf { it.isNotBlank() }
                     LiquidTransactionItem(
                         tx = tx,
                         denomination = denomination,
@@ -758,7 +836,7 @@ fun LiquidBalanceScreen(
                                 null
                             },
                         privacyMode = privacyMode,
-                        label = liquidTransactionLabels[tx.txid],
+                        label = linkedAddress?.let { liquidAddressLabels[it] } ?: liquidTransactionLabels[tx.txid],
                         onClick = { selectedLiquidTransaction = tx },
                     )
                     Spacer(modifier = Modifier.height(4.dp))
@@ -997,6 +1075,7 @@ private fun LiquidTransactionDetailDialog(
     onSaveLabel: (String) -> Unit = {},
     onDeleteLabel: (() -> Unit)? = null,
     boltzRescueMnemonic: String? = null,
+    onHideFromHistory: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -1012,6 +1091,19 @@ private fun LiquidTransactionDetailDialog(
             LiquidTxSource.LIGHTNING_RECEIVE_SWAP -> transaction.swapDetails
             else -> null
         }
+    val lightningFailureReason =
+        lightningSwapDetails?.failureReason?.takeIf { it.isNotBlank() }
+            ?: lightningPaymentDetails?.refundError?.takeIf { it.isNotBlank() }
+            ?: lightningSwapDetails?.status
+                ?.takeIf {
+                    it.isNotBlank() &&
+                        (
+                            lightningPaymentDetails?.phase == PendingLightningPaymentPhase.FAILED ||
+                                lightningPaymentDetails?.refundState ==
+                                BoltzSubmarineRefundState.FAILED ||
+                                it.contains("fail", ignoreCase = true)
+                            )
+                }
     val swapRole = chainSwapDetails?.role
     val isReceive =
         when (swapRole) {
@@ -1061,6 +1153,12 @@ private fun LiquidTransactionDetailDialog(
             swapRole == LiquidSwapTxRole.SETTLEMENT ->
                 chainSwapSettlementAmountSats!!.toULong()
             else -> kotlin.math.abs(transaction.balanceSatoshi).toULong()
+        }
+    val liquidAmountText =
+        if (privacyMode) {
+            HIDDEN_AMOUNT
+        } else {
+            "${if (isReceive) "+" else "-"}${formatAmount(amountAbs, useSats)} ${liquidBalanceUnitLabel(useSats)}"
         }
     val accentColor = if (isReceive) AccentGreen else AccentRed
     val lightningPrimaryValue =
@@ -1144,6 +1242,7 @@ private fun LiquidTransactionDetailDialog(
         }
     val canOpenBlockExplorer = liquidExplorer != SecureStorage.LIQUID_EXPLORER_DISABLED && explorerUrl.isNotBlank()
 
+    var showCopiedAmount by remember { mutableStateOf(false) }
     var showCopiedTxid by remember { mutableStateOf(false) }
     var showCopiedAddress by remember { mutableStateOf(false) }
     var showCopiedRecipient by remember { mutableStateOf(false) }
@@ -1196,6 +1295,12 @@ private fun LiquidTransactionDetailDialog(
         )
     }
 
+    LaunchedEffect(showCopiedAmount) {
+        if (showCopiedAmount) {
+            kotlinx.coroutines.delay(3000)
+            showCopiedAmount = false
+        }
+    }
     LaunchedEffect(showCopiedTxid) {
         if (showCopiedTxid) {
             kotlinx.coroutines.delay(3000)
@@ -1299,6 +1404,23 @@ private fun LiquidTransactionDetailDialog(
                             .padding(12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(DarkCard.copy(alpha = 0.72f))
+                                .clickable(onClick = onHideFromHistory),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.transaction_history_hide_confirm),
+                            tint = TextSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector =
@@ -1350,15 +1472,27 @@ private fun LiquidTransactionDetailDialog(
                             }
                         } else {
                             Text(
-                                text = if (privacyMode) {
-                                    HIDDEN_AMOUNT
-                                } else {
-                                    "${if (isReceive) "+" else "-"}${formatAmount(amountAbs, useSats)} ${liquidBalanceUnitLabel(useSats)}"
-                                },
+                                text = liquidAmountText,
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = accentColor,
+                                modifier =
+                                    if (privacyMode) {
+                                        Modifier
+                                    } else {
+                                        Modifier.clickable {
+                                            SecureClipboard.copyAndScheduleClear(context, liquidAmountText)
+                                            showCopiedAmount = true
+                                        }
+                                    },
                             )
+                            if (showCopiedAmount) {
+                                Text(
+                                    text = stringResource(R.string.loc_e287255d),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = LiquidTeal,
+                                )
+                            }
                             if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 LiquidHistoricalFiatText(
@@ -1415,6 +1549,19 @@ private fun LiquidTransactionDetailDialog(
                                 }
                             }
                             Spacer(modifier = Modifier.height(4.dp))
+                            val hasLightningFailure = !lightningFailureReason.isNullOrBlank()
+                            val statusColor =
+                                when {
+                                    hasLightningFailure -> ErrorRed
+                                    transaction.height != null -> AccentGreen
+                                    else -> BitcoinOrange
+                                }
+                            val statusText =
+                                when {
+                                    hasLightningFailure -> stringResource(R.string.ln_node_status_failed)
+                                    transaction.height != null -> stringResource(R.string.loc_4ab75d7f)
+                                    else -> stringResource(R.string.loc_1b684325)
+                                }
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1423,25 +1570,20 @@ private fun LiquidTransactionDetailDialog(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         imageVector =
-                                            if (transaction.height != null) {
-                                                Icons.Default.CheckCircle
-                                            } else {
-                                                Icons.Default.Schedule
+                                            when {
+                                                hasLightningFailure -> Icons.Default.Close
+                                                transaction.height != null -> Icons.Default.CheckCircle
+                                                else -> Icons.Default.Schedule
                                             },
                                         contentDescription = null,
-                                        tint = if (transaction.height != null) AccentGreen else BitcoinOrange,
+                                        tint = statusColor,
                                         modifier = Modifier.size(18.dp),
                                     )
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
-                                        text =
-                                            if (transaction.height != null) {
-                                                stringResource(R.string.loc_4ab75d7f)
-                                            } else {
-                                                stringResource(R.string.loc_1b684325)
-                                            },
+                                        text = statusText,
                                         style = MaterialTheme.typography.bodyLarge,
-                                        color = if (transaction.height != null) AccentGreen else BitcoinOrange,
+                                        color = statusColor,
                                     )
                                 }
                                 transaction.timestamp?.let {
@@ -1451,6 +1593,24 @@ private fun LiquidTransactionDetailDialog(
                                         color = TextSecondary,
                                     )
                                 }
+                            }
+
+                            lightningFailureReason?.let { reason ->
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(vertical = 6.dp),
+                                    color = TextSecondary.copy(alpha = 0.1f),
+                                )
+                                Text(
+                                    text = stringResource(R.string.ln_node_failure_reason),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TextSecondary,
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = reason,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = ErrorRed,
+                                )
                             }
                         }
 
@@ -2478,6 +2638,13 @@ private fun SwapDetailTextRow(
 }
 
 private fun pendingLightningSessionToSwapDetails(session: PendingLightningPaymentSession): LiquidSwapDetails {
+    val markFailed =
+        session.phase == PendingLightningPaymentPhase.FAILED ||
+            session.refundState == BoltzSubmarineRefundState.FAILED ||
+            session.status.contains("fail", ignoreCase = true)
+    val failure =
+        session.refundError?.takeIf { it.isNotBlank() }
+            ?: session.status.takeIf { markFailed && it.isNotBlank() }
     return LiquidSwapDetails(
         service = SwapService.BOLTZ,
         direction = SwapDirection.LBTC_TO_BTC,
@@ -2491,6 +2658,7 @@ private fun pendingLightningSessionToSwapDetails(session: PendingLightningPaymen
         resolvedPaymentInput = session.resolvedPaymentInput,
         invoice = session.fetchedInvoice,
         status = session.status,
+        failureReason = failure,
         timeoutBlockHeight = session.timeoutBlockHeight,
         refundPublicKey = session.refundPublicKey,
         claimPublicKey = session.boltzClaimPublicKey,
@@ -2893,4 +3061,3 @@ private fun formatLiquidAssetAmount(asset: LiquidAsset, baseUnits: Long): String
     val value = baseUnits.toDouble() / divisor
     return String.format(java.util.Locale.US, "%.2f %s", value, asset.ticker)
 }
-

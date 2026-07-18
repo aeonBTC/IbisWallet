@@ -11,6 +11,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -39,6 +40,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.QrCode
@@ -120,12 +122,15 @@ import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
+import github.aeonbtc.ibiswallet.ui.components.ElectrumConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.MAX_FEE_RATE_SAT_VB
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.StatusBadge
+import github.aeonbtc.ibiswallet.ui.components.TransactionHistoryHideAllDialog
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.components.shouldShowBoltzRescueKey
 import github.aeonbtc.ibiswallet.ui.theme.AccentBlue
@@ -183,6 +188,8 @@ fun BalanceScreen(
     onRedirectTransaction: (String, Double, String?) -> Unit = { _, _, _ -> },
     onSaveTransactionLabel: (String, String) -> Unit = { _, _ -> },
     onDeleteTransactionLabel: (String) -> Unit = {},
+    onDeleteTransactionFromHistory: (String) -> Unit = {},
+    onDeleteAllTransactionsFromHistory: () -> Unit = {},
     onSaveAddressLabelFromTransaction: (String, String) -> Unit = { _, _ -> },
     onDeleteAddressLabelFromTransaction: (String) -> Unit = {},
     searchTransactions: suspend (String, Boolean, Int) -> TransactionSearchResult =
@@ -196,6 +203,11 @@ fun BalanceScreen(
     boltzRescueMnemonic: String? = null,
     showLayer2RequiredPlaceholder: Boolean = false,
     onOpenSettings: () -> Unit = {},
+    isElectrumConnected: Boolean = false,
+    isElectrumConnecting: Boolean = false,
+    hasElectrumServerConfigured: Boolean = false,
+    onConnectElectrumServer: () -> Unit = {},
+    onOpenElectrumServerSettings: () -> Unit = {},
 ) {
     if (showLayer2RequiredPlaceholder) {
         Layer2RequiredPlaceholder(
@@ -207,6 +219,8 @@ fun BalanceScreen(
 
     // State for selected transaction dialog
     var selectedTransaction by remember { mutableStateOf<TransactionDetails?>(null) }
+    var transactionPendingHistoryDelete by remember { mutableStateOf<TransactionDetails?>(null) }
+    var showDeleteAllHistoryDialog by remember { mutableStateOf(false) }
 
     // QR scanner state
     var showQrScanner by remember { mutableStateOf(false) }
@@ -289,22 +303,56 @@ fun BalanceScreen(
                 }
             },
             onSaveLabel = { label ->
-                onSaveTransactionLabel(tx.txid, label)
-                tx.address
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let { onSaveAddressLabelFromTransaction(it, label) }
+                val linkedAddress = tx.address?.takeIf { it.isNotBlank() }
+                if (linkedAddress != null) {
+                    onSaveAddressLabelFromTransaction(linkedAddress, label)
+                    if (explicitTxLabel != null) onDeleteTransactionLabel(tx.txid)
+                } else {
+                    onSaveTransactionLabel(tx.txid, label)
+                }
             },
             onDeleteLabel =
-                explicitTxLabel?.let {
+                txLabel?.let {
                     {
-                        onDeleteTransactionLabel(tx.txid)
                         tx.address
                             ?.takeIf { it.isNotBlank() }
                             ?.let(onDeleteAddressLabelFromTransaction)
+                            ?: onDeleteTransactionLabel(tx.txid)
+                        if (explicitTxLabel != null) onDeleteTransactionLabel(tx.txid)
                     }
-                },
+            },
             boltzRescueMnemonic = boltzRescueMnemonic,
+            onHideFromHistory = {
+                transactionPendingHistoryDelete = tx
+            },
             onDismiss = { selectedTransaction = null },
+        )
+    }
+
+    transactionPendingHistoryDelete?.let { tx ->
+        IbisConfirmDialog(
+            onDismissRequest = { transactionPendingHistoryDelete = null },
+            title = stringResource(R.string.transaction_history_hide_title),
+            message = stringResource(R.string.transaction_history_hide_message),
+            confirmText = stringResource(R.string.transaction_history_hide_confirm),
+            onConfirm = {
+                onDeleteTransactionFromHistory(tx.txid)
+                transactionPendingHistoryDelete = null
+                if (selectedTransaction?.txid == tx.txid) {
+                    selectedTransaction = null
+                }
+            },
+        )
+    }
+
+    if (showDeleteAllHistoryDialog) {
+        TransactionHistoryHideAllDialog(
+            entryCount = walletState.transactions.size,
+            onDismissRequest = { showDeleteAllHistoryDialog = false },
+            onConfirm = {
+                onDeleteAllTransactionsFromHistory()
+                showDeleteAllHistoryDialog = false
+            },
         )
     }
 
@@ -415,6 +463,17 @@ fun BalanceScreen(
                     },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            if (!isElectrumConnected) {
+                item {
+                    ElectrumConnectionBanner(
+                        isConnecting = isElectrumConnecting,
+                        hasServerConfigured = hasElectrumServerConfigured,
+                        onConnect = onConnectElectrumServer,
+                        onOpenServerSettings = onOpenElectrumServerSettings,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
             item {
                 val cardAccentColor = BitcoinOrange
 
@@ -701,6 +760,15 @@ fun BalanceScreen(
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onBackground,
                         )
+                        if (walletState.transactions.isNotEmpty()) {
+                            TransactionFilterButton(
+                                icon = Icons.Default.Delete,
+                                contentDescription = stringResource(R.string.transaction_history_hide_all_content_description),
+                                tint = TextSecondary,
+                                isSelected = true,
+                                onClick = { showDeleteAllHistoryDialog = true },
+                            )
+                        }
                         if (historicalBtcPrices.isNotEmpty()) {
                             TransactionFilterButton(
                                 icon = Icons.Default.Schedule,
@@ -907,10 +975,10 @@ fun BalanceScreen(
                 }
             } else {
                 items(visibleTransactions, key = { it.txid }) { tx ->
-                    // Look up label: first check transaction label, then address label
+                    // Imported tx labels remain a fallback, but user edits are address labels when possible.
                     val label =
-                        transactionLabels[tx.txid]
-                            ?: tx.address?.let { addressLabels[it] }
+                        tx.address?.let { addressLabels[it] }
+                            ?: transactionLabels[tx.txid]
 
                     TransactionItem(
                         transaction = tx,
@@ -1226,6 +1294,7 @@ private fun TransactionItem(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     onClick: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
 ) {
     val swapDetails = transaction.swapDetails
     val isReceived =
@@ -1245,7 +1314,10 @@ private fun TransactionItem(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick),
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = onLongClick,
+                ),
         shape = RoundedCornerShape(8.dp),
         colors =
             CardDefaults.cardColors(
@@ -1749,6 +1821,7 @@ fun TransactionDetailDialog(
     onSaveLabel: (String) -> Unit = {},
     onDeleteLabel: (() -> Unit)? = null,
     boltzRescueMnemonic: String? = null,
+    onHideFromHistory: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -1763,6 +1836,7 @@ fun TransactionDetailDialog(
     val scrollState = rememberScrollState()
 
     // State for showing copy confirmation
+    var showCopiedAmount by remember { mutableStateOf(false) }
     var showCopiedTxid by remember { mutableStateOf(false) }
     var showCopiedAddress by remember { mutableStateOf(false) }
     var showCopiedChangeAddress by remember { mutableStateOf(false) }
@@ -1771,6 +1845,12 @@ fun TransactionDetailDialog(
     var showRescueKeyDialog by remember { mutableStateOf(false) }
 
     // Auto-dismiss copy notifications after 3 seconds
+    LaunchedEffect(showCopiedAmount) {
+        if (showCopiedAmount) {
+            kotlinx.coroutines.delay(3000)
+            showCopiedAmount = false
+        }
+    }
     LaunchedEffect(showCopiedTxid) {
         if (showCopiedTxid) {
             kotlinx.coroutines.delay(3000)
@@ -1859,6 +1939,15 @@ fun TransactionDetailDialog(
         }
 
     val denominationLabel = if (useSats) stringResource(R.string.loc_9384ed0d) else "BTC"
+    val amountText =
+        if (privacyMode) {
+            HIDDEN_AMOUNT
+        } else {
+            "${if (isReceived) "+" else "-"}${formatAmount(
+                amountAbs,
+                useSats,
+            )} $denominationLabel"
+        }
     val confirmationProgressText = transaction.confirmationProgressText(currentBlockHeight)
     val swapIdLabel = stringResource(R.string.loc_3e5cd869)
     val swapDepositAddressLabel = stringResource(R.string.loc_d5ff2eb5)
@@ -2002,6 +2091,23 @@ fun TransactionDetailDialog(
                             .padding(12.dp),
                     contentAlignment = Alignment.Center,
                 ) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .align(Alignment.TopEnd)
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(DarkCard.copy(alpha = 0.72f))
+                                .clickable(onClick = onHideFromHistory),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = stringResource(R.string.transaction_history_hide_confirm),
+                            tint = TextSecondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
@@ -2048,19 +2154,27 @@ fun TransactionDetailDialog(
 
                         // Amount (based on denomination setting)
                         Text(
-                            text =
-                                if (privacyMode) {
-                                    HIDDEN_AMOUNT
-                                } else {
-                                    "${if (isReceived) "+" else "-"}${formatAmount(
-                                        amountAbs,
-                                        useSats,
-                                    )} $denominationLabel"
-                                },
+                            text = amountText,
                             style = MaterialTheme.typography.headlineSmall,
                             fontWeight = FontWeight.Bold,
                             color = if (isReceived) AccentGreen else AccentRed,
+                            modifier =
+                                if (privacyMode) {
+                                    Modifier
+                                } else {
+                                    Modifier.clickable {
+                                        SecureClipboard.copyAndScheduleClear(context, amountText)
+                                        showCopiedAmount = true
+                                    }
+                                },
                         )
+                        if (showCopiedAmount) {
+                            Text(
+                                text = stringResource(R.string.loc_e287255d),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = BitcoinOrange,
+                            )
+                        }
 
                         if (!privacyMode) {
                             if (btcPrice != null && btcPrice > 0) {
@@ -2835,7 +2949,7 @@ private fun TorBrowserErrorDialog(onDismiss: () -> Unit) {
  * Allows user to set a new fee rate for RBF, CPFP, or redirect replacement
  */
 @Composable
-private fun SpeedUpDialog(
+internal fun SpeedUpDialog(
     method: SpeedUpMethod,
     currentFee: ULong?,
     currentFeeRate: Double?,
