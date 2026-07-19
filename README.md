@@ -47,7 +47,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
 - **PIN & Biometrics** - With configurable lock timing
 - **Privacy Toggle** - Hide all wallet amounts and balances
-- **Privacy Toggle** - Locally wipe specific wallet transactions or entire history
+- **Wipe Hisory** - Locally wipe specific wallet transactions or entire history
 - **Wallet Locks** - Lock specific wallets independently
 - **Duress PIN** - Configure a duress PIN that opens a decoy wallet
 - **Auto-Wipe** - Set a threshold for failed unlocks that automatically and irreversibly wipes all app data
