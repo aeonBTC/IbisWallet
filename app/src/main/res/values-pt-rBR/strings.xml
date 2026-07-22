@@ -218,12 +218,13 @@
     <string name="liquid_connecting_hint">Conectando ao Liquid Electrum…</string>
     <string name="liquid_connect_server">Conectar</string>
     <string name="liquid_setup_server">Abrir Liquid Electrum</string>
-    <string name="electrum_not_connected">Não conectado</string>
-    <string name="electrum_not_connected_hint">Conecte-se a um servidor Electrum para sincronizar e enviar.</string>
+    <string name="electrum_not_connected">Electrum offline</string>
+    <string name="electrum_not_connected_hint">Conecte-se a um servidor Electrum para sincronizar a carteira e enviar transações.</string>
     <string name="electrum_status_connecting">Conectando…</string>
     <string name="electrum_connecting_hint">Conectando ao Electrum…</string>
     <string name="electrum_connect_server">Conectar</string>
-    <string name="electrum_setup_server">Abrir Electrum</string>
+    <string name="electrum_setup_server">Configurações do servidor</string>
+    <string name="electrum_work_offline">Trabalhar offline</string>
     <string name="privacy_mode_hint_title">Modo de privacidade ativado</string>
     <string name="privacy_mode_hint_message">Os saldos estão ocultos. Toque e segure o ícone de privacidade para desativar.</string>
     <string name="common_copy_with_label">Copiar %1$s</string>
@@ -348,7 +349,29 @@
     <string name="loc_e440bb19" formatted="false">Configure primeiro o PIN ou a biometria</string>
     <string name="loc_e95ede4f" formatted="false">Falha na configuração de coação</string>
     <string name="loc_629b9e5b" formatted="false">Um estranho</string>
-    <string name="loc_b6df6876" formatted="false">Erro de líquido: PSET está temporariamente indisponível para uso real.</string>
+    <string name="loc_b6df6876" formatted="false">PSET criado</string>
+    <string name="loc_pset_title" formatted="false">Criar PSET</string>
+    <string name="loc_pset_creating" formatted="false">Criando PSET...</string>
+    <string name="loc_pset_combining" formatted="false">Importando assinaturas...</string>
+    <string name="loc_pset_broadcasting" formatted="false">Transmitindo transação...</string>
+    <string name="loc_pset_export_step" formatted="false">Passo 1: Exportar PSET não assinado</string>
+    <string name="loc_pset_export_hint" formatted="false">Escaneie ou salve o PSET para assinar no Jade.</string>
+    <string name="loc_pset_import_step" formatted="false">Passo 2: Importar PSET assinado</string>
+    <string name="loc_pset_import_hint" formatted="false">Escaneie, carregue ou cole o PSET assinado.</string>
+    <string name="loc_pset_scan_qr" formatted="false">Escanear QR</string>
+    <string name="loc_pset_load_file" formatted="false">Carregar arquivo</string>
+    <string name="loc_pset_confirm_title" formatted="false">Confirmar transmissão</string>
+    <string name="loc_pset_confirm_hint" formatted="false">Revise os detalhes antes de transmitir.</string>
+    <string name="loc_pset_create_failed" formatted="false">Falha ao criar PSET</string>
+    <string name="loc_pset_saved" formatted="false">PSET salvo</string>
+    <string name="loc_pset_save_failed" formatted="false">Falha ao salvar PSET</string>
+    <string name="loc_pset_read_failed" formatted="false">Falha ao ler arquivo</string>
+    <string name="loc_pset_copied" formatted="false">PSET copiado</string>
+    <string name="loc_pset_paste_title" formatted="false">Colar PSET assinado</string>
+    <string name="loc_pset_paste_hint" formatted="false">Cole o PSET em base64 do assinador.</string>
+    <string name="loc_pset_paste_placeholder" formatted="false">cHNldP8...</string>
+    <string name="loc_pset_review" formatted="false">Revisar PSET</string>
+    <string name="loc_pset_qr_unavailable" formatted="false">O firmware do Jade ainda não suporta assinatura PSET por QR.</string>
     <string name="loc_b2ef417b" formatted="false">Verificando novamente...</string>
     <string name="loc_fe7aca52" formatted="false">Descobrindo direções...</string>
     <string name="loc_a999bfe2" formatted="false">Iniciando nova verificação...</string>

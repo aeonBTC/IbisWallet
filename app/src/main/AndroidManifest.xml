@@ -27,9 +27,12 @@
         android:theme="@style/Theme.IbisWallet"
         tools:targetApi="31">
 
+        <!-- Not exported: only the launcher aliases below should reach this
+             activity. It forwards its intent verbatim to MainActivity, so an
+             exported entry here would be a generic intent-forwarding proxy. -->
         <activity
             android:name=".LaunchActivity"
-            android:exported="true"
+            android:exported="false"
             android:noHistory="true"
             android:theme="@style/Theme.IbisWallet.Launch" />
         

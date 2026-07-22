@@ -217,12 +217,13 @@
     <string name="liquid_connecting_hint">Conectando a Liquid Electrumâ¦</string>
     <string name="liquid_connect_server">Conectar</string>
     <string name="liquid_setup_server">Abrir Liquid Electrum</string>
-    <string name="electrum_not_connected">No conectado</string>
-    <string name="electrum_not_connected_hint">Conéctate a un servidor Electrum para sincronizar y enviar.</string>
-    <string name="electrum_status_connecting">Conectandoâ¦</string>
-    <string name="electrum_connecting_hint">Conectando a Electrumâ¦</string>
+    <string name="electrum_not_connected">Electrum sin conexión</string>
+    <string name="electrum_not_connected_hint">Conéctate a un servidor Electrum para sincronizar tu monedero y enviar transacciones.</string>
+    <string name="electrum_status_connecting">Conectando…</string>
+    <string name="electrum_connecting_hint">Conectando a Electrum…</string>
     <string name="electrum_connect_server">Conectar</string>
-    <string name="electrum_setup_server">Abrir Electrum</string>
+    <string name="electrum_setup_server">Ajustes del servidor</string>
+    <string name="electrum_work_offline">Trabajar sin conexión</string>
     <string name="privacy_mode_hint_title">Modo de privacidad activado</string>
     <string name="privacy_mode_hint_message">Los saldos están ocultos. Mantén pulsado el icono de privacidad para desactivarlo.</string>
     <string name="common_copy_with_label">Copiar %1$s</string>
@@ -348,7 +349,29 @@
     <string name="loc_e440bb19" formatted="false">Configura PIN o biometria primero</string>
     <string name="loc_e95ede4f" formatted="false">Configuracion de coaccion fallida</string>
     <string name="loc_629b9e5b" formatted="false">Desconocido</string>
-    <string name="loc_b6df6876" formatted="false">Error Liquid: PSET no está disponible temporalmente para uso real.</string>
+    <string name="loc_b6df6876" formatted="false">PSET creado</string>
+    <string name="loc_pset_title" formatted="false">Crear PSET</string>
+    <string name="loc_pset_creating" formatted="false">Creando PSET...</string>
+    <string name="loc_pset_combining" formatted="false">Importando firmas...</string>
+    <string name="loc_pset_broadcasting" formatted="false">Transmitiendo transacción...</string>
+    <string name="loc_pset_export_step" formatted="false">Paso 1: Exportar PSET sin firmar</string>
+    <string name="loc_pset_export_hint" formatted="false">Escanea o guarda el PSET para firmar en Jade.</string>
+    <string name="loc_pset_import_step" formatted="false">Paso 2: Importar PSET firmado</string>
+    <string name="loc_pset_import_hint" formatted="false">Escanea, carga o pega el PSET firmado.</string>
+    <string name="loc_pset_scan_qr" formatted="false">Escanear QR</string>
+    <string name="loc_pset_load_file" formatted="false">Cargar archivo</string>
+    <string name="loc_pset_confirm_title" formatted="false">Confirmar transmisión</string>
+    <string name="loc_pset_confirm_hint" formatted="false">Revisa los detalles antes de transmitir.</string>
+    <string name="loc_pset_create_failed" formatted="false">Error al crear PSET</string>
+    <string name="loc_pset_saved" formatted="false">PSET guardado</string>
+    <string name="loc_pset_save_failed" formatted="false">No se pudo guardar el PSET</string>
+    <string name="loc_pset_read_failed" formatted="false">No se pudo leer el archivo</string>
+    <string name="loc_pset_copied" formatted="false">PSET copiado</string>
+    <string name="loc_pset_paste_title" formatted="false">Pegar PSET firmado</string>
+    <string name="loc_pset_paste_hint" formatted="false">Pega el PSET en base64 del firmante.</string>
+    <string name="loc_pset_paste_placeholder" formatted="false">cHNldP8...</string>
+    <string name="loc_pset_review" formatted="false">Revisar PSET</string>
+    <string name="loc_pset_qr_unavailable" formatted="false">El firmware de Jade aún no admite firma PSET por QR.</string>
     <string name="loc_b2ef417b" formatted="false">Reescaneando...</string>
     <string name="loc_fe7aca52" formatted="false">Descubriendo direcciones...</string>
     <string name="loc_a999bfe2" formatted="false">Iniciando reescaneo...</string>

@@ -251,12 +251,13 @@
     <string name="liquid_connecting_hint">Подключение к Liquid Electrum…</string>
     <string name="liquid_connect_server">Подключиться</string>
     <string name="liquid_setup_server">Открыть Liquid Electrum</string>
-    <string name="electrum_not_connected">Не подключено</string>
-    <string name="electrum_not_connected_hint">Подключитесь к серверу Electrum для синхронизации и отправки.</string>
+    <string name="electrum_not_connected">Electrum офлайн</string>
+    <string name="electrum_not_connected_hint">Подключитесь к серверу Electrum, чтобы синхронизировать кошелёк и отправлять транзакции.</string>
     <string name="electrum_status_connecting">Подключение…</string>
     <string name="electrum_connecting_hint">Подключение к Electrum…</string>
     <string name="electrum_connect_server">Подключиться</string>
-    <string name="electrum_setup_server">Открыть Electrum</string>
+    <string name="electrum_setup_server">Настройки сервера</string>
+    <string name="electrum_work_offline">Работать офлайн</string>
     <string name="privacy_mode_hint_title">Режим приватности включен</string>
     <string name="privacy_mode_hint_message">Балансы скрыты. Нажмите и удерживайте значок приватности, чтобы отключить.</string>
     <string name="common_copy_with_label">Копировать %1$s</string>
@@ -889,7 +890,29 @@
     <string name="loc_4be4f258" formatted="false">Импорт не удался</string>
     <string name="loc_e440bb19" formatted="false">Сначала настройте PIN или биометрию</string>
     <string name="loc_e95ede4f" formatted="false">Не удалось настроить PIN принуждения</string>
-    <string name="loc_b6df6876" formatted="false">Ошибка Liquid: PSET временно недоступен для использования с реальными средствами.</string>
+    <string name="loc_b6df6876" formatted="false">PSET создан</string>
+    <string name="loc_pset_title" formatted="false">Собрать PSET</string>
+    <string name="loc_pset_creating" formatted="false">Создание PSET...</string>
+    <string name="loc_pset_combining" formatted="false">Импорт подписей...</string>
+    <string name="loc_pset_broadcasting" formatted="false">Отправка транзакции...</string>
+    <string name="loc_pset_export_step" formatted="false">Шаг 1: Экспорт неподписанного PSET</string>
+    <string name="loc_pset_export_hint" formatted="false">Отсканируйте или сохраните PSET для подписи на Jade.</string>
+    <string name="loc_pset_import_step" formatted="false">Шаг 2: Импорт подписанного PSET</string>
+    <string name="loc_pset_import_hint" formatted="false">Отсканируйте, загрузите или вставьте подписанный PSET.</string>
+    <string name="loc_pset_scan_qr" formatted="false">Сканировать QR</string>
+    <string name="loc_pset_load_file" formatted="false">Загрузить файл</string>
+    <string name="loc_pset_confirm_title" formatted="false">Подтвердить отправку</string>
+    <string name="loc_pset_confirm_hint" formatted="false">Проверьте детали перед отправкой.</string>
+    <string name="loc_pset_create_failed" formatted="false">Не удалось создать PSET</string>
+    <string name="loc_pset_saved" formatted="false">PSET сохранён</string>
+    <string name="loc_pset_save_failed" formatted="false">Не удалось сохранить PSET</string>
+    <string name="loc_pset_read_failed" formatted="false">Не удалось прочитать файл</string>
+    <string name="loc_pset_copied" formatted="false">PSET скопирован</string>
+    <string name="loc_pset_paste_title" formatted="false">Вставить подписанный PSET</string>
+    <string name="loc_pset_paste_hint" formatted="false">Вставьте base64 PSET от подписанта.</string>
+    <string name="loc_pset_paste_placeholder" formatted="false">cHNldP8...</string>
+    <string name="loc_pset_review" formatted="false">Просмотр PSET</string>
+    <string name="loc_pset_qr_unavailable" formatted="false">Прошивка Jade пока не поддерживает подпись PSET через QR.</string>
     <string name="loc_b2ef417b" formatted="false">Идет полный синк</string>
     <string name="loc_fe7aca52" formatted="false">Поиск адресов...</string>
     <string name="loc_a999bfe2" formatted="false">Запуск полного синка...</string>

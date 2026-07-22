@@ -217,12 +217,13 @@
     <string name="liquid_connecting_hint">Connecting to Liquid Electrum…</string>
     <string name="liquid_connect_server">Connect</string>
     <string name="liquid_setup_server">Open Liquid Electrum</string>
-    <string name="electrum_not_connected">Not connected</string>
-    <string name="electrum_not_connected_hint">Connect to an Electrum server to sync and send.</string>
+    <string name="electrum_not_connected">Electrum offline</string>
+    <string name="electrum_not_connected_hint">Connect to an Electrum server to sync your wallet and send transactions.</string>
     <string name="electrum_status_connecting">Connecting…</string>
     <string name="electrum_connecting_hint">Connecting to Electrum…</string>
     <string name="electrum_connect_server">Connect</string>
-    <string name="electrum_setup_server">Open Electrum</string>
+    <string name="electrum_setup_server">Server settings</string>
+    <string name="electrum_work_offline">Work offline</string>
     <string name="privacy_mode_hint_title">Privacy mode enabled</string>
     <string name="privacy_mode_hint_message">Balances are hidden. Tap and hold the privacy icon to disable.</string>
     <string name="common_copy_with_label">Copy %1$s</string>
@@ -348,7 +349,29 @@
     <string name="loc_e440bb19" formatted="false">Set up PIN or biometric first</string>
     <string name="loc_e95ede4f" formatted="false">Duress setup failed</string>
     <string name="loc_629b9e5b" formatted="false">Unknown</string>
-    <string name="loc_b6df6876" formatted="false">Liquid error: PSET is temporarily unavailable for live use.</string>
+    <string name="loc_b6df6876" formatted="false">PSET created</string>
+    <string name="loc_pset_title" formatted="false">Build PSET</string>
+    <string name="loc_pset_creating" formatted="false">Creating PSET...</string>
+    <string name="loc_pset_combining" formatted="false">Importing signatures...</string>
+    <string name="loc_pset_broadcasting" formatted="false">Broadcasting transaction...</string>
+    <string name="loc_pset_export_step" formatted="false">Step 1: Export Unsigned PSET</string>
+    <string name="loc_pset_export_hint" formatted="false">Scan or save PSET for signing on Jade.</string>
+    <string name="loc_pset_import_step" formatted="false">Step 2: Import Signed PSET</string>
+    <string name="loc_pset_import_hint" formatted="false">Scan, load, or paste the signed PSET.</string>
+    <string name="loc_pset_scan_qr" formatted="false">Scan QR</string>
+    <string name="loc_pset_load_file" formatted="false">Load File</string>
+    <string name="loc_pset_confirm_title" formatted="false">Confirm Broadcast</string>
+    <string name="loc_pset_confirm_hint" formatted="false">Review details before broadcasting.</string>
+    <string name="loc_pset_create_failed" formatted="false">PSET creation failed</string>
+    <string name="loc_pset_saved" formatted="false">PSET saved</string>
+    <string name="loc_pset_save_failed" formatted="false">Failed to save PSET</string>
+    <string name="loc_pset_read_failed" formatted="false">Failed to read file</string>
+    <string name="loc_pset_copied" formatted="false">PSET copied</string>
+    <string name="loc_pset_paste_title" formatted="false">Paste Signed PSET</string>
+    <string name="loc_pset_paste_hint" formatted="false">Paste base64 PSET from the signer.</string>
+    <string name="loc_pset_paste_placeholder" formatted="false">cHNldP8...</string>
+    <string name="loc_pset_review" formatted="false">Review PSET</string>
+    <string name="loc_pset_qr_unavailable" formatted="false">Jade firmware does not support QR PSET signing yet.</string>
     <string name="loc_b2ef417b" formatted="false">Full sync in progress</string>
     <string name="loc_fe7aca52" formatted="false">Discovering addresses...</string>
     <string name="loc_a999bfe2" formatted="false">Starting full sync...</string>
