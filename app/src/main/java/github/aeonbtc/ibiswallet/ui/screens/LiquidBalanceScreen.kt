@@ -421,10 +421,10 @@ fun LiquidBalanceScreen(
                     },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (!isLiquidConnected) {
+            if (!isLiquidConnected && !isLiquidConnecting) {
                 item {
                     LiquidConnectionBanner(
-                        isConnecting = isLiquidConnecting,
+                        isConnecting = false,
                         hasServerConfigured = hasLiquidServerConfigured,
                         onConnect = onConnectLiquidServer,
                         onOpenServerSettings = onOpenLiquidServerSettings,

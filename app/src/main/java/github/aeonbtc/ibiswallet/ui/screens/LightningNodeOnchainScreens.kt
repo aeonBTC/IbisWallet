@@ -138,6 +138,7 @@ import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
+import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
@@ -225,8 +226,13 @@ fun LightningNodeOnchainBalanceScreen(
                     .thenByDescending { it.txid },
             )
         }
+    val totalTransactionCount = filteredTransactions.size
     val visibleTransactions = remember(filteredTransactions, displayLimit) {
         filteredTransactions.take(displayLimit)
+    }
+    // Progressive reveal matches L1 / Liquid / Spark (25 → 100 → all loaded).
+    LaunchedEffect(searchQuery, state.transactions.size) {
+        displayLimit = 25
     }
 
     if (showQrScanner) {
@@ -268,13 +274,6 @@ fun LightningNodeOnchainBalanceScreen(
     val onchainUnavailable =
         isNodeConnected && !state.isAvailable && !state.isSyncing && !isNodeConnecting
 
-    val connectingDetail =
-        if (!connectionTarget.isNullOrBlank()) {
-            stringResource(R.string.ln_node_connecting_to_format, connectionTarget)
-        } else {
-            stringResource(R.string.ln_node_onchain_connecting_wait)
-        }
-    // Banner already shows connection target while connecting — keep the list empty state generic.
     val emptyHistoryMessage =
         when {
             !isNodeConnected && isNodeConnecting ->
@@ -562,16 +561,12 @@ fun LightningNodeOnchainBalanceScreen(
             item {
                 Spacer(modifier = Modifier.height(8.dp))
                 when {
-                    nodeOffline || isNodeConnecting -> {
+                    nodeOffline && !isNodeConnecting -> {
                         OnchainConnectionBanner(
-                            isConnecting = isNodeConnecting,
+                            isConnecting = false,
                             detail =
                                 state.error?.takeIf { it.isNotBlank() }
-                                    ?: if (isNodeConnecting) {
-                                        connectingDetail
-                                    } else {
-                                        stringResource(R.string.ln_node_not_connected_hint)
-                                    },
+                                    ?: stringResource(R.string.ln_node_not_connected_hint),
                             onOpenConnectionSettings = onOpenConnectionSettings,
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -705,13 +700,35 @@ fun LightningNodeOnchainBalanceScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                 }
-                if (filteredTransactions.size > displayLimit) {
+                if (visibleTransactions.size < totalTransactionCount) {
                     item {
-                        IbisButton(
-                            onClick = { displayLimit += 25 },
-                            modifier = Modifier.fillMaxWidth(),
+                        val remaining = totalTransactionCount - visibleTransactions.size
+                        TextButton(
+                            onClick = {
+                                displayLimit =
+                                    if (displayLimit <= 25) {
+                                        100
+                                    } else {
+                                        Int.MAX_VALUE
+                                    }
+                            },
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
                         ) {
-                            Text(stringResource(R.string.loc_0ee47e3c))
+                            Text(
+                                text =
+                                    if (displayLimit <= 25) {
+                                        stringResource(R.string.loc_0ee47e3c)
+                                    } else {
+                                        stringResource(
+                                            R.string.common_show_all_remaining_format,
+                                            remaining,
+                                        )
+                                    },
+                                color = TextSecondary,
+                            )
                         }
                         Spacer(modifier = Modifier.height(16.dp))
                     }
@@ -1648,12 +1665,6 @@ fun LightningNodeOnchainReceiveScreen(
     val copyReceiveToast = stringResource(R.string.loc_b6b10bfe)
     val receiveShareRequestTitle = stringResource(R.string.receive_share_request_title)
     val receiveNoShareAppMessage = stringResource(R.string.receive_no_share_app)
-    val connectingDetail =
-        if (!connectionTarget.isNullOrBlank()) {
-            stringResource(R.string.ln_node_connecting_to_format, connectionTarget)
-        } else {
-            stringResource(R.string.ln_node_onchain_connecting_wait)
-        }
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     val address = state.currentAddress
 
@@ -1671,13 +1682,13 @@ fun LightningNodeOnchainReceiveScreen(
                 null
             } else if (isUsdMode && btcPrice != null && btcPrice > 0) {
                 amountText.toDoubleOrNull()?.let { usd ->
-                    ((usd / btcPrice) * 100_000_000).toLong()
+                    ((usd / btcPrice) * 100_000_000).roundToLong()
                 }
             } else if (useSats) {
                 amountText.toLongOrNull()
             } else {
                 amountText.toDoubleOrNull()?.let { btc ->
-                    (btc * 100_000_000).toLong()
+                    (btc * 100_000_000).roundToLong()
                 }
             }
         }
@@ -1785,16 +1796,12 @@ fun LightningNodeOnchainReceiveScreen(
                 .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Only show real connection/unavailable status. Periodic isSyncing from
-        // heartbeat refresh must not flash "Connecting to node".
+        // Connection status is shown in the top-right pill; only surface offline/unavailable.
         val statusMessage =
             when {
-                isNodeConnecting || !isNodeConnected ->
-                    if (isNodeConnecting) {
-                        connectingDetail
-                    } else {
-                        stringResource(R.string.ln_node_onchain_waiting_connection)
-                    }
+                isNodeConnecting -> null
+                !isNodeConnected ->
+                    stringResource(R.string.ln_node_onchain_waiting_connection)
                 !state.isAvailable ->
                     state.error ?: stringResource(R.string.ln_node_onchain_unavailable)
                 else -> state.error?.takeIf { it.isNotBlank() }
@@ -1803,7 +1810,7 @@ fun LightningNodeOnchainReceiveScreen(
             Spacer(modifier = Modifier.height(8.dp))
             OnchainStatusBanner(
                 message = statusMessage,
-                isConnecting = isNodeConnecting && !isNodeConnected,
+                isConnecting = false,
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -2200,14 +2207,14 @@ fun LightningNodeOnchainSendScreen(
     onSend: (
         address: String,
         amountSats: Long?,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         sendAll: Boolean,
         label: String?,
         selectedOutpoints: List<UtxoInfo>?,
     ) -> Unit = { _, _, _, _, _, _ -> },
     onSendMany: (
         addrToAmountSats: Map<String, Long>,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         label: String?,
         selectedOutpoints: List<UtxoInfo>?,
     ) -> Unit = { _, _, _, _ -> },
@@ -2225,7 +2232,9 @@ fun LightningNodeOnchainSendScreen(
 
     var recipientAddress by remember { mutableStateOf("") }
     var amountInput by remember { mutableStateOf("") }
-    var feeRate by remember { mutableDoubleStateOf(minFeeRate.coerceAtLeast(1.0)) }
+    // Honour app min (may be sub-sat). Do not clamp to 1.0 — that hid the fee widget/
+    // blocked decimal rates when minFeeRate is e.g. 0.5.
+    var feeRate by remember { mutableDoubleStateOf(minFeeRate.coerceAtLeast(0.0)) }
     var isUsdMode by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showCoinControl by remember { mutableStateOf(false) }
@@ -2307,33 +2316,133 @@ fun LightningNodeOnchainSendScreen(
     val sendSuccessMessage =
         sendSuccessTxid?.let { stringResource(R.string.ln_node_onchain_sent_format, it.take(16)) }
 
+    // Available to spend: coin-control selection, else node spendable.
+    // Prefer balanceSats (pending outs deducted) over raw UTXO sum — ListUnspent can
+    // still list coins that SendCoins/SendOutputs will not use yet.
+    val selectedUtxoSnapshot = selectedUtxos.toList()
     val availableSats =
-        remember(selectedUtxos.toList(), state.balanceSats) {
-            if (selectedUtxos.isNotEmpty()) {
-                selectedUtxos.sumOf { it.amountSats.toLong() }
+        remember(selectedUtxoSnapshot, spendableUtxos, state.balanceSats) {
+            if (selectedUtxoSnapshot.isNotEmpty()) {
+                selectedUtxoSnapshot.sumOf { it.amountSats.toLong() }
             } else {
-                state.balanceSats
+                val utxoSum = spendableUtxos.sumOf { it.amountSats.toLong() }
+                when {
+                    utxoSum <= 0L -> state.balanceSats
+                    state.balanceSats <= 0L -> utxoSum
+                    else -> minOf(utxoSum, state.balanceSats)
+                }
             }
         }
+    val feeInputUtxos =
+        remember(selectedUtxoSnapshot, spendableUtxos) {
+            selectedUtxoSnapshot.ifEmpty { spendableUtxos }
+        }
+    val feeInputAddresses = remember(feeInputUtxos) { feeInputUtxos.map { it.address } }
 
+    // Single fee/vsize for Max + review: sweep has no change; otherwise one change out.
+    val maxSweepFeeSats =
+        remember(feeRate, feeInputAddresses, recipientAddress, isMultiMode, multiRecipientList) {
+            if (feeRate <= 0.0) {
+                0L
+            } else {
+                val outs =
+                    if (isMultiMode) {
+                        multiRecipientList.map { it.address }.ifEmpty { listOf(recipientAddress) }
+                    } else {
+                        listOf(recipientAddress)
+                    }
+                BitcoinUtils.estimateOnchainSendFeeSats(
+                    satPerVb = feeRate,
+                    inputAddresses = feeInputAddresses,
+                    outputAddresses = outs,
+                    includeChange = false,
+                )
+            }
+        }
+    val maxRecipientSats =
+        remember(availableSats, maxSweepFeeSats) {
+            maxOf(0L, availableSats - maxSweepFeeSats)
+        }
+
+    val estimatedVBytes =
+        remember(
+            feeInputAddresses,
+            isMultiMode,
+            multiRecipientList,
+            multiTotalSats,
+            recipientAddress,
+            isMaxMode,
+            amountSats,
+            availableSats,
+            feeRate,
+            maxSweepFeeSats,
+        ) {
+            val outputs =
+                if (isMultiMode) {
+                    multiRecipientList.map { it.address }.ifEmpty { listOf(recipientAddress) }
+                } else {
+                    listOf(recipientAddress)
+                }
+            val recipientTotal =
+                if (isMultiMode) multiTotalSats else amountSats.roundToLong().coerceAtLeast(0L)
+            // Sweep (max or amount+fee covers all inputs) has no change output.
+            val looksLikeSweep =
+                isMaxMode ||
+                    (
+                        !isMultiMode &&
+                            amountSats > 0 &&
+                            availableSats > 0 &&
+                            recipientTotal + maxSweepFeeSats >= availableSats
+                    )
+            BitcoinUtils.estimateOnchainSendVsize(
+                inputAddresses = feeInputAddresses,
+                outputAddresses = outputs,
+                includeChange = !looksLikeSweep && !isMaxMode,
+            )
+        }
     val roughFeeSats =
-        remember(feeRate, isMultiMode, multiRecipientList.size) {
-            val outputs = if (isMultiMode) multiRecipientList.size.coerceAtLeast(1) else 1
-            ceil(feeRate * (140.0 + outputs * 40.0)).toLong().coerceAtLeast(0L)
+        remember(feeRate, estimatedVBytes, isMaxMode, maxSweepFeeSats) {
+            if (feeRate <= 0.0) {
+                0L
+            } else if (isMaxMode) {
+                // Keep max amount + fee tied to the same sweep estimate.
+                maxSweepFeeSats
+            } else {
+                BitcoinUtils.computeExactFeeSats(feeRate, estimatedVBytes)?.toLong()
+                    ?: ceil(feeRate * estimatedVBytes).toLong().coerceAtLeast(0L)
+            }
+        }
+    // Max send display: pin recipient so amount + fee never exceeds available.
+    val displayAmountSats =
+        if (isMaxMode && !isMultiMode) {
+            maxRecipientSats
+        } else {
+            amountSats.roundToLong().coerceAtLeast(0L)
         }
     val remainingAfterSend =
         if (isMultiMode) {
             maxOf(0L, availableSats - multiTotalSats - roughFeeSats)
-        } else if (amountSats > 0) {
-            maxOf(0L, availableSats - amountSats.roundToLong() - roughFeeSats)
+        } else if (isMaxMode) {
+            0L
+        } else if (displayAmountSats > 0) {
+            maxOf(0L, availableSats - displayAmountSats - roughFeeSats)
         } else {
             availableSats
         }
 
-    LaunchedEffect(isMaxMode, availableSats, feeRate, useSats, isMultiMode) {
+    LaunchedEffect(
+        isMaxMode,
+        maxRecipientSats,
+        useSats,
+        isMultiMode,
+    ) {
         if (isMaxMode && !isMultiMode) {
-            val maxSats = maxOf(0L, availableSats - ceil(feeRate * 180.0).toLong())
-            amountInput = if (useSats) maxSats.toString() else formatBtc(maxSats.toULong())
+            amountInput =
+                if (useSats) {
+                    maxRecipientSats.toString()
+                } else {
+                    formatBtc(maxRecipientSats.toULong())
+                }
         }
     }
 
@@ -2350,7 +2459,7 @@ fun LightningNodeOnchainSendScreen(
             showLabelField = false
             labelText = ""
             selectedUtxos.clear()
-            feeRate = minFeeRate.coerceAtLeast(1.0)
+            feeRate = minFeeRate.coerceAtLeast(0.0)
             Toast
                 .makeText(
                         context,
@@ -2376,7 +2485,7 @@ fun LightningNodeOnchainSendScreen(
                 when {
                     isUsdMode && btcPrice != null && btcPrice > 0 ->
                         String.format(Locale.US, "%.2f", btcAmount * btcPrice)
-                    useSats -> (btcAmount * 100_000_000).toLong().toString()
+                    useSats -> (btcAmount * 100_000_000).roundToLong().toString()
                     else ->
                         String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
                 }
@@ -2436,12 +2545,19 @@ fun LightningNodeOnchainSendScreen(
 
     if (showConfirmDialog) {
         val txLabel = labelText.trim().takeIf { showLabelField && it.isNotBlank() }
-        val amountForSend = amountSats.roundToLong()
+        val amountForSend = displayAmountSats
+        // Max review total is always the spendable pool (fee carved out of amount).
+        val reviewFeeSats =
+            if (isMaxMode && !isMultiMode) {
+                maxOf(0L, availableSats - amountForSend)
+            } else {
+                roughFeeSats
+            }
         LnOnchainSendConfirmationDialog(
             recipients = if (isMultiMode) multiRecipientList else listOf(Recipient(recipientAddress, amountForSend.toULong())),
             isMaxMode = isMaxMode,
             recipientTotalSats = if (isMultiMode) multiTotalSats else amountForSend,
-            estimatedFeeSats = roughFeeSats,
+            estimatedFeeSats = reviewFeeSats,
             changeSats = remainingAfterSend.takeIf { !isMaxMode && it > 0L },
             feeRate = feeRate,
             label = txLabel,
@@ -2453,12 +2569,20 @@ fun LightningNodeOnchainSendScreen(
             isSending = isSending,
             error = sendError,
             onConfirm = {
-                val fee = feeRate.roundToLong().coerceAtLeast(1L)
+                val fee = feeRate.takeIf { it > 0.0 }
                 val outs = selectedUtxos.toList().ifEmpty { null }
                 if (isMultiMode) {
                     onSendMany(multiRecipientList.associate { it.address to it.amountSats.toLong() }, fee, txLabel, outs)
                 } else {
-                    onSend(recipientAddress.trim(), if (isMaxMode) null else amountForSend, fee, isMaxMode, txLabel, outs)
+                    // Max: amount omitted — node send_all / fractional recreate from spendable.
+                    onSend(
+                        recipientAddress.trim(),
+                        if (isMaxMode) null else amountForSend,
+                        fee,
+                        isMaxMode,
+                        txLabel,
+                        outs,
+                    )
                 }
             },
             onDismiss = { if (!isSending) showConfirmDialog = false },
@@ -2474,22 +2598,12 @@ fun LightningNodeOnchainSendScreen(
                 .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        val connectingDetail =
-            if (!connectionTarget.isNullOrBlank()) {
-                stringResource(R.string.ln_node_connecting_to_format, connectionTarget)
-            } else {
-                stringResource(R.string.ln_node_onchain_connecting_wait)
-            }
-        // Only show real connection/unavailable status. Periodic isSyncing from
-        // heartbeat refresh must not flash "Connecting to node".
+        // Connection status is shown in the top-right pill; only surface offline/unavailable.
         val statusMessage =
             when {
-                isNodeConnecting || !isNodeConnected ->
-                    if (isNodeConnecting) {
-                        connectingDetail
-                    } else {
-                        stringResource(R.string.ln_node_onchain_waiting_connection)
-                    }
+                isNodeConnecting -> null
+                !isNodeConnected ->
+                    stringResource(R.string.ln_node_onchain_waiting_connection)
                 !state.isAvailable ->
                     state.error ?: stringResource(R.string.ln_node_onchain_unavailable)
                 else -> state.error?.takeIf { it.isNotBlank() }
@@ -2498,7 +2612,7 @@ fun LightningNodeOnchainSendScreen(
             Spacer(modifier = Modifier.height(8.dp))
             OnchainStatusBanner(
                 message = statusMessage,
-                isConnecting = isNodeConnecting && !isNodeConnected,
+                isConnecting = false,
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -2831,13 +2945,13 @@ fun LightningNodeOnchainSendScreen(
                                                 when {
                                                     isUsdMode -> {
                                                         val usd = amountInput.toDoubleOrNull() ?: 0.0
-                                                        (usd / btcPrice * 100_000_000).toLong()
+                                                        (usd / btcPrice * 100_000_000).roundToLong()
                                                     }
                                                     useSats ->
                                                         amountInput.replace(",", "").toLongOrNull() ?: 0L
                                                     else -> {
                                                         val btc = amountInput.toDoubleOrNull() ?: 0.0
-                                                        (btc * 100_000_000).toLong()
+                                                        (btc * 100_000_000).roundToLong()
                                                     }
                                                 }
                                             amountInput =
@@ -2984,9 +3098,12 @@ fun LightningNodeOnchainSendScreen(
                         } else {
                             isMaxMode = true
                             isUsdMode = false
-                            val roughMax = maxOf(0L, availableSats - ceil(feeRate * 180.0).toLong())
                             amountInput =
-                                if (useSats) roughMax.toString() else formatBtc(roughMax.toULong())
+                                if (useSats) {
+                                    maxRecipientSats.toString()
+                                } else {
+                                    formatBtc(maxRecipientSats.toULong())
+                                }
                         }
                     },
                 )
@@ -3071,7 +3188,7 @@ fun LightningNodeOnchainSendScreen(
                     onRefreshFees = onRefreshFees,
                     enabled = gatewayReady && !isSending,
                     estimatedFeeSats = if ((amountSats > 0 || isMaxMode) || (isMultiMode && multiRecipientList.isNotEmpty())) roughFeeSats else null,
-                    estimatedVBytes = if ((amountSats > 0 || isMaxMode) || (isMultiMode && multiRecipientList.isNotEmpty())) (140.0 + multiRecipientList.size.coerceAtLeast(1) * 40.0) else null,
+                    estimatedVBytes = if ((amountSats > 0 || isMaxMode) || (isMultiMode && multiRecipientList.isNotEmpty())) estimatedVBytes else null,
                     useSats = useSats,
                     btcPrice = btcPrice,
                     privacyMode = privacyMode,
@@ -3306,7 +3423,7 @@ private fun LnOnchainSendConfirmationDialog(
 
         LnOnchainReviewAmountRow(
             label = stringResource(R.string.loc_a870ad41),
-            detail = stringResource(R.string.ln_node_onchain_fee_rate_format, String.format(Locale.US, "%.1f", feeRate)),
+            detail = stringResource(R.string.ln_node_onchain_fee_rate_format, formatFeeRate(feeRate)),
             amountSats = estimatedFeeSats,
             sign = "-",
             color = BitcoinOrange,

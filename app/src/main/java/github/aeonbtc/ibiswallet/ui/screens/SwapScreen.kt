@@ -120,6 +120,7 @@ import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import kotlinx.coroutines.delay
 import java.text.NumberFormat
 import java.util.Locale
+import kotlin.math.roundToLong
 import androidx.compose.ui.res.stringResource
 import github.aeonbtc.ibiswallet.R
 import androidx.compose.material3.Text
@@ -286,13 +287,13 @@ fun SwapScreen(
             amountInput.isBlank() -> null
             isUsdMode && btcPrice != null && btcPrice > 0 -> {
                 amountInput.toDoubleOrNull()?.takeIf { it > 0 }?.let {
-                    ((it / btcPrice) * 100_000_000).toLong()
+                    ((it / btcPrice) * 100_000_000).roundToLong()
                 }
             }
             useSats -> amountInput.toLongOrNull()?.takeIf { it > 0 }
             else -> {
                 amountInput.toDoubleOrNull()?.takeIf { it > 0 }?.let {
-                    (it * 100_000_000).toLong()
+                    (it * 100_000_000).roundToLong()
                 }
             }
         }
@@ -340,13 +341,15 @@ fun SwapScreen(
         }
     val selectedFundingUtxos = if (isPegIn) selectedBitcoinUtxos else selectedLiquidUtxos
     val selectableFundingUtxos = if (isPegIn) spendableBitcoinUtxos else spendableLiquidUtxos
+    // Available for swap funding: selected coin-control UTXOs, else unfrozen only
+    // (Balance screens still show full wallet totals including frozen).
     val availableBalance =
         if (selectedFundingUtxos.isNotEmpty()) {
             selectedFundingUtxos.sumOf { it.amountSats.toLong() }
         } else if (isPegIn) {
-            btcBalanceSats
+            spendableBitcoinUtxos.sumOf { it.amountSats.toLong() }
         } else {
-            lbtcBalanceSats
+            spendableLiquidUtxos.sumOf { it.amountSats.toLong() }
         }
     val swapLimits = swapLimitsByService[selectedService]?.takeIf { it.direction == direction }
     val boltzLimits = swapLimitsByService[SwapService.BOLTZ]?.takeIf { it.direction == direction }
@@ -736,9 +739,9 @@ fun SwapScreen(
             Spacer(modifier = Modifier.height(12.dp))
         }
 
-        if (!isLiquidConnected) {
+        if (!isLiquidConnected && !isLiquidConnecting) {
             LiquidConnectionBanner(
-                isConnecting = isLiquidConnecting,
+                isConnecting = false,
                 hasServerConfigured = hasLiquidServerConfigured,
                 onConnect = onConnectLiquidServer,
                 onOpenServerSettings = onOpenLiquidServerSettings,
@@ -942,14 +945,14 @@ fun SwapScreen(
                                             when {
                                                 isUsdMode -> {
                                                     val usdAmount = amountInput.toDoubleOrNull() ?: 0.0
-                                                    (usdAmount / btcPrice * 100_000_000).toLong()
+                                                    (usdAmount / btcPrice * 100_000_000).roundToLong()
                                                 }
                                                 useSats -> {
                                                     amountInput.replace(",", "").toLongOrNull() ?: 0L
                                                 }
                                                 else -> {
                                                     val btcAmount = amountInput.toDoubleOrNull() ?: 0.0
-                                                    (btcAmount * 100_000_000).toLong()
+                                                    (btcAmount * 100_000_000).roundToLong()
                                                 }
                                             }
                                         amountInput =

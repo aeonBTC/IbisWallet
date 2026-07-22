@@ -350,14 +350,14 @@ fun LiquidSendScreen(
         }
     }
     val selectedUtxoSnapshot = selectedUtxos.toList()
+    // Available to spend: selected coin-control UTXOs, else unfrozen UTXOs for the
+    // send asset (Balance still shows full wallet totals including frozen).
     val availableSats =
-        remember(selectedUtxoSnapshot, liquidState.balanceSats, liquidState.assetBalances, sendAsset) {
+        remember(selectedUtxoSnapshot, spendableUtxos, liquidState.balanceSats, liquidState.assetBalances, sendAsset) {
             if (selectedUtxoSnapshot.isNotEmpty()) {
                 selectedUtxoSnapshot.sumOf { it.amountSats.toLong() }
-            } else if (sendAsset != null) {
-                liquidState.balanceForAsset(sendAsset.assetId)
             } else {
-                liquidState.balanceSats.coerceAtLeast(0L)
+                spendableUtxos.sumOf { it.amountSats.toLong() }
             }
         }
     val coinControlAsset =
@@ -433,6 +433,8 @@ fun LiquidSendScreen(
         }
     val amountFieldInlineError = inlineSendError ?: assetOverBalanceMessage
     val previewErrorForMulti = inlineSendError ?: multiOverBalanceMessage
+    // Jade firmware does not support QR PSET signing yet. Keep the PSET export /
+    // import / broadcast stack ready, but block the Send-screen entry until it does.
     val canReview =
         liquidState.isInitialized &&
             !isLiquidWatchOnly &&
@@ -802,6 +804,7 @@ fun LiquidSendScreen(
                     )
                 } else if (confirmIsAssetSend) {
                     if (isLiquidWatchOnly) {
+                        showConfirmDialog = false
                         onCreateAssetPset(
                             liquidRecipient?.address ?: recipientAddress.trim(),
                             amountSats,
@@ -821,6 +824,7 @@ fun LiquidSendScreen(
                         )
                     }
                 } else if (isLiquidWatchOnly) {
+                    showConfirmDialog = false
                     onCreatePset(
                         liquidRecipient?.address ?: recipientAddress.trim(),
                         amountSats,
@@ -897,9 +901,9 @@ fun LiquidSendScreen(
             Spacer(modifier = Modifier.height(8.dp))
         }
 
-        if (!isLiquidConnected) {
+        if (!isLiquidConnected && !isLiquidConnecting) {
             LiquidConnectionBanner(
-                isConnecting = isLiquidConnecting,
+                isConnecting = false,
                 hasServerConfigured = hasLiquidServerConfigured,
                 onConnect = onConnectLiquidServer,
                 onOpenServerSettings = onOpenLiquidServerSettings,
@@ -1571,14 +1575,6 @@ fun LiquidSendScreen(
                     )
                 }
 
-                if (isLiquidWatchOnly) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = LIQUID_PSET_DISABLED_MESSAGE,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = WarningYellow,
-                    )
-                }
             }
         }
 
@@ -1645,10 +1641,21 @@ fun LiquidSendScreen(
                 text =
                     when {
                         isLightningPayment -> "Review Payment"
-                        isLiquidWatchOnly -> "PSET Disabled"
+                        isLiquidWatchOnly -> stringResource(R.string.loc_pset_review)
                         else -> "Review Transaction"
                     },
                 style = MaterialTheme.typography.titleMedium,
+            )
+        }
+
+        if (isLiquidWatchOnly) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.loc_pset_qr_unavailable),
+                style = MaterialTheme.typography.bodySmall,
+                color = WarningYellow,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
             )
         }
 
@@ -4253,4 +4260,3 @@ private fun truncatePendingValue(value: String, edgeChars: Int = 10): String =
 
 private const val MIN_LIQUID_FEE_RATE = 0.1
 private const val LIQUID_HIDDEN_AMOUNT = "****"
-private const val LIQUID_PSET_DISABLED_MESSAGE = "PSET is temporarily unavailable for live use."

@@ -149,6 +149,7 @@ import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
+import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.LightningKind
 import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.SecureClipboard
@@ -161,6 +162,7 @@ import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToLong
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.ui.window.DialogProperties
@@ -222,8 +224,13 @@ fun LightningNodeBalanceScreen(
                 }
             }
         }
+    val totalPaymentCount = filteredPayments.size
     val visiblePayments = remember(filteredPayments, displayLimit) {
         filteredPayments.take(displayLimit)
+    }
+    // Progressive reveal matches L1 / Liquid / Spark (25 → 100 → all loaded).
+    LaunchedEffect(searchQuery, state.payments.size) {
+        displayLimit = 25
     }
 
     if (showQrScanner) {
@@ -588,13 +595,35 @@ fun LightningNodeBalanceScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                 }
-                if (filteredPayments.size > displayLimit) {
+                if (visiblePayments.size < totalPaymentCount) {
                     item {
-                        IbisButton(
-                            onClick = { displayLimit += 25 },
-                            modifier = Modifier.fillMaxWidth(),
+                        val remaining = totalPaymentCount - visiblePayments.size
+                        TextButton(
+                            onClick = {
+                                displayLimit =
+                                    if (displayLimit <= 25) {
+                                        100
+                                    } else {
+                                        Int.MAX_VALUE
+                                    }
+                            },
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp),
                         ) {
-                            Text(stringResource(R.string.loc_0ee47e3c))
+                            Text(
+                                text =
+                                    if (displayLimit <= 25) {
+                                        stringResource(R.string.loc_0ee47e3c)
+                                    } else {
+                                        stringResource(
+                                            R.string.common_show_all_remaining_format,
+                                            remaining,
+                                        )
+                                    },
+                                color = TextSecondary,
+                            )
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                     }
@@ -699,7 +728,7 @@ private fun LightningPaymentRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                payment.memo?.takeIf { it.isNotBlank() }?.let { memo ->
+                payment.memo?.let { BitcoinUtils.sanitizeExternalLabel(it) }?.let { memo ->
                     Text(
                         text = memo,
                         style =
@@ -1318,7 +1347,7 @@ private fun LightningNodePaymentDetailDialog(
                             }
                         }
 
-                        payment.memo?.takeIf { it.isNotBlank() }?.let { memo ->
+                        payment.memo?.let { BitcoinUtils.sanitizeExternalLabel(it) }?.let { memo ->
                             HorizontalDivider(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 color = TextSecondary.copy(alpha = 0.1f),
@@ -1519,13 +1548,13 @@ fun LightningNodeReceiveScreen(
                 null
             } else if (isUsdMode && btcPrice != null && btcPrice > 0) {
                 amountText.toDoubleOrNull()?.let { usd ->
-                    ((usd / btcPrice) * 100_000_000).toLong()
+                    ((usd / btcPrice) * 100_000_000).roundToLong()
                 }
             } else if (useSats) {
                 amountText.toLongOrNull()
             } else {
                 amountText.toDoubleOrNull()?.let { btc ->
-                    (btc * 100_000_000).toLong()
+                    (btc * 100_000_000).roundToLong()
                 }
             }
         }
@@ -1684,9 +1713,9 @@ fun LightningNodeReceiveScreen(
                 .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (!isConnected || isConnecting) {
+        if (!isConnected && !isConnecting) {
             LnConnectionStatusBanner(
-                isConnecting = isConnecting,
+                isConnecting = false,
                 nodeTarget = connectionTarget,
                 onOpenConnectionSettings = onOpenConnectionSettings,
             )
@@ -2671,9 +2700,9 @@ fun LightningNodeSendScreen(
                 .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (!isConnected || isConnecting) {
+        if (!isConnected && !isConnecting) {
             LnConnectionStatusBanner(
-                isConnecting = isConnecting,
+                isConnecting = false,
                 nodeTarget = connectionTarget,
                 onOpenConnectionSettings = onOpenConnectionSettings,
             )
@@ -3616,7 +3645,9 @@ private fun filterLnAmountInput(
     useSats: Boolean,
     isUsdMode: Boolean,
 ): String {
-    var v = value.replace(",", "")
+    // Do NOT strip commas: "0,5" would become "05" and parse as 5 BTC.
+    // Commas simply fail the pattern, matching the Layer 1 / Liquid filters.
+    var v = value
     val pattern =
         when {
             isUsdMode -> Regex("^\\d*\\.?\\d{0,2}$")
@@ -3635,13 +3666,14 @@ private fun parseLnSendAmount(
     isUsdMode: Boolean,
     btcPrice: Double?,
 ): Long? {
-    val trimmed = input.trim().replace(",", "")
+    // No comma stripping — "0,5" must fail parsing, not become 5 BTC.
+    val trimmed = input.trim()
     if (trimmed.isBlank()) return null
     return when {
         isUsdMode && btcPrice != null && btcPrice > 0 ->
-            trimmed.toDoubleOrNull()?.let { ((it / btcPrice) * 100_000_000).toLong() }
+            trimmed.toDoubleOrNull()?.let { ((it / btcPrice) * 100_000_000).roundToLong() }
         useSats -> trimmed.toLongOrNull()
-        else -> trimmed.toDoubleOrNull()?.let { (it * 100_000_000).toLong() }
+        else -> trimmed.toDoubleOrNull()?.let { (it * 100_000_000).roundToLong() }
     }?.takeIf { it > 0 }
 }
 
@@ -3860,8 +3892,9 @@ fun LightningNodeConnectionScreen(
         mutableStateOf(initialConfig.useTor || initialConfig.host.endsWith(".onion"))
     }
     var tlsEnabled by remember {
-        // Default off for new/unconfigured connections; import and saved config set true when needed.
-        mutableStateOf(initialConfig.tlsEnabled || initialConfig.tlsCertPem.isNotBlank())
+        // Follow the saved preference only — a leftover cert must not force TLS on
+        // when the user explicitly chose plain HTTP.
+        mutableStateOf(initialConfig.useTls)
     }
     var showQrScanner by remember { mutableStateOf(false) }
     var showSuccessSaveDialog by remember { mutableStateOf(false) }
@@ -3909,7 +3942,7 @@ fun LightningNodeConnectionScreen(
             imported.useTor ||
                 imported.host.endsWith(".onion", ignoreCase = true) ||
                 imported.nwcUri.contains(".onion", ignoreCase = true)
-        tlsEnabled = imported.tlsEnabled || imported.tlsCertPem.isNotBlank()
+        tlsEnabled = imported.useTls
         onClearTest()
     }
 
@@ -3933,6 +3966,9 @@ fun LightningNodeConnectionScreen(
             tlsCertPem = if (tlsEnabled) tlsCert.trim() else "",
             useTls = tlsEnabled,
             allowInsecureTls = !tlsEnabled,
+            // Carry over after a successful test so LAN reconnects skip dead HTTP.
+            preferSessionTls = successDialogPayload?.preferSessionTls == true ||
+                initialConfig.preferSessionTls,
             nwcUri = nwcUri.trim(),
             clnRune = clnRune.trim(),
         )
@@ -4735,16 +4771,8 @@ fun LightningNodeChannelsScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 when {
-                    nwcUnavailable || !isConnected -> {
+                    nwcUnavailable || !isConnected || isConnecting -> {
                         // Empty state cards carry the full message; avoid duplicate subtitle text.
-                    }
-                    isConnecting && channels.isEmpty() -> {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = stringResource(R.string.ln_node_status_connecting),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = TextSecondary,
-                        )
                     }
                     else -> {
                         Spacer(modifier = Modifier.height(4.dp))

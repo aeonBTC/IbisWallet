@@ -56,6 +56,9 @@ import github.aeonbtc.ibiswallet.R
  *  but a warning is shown and the value is clamped when applied. */
 const val MAX_FEE_RATE_SAT_VB = 10_000.0
 
+/** Absolute minimum custom input — below typical minrelay; protects against free/zero dust spam. */
+const val ABSOLUTE_MIN_FEE_RATE_SAT_VB = 0.01
+
 enum class FeeRateOption {
     FASTEST,
     HALF_HOUR,
@@ -118,6 +121,15 @@ fun FeeRateSection(
     }
 
     val estimates = (feeEstimationState as? FeeEstimationResult.Success)?.estimates
+    // Floor for pickup + custom entry: relay min, and when estimates load also their economy
+    // rate so sub-sat pickers work for LN / fee-API paths without Electrum relayfee.
+    val effectiveMinFeeRate =
+        remember(minFeeRate, estimates?.minimumFee) {
+            val fromEstimates = estimates?.minimumFee?.takeIf { it > 0.0 }
+            val candidates = listOfNotNull(minFeeRate.takeIf { it > 0.0 }, fromEstimates)
+            (candidates.minOrNull() ?: ABSOLUTE_MIN_FEE_RATE_SAT_VB)
+                .coerceAtLeast(ABSOLUTE_MIN_FEE_RATE_SAT_VB)
+        }
 
     LaunchedEffect(resolvedSelectedOption) {
         if (resolvedSelectedOption == FeeRateOption.CUSTOM) {
@@ -125,7 +137,7 @@ fun FeeRateSection(
         }
     }
 
-    LaunchedEffect(estimates, resolvedSelectedOption) {
+    LaunchedEffect(estimates, resolvedSelectedOption, effectiveMinFeeRate) {
         if (estimates != null && resolvedSelectedOption != FeeRateOption.CUSTOM) {
             onRawCustomFeeRateChange?.invoke(null)
             val newRate =
@@ -135,7 +147,7 @@ fun FeeRateSection(
                     FeeRateOption.HOUR -> estimates.hourFee
                     FeeRateOption.CUSTOM -> return@LaunchedEffect
                 }
-            onFeeRateChange(newRate.coerceAtLeast(minFeeRate))
+            onFeeRateChange(newRate.coerceAtLeast(effectiveMinFeeRate))
         }
     }
 
@@ -217,11 +229,11 @@ fun FeeRateSection(
                     val parsedRate = input.toDoubleOrNull()
                     onRawCustomFeeRateChange?.invoke(parsedRate)
                     parsedRate?.let {
-                        onFeeRateChange(it.coerceIn(minFeeRate, MAX_FEE_RATE_SAT_VB))
+                        onFeeRateChange(it.coerceIn(effectiveMinFeeRate, MAX_FEE_RATE_SAT_VB))
                     }
                 },
                 enabled = enabled,
-                minFeeRate = minFeeRate,
+                minFeeRate = effectiveMinFeeRate,
             )
         } else {
             val isLoading = feeEstimationState is FeeEstimationResult.Loading
@@ -274,7 +286,7 @@ fun FeeRateSection(
                             updateSelectedOption(FeeRateOption.FASTEST)
                             updateCustomFeeInput(null)
                             onRawCustomFeeRateChange?.invoke(null)
-                            onFeeRateChange(it.fastestFee.coerceAtLeast(minFeeRate))
+                            onFeeRateChange(it.fastestFee.coerceAtLeast(effectiveMinFeeRate))
                         }
                     },
                     enabled = enabled,
@@ -291,7 +303,7 @@ fun FeeRateSection(
                             updateSelectedOption(FeeRateOption.HALF_HOUR)
                             updateCustomFeeInput(null)
                             onRawCustomFeeRateChange?.invoke(null)
-                            onFeeRateChange(it.halfHourFee.coerceAtLeast(minFeeRate))
+                            onFeeRateChange(it.halfHourFee.coerceAtLeast(effectiveMinFeeRate))
                         }
                     },
                     enabled = enabled,
@@ -308,7 +320,7 @@ fun FeeRateSection(
                             updateSelectedOption(FeeRateOption.HOUR)
                             updateCustomFeeInput(null)
                             onRawCustomFeeRateChange?.invoke(null)
-                            onFeeRateChange(it.hourFee.coerceAtLeast(minFeeRate))
+                            onFeeRateChange(it.hourFee.coerceAtLeast(effectiveMinFeeRate))
                         }
                     },
                     enabled = enabled,
@@ -329,11 +341,11 @@ fun FeeRateSection(
                         val parsedRate = input.toDoubleOrNull()
                         onRawCustomFeeRateChange?.invoke(parsedRate)
                         parsedRate?.let {
-                            onFeeRateChange(it.coerceIn(minFeeRate, MAX_FEE_RATE_SAT_VB))
+                            onFeeRateChange(it.coerceIn(effectiveMinFeeRate, MAX_FEE_RATE_SAT_VB))
                         }
                     },
                     enabled = enabled,
-                    minFeeRate = minFeeRate,
+                    minFeeRate = effectiveMinFeeRate,
                     modifier = Modifier.focusRequester(customFocusRequester),
                 )
             } else {

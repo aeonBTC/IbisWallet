@@ -88,6 +88,7 @@ import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 import java.text.NumberFormat
 import java.util.Locale
+import kotlin.math.roundToLong
 import androidx.compose.ui.res.stringResource
 import github.aeonbtc.ibiswallet.R
 import androidx.compose.material3.Text
@@ -132,13 +133,13 @@ fun SparkReceiveScreen(
                 null
             } else if (isUsdMode && btcPrice != null && btcPrice > 0) {
                 amountText.toDoubleOrNull()?.let { usd ->
-                    ((usd / btcPrice) * 100_000_000).toLong()
+                    ((usd / btcPrice) * 100_000_000).roundToLong()
                 }
             } else if (useSats) {
                 amountText.filter { it.isDigit() }.toLongOrNull()
             } else {
                 amountText.toDoubleOrNull()?.let { btc ->
-                    (btc * 100_000_000).toLong()
+                    (btc * 100_000_000).roundToLong()
                 }
             }
         }

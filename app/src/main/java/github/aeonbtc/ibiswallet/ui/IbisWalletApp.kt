@@ -164,6 +164,7 @@ import github.aeonbtc.ibiswallet.ui.screens.LiquidSendScreen
 import github.aeonbtc.ibiswallet.ui.screens.LiquidServerConfigScreen
 import github.aeonbtc.ibiswallet.ui.screens.LockScreen
 import github.aeonbtc.ibiswallet.ui.screens.ManageWalletsScreen
+import github.aeonbtc.ibiswallet.ui.screens.LiquidPsetScreen
 import github.aeonbtc.ibiswallet.ui.screens.PsbtScreen
 import github.aeonbtc.ibiswallet.ui.screens.ReceiveScreen
 import github.aeonbtc.ibiswallet.ui.screens.SecurityScreen
@@ -296,7 +297,7 @@ fun IbisWalletApp(
     val bip329ImportSuccessMessage = stringResource(R.string.loc_a70e9a3b)
     val bip329ImportErrorMessage = stringResource(R.string.loc_4be4f258)
     val duressSetupErrorMessage = stringResource(R.string.loc_e95ede4f)
-    val psetCanceledMessage = stringResource(R.string.loc_b6df6876)
+
     val walletNotificationsAndroidBlocked = stringResource(R.string.wallet_notifications_android_blocked)
     val walletNotificationsPermissionDenied = stringResource(R.string.wallet_notifications_permission_denied)
     val initialSyncComplete by viewModel.initialSyncComplete.collectAsStateWithLifecycle()
@@ -367,6 +368,9 @@ fun IbisWalletApp(
     val lightningChannelsLoading by lightningNodeViewModel.channelsLoading.collectAsStateWithLifecycle()
     val lightningChannelsError by lightningNodeViewModel.channelsError.collectAsStateWithLifecycle()
     val lightningConfigRevision by lightningNodeViewModel.configRevision.collectAsStateWithLifecycle()
+    val lightningOnchainMinFeeRate by lightningNodeViewModel.onchainMinFeeRate.collectAsStateWithLifecycle()
+    // LN L1 fee floor: prefer node's chain-backend minrelay (via LND/CLN) over Electrum default.
+    val lightningMinFeeRate = lightningOnchainMinFeeRate ?: minFeeRate
     val layer2Denomination by liquidViewModel.denominationState.collectAsStateWithLifecycle()
     val liquidExplorer by liquidViewModel.liquidExplorer.collectAsStateWithLifecycle()
     val isLiquidConnected by liquidViewModel.isLiquidConnected.collectAsStateWithLifecycle()
@@ -939,7 +943,9 @@ fun IbisWalletApp(
             onDismissAction = { viewModel.dismissAppUpdatePrompt() },
             onConfirm = {
                 viewModel.dismissAppUpdatePrompt()
-                context.startActivity(Intent(Intent.ACTION_VIEW, prompt.releaseUrl.toUri()))
+                runCatching {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, prompt.releaseUrl.toUri()))
+                }
             },
         )
     }
@@ -1215,7 +1221,17 @@ fun IbisWalletApp(
                 isBiometricAvailable = false,
                 onBiometricRequest = {},
                 onPinEntered = { pin ->
-                    if (secureStorage.verifyPin(pin)) {
+                    // In duress mode only the duress PIN is expected to work; accept
+                    // either so the decoy wallet can be unlocked without revealing
+                    // that duress mode exists. verifyDuressPin runs second so its
+                    // success resets the shared counter verifyPin just incremented.
+                    val unlocked =
+                        secureStorage.verifyPin(pin) ||
+                            (
+                                isDuressMode && secureStorage.isDuressEnabled() &&
+                                    secureStorage.verifyDuressPin(pin, incrementFailedAttempts = false)
+                            )
+                    if (unlocked) {
                         pendingWalletUnlock = null
                         completeWalletAuth(request)
                         true
@@ -1443,6 +1459,11 @@ fun IbisWalletApp(
                 is LiquidEvent.Error -> {
                     if (!suppressLiquidServerSnackbar(event.message)) {
                         snackbarHostState.showSnackbar(liquidOperationFailedMessage)
+                    }
+                }
+                is LiquidEvent.PsetCreated -> {
+                    if (navController.currentDestination?.route != Screen.LiquidPsetExport.route) {
+                        navController.navigate(Screen.LiquidPsetExport.route)
                     }
                 }
                 is LiquidEvent.TransactionSent -> {
@@ -2656,7 +2677,9 @@ fun IbisWalletApp(
                 },
                 appUpdateStatus = appUpdateStatus,
                 onDownloadUpdateClick = { releaseUrl ->
-                    context.startActivity(Intent(Intent.ACTION_VIEW, releaseUrl.toUri()))
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, releaseUrl.toUri()))
+                    }
                 },
             )
         },
@@ -3323,19 +3346,6 @@ fun IbisWalletApp(
                                             onShowAllAddresses = { navController.navigate(Screen.AllAddresses.route) },
                                             onShowAllUtxos = { navController.navigate(Screen.AllUtxos.route) },
                                             onToggleDenomination = toggleLayer1Denomination,
-                                            isElectrumConnected = uiState.isConnected,
-                                            isElectrumConnecting = uiState.isConnecting,
-                                            hasElectrumServerConfigured =
-                                                serversState.hasUserSelectedServer &&
-                                                    serversState.activeServerId != null,
-                                            onConnectElectrumServer = {
-                                                serversState.activeServerId?.let(viewModel::connectToServer)
-                                            },
-                                            onOpenElectrumServerSettings = {
-                                                navController.navigate(Screen.ElectrumConfig.route) {
-                                                    launchSingleTop = true
-                                                }
-                                            },
                                         )
                                     }
                                 }
@@ -3352,19 +3362,6 @@ fun IbisWalletApp(
                                 onShowAllAddresses = { navController.navigate(Screen.AllAddresses.route) },
                                 onShowAllUtxos = { navController.navigate(Screen.AllUtxos.route) },
                                 onToggleDenomination = toggleLayer1Denomination,
-                                isElectrumConnected = uiState.isConnected,
-                                isElectrumConnecting = uiState.isConnecting,
-                                hasElectrumServerConfigured =
-                                    serversState.hasUserSelectedServer &&
-                                        serversState.activeServerId != null,
-                                onConnectElectrumServer = {
-                                    serversState.activeServerId?.let(viewModel::connectToServer)
-                                },
-                                onOpenElectrumServerSettings = {
-                                    navController.navigate(Screen.ElectrumConfig.route) {
-                                        launchSingleTop = true
-                                    }
-                                },
                             )
                         }
                     }
@@ -3604,12 +3601,12 @@ fun IbisWalletApp(
                                                 )
                                             },
                                             feeEstimationState = feeEstimationState,
-                                            minFeeRate = minFeeRate,
+                                            minFeeRate = lightningMinFeeRate,
                                             onRefreshFees = { viewModel.fetchFeeEstimates() },
                                             onBumpFee = { txid, feeRate ->
                                                 lightningNodeViewModel.bumpOnchainFee(
                                                     parentTxid = txid,
-                                                    satPerVbyte = feeRate.roundToLong().coerceAtLeast(1L),
+                                                    satPerVbyte = feeRate,
                                                 )
                                             },
                                             canBumpFee = { txid, confirmations ->
@@ -3678,6 +3675,7 @@ fun IbisWalletApp(
                                             onOpenSettings = { navController.navigate(Screen.Layer2Options.route) },
                                             isElectrumConnected = uiState.isConnected,
                                             isElectrumConnecting = uiState.isConnecting,
+                                            electrumBannerDismissed = uiState.electrumBannerDismissed,
                                             hasElectrumServerConfigured =
                                                 serversState.hasUserSelectedServer &&
                                                     serversState.activeServerId != null,
@@ -3688,6 +3686,9 @@ fun IbisWalletApp(
                                                 navController.navigate(Screen.ElectrumConfig.route) {
                                                     launchSingleTop = true
                                                 }
+                                            },
+                                            onDismissElectrumBanner = {
+                                                viewModel.dismissElectrumConnectionBanner()
                                             },
                                         )
                                     }
@@ -3752,6 +3753,7 @@ fun IbisWalletApp(
                                 onOpenSettings = { navController.navigate(Screen.Layer2Options.route) },
                                 isElectrumConnected = uiState.isConnected,
                                 isElectrumConnecting = uiState.isConnecting,
+                                electrumBannerDismissed = uiState.electrumBannerDismissed,
                                 hasElectrumServerConfigured =
                                     serversState.hasUserSelectedServer &&
                                         serversState.activeServerId != null,
@@ -3762,6 +3764,9 @@ fun IbisWalletApp(
                                     navController.navigate(Screen.ElectrumConfig.route) {
                                         launchSingleTop = true
                                     }
+                                },
+                                onDismissElectrumBanner = {
+                                    viewModel.dismissElectrumConnectionBanner()
                                 },
                             )
                         }
@@ -3973,7 +3978,6 @@ fun IbisWalletApp(
                                                         isMaxSend = isMaxSend,
                                                         label = label,
                                                     )
-                                                    navController.navigate(Screen.LiquidPsetExport.route)
                                                 },
                                                 onPreviewAssetSend = { address, amount, assetId, feeRate, selectedUtxos, label ->
                                                     liquidViewModel.previewAssetSend(
@@ -4004,7 +4008,6 @@ fun IbisWalletApp(
                                                         selectedUtxos = selectedUtxos,
                                                         label = label,
                                                     )
-                                                    navController.navigate(Screen.LiquidPsetExport.route)
                                                 },
                                                 pendingSubmarineSwap = pendingSubmarineSwap,
                                                 boltzRescueMnemonic = sendBoltzRescueMnemonic,
@@ -4042,7 +4045,7 @@ fun IbisWalletApp(
                                                 sendState = lightningOnchainSendState,
                                                 denomination = layer1Denomination,
                                                 feeEstimationState = feeEstimationState,
-                                                minFeeRate = minFeeRate,
+                                                minFeeRate = lightningMinFeeRate,
                                                 btcPrice = btcPrice,
                                                 fiatCurrency = priceCurrency,
                                                 privacyMode = privacyMode,
@@ -4279,6 +4282,7 @@ fun IbisWalletApp(
                                 hasElectrumServerConfigured =
                                     serversState.hasUserSelectedServer &&
                                         serversState.activeServerId != null,
+                                electrumBannerDismissed = uiState.electrumBannerDismissed,
                                 onConnectElectrumServer = {
                                     serversState.activeServerId?.let(viewModel::connectToServer)
                                 },
@@ -4286,6 +4290,9 @@ fun IbisWalletApp(
                                     navController.navigate(Screen.ElectrumConfig.route) {
                                         launchSingleTop = true
                                     }
+                                },
+                                onDismissElectrumBanner = {
+                                    viewModel.dismissElectrumConnectionBanner()
                                 },
                             )
                         }
@@ -5301,7 +5308,9 @@ fun IbisWalletApp(
                             appUpdateCheckEnabled = appUpdateCheckEnabled,
                             onAppUpdateCheckEnabledChange = ::updateAppUpdateCheckEnabled,
                             onDownloadUpdateClick = { releaseUrl ->
-                                context.startActivity(Intent(Intent.ACTION_VIEW, releaseUrl.toUri()))
+                                runCatching {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, releaseUrl.toUri()))
+                                }
                             },
                             onBack = { navController.popBackStack() },
                         )
@@ -5627,11 +5636,34 @@ fun IbisWalletApp(
                             )
                         },
                     ) {
-                        LaunchedEffect(Unit) {
-                            snackbarHostState.showSnackbar(psetCanceledMessage)
-                            liquidViewModel.cancelPsetFlow()
-                            navController.popBackStack()
-                        }
+                        val liquidPsetState by liquidViewModel.psetState.collectAsStateWithLifecycle()
+                        val psbtQrDensity by viewModel.psbtQrDensityState.collectAsStateWithLifecycle()
+                        val psbtQrBrightness by viewModel.psbtQrBrightnessState.collectAsStateWithLifecycle()
+                        LiquidPsetScreen(
+                            psetState = liquidPsetState,
+                            isConnected = isLiquidConnected,
+                            qrDensity = psbtQrDensity,
+                            onQrDensityChange = { density ->
+                                viewModel.setPsbtQrDensity(density)
+                            },
+                            qrBrightness = psbtQrBrightness,
+                            onQrBrightnessChange = { brightness ->
+                                viewModel.setPsbtQrBrightness(brightness)
+                            },
+                            onSignedDataReceived = { data ->
+                                liquidViewModel.setSignedPsetData(data)
+                            },
+                            onConfirmBroadcast = {
+                                liquidViewModel.confirmBroadcastPset()
+                            },
+                            onCancelBroadcast = {
+                                liquidViewModel.cancelPsetBroadcast()
+                            },
+                            onBack = {
+                                liquidViewModel.cancelPsetFlow()
+                                navController.popBackStack()
+                            },
+                        )
                     }
                     composable(
                         route = Screen.BroadcastTransaction.route,

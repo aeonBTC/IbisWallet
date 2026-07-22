@@ -107,6 +107,16 @@ private class CalcState(
         }
     }
 
+    /** Constant-time comparison for the cloak code to avoid timing oracles. */
+    private fun constantTimeCodeEquals(
+        a: String,
+        b: String,
+    ): Boolean =
+        java.security.MessageDigest.isEqual(
+            a.toByteArray(Charsets.UTF_8),
+            b.toByteArray(Charsets.UTF_8),
+        )
+
     fun operator(op: String) {
         val cur = parseDisplay()
         if (firstOperand != null && pendingOperator != null && !resetOnNextDigit) {
@@ -124,7 +134,7 @@ private class CalcState(
     }
 
     fun equals() {
-        if (rawInput == cloakCode) {
+        if (constantTimeCodeEquals(rawInput, cloakCode)) {
             onUnlock()
             return
         }

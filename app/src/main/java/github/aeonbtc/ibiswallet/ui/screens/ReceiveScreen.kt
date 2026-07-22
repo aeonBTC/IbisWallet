@@ -65,7 +65,6 @@ import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
-import github.aeonbtc.ibiswallet.ui.components.ElectrumConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
@@ -83,6 +82,7 @@ import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
+import kotlin.math.roundToLong
 import androidx.compose.material3.Text
 
 @Composable
@@ -97,11 +97,6 @@ fun ReceiveScreen(
     onShowAllAddresses: () -> Unit = {},
     onShowAllUtxos: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
-    isElectrumConnected: Boolean = false,
-    isElectrumConnecting: Boolean = false,
-    hasElectrumServerConfigured: Boolean = false,
-    onConnectElectrumServer: () -> Unit = {},
-    onOpenElectrumServerSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val copyReceiveToast = stringResource(R.string.loc_b6b10bfe)
@@ -130,14 +125,14 @@ fun ReceiveScreen(
             } else if (isUsdMode && btcPrice != null && btcPrice > 0) {
                 // USD input - convert to sats: USD / price * 100_000_000
                 amountText.toDoubleOrNull()?.let { usd ->
-                    ((usd / btcPrice) * 100_000_000).toLong()
+                    ((usd / btcPrice) * 100_000_000).roundToLong()
                 }
             } else if (useSats) {
                 amountText.toLongOrNull()
             } else {
                 // BTC input - convert to sats
                 amountText.toDoubleOrNull()?.let { btc ->
-                    (btc * 100_000_000).toLong()
+                    (btc * 100_000_000).roundToLong()
                 }
             }
         }
@@ -271,16 +266,6 @@ fun ReceiveScreen(
                 .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (!isElectrumConnected) {
-            ElectrumConnectionBanner(
-                isConnecting = isElectrumConnecting,
-                hasServerConfigured = hasElectrumServerConfigured,
-                onConnect = onConnectElectrumServer,
-                onOpenServerSettings = onOpenElectrumServerSettings,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-        }
-
         // ════════════════════════════════════════════
         // Layer 1 Receive (existing Bitcoin content)
         // ════════════════════════════════════════════

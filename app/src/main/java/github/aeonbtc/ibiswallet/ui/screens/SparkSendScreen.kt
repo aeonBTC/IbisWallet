@@ -81,6 +81,7 @@ import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import java.util.Locale
+import kotlin.math.roundToLong
 
 @Composable
 fun SparkSendScreen(
@@ -1322,7 +1323,9 @@ private fun filterSparkAmountInput(
     useSats: Boolean,
     isUsdMode: Boolean,
 ): String {
-    var v = value.replace(",", "")
+    // Do NOT strip commas: "0,5" would become "05" and parse as 5 BTC.
+    // Commas simply fail the pattern, matching the Layer 1 / Liquid filters.
+    var v = value
     val pattern =
         when {
             isUsdMode -> Regex("^\\d*\\.?\\d{0,2}$")
@@ -1341,13 +1344,14 @@ private fun parseSparkSendAmount(
     isUsdMode: Boolean,
     btcPrice: Double?,
 ): Long? {
-    val trimmed = input.trim().replace(",", "")
+    // No comma stripping — "0,5" must fail parsing, not become 5 BTC.
+    val trimmed = input.trim()
     if (trimmed.isBlank()) return null
     return when {
         isUsdMode && btcPrice != null && btcPrice > 0 ->
-            trimmed.toDoubleOrNull()?.let { ((it / btcPrice) * 100_000_000).toLong() }
+            trimmed.toDoubleOrNull()?.let { ((it / btcPrice) * 100_000_000).roundToLong() }
         useSats -> trimmed.toLongOrNull()
-        else -> trimmed.toDoubleOrNull()?.let { (it * 100_000_000).toLong() }
+        else -> trimmed.toDoubleOrNull()?.let { (it * 100_000_000).roundToLong() }
     }?.takeIf { it > 0 }
 }
 

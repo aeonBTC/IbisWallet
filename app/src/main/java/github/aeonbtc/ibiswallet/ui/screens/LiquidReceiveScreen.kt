@@ -106,6 +106,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 import java.util.Locale
+import kotlin.math.roundToLong
 import androidx.compose.material3.Text
 
 @Composable
@@ -173,13 +174,13 @@ fun LiquidReceiveScreen(
                 null
             } else if (isUsdMode && btcPrice != null && btcPrice > 0) {
                 amountText.toDoubleOrNull()?.let { usd ->
-                    ((usd / btcPrice) * 100_000_000).toLong()
+                    ((usd / btcPrice) * 100_000_000).roundToLong()
                 }
             } else if (useSats) {
                 amountText.toLongOrNull()
             } else {
                 amountText.toDoubleOrNull()?.let { lbtc ->
-                    (lbtc * 100_000_000).toLong()
+                    (lbtc * 100_000_000).roundToLong()
                 }
             }
         }
@@ -190,13 +191,13 @@ fun LiquidReceiveScreen(
                 null
             } else if (lightningIsUsdMode && btcPrice != null && btcPrice > 0) {
                 lightningAmountText.toDoubleOrNull()?.let { usd ->
-                    ((usd / btcPrice) * 100_000_000).toLong()
+                    ((usd / btcPrice) * 100_000_000).roundToLong()
                 }
             } else if (useSats) {
                 lightningAmountText.toLongOrNull()
             } else {
                 lightningAmountText.toDoubleOrNull()?.let { lbtc ->
-                    (lbtc * 100_000_000).toLong()
+                    (lbtc * 100_000_000).roundToLong()
                 }
             }
         }
@@ -236,9 +237,11 @@ fun LiquidReceiveScreen(
                     label?.let {
                         params += "label=${URLEncoder.encode(it, "UTF-8")}"
                     }
-                    if (isNonLbtcAsset) {
-                        params += "assetid=$selectedAssetId"
-                    }
+                    // Always include assetid once the URI has any params: wallets like
+                    // Aqua reject payment requests without an explicit assetid
+                    // (id_invalid_payment_request_assetid), defaulting to L-BTC is not
+                    // universal.
+                    params += "assetid=${selectedAssetId ?: LiquidAsset.LBTC_ASSET_ID}"
                     "liquidnetwork:$address?${params.joinToString("&")}"
                 } else {
                     address
@@ -407,9 +410,9 @@ fun LiquidReceiveScreen(
             .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (!isLiquidConnected) {
+        if (!isLiquidConnected && !isLiquidConnecting) {
             LiquidConnectionBanner(
-                isConnecting = isLiquidConnecting,
+                isConnecting = false,
                 hasServerConfigured = hasLiquidServerConfigured,
                 onConnect = onConnectLiquidServer,
                 onOpenServerSettings = onOpenLiquidServerSettings,

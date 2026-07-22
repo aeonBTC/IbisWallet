@@ -95,6 +95,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
+import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.SilentPayment
 import github.aeonbtc.ibiswallet.util.canOpenBitcoinSendReview
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
@@ -175,8 +176,10 @@ fun SendScreen(
     onHandleRecipientInput: (String) -> Boolean = { false },
     onToggleDenomination: () -> Unit = {},
     hasElectrumServerConfigured: Boolean = false,
+    electrumBannerDismissed: Boolean = false,
     onConnectElectrumServer: () -> Unit = {},
     onOpenElectrumServerSettings: () -> Unit = {},
+    onDismissElectrumBanner: () -> Unit = {},
 ) {
     // Initialize state from draft
     var recipientAddress by remember { mutableStateOf(draft.recipientAddress) }
@@ -357,13 +360,14 @@ fun SendScreen(
             }
         }
 
-    // Calculate available balance based on coin control selection
+    // Available to spend: selected coin-control UTXOs, else all unfrozen UTXOs
+    // (Balance screen still shows full wallet total including frozen).
     val availableSats =
-        remember(selectedUtxos.toList(), walletState.balanceSats) {
+        remember(selectedUtxos.toList(), spendableUtxos, walletState.balanceSats) {
             if (selectedUtxos.isNotEmpty()) {
                 selectedUtxos.sumOf { it.amountSats.toLong() }
             } else {
-                walletState.balanceSats.toLong()
+                spendableUtxos.sumOf { it.amountSats.toLong() }
             }
         }
     // Build multi-recipient list for fee estimation
@@ -566,7 +570,7 @@ fun SendScreen(
                         amountInput = String.format(Locale.US, "%.2f", usdAmount)
                     } else if (useSats) {
                         // Convert BTC to sats
-                        amountInput = (btcAmount * 100_000_000).toLong().toString()
+                        amountInput = (btcAmount * 100_000_000).roundToLong().toString()
                     } else {
                         // Keep as BTC
                         amountInput = String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
@@ -669,12 +673,19 @@ fun SendScreen(
                 .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (walletState.isInitialized && !uiState.isConnected && !isWatchOnly) {
+        if (
+            walletState.isInitialized &&
+            !uiState.isConnected &&
+            !uiState.isConnecting &&
+            !electrumBannerDismissed &&
+            !isWatchOnly
+        ) {
             ElectrumConnectionBanner(
-                isConnecting = uiState.isConnecting,
+                isConnecting = false,
                 hasServerConfigured = hasElectrumServerConfigured,
                 onConnect = onConnectElectrumServer,
                 onOpenServerSettings = onOpenElectrumServerSettings,
+                onWorkOffline = onDismissElectrumBanner,
             )
             Spacer(modifier = Modifier.height(8.dp))
         }
@@ -1052,7 +1063,7 @@ fun SendScreen(
                                             isUsdMode && btcPrice != null && btcPrice > 0 ->
                                                 String.format(Locale.US, "%.2f", btcAmount * btcPrice)
                                             useSats ->
-                                                (btcAmount * 100_000_000).toLong().toString()
+                                                (btcAmount * 100_000_000).roundToLong().toString()
                                             else ->
                                                 String.format(Locale.US, "%.8f", btcAmount)
                                                     .trimEnd('0').trimEnd('.')
@@ -1141,7 +1152,7 @@ fun SendScreen(
                                                         isUsdMode -> {
                                                             // Converting from USD to BTC/sats
                                                             val usdAmount = amountInput.toDoubleOrNull() ?: 0.0
-                                                            (usdAmount / btcPrice * 100_000_000).toLong()
+                                                            (usdAmount / btcPrice * 100_000_000).roundToLong()
                                                         }
                                                         useSats -> {
                                                             // Already in sats, keep as is
@@ -1150,7 +1161,7 @@ fun SendScreen(
                                                         else -> {
                                                             // Converting from BTC to USD
                                                             val btcAmount = amountInput.toDoubleOrNull() ?: 0.0
-                                                            (btcAmount * 100_000_000).toLong()
+                                                            (btcAmount * 100_000_000).roundToLong()
                                                         }
                                                     }
                                                 amountInput =
@@ -2391,10 +2402,22 @@ internal fun parseBip21Uri(input: String): Bip21Uri {
 
     return Bip21Uri(
         address = address,
-        amount = params["amount"]?.toDoubleOrNull(),
-        label = params["label"]?.takeIf { it.isNotBlank() },
-        message = params["message"]?.takeIf { it.isNotBlank() },
+        amount = params["amount"]?.let(::parseBip21AmountBtc),
+        label = BitcoinUtils.sanitizeExternalLabel(params["label"]),
+        message = BitcoinUtils.sanitizeExternalLabel(params["message"]),
     )
+}
+
+/**
+ * Strict BIP21 amount parser: decimal BTC, max 8 decimal places, finite,
+ * non-negative, and within the 21M supply cap. NaN/Infinity/scientific
+ * notation/negatives are rejected instead of being coerced downstream.
+ */
+private fun parseBip21AmountBtc(raw: String): Double? {
+    if (!raw.matches(Regex("^\\d+(\\.\\d{1,8})?$"))) return null
+    val value = raw.toDoubleOrNull() ?: return null
+    if (!value.isFinite() || value > 21_000_000.0) return null
+    return value
 }
 
 /**
@@ -2608,7 +2631,7 @@ internal fun MultiRecipientDialog(
                                 val usdAmount = btcAmount * btcPrice
                                 String.format(Locale.US, "%.2f", usdAmount)
                             }
-                            useSats -> (btcAmount * 100_000_000).toLong().toString()
+                            useSats -> (btcAmount * 100_000_000).roundToLong().toString()
                             else -> String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
                         }
                         recipients[index] = Pair(bip21.address, amountStr)

@@ -1060,7 +1060,7 @@ private fun PsbtDetailRow(
 }
 
 @Composable
-private fun QrDensityDropdown(
+internal fun QrDensityDropdown(
     currentDensity: SecureStorage.QrDensity,
     onDensitySelected: (SecureStorage.QrDensity) -> Unit,
     modifier: Modifier = Modifier,
@@ -1251,7 +1251,7 @@ private fun QrDropdownOptionText(
 }
 
 @Composable
-private fun QrBrightnessSlider(
+internal fun QrBrightnessSlider(
     brightness: Float,
     onBrightnessChange: (Float) -> Unit,
 ) {

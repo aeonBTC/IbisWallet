@@ -205,9 +205,11 @@ fun BalanceScreen(
     onOpenSettings: () -> Unit = {},
     isElectrumConnected: Boolean = false,
     isElectrumConnecting: Boolean = false,
+    electrumBannerDismissed: Boolean = false,
     hasElectrumServerConfigured: Boolean = false,
     onConnectElectrumServer: () -> Unit = {},
     onOpenElectrumServerSettings: () -> Unit = {},
+    onDismissElectrumBanner: () -> Unit = {},
 ) {
     if (showLayer2RequiredPlaceholder) {
         Layer2RequiredPlaceholder(
@@ -463,13 +465,14 @@ fun BalanceScreen(
                     },
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            if (!isElectrumConnected) {
+            if (!isElectrumConnected && !isElectrumConnecting && !electrumBannerDismissed) {
                 item {
                     ElectrumConnectionBanner(
-                        isConnecting = isElectrumConnecting,
+                        isConnecting = false,
                         hasServerConfigured = hasElectrumServerConfigured,
                         onConnect = onConnectElectrumServer,
                         onOpenServerSettings = onOpenElectrumServerSettings,
+                        onWorkOffline = onDismissElectrumBanner,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
@@ -3034,7 +3037,7 @@ internal fun SpeedUpDialog(
         when (method) {
             SpeedUpMethod.RBF, SpeedUpMethod.REDIRECT -> {
                 if (vsize != null && appliedFeeRate > 0.0 && currentFee != null) {
-                    val newTotalFee = (appliedFeeRate * vsize).toLong()
+                    val newTotalFee = kotlin.math.round(appliedFeeRate * vsize).toLong()
                     (newTotalFee - currentFee.toLong()).coerceAtLeast(0)
                 } else {
                     null
@@ -3042,8 +3045,14 @@ internal fun SpeedUpDialog(
             }
             SpeedUpMethod.CPFP -> {
                 if (appliedFeeRate > 0.0) {
-                    val effectiveFeeRate = kotlin.math.ceil(appliedFeeRate).toLong()
-                    (effectiveFeeRate * estimatedChildVsize)
+                    // Package-aware: child pays target rate for parent+child vsize
+                    // minus the fee the parent already pays (matches cpfp()).
+                    val parentVsize = vsize ?: 0.0
+                    val parentFee = currentFee?.toLong() ?: 0L
+                    (
+                        kotlin.math.ceil(appliedFeeRate * (parentVsize + estimatedChildVsize)).toLong() -
+                            parentFee
+                    ).coerceAtLeast(estimatedChildVsize)
                 } else {
                     null
                 }
