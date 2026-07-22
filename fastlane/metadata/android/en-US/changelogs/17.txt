@@ -1,0 +1,10 @@
+- PIN lockout now enforced by both wall-clock and monotonic clocks — no longer bypassable by changing device time or rebooting (monotonic arm correctly dropped post-reboot so the real PIN never bricks).
+- Failed-attempt counter and lockout state persist with synchronous commits — a process kill can't regress auto-wipe progress.
+- Duress PIN is verified before the lockout check and always succeeds, so it can never trigger auto-wipe; counter shared between real and duress PINs.
+- Wallet create/import/load now sets ownership tracking (`loadedWalletId` + mutex) on every path — fixes empty Manage Wallets and concurrent-load races.
+- Stale Electrum syncs from a previous wallet/connection can no longer clobber state for the newly loaded wallet (ownership guards across subscription, quick-sync, and incremental paths).
+- Electrum responses are size-capped — a malicious server can no longer OOM the app via unbounded protocol lines.
+- Frozen UTXOs are excluded from CPFP/RBF fee-bump coin selection — the do-not-spend flag can't be bypassed through fee-bump paths.
+- CPFP package fee picker now prices the whole package (parent + child), not just the child vsize.
+
+See full changelogs on GitHub.
