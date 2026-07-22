@@ -520,10 +520,15 @@ class MainActivity : FragmentActivity() {
                 )
             }
 
-            // Check if security is enabled - always locked on fresh start
-            // When cloak mode is active, stay locked so the calculator screen shows first
+            // Check if security is enabled - locked on fresh start, but preserve the
+            // unlocked session across configuration-change recreations (the ViewModel
+            // survives them; a process death resets the flag and re-locks normally).
+            // When cloak mode is active, stay locked so the calculator screen shows first.
             val securityMethod = secureStorage.getSecurityMethod()
-            isUnlocked = securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive
+            isUnlocked =
+                (securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive) ||
+                    walletViewModel.isSessionUnlocked()
+            cloakBypassed = walletViewModel.isCloakBypassedThisSession()
             if (isUnlocked) {
                 walletViewModel.onAppUnlocked()
             }
@@ -568,6 +573,7 @@ class MainActivity : FragmentActivity() {
                                 cloakCode = secureStorage.getCloakCode() ?: "",
                                 onUnlock = {
                                     cloakBypassed = true
+                                    walletViewModel.markCloakBypassedThisSession()
                                     val secMethod = secureStorage.getSecurityMethod()
                                     if (secMethod == SecureStorage.SecurityMethod.NONE) {
                                         // No additional auth — go straight to wallet

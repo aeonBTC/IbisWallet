@@ -53,6 +53,7 @@ import github.aeonbtc.ibiswallet.util.Bip137MessageSigner
 import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
 import github.aeonbtc.ibiswallet.util.MultisigWalletParser
 import github.aeonbtc.ibiswallet.util.PsbtExportOptimizer
+import github.aeonbtc.ibiswallet.util.QrFormatParser
 import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.SilentPayment
 import github.aeonbtc.ibiswallet.util.SpeedUpTransactionErrors
@@ -89,6 +90,7 @@ import org.bitcoindevkit.Address
 import org.bitcoindevkit.Amount
 import org.bitcoindevkit.BumpFeeTxBuilder
 import org.bitcoindevkit.ChainPosition
+import org.bitcoindevkit.DerivationPath
 import org.bitcoindevkit.Descriptor
 import org.bitcoindevkit.DescriptorSecretKey
 import org.bitcoindevkit.ElectrumClient
@@ -98,6 +100,7 @@ import org.bitcoindevkit.FullScanScriptInspector
 import org.bitcoindevkit.KeychainKind
 import org.bitcoindevkit.Mnemonic
 import org.bitcoindevkit.Network
+import org.bitcoindevkit.OutPoint
 import org.bitcoindevkit.Persister
 import org.bitcoindevkit.Psbt
 import org.bitcoindevkit.Script
@@ -469,6 +472,7 @@ class WalletRepository(context: Context) {
         bitcoinSearchIndexJob?.cancel()
         bitcoinSearchIndexJob = null
         wallet = null
+        loadedWalletId = null
         walletPersister = null
         walletExternalDescriptor = null
         walletInternalDescriptor = null
@@ -479,12 +483,15 @@ class WalletRepository(context: Context) {
         lastIncrementalReconcileAtMs = 0L
     }
 
-    fun unloadWalletFromMemoryForLock() {
-        clearLoadedWallet()
-        _walletState.value = WalletState()
+    suspend fun unloadWalletFromMemoryForLock() {
+        walletLoadMutex.withLock {
+            clearLoadedWallet()
+            _walletState.value = WalletState()
+        }
     }
 
     private fun replaceLoadedWallet(
+        walletId: String,
         loadedWallet: Wallet,
         persister: Persister,
         externalDescriptor: Descriptor?,
@@ -498,6 +505,7 @@ class WalletRepository(context: Context) {
         bitcoinSearchIndexJob?.cancel()
         bitcoinSearchIndexJob = null
         wallet = loadedWallet
+        loadedWalletId = walletId
         walletPersister = persister
         walletExternalDescriptor = externalDescriptor
         walletInternalDescriptor = internalDescriptor
@@ -639,6 +647,11 @@ class WalletRepository(context: Context) {
 
     // Current active BDK wallet instance
     private var wallet: Wallet? = null
+
+    // Which wallet ID the loaded BDK wallet belongs to (null while unloaded).
+    // State publishers use it to avoid emitting wallet A's data under wallet B's
+    // metadata during a wallet switch.
+    private var loadedWalletId: String? = null
     private var walletPersister: Persister? = null
     private var walletExternalDescriptor: Descriptor? = null
     private var walletInternalDescriptor: Descriptor? = null
@@ -657,6 +670,11 @@ class WalletRepository(context: Context) {
     // script hash subscriptions, verbose tx queries) through a single upstream socket.
     private var cachingProxy: CachingElectrumProxy? = null
     private val connectionMutex = Mutex()
+
+    // Wallet-load mutex — serializes load/switch/unload so the wallet, persister, and
+    // descriptor fields can never be crossed between two wallets by concurrent loads
+    // (e.g. post-unlock bootstrap racing a duress-mode wallet switch).
+    private val walletLoadMutex = Mutex()
 
     // Sync mutex - prevents concurrent sync operations
     private val syncMutex = Mutex()
@@ -846,8 +864,42 @@ class WalletRepository(context: Context) {
     /** BIP125 opt-in RBF (nSequence = 0xFFFFFFFD) for sends and replacements. */
     private fun TxBuilder.applyOptInRbf(): TxBuilder = setExactSequence(RBF_SIGNAL_SEQUENCE)
 
+    /**
+     * Exclude frozen UTXOs from automatic coin selection. Frozen status is an
+     * app-level do-not-spend flag — without this filter, default coin selection
+     * would silently spend frozen coins on any ordinary send.
+     */
+    private fun TxBuilder.applyFrozenUtxoFilter(): TxBuilder {
+        val frozenOutpoints = frozenOutpointsForActiveWallet()
+        return if (frozenOutpoints.isEmpty()) this else unspendable(frozenOutpoints)
+    }
+
+    private fun frozenOutpointsForActiveWallet(): List<OutPoint> {
+        val walletId = secureStorage.getActiveWalletId() ?: return emptyList()
+        val frozen = secureStorage.getFrozenUtxos(walletId)
+        if (frozen.isEmpty()) return emptyList()
+        return frozen.mapNotNull { ref ->
+            val txid = ref.substringBefore(':', "")
+            val vout = ref.substringAfter(':', "").toUIntOrNull() ?: return@mapNotNull null
+            if (txid.isBlank()) return@mapNotNull null
+            runCatching { OutPoint(Txid.fromString(txid), vout) }.getOrNull()
+        }
+    }
+
+    private fun OutPoint.toFrozenRef(): String = "${txid}:$vout"
+
+    private fun isFrozenOutpoint(
+        outpoint: OutPoint,
+        frozenRefs: Set<String>,
+    ): Boolean = outpoint.toFrozenRef() in frozenRefs
+
+    private fun frozenRefsForActiveWallet(): Set<String> {
+        val walletId = secureStorage.getActiveWalletId() ?: return emptySet()
+        return secureStorage.getFrozenUtxos(walletId)
+    }
+
     private fun TxBuilder.applySendDefaults(): TxBuilder =
-        applyConfirmedOnlyFilter().applyOptInRbf()
+        applyConfirmedOnlyFilter().applyOptInRbf().applyFrozenUtxoFilter()
 
     /**
      * Compute ceiled vsize (ceil(weight/4)) of a signed tx from a PSBT.
@@ -1019,17 +1071,48 @@ class WalletRepository(context: Context) {
         wallet: Wallet,
         targetSatPerVb: Double,
         rebuildWithFee: (ULong) -> Psbt?,
+        feeOffsetSats: Long = 0,
     ): SignedTxResult {
+        // Package-aware fee target: rate * vsize + offset (offset accounts for a
+        // CPFP parent's fee/vsize). Floored at ~1 sat/vB relay minimum.
+        fun targetFeeFor(vsize: Double): ULong? {
+            val base = BitcoinUtils.computeExactFeeSats(targetSatPerVb, vsize) ?: return null
+            val adjusted = base.toLong() + feeOffsetSats
+            val relayFloor = kotlin.math.ceil(1.0 * vsize).toLong()
+            return adjusted.coerceAtLeast(relayFloor).toULong()
+        }
+
+        // Score against the package absolute fee target, not bare fee/vsize rate.
+        // With feeOffsetSats > 0 the true child rate is above targetSatPerVb; scoring
+        // |fee/vsize - rate| systematically prefers under-fee candidates.
+        fun packageError(candidate: SignedTxResult): Double {
+            val target = targetFeeFor(candidate.vsize)?.toDouble() ?: return Double.MAX_VALUE
+            return kotlin.math.abs(candidate.feeSats.toDouble() - target)
+        }
+
+        fun bestCandidate(candidates: List<SignedTxResult>): SignedTxResult {
+            // Prefer candidates that meet/exceed the package fee target; among those
+            // (or among all if none meet) pick the closest absolute fee.
+            val meeting =
+                candidates.filter { c ->
+                    val t = targetFeeFor(c.vsize)
+                    t != null && c.feeSats >= t
+                }
+            val pool = meeting.ifEmpty { candidates }
+            return pool.minByOrNull(::packageError) ?: pool.last()
+        }
+
         // --- attempt 1: sign the initial PSBT ---
         wallet.sign(initialPsbt)
         val tx = initialPsbt.extractTx()
         val bakedFee = try { initialPsbt.fee() } catch (_: Exception) { 0UL }
         val weight = tx.weight()
         val vsize = kotlin.math.ceil(weight.toDouble() / 4.0)
-        val targetFee = BitcoinUtils.computeExactFeeSats(targetSatPerVb, vsize)
+        val targetFee = targetFeeFor(vsize)
+        val candidate1 = SignedTxResult(tx, bakedFee, vsize)
 
         if (targetFee == null || targetFee == bakedFee) {
-            return SignedTxResult(tx, bakedFee, vsize)
+            return candidate1
         }
 
         // --- attempt 2: rebuild with corrected fee, re-sign ---
@@ -1039,7 +1122,9 @@ class WalletRepository(context: Context) {
             null
         }
         if (correctedPsbt == null) {
-            return SignedTxResult(tx, bakedFee, vsize)
+            // Prefer the higher absolute fee among signed candidates when package-aware
+            // correction failed — never lock in under-package pass-1 if we can avoid it.
+            return candidate1
         }
 
         wallet.sign(correctedPsbt)
@@ -1047,11 +1132,12 @@ class WalletRepository(context: Context) {
         val bakedFee2 = try { correctedPsbt.fee() } catch (_: Exception) { 0UL }
         val weight2 = tx2.weight()
         val vsize2 = kotlin.math.ceil(weight2.toDouble() / 4.0)
-        val targetFee2 = BitcoinUtils.computeExactFeeSats(targetSatPerVb, vsize2)
+        val targetFee2 = targetFeeFor(vsize2)
+        val candidate2 = SignedTxResult(tx2, bakedFee2, vsize2)
 
         // If the corrected fee still matches the baked fee for this vsize, we're done
         if (targetFee2 == null || targetFee2 == bakedFee2) {
-            return SignedTxResult(tx2, bakedFee2, vsize2)
+            return candidate2
         }
 
         // --- attempt 3: one more rebuild to try to converge ---
@@ -1067,34 +1153,22 @@ class WalletRepository(context: Context) {
                 val bakedFee3 = try { correctedPsbt3.fee() } catch (_: Exception) { 0UL }
                 val weight3 = tx3.weight()
                 val vsize3 = kotlin.math.ceil(weight3.toDouble() / 4.0)
-                val targetFee3 = BitcoinUtils.computeExactFeeSats(targetSatPerVb, vsize3)
+                val targetFee3 = targetFeeFor(vsize3)
+                val candidate3 = SignedTxResult(tx3, bakedFee3, vsize3)
 
                 if (targetFee3 == null || targetFee3 == bakedFee3) {
-                    return SignedTxResult(tx3, bakedFee3, vsize3)
+                    return candidate3
                 }
 
-                // Still oscillating — pick the best among all three candidates
-                val candidates = listOf(
-                    SignedTxResult(tx, bakedFee, vsize),
-                    SignedTxResult(tx2, bakedFee2, vsize2),
-                    SignedTxResult(tx3, bakedFee3, vsize3),
-                )
-                return candidates.minByOrNull {
-                    kotlin.math.abs(it.feeSats.toDouble() / it.vsize - targetSatPerVb)
-                } ?: SignedTxResult(tx2, bakedFee2, vsize2)
+                // Still oscillating — pick the closest to the package fee target
+                return bestCandidate(listOf(candidate1, candidate2, candidate3))
             } catch (_: Exception) {
                 // Fall through to pick best of first two
             }
         }
 
-        // Oscillation between attempt 1 and 2 — pick the one closer to target
-        val err1 = kotlin.math.abs(bakedFee.toDouble() / vsize - targetSatPerVb)
-        val err2 = kotlin.math.abs(bakedFee2.toDouble() / vsize2 - targetSatPerVb)
-        return if (err2 <= err1) {
-            SignedTxResult(tx2, bakedFee2, vsize2)
-        } else {
-            SignedTxResult(tx, bakedFee, vsize)
-        }
+        // Oscillation between attempt 1 and 2 — pick closer to package fee target
+        return bestCandidate(listOf(candidate1, candidate2))
     }
 
     private val _walletState = MutableStateFlow(WalletState())
@@ -1489,17 +1563,28 @@ class WalletRepository(context: Context) {
      */
     suspend fun importWallet(config: WalletImportConfig): WalletResult<Unit> =
         withContext(Dispatchers.IO) {
+            walletLoadMutex.withLock {
             try {
                 if (config.network != WalletNetwork.BITCOIN) {
                     return@withContext WalletResult.Error(BitcoinUtils.UNSUPPORTED_NON_MAINNET_MESSAGE)
                 }
                 val bdkNetwork = config.network.toBdkNetwork()
-                val trimmedKey = config.keyMaterial.trim()
+                var trimmedKey = config.keyMaterial.trim()
                 BitcoinUtils.unsupportedNonMainnetReason(trimmedKey)?.let {
                     return@withContext WalletResult.Error(it)
                 }
                 BitcoinUtils.unsupportedNestedSegwitReason(trimmedKey)?.let {
                     return@withContext WalletResult.Error(it)
+                }
+                // ColdCard / Specter / generic wallet JSON pasted into the text field:
+                // run the same conversion as the QR import path to extract key material.
+                if (trimmedKey.startsWith("{") && !MultisigWalletParser.looksLikeMultisig(trimmedKey)) {
+                    trimmedKey =
+                        try {
+                            QrFormatParser.parseWalletQr(appContext, trimmedKey, config.addressType)
+                        } catch (e: Exception) {
+                            return@withContext WalletResult.Error(e.message ?: "Unsupported wallet JSON")
+                        }
                 }
                 val multisigConfig =
                     config.multisigConfig ?: if (MultisigWalletParser.looksLikeMultisig(trimmedKey)) {
@@ -1508,6 +1593,7 @@ class WalletRepository(context: Context) {
                         null
                     }
                 val isWatchOnly = isWatchOnlyInput(trimmedKey)
+                val isXprv = !isWatchOnly && isExtendedPrivateKeyInput(trimmedKey)
                 val isWif = isWifPrivateKey(trimmedKey)
                 val isSingleAddress = isBitcoinAddress(trimmedKey)
 
@@ -1548,7 +1634,7 @@ class WalletRepository(context: Context) {
                 val resolvedFingerprint =
                     when {
                         isWif || isSingleAddress -> null
-                        isWatchOnly -> fingerprint
+                        isWatchOnly || isXprv -> fingerprint
                         isElectrumSeed ->
                             deriveElectrumFingerprint(
                                 config.keyMaterial,
@@ -1582,6 +1668,7 @@ class WalletRepository(context: Context) {
                     secureStorage.saveNetwork(config.network)
                     secureStorage.setNeedsFullSync(walletId, false)
                     clearLoadedWallet()
+                    loadedWalletId = walletId
                     secureStorage.setActiveWalletId(walletId)
                     updateWalletState()
                     return@withContext WalletResult.Success(Unit)
@@ -1600,6 +1687,7 @@ class WalletRepository(context: Context) {
                             persister = persister,
                         )
                     replaceLoadedWallet(
+                        walletId = walletId,
                         loadedWallet = importedWallet,
                         persister = persister,
                         externalDescriptor = descriptor,
@@ -1611,6 +1699,13 @@ class WalletRepository(context: Context) {
                         when {
                             isWatchOnly ->
                                 createWatchOnlyDescriptors(
+                                    trimmedKey,
+                                    config.addressType,
+                                    bdkNetwork,
+                                    resolvedFingerprint,
+                                )
+                            isXprv ->
+                                createExtendedPrivateKeyDescriptors(
                                     trimmedKey,
                                     config.addressType,
                                     bdkNetwork,
@@ -1629,6 +1724,7 @@ class WalletRepository(context: Context) {
                                     passphrase = config.passphrase,
                                     addressType = config.addressType,
                                     network = bdkNetwork,
+                                    customPath = config.customDerivationPath,
                                 )
                         }
 
@@ -1666,6 +1762,7 @@ class WalletRepository(context: Context) {
                             )
                         }
                     replaceLoadedWallet(
+                        walletId = walletId,
                         loadedWallet = importedWallet,
                         persister = persister,
                         externalDescriptor = externalDescriptor,
@@ -1697,8 +1794,8 @@ class WalletRepository(context: Context) {
                 // Save key material with wallet ID
                 if (isWif) {
                     secureStorage.savePrivateKey(walletId, config.keyMaterial.trim())
-                } else if (isWatchOnly) {
-                    secureStorage.saveExtendedKey(walletId, config.keyMaterial)
+                } else if (isWatchOnly || isXprv) {
+                    secureStorage.saveExtendedKey(walletId, trimmedKey)
                 } else {
                     secureStorage.saveMnemonic(walletId, config.keyMaterial)
                     config.passphrase?.let { secureStorage.savePassphrase(walletId, it) }
@@ -1724,6 +1821,7 @@ class WalletRepository(context: Context) {
                 )
                 WalletResult.Error("Failed to import wallet: ${e.message ?: e.javaClass.simpleName}", e)
             }
+            } // walletLoadMutex
         }
 
     private fun importMultisigWallet(
@@ -1747,6 +1845,7 @@ class WalletRepository(context: Context) {
                 persister = persister,
             )
         replaceLoadedWallet(
+            walletId = walletId,
             loadedWallet = importedWallet,
             persister = persister,
             externalDescriptor = externalDescriptor,
@@ -1807,36 +1906,39 @@ class WalletRepository(context: Context) {
         ctDescriptor: String,
         gapLimit: Int,
     ): WalletResult<String> = withContext(Dispatchers.IO) {
-        try {
-            val walletId = UUID.randomUUID().toString()
-            val storedWallet = StoredWallet(
-                id = walletId,
-                name = name,
-                addressType = AddressType.SEGWIT,
-                derivationPath = "liquid_ct",
-                isWatchOnly = true,
-                network = WalletNetwork.BITCOIN,
-            )
-            secureStorage.saveWalletMetadata(storedWallet)
-            secureStorage.setLiquidDescriptor(walletId, ctDescriptor)
-            secureStorage.setLiquidWatchOnly(walletId, true)
-            secureStorage.setLayer2Enabled(true)
-            secureStorage.setLiquidEnabledForWallet(walletId, true)
-            secureStorage.setLiquidGapLimit(walletId, gapLimit)
-            secureStorage.setNeedsFullSync(walletId, false)
-            secureStorage.setNeedsLiquidFullSync(walletId, true)
-            clearLoadedWallet()
-            secureStorage.setActiveWalletId(walletId)
-            updateWalletState()
-            WalletResult.Success(walletId)
-        } catch (e: Exception) {
-            SecureLog.e(
-                TAG,
-                "Failed to import Liquid watch-only wallet",
-                e,
-                releaseMessage = "Liquid wallet import failed",
-            )
-            WalletResult.Error("Failed to import: ${e.message ?: e.javaClass.simpleName}", e)
+        walletLoadMutex.withLock {
+            try {
+                val walletId = UUID.randomUUID().toString()
+                val storedWallet = StoredWallet(
+                    id = walletId,
+                    name = name,
+                    addressType = AddressType.SEGWIT,
+                    derivationPath = "liquid_ct",
+                    isWatchOnly = true,
+                    network = WalletNetwork.BITCOIN,
+                )
+                secureStorage.saveWalletMetadata(storedWallet)
+                secureStorage.setLiquidDescriptor(walletId, ctDescriptor)
+                secureStorage.setLiquidWatchOnly(walletId, true)
+                secureStorage.setLayer2Enabled(true)
+                secureStorage.setLiquidEnabledForWallet(walletId, true)
+                secureStorage.setLiquidGapLimit(walletId, gapLimit)
+                secureStorage.setNeedsFullSync(walletId, false)
+                secureStorage.setNeedsLiquidFullSync(walletId, true)
+                clearLoadedWallet()
+                loadedWalletId = walletId
+                secureStorage.setActiveWalletId(walletId)
+                updateWalletState()
+                WalletResult.Success(walletId)
+            } catch (e: Exception) {
+                SecureLog.e(
+                    TAG,
+                    "Failed to import Liquid watch-only wallet",
+                    e,
+                    releaseMessage = "Liquid wallet import failed",
+                )
+                WalletResult.Error("Failed to import: ${e.message ?: e.javaClass.simpleName}", e)
+            }
         }
     }
 
@@ -1848,30 +1950,33 @@ class WalletRepository(context: Context) {
         name: String,
         config: LightningNodeConfig,
     ): WalletResult<String> = withContext(Dispatchers.IO) {
-        try {
-            require(name.isNotBlank()) { "Wallet name is required" }
-            require(config.isConfigured) { "Incomplete Lightning Node connection" }
-            val walletId = UUID.randomUUID().toString()
-            val storedWallet = StoredWallet(
-                id = walletId,
-                name = name.trim(),
-                addressType = AddressType.SEGWIT,
-                derivationPath = "lightning_node",
-                isWatchOnly = true,
-                network = WalletNetwork.BITCOIN,
-                walletKind = WalletKind.LIGHTNING_NODE,
-            )
-            secureStorage.saveWalletMetadata(storedWallet)
-            secureStorage.setLightningNodeConfig(walletId, config)
-            secureStorage.setLayer2ProviderForWallet(walletId, Layer2Provider.LIGHTNING)
-            secureStorage.setActiveLayer(walletId, WalletLayer.LAYER2.name)
-            secureStorage.setNeedsFullSync(walletId, false)
-            clearLoadedWallet()
-            secureStorage.setActiveWalletId(walletId)
-            updateWalletState()
-            WalletResult.Success(walletId)
-        } catch (e: Exception) {
-            WalletResult.Error("Lightning Node wallet creation failed: ${e.message ?: e.javaClass.simpleName}", e)
+        walletLoadMutex.withLock {
+            try {
+                require(name.isNotBlank()) { "Wallet name is required" }
+                require(config.isConfigured) { "Incomplete Lightning Node connection" }
+                val walletId = UUID.randomUUID().toString()
+                val storedWallet = StoredWallet(
+                    id = walletId,
+                    name = name.trim(),
+                    addressType = AddressType.SEGWIT,
+                    derivationPath = "lightning_node",
+                    isWatchOnly = true,
+                    network = WalletNetwork.BITCOIN,
+                    walletKind = WalletKind.LIGHTNING_NODE,
+                )
+                secureStorage.saveWalletMetadata(storedWallet)
+                secureStorage.setLightningNodeConfig(walletId, config)
+                secureStorage.setLayer2ProviderForWallet(walletId, Layer2Provider.LIGHTNING)
+                secureStorage.setActiveLayer(walletId, WalletLayer.LAYER2.name)
+                secureStorage.setNeedsFullSync(walletId, false)
+                clearLoadedWallet()
+                loadedWalletId = walletId
+                secureStorage.setActiveWalletId(walletId)
+                updateWalletState()
+                WalletResult.Success(walletId)
+            } catch (e: Exception) {
+                WalletResult.Error("Lightning Node wallet creation failed: ${e.message ?: e.javaClass.simpleName}", e)
+            }
         }
     }
 
@@ -1884,16 +1989,31 @@ class WalletRepository(context: Context) {
                 secureStorage.getWalletMetadata(walletId)
                     ?: return@withContext WalletResult.Error("Wallet not found")
 
-                // Set as active
-                secureStorage.setActiveWalletId(walletId)
+                walletLoadMutex.withLock {
+                    val previousActiveId = secureStorage.getActiveWalletId()
+                    // Set as active
+                    secureStorage.setActiveWalletId(walletId)
 
-                // Clear script hash cache - different wallet has different addresses
-                clearScriptHashCache()
+                    // Clear script hash cache - different wallet has different addresses
+                    clearScriptHashCache()
 
-                // Load the wallet
-                when (val loadResult = loadWalletById(walletId)) {
-                    is WalletResult.Success -> WalletResult.Success(Unit)
-                    is WalletResult.Error -> return@withContext loadResult
+                    // Load the wallet
+                    when (val loadResult = loadWalletByIdLocked(walletId)) {
+                        is WalletResult.Success -> WalletResult.Success(Unit)
+                        is WalletResult.Error -> {
+                            // Roll back active id and try to restore the previous wallet
+                            // so a failed switch doesn't leave a half-loaded target active.
+                            if (previousActiveId != null && previousActiveId != walletId) {
+                                secureStorage.setActiveWalletId(previousActiveId)
+                                clearScriptHashCache()
+                                loadWalletByIdLocked(previousActiveId)
+                            } else {
+                                clearLoadedWallet()
+                                updateWalletState()
+                            }
+                            return@withContext loadResult
+                        }
+                    }
                 }
 
                 WalletResult.Success(Unit)
@@ -1903,17 +2023,24 @@ class WalletRepository(context: Context) {
         }
 
     /**
-     * Load a specific wallet by ID
+     * Load a specific wallet by ID.
+     * Caller MUST hold [walletLoadMutex] — see [loadWallet] / [switchWallet].
      */
-    private suspend fun loadWalletById(walletId: String): WalletResult<Unit> =
+    private suspend fun loadWalletByIdLocked(walletId: String): WalletResult<Unit> =
         withContext(Dispatchers.IO) {
+            fun failLoad(message: String): WalletResult.Error {
+                clearLoadedWallet()
+                updateWalletState()
+                return WalletResult.Error(message)
+            }
             try {
                 val storedWallet =
                     secureStorage.getWalletMetadata(walletId)
-                        ?: return@withContext WalletResult.Error("Wallet not found")
+                        ?: return@withContext failLoad("Wallet not found")
 
                 val bdkNetwork = storedWallet.network.toBdkNetwork()
                 clearLoadedWallet()
+                loadedWalletId = walletId
 
                 // Watch address wallets have no BDK wallet — tracked via Electrum only
                 if (secureStorage.hasWatchAddress(walletId)) {
@@ -1933,7 +2060,7 @@ class WalletRepository(context: Context) {
                 if (storedWallet.policyType == WalletPolicyType.MULTISIG) {
                     val multisigConfig =
                         secureStorage.getMultisigWalletConfig(walletId)
-                            ?: return@withContext WalletResult.Error("No multisig config found")
+                            ?: return@withContext failLoad("No multisig config found")
                     val localCosignerMaterial = secureStorage.getLocalCosignerKeyMaterial(walletId)
                     val (externalDescriptor, internalDescriptor) =
                         createMultisigDescriptors(multisigConfig, localCosignerMaterial, bdkNetwork)
@@ -1975,7 +2102,7 @@ class WalletRepository(context: Context) {
                     // Single-key WIF wallet — uses Wallet.createSingle (no change descriptor)
                     val wif =
                         secureStorage.getPrivateKey(walletId)
-                            ?: return@withContext WalletResult.Error("No private key found")
+                            ?: return@withContext failLoad("No private key found")
                     val descriptor = createDescriptorFromWif(wif, storedWallet.addressType, bdkNetwork)
 
                     wallet =
@@ -1996,25 +2123,40 @@ class WalletRepository(context: Context) {
                     walletInternalDescriptor = null
                     walletIsSingleKey = true
                 } else {
+                    // For BIP39 wallets with a custom derivation path: credentials kept
+                    // in scope so a descriptor mismatch can fall back to the standard
+                    // path (see below).
+                    var bip39FallbackCredentials: Pair<String, String?>? = null
+                    val storedCustomPath = customBip39DerivationPath(storedWallet)
                     var (externalDescriptor, internalDescriptor) =
                         when {
                             secureStorage.hasExtendedKey(walletId) -> {
-                                // Watch-only wallet - include master fingerprint for PSBT signing
                                 val extendedKey =
                                     secureStorage.getExtendedKey(walletId)
-                                        ?: return@withContext WalletResult.Error("No extended key found")
-                                createWatchOnlyDescriptors(
-                                    extendedKey,
-                                    storedWallet.addressType,
-                                    bdkNetwork,
-                                    storedWallet.masterFingerprint,
-                                )
+                                        ?: return@withContext failLoad("No extended key found")
+                                if (isExtendedPrivateKeyInput(extendedKey)) {
+                                    // Extended PRIVATE key import — spend-capable descriptors
+                                    createExtendedPrivateKeyDescriptors(
+                                        extendedKey,
+                                        storedWallet.addressType,
+                                        bdkNetwork,
+                                        storedWallet.masterFingerprint,
+                                    )
+                                } else {
+                                    // Watch-only wallet - include master fingerprint for PSBT signing
+                                    createWatchOnlyDescriptors(
+                                        extendedKey,
+                                        storedWallet.addressType,
+                                        bdkNetwork,
+                                        storedWallet.masterFingerprint,
+                                    )
+                                }
                             }
                             else -> {
                                 // Full wallet from mnemonic
                                 val mnemonic =
                                     secureStorage.getMnemonic(walletId)
-                                        ?: return@withContext WalletResult.Error("No mnemonic found")
+                                        ?: return@withContext failLoad("No mnemonic found")
                                 val passphrase = secureStorage.getPassphrase(walletId)
 
                                 // Route Electrum seeds through their own derivation
@@ -2033,13 +2175,18 @@ class WalletRepository(context: Context) {
                                             ElectrumSeedUtil.ElectrumSeedType.SEGWIT,
                                             bdkNetwork,
                                         )
-                                    else ->
+                                    else -> {
+                                        if (storedCustomPath != null) {
+                                            bip39FallbackCredentials = mnemonic to passphrase
+                                        }
                                         createDescriptorsFromMnemonic(
                                             mnemonic,
                                             passphrase,
                                             storedWallet.addressType,
                                             bdkNetwork,
+                                            customPath = storedCustomPath,
                                         )
+                                    }
                                 }
                             }
                         }
@@ -2061,6 +2208,34 @@ class WalletRepository(context: Context) {
                                 loadedWallet
                             } ?: run {
                                 if (isDescriptorMismatch(e)) {
+                                    val fallbackCredentials = bip39FallbackCredentials
+                                    if (fallbackCredentials != null) {
+                                        // Wallets imported before custom derivation paths were
+                                        // honored were actually derived at the standard path.
+                                        // Retry with standard descriptors and repair the stored
+                                        // path on success.
+                                        val (stdExternal, stdInternal) =
+                                            createDescriptorsFromMnemonic(
+                                                fallbackCredentials.first,
+                                                fallbackCredentials.second,
+                                                storedWallet.addressType,
+                                                bdkNetwork,
+                                            )
+                                        val legacyWallet =
+                                            try {
+                                                Wallet.load(stdExternal, stdInternal, persister)
+                                            } catch (_: Exception) {
+                                                throw e
+                                            }
+                                        externalDescriptor = stdExternal
+                                        internalDescriptor = stdInternal
+                                        secureStorage.saveWalletMetadata(
+                                            storedWallet.copy(
+                                                derivationPath = storedWallet.addressType.defaultPath,
+                                            ),
+                                        )
+                                        return@run legacyWallet
+                                    }
                                     throw e
                                 }
                                 if (BuildConfig.DEBUG) {
@@ -2095,18 +2270,25 @@ class WalletRepository(context: Context) {
 
                 WalletResult.Success(Unit)
             } catch (e: Exception) {
+                // Leave memory unloaded so state publishers don't publish half-built
+                // descriptors under a wallet id that never finished loading.
+                clearLoadedWallet()
+                updateWalletState()
                 WalletResult.Error(e.message ?: "Failed to load wallet", e)
             }
         }
 
     /**
-     * Create descriptors from mnemonic based on address type
+     * Create descriptors from mnemonic based on address type.
+     * When [customPath] is provided, the account key is derived at that path
+     * instead of the standard BIP44/84/86 path.
      */
     private fun createDescriptorsFromMnemonic(
         mnemonic: String,
         passphrase: String?,
         addressType: AddressType,
         network: Network,
+        customPath: String? = null,
     ): Pair<Descriptor, Descriptor> {
         val mnemonicObj = Mnemonic.fromString(mnemonic)
         val descriptorSecretKey =
@@ -2115,6 +2297,15 @@ class WalletRepository(context: Context) {
                 mnemonic = mnemonicObj,
                 password = passphrase,
             )
+
+        if (!customPath.isNullOrBlank()) {
+            return createCustomPathDescriptors(
+                descriptorSecretKey = descriptorSecretKey,
+                customPath = customPath,
+                addressType = addressType,
+                network = network,
+            )
+        }
 
         return when (addressType) {
             AddressType.LEGACY -> {
@@ -2169,6 +2360,70 @@ class WalletRepository(context: Context) {
     }
 
     /**
+     * Create descriptors for a BIP39 mnemonic at a user-supplied account derivation
+     * path. The account key is derived at [customPath] (minus any trailing
+     * non-hardened change segment), then extended with wildcard change branches
+     * (0 for external, 1 for internal) — the same convention as the standard
+     * BIP44/84/86 builders.
+     */
+    private fun createCustomPathDescriptors(
+        descriptorSecretKey: DescriptorSecretKey,
+        customPath: String,
+        addressType: AddressType,
+        network: Network,
+    ): Pair<Descriptor, Descriptor> {
+        val accountPath = customAccountPath(customPath)
+        val accountXprv = descriptorSecretKey.derive(DerivationPath(accountPath)).toString()
+        val function =
+            when (addressType) {
+                AddressType.LEGACY -> "pkh"
+                AddressType.SEGWIT -> "wpkh"
+                AddressType.TAPROOT -> "tr"
+            }
+        return Pair(
+            Descriptor("$function($accountXprv/0/*)", network),
+            Descriptor("$function($accountXprv/1/*)", network),
+        )
+    }
+
+    /**
+     * Normalize a user-entered derivation path to the account-level path.
+     * A trailing non-hardened `0`/`1` segment is treated as the change branch
+     * (matching the default paths, e.g. m/84'/0'/0'/0) and stripped.
+     * Throws IllegalArgumentException on malformed paths so bad input fails
+     * loudly instead of silently deriving the wrong wallet.
+     */
+    private fun customAccountPath(rawPath: String): String {
+        var normalized = rawPath.trim().replace(" ", "").removeSuffix("/")
+        if (normalized.startsWith("M/")) normalized = "m/" + normalized.removePrefix("M/")
+        if (normalized == "m" || normalized == "M") return "m"
+        if (!normalized.startsWith("m/")) normalized = "m/$normalized"
+        val segments = normalized.removePrefix("m/").split("/")
+        require(segments.all { it.matches(Regex("^\\d+'?$")) }) {
+            "Invalid derivation path: $rawPath"
+        }
+        val accountSegments =
+            if (segments.last() == "0" || segments.last() == "1") {
+                segments.dropLast(1)
+            } else {
+                segments
+            }
+        return if (accountSegments.isEmpty()) "m" else "m/" + accountSegments.joinToString("/")
+    }
+
+    /**
+     * Returns the custom BIP39 derivation path stored for this wallet, or null when
+     * the stored path is a sentinel/default that uses a dedicated descriptor builder.
+     */
+    private fun customBip39DerivationPath(storedWallet: StoredWallet): String? {
+        val path = storedWallet.derivationPath.trim()
+        if (path.isBlank()) return null
+        if (path == "single" || path == "m" || path == "m/0'" || path == "liquid_ct") return null
+        if (path == storedWallet.addressType.defaultPath) return null
+        return path
+    }
+
+    /**
      * Create descriptors from an Electrum native seed phrase.
      *
      * Electrum seeds use different key stretching (PBKDF2 with "electrum" salt)
@@ -2217,6 +2472,72 @@ class WalletRepository(context: Context) {
         BitcoinUtils.convertToXpub(extendedKey)
 
     /**
+     * True when the input is a bare or origin-prefixed extended PRIVATE key
+     * (xprv/zprv). Full descriptors are handled by the descriptor parser instead.
+     */
+    private fun isExtendedPrivateKeyInput(input: String): Boolean {
+        val bare = parseKeyOrigin(input.trim()).bareKey
+        return bare.startsWith("xprv") || bare.startsWith("zprv")
+    }
+
+    /**
+     * Create spend-capable descriptors from an extended private key (xprv/zprv).
+     * Mirrors [createWatchOnlyDescriptors] but embeds the private key so the
+     * resulting wallet can sign. zprv is re-encoded to xprv version bytes.
+     */
+    private fun createExtendedPrivateKeyDescriptors(
+        extendedKey: String,
+        addressType: AddressType,
+        network: Network,
+        masterFingerprint: String? = null,
+    ): Pair<Descriptor, Descriptor> {
+        val parsed = parseKeyOrigin(extendedKey.trim())
+        val fingerprint = parsed.fingerprint ?: masterFingerprint
+        val originPath = parsed.derivationPath
+        validateKeyScriptTypeConsistency(parsed.bareKey, originPath, addressType)
+        val xprvKey = BitcoinUtils.convertToXprv(parsed.bareKey)
+        val keyWithOrigin = BitcoinUtils.buildKeyWithOrigin(xprvKey, fingerprint, originPath, addressType)
+        val (externalStr, internalStr) = BitcoinUtils.buildDescriptorStrings(keyWithOrigin, addressType)
+        return Pair(Descriptor(externalStr, network), Descriptor(internalStr, network))
+    }
+
+    /**
+     * Reject key/origin combinations that would silently derive a valid-but-wrong
+     * wallet: SLIP-132 versions imply a script type, and a BIP purpose (44'/84'/86')
+     * in the origin path must match the selected address type.
+     */
+    private fun validateKeyScriptTypeConsistency(
+        bareKey: String,
+        originPath: String?,
+        addressType: AddressType,
+    ) {
+        if ((bareKey.startsWith("zpub") || bareKey.startsWith("zprv")) && addressType != AddressType.SEGWIT) {
+            throw IllegalArgumentException(
+                "${bareKey.take(4)} is a Native SegWit key — select the SegWit address type",
+            )
+        }
+        val purpose =
+            originPath
+                ?.split('/')
+                ?.firstOrNull()
+                ?.removeSuffix("'")
+                ?.toIntOrNull()
+        if (purpose == 44 || purpose == 84 || purpose == 86) {
+            val expected =
+                when (addressType) {
+                    AddressType.LEGACY -> 44
+                    AddressType.SEGWIT -> 84
+                    AddressType.TAPROOT -> 86
+                }
+            if (purpose != expected) {
+                throw IllegalArgumentException(
+                    "Origin path m/$purpose'/... does not match the selected address type (expected m/$expected'/...)",
+                )
+            }
+        }
+    }
+
+    /**
      * Create watch-only descriptors from extended public key.
      *
      * Includes key origin info [fingerprint/derivation] when available, which is
@@ -2252,6 +2573,8 @@ class WalletRepository(context: Context) {
         val bareKey = parsed.bareKey
         val fingerprint = parsed.fingerprint ?: masterFingerprint
         val originPath = parsed.derivationPath
+
+        validateKeyScriptTypeConsistency(bareKey, originPath, addressType)
 
         // Convert to xpub format for BDK compatibility
         val xpubKey = convertToXpub(bareKey)
@@ -2419,6 +2742,14 @@ class WalletRepository(context: Context) {
         addressType: AddressType,
         network: Network,
     ): Descriptor {
+        // Uncompressed-pubkey WIF keys ("5...") are only standard for Legacy P2PKH.
+        // wpkh()/tr() with an uncompressed pubkey produces a non-standard script
+        // that no other wallet would derive — reject instead of silently creating it.
+        if (!isWifCompressed(wif) && addressType != AddressType.LEGACY) {
+            throw IllegalArgumentException(
+                "Uncompressed WIF keys can only be used with the Legacy address type",
+            )
+        }
         val descriptorStr =
             when (addressType) {
                 AddressType.LEGACY -> "pkh($wif)"
@@ -2433,11 +2764,15 @@ class WalletRepository(context: Context) {
      */
     suspend fun loadWallet(): WalletResult<Unit> =
         withContext(Dispatchers.IO) {
-            val activeWalletId =
-                secureStorage.getActiveWalletId()
-                    ?: return@withContext WalletResult.Error("No active wallet")
+            walletLoadMutex.withLock {
+                // Read the active wallet ID under the lock so a concurrent wallet
+                // switch can't leave us loading a wallet that is no longer active.
+                val activeWalletId =
+                    secureStorage.getActiveWalletId()
+                        ?: return@withContext WalletResult.Error("No active wallet")
 
-            loadWalletById(activeWalletId)
+                loadWalletByIdLocked(activeWalletId)
+            }
         }
 
     /**
@@ -2819,6 +3154,13 @@ class WalletRepository(context: Context) {
 
             val currentWallet = wallet ?: return@withContext WalletResult.Error("Wallet not initialized")
             val client = electrumClient ?: return@withContext WalletResult.Error("Not connected to Electrum server")
+            // Snapshot ownership so a concurrent switch/import cannot persist this
+            // wallet into another wallet's SQLite or publish its balance under the new name.
+            val syncWalletId = loadedWalletId
+            val syncWallet = currentWallet
+            if (syncWalletId == null || syncWalletId != activeWalletId) {
+                return@withContext WalletResult.Error("Wallet changed during sync")
+            }
 
             // If wallet needs full sync (first time or manually requested), do that instead.
             // force = false: if another fullSync() completed while we wait on the mutex,
@@ -2956,21 +3298,32 @@ class WalletRepository(context: Context) {
                     }
                 val shouldVerifyPendingConfirmations = hadPendingTransactions && (force || newBlockDetected)
 
+                // Never write or publish if ownership changed mid-sync
+                if (loadedWalletId != syncWalletId ||
+                    wallet !== syncWallet ||
+                    secureStorage.getActiveWalletId() != syncWalletId
+                ) {
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Abandoning sync apply — wallet ownership changed")
+                    return@withContext WalletResult.Error("Wallet changed during sync")
+                }
+
                 // Always persist — chain tip updates even when no tx events
-                walletPersister?.let { currentWallet.persist(it) }
-                var postSyncWallet = currentWallet
+                walletPersister?.let { syncWallet.persist(it) }
+                var postSyncWallet = syncWallet
                 if (shouldVerifyPendingConfirmations) {
                     if (reloadWalletFromDatabase()) {
-                        postSyncWallet = wallet ?: currentWallet
-                    } else {
-                        wallet = currentWallet
+                        postSyncWallet = wallet ?: syncWallet
+                    } else if (loadedWalletId == syncWalletId && wallet === syncWallet) {
+                        wallet = syncWallet
                     }
                 }
 
                 // Clear syncing state so the UI dialog dismisses promptly.
                 // The post-processing (updateWalletState, cache refresh) runs after
                 // and the balance/transactions update seamlessly in the background.
-                _walletState.value = _walletState.value.copy(isSyncing = false, syncProgress = null)
+                if (loadedWalletId == syncWalletId) {
+                    _walletState.value = _walletState.value.copy(isSyncing = false, syncProgress = null)
+                }
 
                 if (events.isNotEmpty()) {
                     if (BuildConfig.DEBUG) Log.d(TAG, "Sync events: ${events.size} changes detected")
@@ -3029,6 +3382,11 @@ class WalletRepository(context: Context) {
             val activeWalletId =
                 secureStorage.getActiveWalletId()
                     ?: return@withContext WalletResult.Error("No active wallet")
+            val fullSyncWalletId = loadedWalletId
+            val fullSyncWallet = currentWallet
+            if (fullSyncWalletId == null || fullSyncWalletId != activeWalletId) {
+                return@withContext WalletResult.Error("Wallet changed during sync")
+            }
             cancelTransactionRefreshForSync()
 
             // Mutex: wait for any running sync to finish before starting full scan
@@ -3146,12 +3504,21 @@ class WalletRepository(context: Context) {
                     currentBatchSize = SYNC_BATCH_SIZE
                     secureStorage.saveSyncBatchSize(currentBatchSize.toLong())
 
+                    // Never apply/persist if ownership changed mid-scan
+                    if (loadedWalletId != fullSyncWalletId ||
+                        wallet !== fullSyncWallet ||
+                        secureStorage.getActiveWalletId() != fullSyncWalletId
+                    ) {
+                        if (BuildConfig.DEBUG) Log.d(TAG, "Abandoning full sync apply — wallet ownership changed")
+                        return@withContext WalletResult.Error("Wallet changed during sync")
+                    }
+
                     // Apply update with events
                     _walletState.value =
                         _walletState.value.copy(
                             syncProgress = SyncProgress(status = "Applying updates..."),
                         )
-                    val events = currentWallet.applyUpdateEvents(update)
+                    val events = fullSyncWallet.applyUpdateEvents(update)
                     if (BuildConfig.DEBUG) Log.d(TAG, "Full scan events: ${events.size} changes detected")
 
                     // Persist changes to database
@@ -3159,18 +3526,18 @@ class WalletRepository(context: Context) {
                         _walletState.value.copy(
                             syncProgress = SyncProgress(status = "Saving to database..."),
                         )
-                    walletPersister?.let { currentWallet.persist(it) }
-                    var postSyncWallet = currentWallet
+                    walletPersister?.let { fullSyncWallet.persist(it) }
+                    var postSyncWallet = fullSyncWallet
 
                     // BDK's in-memory UTXO/keychain index can be stale after
                     // applyUpdateEvents when the full scan revealed new addresses.
                     // Reloading from the persisted database forces a full rebuild
                     // so that balance() matches the actual transaction set.
                     if (events.isNotEmpty()) {
-                        refreshWalletTransactionCache(currentWallet)
-                        val preReloadBalance = try { amountToSats(currentWallet.balance().total) } catch (_: Exception) { null }
+                        refreshWalletTransactionCache(fullSyncWallet)
+                        val preReloadBalance = try { amountToSats(fullSyncWallet.balance().total) } catch (_: Exception) { null }
                         if (reloadWalletFromDatabase()) {
-                            postSyncWallet = wallet ?: currentWallet
+                            postSyncWallet = wallet ?: fullSyncWallet
                             refreshWalletTransactionCache(postSyncWallet)
                             if (BuildConfig.DEBUG) {
                                 val postBalance = try { amountToSats(postSyncWallet.balance().total) } catch (_: Exception) { null }
@@ -3178,8 +3545,8 @@ class WalletRepository(context: Context) {
                                     Log.w(TAG, "Full scan reload corrected balance: $preReloadBalance -> $postBalance")
                                 }
                             }
-                        } else {
-                            wallet = currentWallet
+                        } else if (loadedWalletId == fullSyncWalletId && wallet === fullSyncWallet) {
+                            wallet = fullSyncWallet
                         }
                     }
 
@@ -4260,22 +4627,26 @@ class WalletRepository(context: Context) {
                 val syncResult = sync()
                 result =
                     if (syncResult is WalletResult.Success) {
+                        // NOW populate the cache — BDK has processed all changes.
+                        // These statuses represent the current server state that
+                        // BDK is in sync with.
+                        scriptHashStatusCache.putAll(currentStatuses)
+                        // Persist current statuses for next app launch
+                        electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
                         SubscriptionResult.SYNCED
                     } else {
+                        // Sync failed — do NOT record the server's statuses in memory
+                        // or on disk. Keeping the stale persisted snapshot forces
+                        // change detection (and a sync) on the next launch; leaving
+                        // the in-memory cache empty bypasses the quick-sync pre-check.
                         SubscriptionResult.FAILED
                     }
             } else {
                 if (BuildConfig.DEBUG) Log.d(TAG, "No changes since last session — skipping sync")
+                scriptHashStatusCache.putAll(currentStatuses)
+                electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
                 result = SubscriptionResult.NO_CHANGES
             }
-
-            // NOW populate the cache — BDK has processed all changes (or confirmed
-            // nothing changed). These statuses represent the current server state
-            // that BDK is in sync with.
-            scriptHashStatusCache.putAll(currentStatuses)
-
-            // Persist current statuses for next app launch
-            electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
 
             if (BuildConfig.DEBUG) Log.d(TAG, "Starting notification collector (result=$result)")
 
@@ -6680,10 +7051,37 @@ class WalletRepository(context: Context) {
             try {
                 // Round up fee rate to ensure we meet the target
                 val feeRate = feeRateFromSatPerVb(newFeeRate)
+                val frozenRefs = frozenRefsForActiveWallet()
+                val originalTx =
+                    currentWallet.getTx(Txid.fromString(txid))?.transaction
+                        ?: return@withContext WalletResult.Error("Original transaction not found")
+                val originalOutpoints =
+                    originalTx.input().map { it.previousOutput.toFrozenRef() }.toSet()
 
                 // Use BDK's bump fee builder — requires Txid type in BDK 2.x
                 val bumpFeeTxBuilder = BumpFeeTxBuilder(Txid.fromString(txid), feeRate)
                 val psbt = bumpFeeTxBuilder.finish(currentWallet)
+
+                // BumpFeeTxBuilder has no freeze API — reject if it pulled any new
+                // (fee-top-up) input that the user marked frozen.
+                val bumpInputs = psbt.extractTx().input()
+                val frozenFeeTopUp =
+                    bumpInputs.any { inp ->
+                        val ref = inp.previousOutput.toFrozenRef()
+                        ref !in originalOutpoints && ref in frozenRefs
+                    }
+                if (frozenFeeTopUp) {
+                    return@withContext WalletResult.Error(
+                        "Cannot RBF using frozen UTXOs for the fee top-up — unfreeze coins or lower the fee",
+                    )
+                }
+
+                // BumpFeeTxBuilder guarantees the replacement satisfies BIP125
+                // (original fee + incremental relay fee). The post-sign correction
+                // below may compute a slightly lower fee when the user picks a rate
+                // barely above the original — clamp to BDK's minimum so the
+                // replacement isn't rejected by the mempool.
+                val minReplacementFee = try { psbt.fee() } catch (_: Exception) { 0UL }
 
                 // BumpFeeTxBuilder only accepts FeeRate (no feeAbsolute),
                 // so we apply post-sign correction by re-invoking the builder.
@@ -6700,14 +7098,17 @@ class WalletRepository(context: Context) {
                             val unsignedTx = psbt.extractTx()
                             val inputs = unsignedTx.input()
                             val outputs = unsignedTx.output()
+                            val clampedFee = if (fee < minReplacementFee) minReplacementFee else fee
 
                             // Identify change vs recipient outputs using isMine().
                             // Recipient outputs get fixed amounts via addRecipient;
                             // change output absorbs the remainder via drainTo.
+                            // Force only the bump's already-selected outs (no frozen extras).
                             var b =
                                 TxBuilder()
                                     .applyOptInRbf()
-                                    .feeAbsolute(Amount.fromSat(fee))
+                                    .applyFrozenUtxoFilter()
+                                    .feeAbsolute(Amount.fromSat(clampedFee))
 
                             for (inp in inputs) {
                                 b = b.addUtxo(inp.previousOutput)
@@ -7078,11 +7479,29 @@ class WalletRepository(context: Context) {
                     return@withContext WalletResult.Error(localizedString(R.string.speed_up_error_cpfp_no_outputs))
                 }
 
+                val frozenRefs = frozenRefsForActiveWallet()
+                if (parentUtxos.any { isFrozenOutpoint(it.outpoint, frozenRefs) }) {
+                    return@withContext WalletResult.Error(
+                        "Cannot CPFP with frozen parent outputs — unfreeze them first",
+                    )
+                }
+
                 // Get a change address to send to (we're just consolidating to ourselves)
                 val changeAddress = currentWallet.revealNextAddress(KeychainKind.INTERNAL)
 
                 // Calculate total value of parent UTXOs
                 val totalValue = parentUtxos.sumOf { it.txout.value.toSat().toLong() }.toULong()
+
+                // Package-aware fee accounting: miners evaluate parent+child TOGETHER,
+                // so the child must pay targetRate * (parentVsize + childVsize) minus
+                // whatever the parent already pays — not just targetRate * childVsize.
+                val parentTx =
+                    currentWallet.getTx(Txid.fromString(parentTxid))?.transaction
+                val parentFeeSats =
+                    parentTx?.let { runCatching { currentWallet.calculateFee(it).toSat().toLong() }.getOrDefault(0L) }
+                        ?: 0L
+                val parentVsize = parentTx?.let { it.weight().toDouble() / 4.0 } ?: 0.0
+                val feeOffsetSats = kotlin.math.round(feeRate * parentVsize).toLong() - parentFeeSats
 
                 // Build transaction spending the parent's UTXOs
                 val bdkFeeRate = feeRateFromSatPerVb(feeRate)
@@ -7094,8 +7513,10 @@ class WalletRepository(context: Context) {
                 // Estimate child tx vsize (~150 vB for 1-in-1-out P2WPKH/P2TR)
                 // Add buffer for potential additional inputs
                 val estimatedVsize = 150L + (parentUtxos.size - 1) * 68L // ~68 vB per additional input
-                val effectiveFeeRateCeil = kotlin.math.ceil(feeRate).toULong()
-                val estimatedFee = effectiveFeeRateCeil * estimatedVsize.toULong()
+                val estimatedFee =
+                    (kotlin.math.ceil(feeRate * (parentVsize + estimatedVsize)).toLong() - parentFeeSats)
+                        .coerceAtLeast(estimatedVsize) // >= ~1 sat/vB relay floor
+                        .toULong()
 
                 // Check if parent output can cover fee AND leave dust-safe amount
                 val canCoverFeeWithDust = totalValue > estimatedFee + dustLimit
@@ -7107,9 +7528,11 @@ class WalletRepository(context: Context) {
                     )
                 }
 
-                // Local helper to build the CPFP transaction with given fee config
+                // Local helper to build the CPFP transaction with given fee config.
+                // applyFrozenUtxoFilter keeps drainWallet() from pulling frozen coins
+                // for fee; parent outs are still force-added via addUtxo.
                 fun buildCpfpTx(builder: TxBuilder): TxBuilder {
-                    var b = builder.applyOptInRbf()
+                    var b = builder.applyOptInRbf().applyFrozenUtxoFilter()
                     for (utxo in parentUtxos) {
                         if (BuildConfig.DEBUG) {
                             Log.d(
@@ -7129,15 +7552,20 @@ class WalletRepository(context: Context) {
                 }
 
                 // Two-pass fee correction: pass-1 with feeRate for coin selection,
-                // then sign to measure actual vsize, rebuild with feeAbsolute
+                // then sign to measure actual vsize, rebuild with feeAbsolute.
+                // The fee offset makes both passes package-aware (parent + child).
                 val pass1Psbt = buildCpfpTx(TxBuilder().feeRate(bdkFeeRate)).finish(currentWallet)
                 val exactFeeResult = computeExactFee(
                     pass1Psbt, currentWallet, pass1Psbt.extractTx(), feeRate,
                 )
                 val psbt = if (exactFeeResult != null) {
                     try {
+                        val packageAwareFee =
+                            (exactFeeResult.feeSats.toLong() + feeOffsetSats)
+                                .coerceAtLeast(kotlin.math.ceil(exactFeeResult.vsize).toLong())
+                                .toULong()
                         buildCpfpTx(
-                            TxBuilder().feeAbsolute(Amount.fromSat(exactFeeResult.feeSats)),
+                            TxBuilder().feeAbsolute(Amount.fromSat(packageAwareFee)),
                         ).finish(currentWallet)
                     } catch (_: Exception) {
                         pass1Psbt
@@ -7151,6 +7579,7 @@ class WalletRepository(context: Context) {
                     initialPsbt = psbt,
                     wallet = currentWallet,
                     targetSatPerVb = feeRate,
+                    feeOffsetSats = feeOffsetSats,
                     rebuildWithFee = { fee ->
                         try {
                             buildCpfpTx(
@@ -7188,17 +7617,35 @@ class WalletRepository(context: Context) {
                 if (parentUtxos.isEmpty()) {
                     return@withContext WalletResult.Error(localizedString(R.string.speed_up_error_cpfp_no_outputs))
                 }
+                val frozenRefs = frozenRefsForActiveWallet()
+                if (parentUtxos.any { isFrozenOutpoint(it.outpoint, frozenRefs) }) {
+                    return@withContext WalletResult.Error(
+                        "Cannot CPFP with frozen parent outputs — unfreeze them first",
+                    )
+                }
 
                 val changeAddress = currentWallet.revealNextAddress(KeychainKind.INTERNAL)
                 val totalValue = parentUtxos.sumOf { it.txout.value.toSat().toLong() }.toULong()
                 val estimatedVsize = 150L + (parentUtxos.size - 1) * 68L
-                val estimatedFee = kotlin.math.ceil(feeRate).toULong() * estimatedVsize.toULong()
+
+                // Package-aware: child must pay targetRate * (parent + child vsize)
+                // minus the parent's existing fee (see cpfp()).
+                val parentTx = currentWallet.getTx(Txid.fromString(parentTxid))?.transaction
+                val parentFeeSats =
+                    parentTx?.let { runCatching { currentWallet.calculateFee(it).toSat().toLong() }.getOrDefault(0L) }
+                        ?: 0L
+                val parentVsize = parentTx?.let { it.weight().toDouble() / 4.0 } ?: 0.0
+                val estimatedFee =
+                    (kotlin.math.ceil(feeRate * (parentVsize + estimatedVsize)).toLong() - parentFeeSats)
+                        .coerceAtLeast(estimatedVsize)
+                        .toULong()
                 val canCoverFeeWithDust = totalValue > estimatedFee + 546UL
 
                 var builder =
                     TxBuilder()
                         .applyOptInRbf()
-                        .feeRate(feeRateFromSatPerVb(feeRate))
+                        .applyFrozenUtxoFilter()
+                        .feeAbsolute(Amount.fromSat(estimatedFee))
                 for (utxo in parentUtxos) {
                     builder = builder.addUtxo(utxo.outpoint)
                 }
@@ -7231,7 +7678,7 @@ class WalletRepository(context: Context) {
      */
     fun canBumpFee(txid: String): Boolean {
         val currentWallet = wallet ?: return false
-        return withWalletReadLock {
+        return withWalletReadLock(lockedOutValue = false) {
             try {
                 val canonical =
                     currentWallet.transactions().find {
@@ -7253,7 +7700,7 @@ class WalletRepository(context: Context) {
      */
     fun canCpfp(txid: String): Boolean {
         val currentWallet = wallet ?: return false
-        return withWalletReadLock {
+        return withWalletReadLock(lockedOutValue = false) {
             try {
                 val canonical =
                     currentWallet.transactions().find {
@@ -7273,12 +7720,21 @@ class WalletRepository(context: Context) {
         }
     }
 
-    private inline fun <T> withWalletReadLock(block: () -> T): T {
-        val locked = syncMutex.tryLock()
+    /**
+     * Run [block] holding the sync mutex so BDK wallet reads can't race a sync's
+     * apply/persist. When a sync is in progress the mutex can't be acquired —
+     * return [lockedOutValue] rather than reading unlocked (fail-safe: callers
+     * pass `false`, hiding RBF/CPFP actions until the sync completes).
+     */
+    private inline fun <T> withWalletReadLock(
+        lockedOutValue: T,
+        block: () -> T,
+    ): T {
+        if (!syncMutex.tryLock()) return lockedOutValue
         return try {
             block()
         } finally {
-            if (locked) syncMutex.unlock()
+            syncMutex.unlock()
         }
     }
 
@@ -7401,7 +7857,9 @@ class WalletRepository(context: Context) {
                 deleteLiquidWalletDatabase(walletId)
 
                 if (wasActive && nextActiveWalletId != null) {
-                    loadWalletById(nextActiveWalletId)
+                    walletLoadMutex.withLock {
+                        loadWalletByIdLocked(nextActiveWalletId)
+                    }
                 }
 
                 WalletResult.Success(Unit)
@@ -8570,6 +9028,10 @@ class WalletRepository(context: Context) {
         }
         val previousState = _walletState.value
         val activeWalletId = secureStorage.getActiveWalletId()
+        // Identity guard: a wallet switch is in flight and the loaded wallet does
+        // not belong to the active wallet ID — skip rather than publish wallet A's
+        // balance under wallet B's name.
+        if (loadedWalletId != activeWalletId) return
         val shouldPreserveDerivedState = previousState.activeWallet?.id == activeWalletId
         val activeWallet: StoredWallet?
         val allWallets: List<StoredWallet>
@@ -8710,6 +9172,12 @@ class WalletRepository(context: Context) {
         val currentWallet = wallet
         val previousState = _walletState.value
         val activeWalletId = secureStorage.getActiveWalletId()
+        // Identity guard: don't publish a loaded wallet's data under a different
+        // active wallet's metadata while a wallet switch is in flight.
+        // Also skip when wallet is null but loadedWalletId disagrees with active
+        // (half-failed load / switch in flight), so we don't flash empty state.
+        if (loadedWalletId != null && loadedWalletId != activeWalletId) return
+        if (currentWallet != null && loadedWalletId != activeWalletId) return
         val activeWallet: StoredWallet?
         val allWallets: List<StoredWallet>
 
@@ -8842,6 +9310,13 @@ class WalletRepository(context: Context) {
     private fun updateWalletStateIncremental(events: List<WalletEvent>) {
         val currentWallet = wallet ?: return
         val existingState = _walletState.value
+        val activeWalletId = secureStorage.getActiveWalletId()
+        // Identity guard: never merge A’s events into B’s transaction history.
+        if (loadedWalletId != activeWalletId) return
+        if (existingState.activeWallet?.id != null && existingState.activeWallet?.id != activeWalletId) {
+            updateWalletState()
+            return
+        }
 
         if (existingState.transactions.isEmpty()) {
             updateWalletState()
@@ -8850,7 +9325,6 @@ class WalletRepository(context: Context) {
 
         try {
             val balance = currentWallet.balance()
-            val activeWalletId = secureStorage.getActiveWalletId()
 
                 val affectedTxids = mutableSetOf<String>()
                 val droppedTxids = mutableSetOf<String>()

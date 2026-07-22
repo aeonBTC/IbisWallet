@@ -131,6 +131,17 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     @Volatile private var isAppInBackground = false
     @Volatile private var isAppSessionUnlocked = false
+
+    /** Whether the current process session has passed the lock screen. */
+    fun isSessionUnlocked(): Boolean = isAppSessionUnlocked
+
+    // Tracks cloak (calculator) bypass within this process so a configuration-change
+    // recreation doesn't bounce the user back to the calculator disguise.
+    @Volatile private var cloakBypassedThisSession = false
+    fun isCloakBypassedThisSession(): Boolean = cloakBypassedThisSession
+    fun markCloakBypassedThisSession() {
+        cloakBypassedThisSession = true
+    }
     private var postUnlockBootstrapJob: Job? = null
 
     // Foreground-only BTC/fiat price refresh
@@ -387,6 +398,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         if (isAppSessionUnlocked && walletState.value.isInitialized) return
 
         isAppSessionUnlocked = true
+        // Reconcile duress state after process death: if the persisted active wallet
+        // is the duress wallet, the app was killed mid-duress — restore duress UI
+        // semantics (wallet filtering, hidden security cards) for this session.
+        if (isPersistedDuressSession()) {
+            _isDuressMode.value = true
+        }
         postUnlockBootstrapJob?.cancel()
         postUnlockBootstrapJob =
             viewModelScope.launch {
@@ -786,7 +803,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
         when (result) {
             is WalletResult.Success<*> -> {
-                _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = true)
+                _uiState.value =
+                    _uiState.value.copy(
+                        isConnecting = false,
+                        isConnected = true,
+                        electrumBannerDismissed = false,
+                    )
                 startHeartbeat()
                 launchSubscriptions(reason = "foreground_reconnect")
             }
@@ -983,6 +1005,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                 _uiState.value.copy(
                                     isConnecting = false,
                                     isConnected = true,
+                                    electrumBannerDismissed = false,
                                     serverVersion = null,
                                 )
                             refreshServersState()
@@ -2753,6 +2776,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         refreshServersState()
     }
 
+    /** Dismiss the Electrum offline banner until the next successful connection. */
+    fun dismissElectrumConnectionBanner() {
+        _uiState.value = _uiState.value.copy(electrumBannerDismissed = true)
+    }
+
     /**
      * Connect to a saved server by ID
      * Automatically enables/disables Tor based on server type
@@ -2822,6 +2850,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                 _uiState.value.copy(
                                     isConnecting = false,
                                     isConnected = true,
+                                    electrumBannerDismissed = false,
                                     serverVersion = serverVersion,
                                 )
                             refreshServersState()
@@ -3185,6 +3214,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
             var walletsImported = 0
             var walletsSkipped = 0
+            var walletsFailed = 0
             val selectedWalletIdSet = walletIds.toSet()
             val labelWalletIdSet = labelWalletIds.toSet()
 
@@ -3203,9 +3233,17 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     val shouldImportLabels = walletSelectionId in labelWalletIdSet
                     if (!shouldImportWallet && !shouldImportLabels) continue
 
-                    val entry = walletsArray.getJSONObject(i)
-                    val walletObj = entry.getJSONObject("wallet")
-                    val keyMaterialObj = entry.getJSONObject("keyMaterial")
+                    // Malformed entries must not abort the whole restore — skip them
+                    // and keep importing the remaining wallets.
+                    val entry = walletsArray.optJSONObject(i)
+                    val walletObj = entry?.optJSONObject("wallet")
+                    val keyMaterialObj = entry?.optJSONObject("keyMaterial")
+                    if (entry == null || walletObj == null || keyMaterialObj == null) {
+                        if (shouldImportWallet) {
+                            walletsFailed++
+                        }
+                        continue
+                    }
                     val parsed =
                         try {
                             BitcoinUtils.parseBackupJson(walletObj, keyMaterialObj)
@@ -3214,7 +3252,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                 android.util.Log.w("WalletViewModel", "Skip wallet import: ${e.message}")
                             }
                             if (shouldImportWallet) {
-                                walletsSkipped++
+                                walletsFailed++
                             }
                             continue
                         }
@@ -3225,9 +3263,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         if (shouldImportWallet) {
                             walletsSkipped++
                         }
-                        if (shouldImportWallet) {
-                            restoreWalletSettings(existingId, entry)
-                        }
+                        // Do NOT apply backup settings (frozen UTXOs, lock state, layer-2
+                        // config) to an existing wallet — the entry is reported as
+                        // "skipped (already exist)", so mutating it would silently alter
+                        // the wallet. Labels are restored only when explicitly selected.
                         if (shouldImportLabels) {
                             restoreLabelsForWallet(existingId, entry)
                         }
@@ -3243,7 +3282,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                     ?.let { SeedFormat.valueOf(it) }
                                     ?: SeedFormat.BIP39
 
-                            val gapLimit = walletObj.optInt("gapLimit", StoredWallet.DEFAULT_GAP_LIMIT)
+                            // Clamp gap limit from untrusted backup data — an unbounded
+                            // value would derive billions of addresses (hang/OOM) at import.
+                            val gapLimit =
+                                walletObj.optInt("gapLimit", StoredWallet.DEFAULT_GAP_LIMIT)
+                                    .coerceIn(1, StoredWallet.MAX_GAP_LIMIT)
                             val fingerprint = walletObj.optString("masterFingerprint", "").ifBlank { null }
                             val multisigConfig =
                                 keyMaterialObj.optJSONObject("multisigConfig")?.let {
@@ -3265,22 +3308,37 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                 localCosignerKeyMaterial =
                                     keyMaterialObj.optString("localCosignerKeyMaterial", "").ifBlank { null },
                             )
-                            repository.importWallet(config)
-                            walletsImported++
-
-                            val newWalletId = repository.getActiveWalletId()
-                            if (newWalletId != null) {
-                                backupIdentity?.let { existingWalletIdsByIdentity[it] = newWalletId }
-                                restoreWalletSettings(newWalletId, entry)
-                                if (shouldImportLabels) {
-                                    restoreLabelsForWallet(newWalletId, entry)
+                            // importWallet reports validation/duplicate failures via
+                            // WalletResult.Error (it does not throw) and only switches
+                            // the active wallet on success — so the result MUST be
+                            // checked before applying this entry's settings/labels,
+                            // otherwise they would be written onto the wrong wallet.
+                            when (val importResult = repository.importWallet(config)) {
+                                is WalletResult.Success -> {
+                                    val newWalletId = repository.getActiveWalletId()
+                                    if (newWalletId == null) {
+                                        walletsFailed++
+                                    } else {
+                                        walletsImported++
+                                        backupIdentity?.let { existingWalletIdsByIdentity[it] = newWalletId }
+                                        restoreWalletSettings(newWalletId, entry)
+                                        if (shouldImportLabels) {
+                                            restoreLabelsForWallet(newWalletId, entry)
+                                        }
+                                    }
+                                }
+                                is WalletResult.Error -> {
+                                    if (BuildConfig.DEBUG) {
+                                        android.util.Log.w("WalletViewModel", "Wallet import failed: ${importResult.message}")
+                                    }
+                                    walletsFailed++
                                 }
                             }
                         } catch (e: Exception) {
                             if (BuildConfig.DEBUG) {
                                 android.util.Log.w("WalletViewModel", "Skip wallet import: ${e.message}")
                             }
-                            walletsSkipped++
+                            walletsFailed++
                         }
                     }
                 }
@@ -3306,6 +3364,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 append("Restored successfully.")
                 if (walletsImported > 0) append(" $walletsImported wallet(s) imported.")
                 if (walletsSkipped > 0) append(" $walletsSkipped skipped (already exist).")
+                if (walletsFailed > 0) append(" $walletsFailed failed to import.")
             }
             _fullBackupResultMessage.value = msg
             _events.emit(WalletEvent.WalletImported)
@@ -3384,6 +3443,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             put("tlsCertPem", config.tlsCertPem)
             put("useTls", config.tlsEnabled)
             put("allowInsecureTls", !config.tlsEnabled)
+            put("preferSessionTls", config.preferSessionTls)
             put("nwcUri", config.nwcUri)
             put("clnRune", config.clnRune)
         }
@@ -3417,6 +3477,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             tlsCertPem = if (useTls) tlsCertPem else "",
             useTls = useTls,
             allowInsecureTls = !useTls,
+            preferSessionTls = json.optBoolean("preferSessionTls", false),
             nwcUri = json.optString("nwcUri", ""),
             clnRune = json.optString("clnRune", ""),
         )
@@ -3500,48 +3561,40 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         val sparkAddrLabels = labelsObj?.optJSONObject("sparkAddresses")
         val sparkTxLabels = labelsObj?.optJSONObject("sparkTransactions")
 
+        // Labels come from an untrusted backup file — sanitize control characters
+        // so a crafted label can't inject line breaks into the UI.
         val restoredAddressLabels = mutableMapOf<String, String>()
         addrLabels?.keys()?.forEach { addr ->
-            val label = addrLabels.optString(addr, "")
-            if (label.isNotBlank()) {
-                restoredAddressLabels[addr] = label
-            }
+            BitcoinUtils.sanitizeExternalLabel(addrLabels.optString(addr, ""))
+                ?.let { restoredAddressLabels[addr] = it }
         }
         repository.saveAddressLabelsForWallet(walletId, restoredAddressLabels)
 
         val restoredTransactionLabels = mutableMapOf<String, String>()
         txLabels?.keys()?.forEach { txid ->
-            val label = txLabels.optString(txid, "")
-            if (label.isNotBlank()) {
-                restoredTransactionLabels[txid] = label
-            }
+            BitcoinUtils.sanitizeExternalLabel(txLabels.optString(txid, ""))
+                ?.let { restoredTransactionLabels[txid] = it }
         }
         repository.saveTransactionLabelsForWallet(walletId, restoredTransactionLabels)
 
         val restoredLiquidTransactionLabels = mutableMapOf<String, String>()
         liquidTxLabels?.keys()?.forEach { txid ->
-            val label = liquidTxLabels.optString(txid, "")
-            if (label.isNotBlank()) {
-                restoredLiquidTransactionLabels[txid] = label
-            }
+            BitcoinUtils.sanitizeExternalLabel(liquidTxLabels.optString(txid, ""))
+                ?.let { restoredLiquidTransactionLabels[txid] = it }
         }
         repository.saveLiquidTransactionLabelsForWallet(walletId, restoredLiquidTransactionLabels)
 
         val restoredSparkAddressLabels = mutableMapOf<String, String>()
         sparkAddrLabels?.keys()?.forEach { address ->
-            val label = sparkAddrLabels.optString(address, "")
-            if (label.isNotBlank()) {
-                restoredSparkAddressLabels[address] = label
-            }
+            BitcoinUtils.sanitizeExternalLabel(sparkAddrLabels.optString(address, ""))
+                ?.let { restoredSparkAddressLabels[address] = it }
         }
         repository.saveSparkAddressLabelsForWallet(walletId, restoredSparkAddressLabels)
 
         val restoredSparkTransactionLabels = mutableMapOf<String, String>()
         sparkTxLabels?.keys()?.forEach { paymentId ->
-            val label = sparkTxLabels.optString(paymentId, "")
-            if (label.isNotBlank()) {
-                restoredSparkTransactionLabels[paymentId] = label
-            }
+            BitcoinUtils.sanitizeExternalLabel(sparkTxLabels.optString(paymentId, ""))
+                ?.let { restoredSparkTransactionLabels[paymentId] = it }
         }
         repository.saveSparkTransactionLabelsForWallet(walletId, restoredSparkTransactionLabels)
         restoreSparkMetadataForWallet(walletId, walletEntry.optJSONObject("sparkMetadata"))
@@ -3577,22 +3630,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             val useTor = obj.optBoolean("useTor", false)
 
             // Reject malformed hosts/ports — a backup is not a trusted source.
+            // Plaintext/clearnet Liquid Electrum is allowed (same as UI server entry):
+            // the user must still TOFU-verify the SSL cert on first connect when SSL is on.
             if (ServerUrlValidator.validateHostAndPort(url, port) != null) {
                 SecureLog.w(
                     TAG,
                     "Skipping Liquid server from backup with invalid host/port",
                     releaseMessage = "Backup contained an invalid Liquid server",
-                )
-                continue
-            }
-            // Fail closed on plaintext + clearnet servers from backup. A user can
-            // re-add a LAN-only plaintext server through the UI if they really
-            // need it; we will not silently take that risk on restore.
-            if (!useSsl && !useTor) {
-                SecureLog.w(
-                    TAG,
-                    "Skipping Liquid server from backup that uses neither SSL nor Tor",
-                    releaseMessage = "Backup contained an untrusted Liquid server",
                 )
                 continue
             }
@@ -3673,6 +3717,63 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         if (settings.has("lightningNodeLayer2Enabled")) {
             secureStorage.setLightningNodeLayer2Enabled(settings.getBoolean("lightningNodeLayer2Enabled"))
         }
+
+        // These keys are exported into appSettings but were historically only
+        // applied by restoreServerSettings — a user importing app settings
+        // without servers would silently lose them. Restore them here too.
+        if (settings.has("autoSwitchServer")) {
+            repository.setAutoSwitchServerEnabled(settings.getBoolean("autoSwitchServer"))
+        }
+        settings.optString("mempoolServer", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setMempoolServer(it) }
+        restoreValidatedUrl(
+            value = settings.optString("mempoolCustomUrl", ""),
+            onValid = repository::setCustomMempoolUrl,
+            debugMessage = "Skipping custom mempool URL from backup: failed validation",
+            releaseMessage = "Backup contained an invalid block explorer URL",
+        )
+        settings.optString("feeSource", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setFeeSource(it) }
+        restoreValidatedUrl(
+            value = settings.optString("feeSourceCustomUrl", ""),
+            onValid = repository::setCustomFeeSourceUrl,
+            debugMessage = "Skipping custom fee source URL from backup: failed validation",
+            releaseMessage = "Backup contained an invalid fee source URL",
+        )
+        settings.optString("priceSource", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setPriceSource(it) }
+        settings.optString("priceCurrency", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setPriceCurrency(it) }
+        if (settings.has("historicalTxFiatEnabled")) {
+            repository.setHistoricalTxFiatEnabled(settings.getBoolean("historicalTxFiatEnabled"))
+        }
+        if (settings.has("liquidTorEnabled")) {
+            repository.setLiquidTorEnabled(settings.getBoolean("liquidTorEnabled"))
+        }
+        settings.optString("boltzApiSource", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setBoltzApiSource(it) }
+        settings.optString("sideSwapApiSource", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setSideSwapApiSource(it) }
+        settings.optString("preferredSwapService", "").takeIf { it.isNotBlank() }?.let { name ->
+            try { repository.setPreferredSwapService(SwapService.valueOf(name)) } catch (_: Exception) {}
+        }
+        if (settings.has("liquidAutoSwitch")) {
+            repository.setLiquidAutoSwitchEnabled(settings.getBoolean("liquidAutoSwitch"))
+        }
+        if (settings.has("electrumServerSelectedByUser")) {
+            repository.setUserSelectedElectrumServer(settings.getBoolean("electrumServerSelectedByUser"))
+        }
+        if (settings.has("liquidServerSelectedByUser")) {
+            repository.setUserSelectedLiquidServer(settings.getBoolean("liquidServerSelectedByUser"))
+        }
+        settings.optString("liquidExplorer", "").takeIf { it.isNotBlank() }
+            ?.let { repository.setLiquidExplorer(it) }
+        restoreValidatedUrl(
+            value = settings.optString("liquidExplorerCustomUrl", ""),
+            onValid = repository::setCustomLiquidExplorerUrl,
+            debugMessage = "Skipping custom Liquid explorer URL from backup: failed validation",
+            releaseMessage = "Backup contained an invalid Liquid explorer URL",
+        )
     }
 
     private fun restoreWalletSettings(walletId: String, walletEntry: JSONObject) {
@@ -3721,7 +3822,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             repository.setLiquidDescriptor(walletId, settingsObj.getString("liquidDescriptor"))
         }
         if (settingsObj.has("liquidGapLimit")) {
-            repository.setLiquidGapLimit(walletId, settingsObj.getInt("liquidGapLimit"))
+            repository.setLiquidGapLimit(
+                walletId,
+                settingsObj.getInt("liquidGapLimit").coerceIn(1, StoredWallet.MAX_GAP_LIMIT),
+            )
         }
         val frozenArr = settingsObj.optJSONArray("frozenUtxos")
         if (frozenArr != null && frozenArr.length() > 0) {
@@ -5078,7 +5182,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Called when the real PIN or biometric is used on the lock screen.
      */
     fun exitDuressMode() {
-        if (!_isDuressMode.value) return
+        // Also exit when the persisted active wallet is the duress wallet (app was
+        // killed mid-duress) even though the in-memory flag reset on cold start —
+        // a real-PIN unlock must always land on the real wallet.
+        if (!_isDuressMode.value && !isPersistedDuressSession()) return
         viewModelScope.launch {
             _isDuressMode.value = false
             repository.switchToRealWallet()
@@ -5086,6 +5193,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 launchSubscriptions()
             }
         }
+    }
+
+    /** True when the persisted active wallet is the duress (decoy) wallet. */
+    private fun isPersistedDuressSession(): Boolean {
+        val duressWalletId = repository.getDuressWalletId() ?: return false
+        return repository.getActiveWalletId() == duressWalletId
     }
 
     /**
@@ -5348,6 +5461,8 @@ data class WalletUiState(
     val isLoading: Boolean = false,
     val isConnecting: Boolean = false,
     val isConnected: Boolean = false,
+    /** Hides the Electrum offline banner until the next successful connection. */
+    val electrumBannerDismissed: Boolean = false,
     val isSending: Boolean = false,
     val sendStatus: String? = null,
     val serverVersion: String? = null,

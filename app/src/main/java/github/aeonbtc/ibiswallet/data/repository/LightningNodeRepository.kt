@@ -34,6 +34,8 @@ import github.aeonbtc.ibiswallet.util.isLightningAddressPayment
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -53,6 +55,12 @@ class LightningNodeRepository(
 ) {
     companion object {
         const val DEFAULT_MAX_FEE_PERCENT = 5.0
+        /**
+         * History depth for LN payments and on-chain txs.
+         * Enough for normal node history; initial load stays fast via parallel RPCs.
+         * (Not infinite — LND honours max_payments; CLN trims after fetch.)
+         */
+        private const val HISTORY_LIMIT = 200
     }
 
     private val mutex = Mutex()
@@ -107,11 +115,19 @@ class LightningNodeRepository(
     private val _isConnecting = MutableStateFlow(false)
     val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
 
+    /**
+     * Min relay fee (sat/vB) from the connected node's chain backend.
+     * Null when disconnected / NWC / query failed — UI falls back to Electrum rate.
+     */
+    private val _onchainMinFeeRate = MutableStateFlow<Double?>(null)
+    val onchainMinFeeRate: StateFlow<Double?> = _onchainMinFeeRate.asStateFlow()
+
     fun clearWalletDisplayState() {
         _onchainState.value = LightningNodeOnchainState()
         _channels.value = emptyList()
         _channelsLoading.value = false
         _channelsError.value = null
+        _onchainMinFeeRate.value = null
         _walletState.value =
             LightningNodeWalletState(
                 walletId = _loadedWalletId.value,
@@ -234,40 +250,41 @@ class LightningNodeRepository(
                         return@withContext
                     }
                     backend = client
-                    // Persist effective TLS mode after auto-upgrade so subsequent opens
-                    // don't start on HTTP and flake over Tor.
-                    val effectiveConfig =
+                    val sessionConfig =
                         (client as? LndRestClient)?.sessionConfig
                             ?: (client as? ClnRestClient)?.sessionConfig
                             ?: connectConfig
-                    if (
-                        effectiveConfig.tlsEnabled != config.tlsEnabled ||
-                        effectiveConfig.useTor != config.useTor
-                    ) {
+                    // Tor auto-detect (.onion) + preferSessionTls (skip slow cleartext next
+                    // time). Never flip the user's TLS toggle from a session upgrade.
+                    val preferSessionTls = !config.useTls && sessionConfig.tlsEnabled
+                    val persistedHintDiffers =
+                        sessionConfig.useTor != config.useTor ||
+                            preferSessionTls != config.preferSessionTls
+                    if (persistedHintDiffers) {
                         secureStorage.setLightningNodeConfig(
                             walletId,
-                            effectiveConfig.copy(
-                                macaroonHex = config.macaroonHex,
-                                tlsCertPem = config.tlsCertPem,
-                                nwcUri = config.nwcUri,
-                                clnRune = config.clnRune,
+                            config.copy(
+                                useTor = sessionConfig.useTor,
+                                preferSessionTls = preferSessionTls,
                             ),
                         )
                     }
-                    loadedConfig = effectiveConfig
-                    // Balance is required for a healthy connect; history/on-chain is best-effort
-                    // so transient Tor stream drops after getinfo don't fail the whole open.
+                    // Live session keeps the transport that worked; UI prefs stay on config.
+                    loadedConfig =
+                        sessionConfig.copy(
+                            useTls = config.useTls,
+                            allowInsecureTls = config.allowInsecureTls,
+                            preferSessionTls = preferSessionTls,
+                            macaroonHex = config.macaroonHex,
+                            tlsCertPem = config.tlsCertPem,
+                            nwcUri = config.nwcUri,
+                            clnRune = config.clnRune,
+                        )
+                    // Mark connected after getinfo + balance. Payment history and on-chain
+                    // lists each open their own Tor circuits and used to block the spinner
+                    // for minutes even when the node was already reachable.
                     val balance = client.getBalance()
                     ensureActive()
-                    if (_loadedWalletId.value != walletId) {
-                        disconnectUnlocked()
-                        return@withContext
-                    }
-                    val payments =
-                        runCatching { client.listPayments(50) }
-                            .getOrDefault(emptyList())
-                            .sortedByDescending { it.timestamp }
-                    runCatching { refreshOnchainStateUnlocked(client) }
                     if (_loadedWalletId.value != walletId) {
                         disconnectUnlocked()
                         return@withContext
@@ -287,15 +304,55 @@ class LightningNodeRepository(
                             nodeNetwork = info.network,
                             numActiveChannels = info.numActiveChannels,
                             syncedToChain = info.syncedToChain,
-                            host = effectiveConfig.host.ifBlank { null },
-                            port = effectiveConfig.port.takeIf { it > 0 },
-                            useTor = effectiveConfig.useTor,
-                            useTls = effectiveConfig.tlsEnabled,
+                            host = sessionConfig.host.ifBlank { null },
+                            port = sessionConfig.port.takeIf { it > 0 },
+                            useTor = sessionConfig.useTor,
+                            // User preference (settings/edit cog), not session auto-upgrade.
+                            useTls = config.useTls,
                             balanceSats = balance.totalSats,
                             remoteBalanceSats = balance.remoteBalanceSats,
-                            payments = payments,
+                            payments = emptyList(),
+                            isSyncing = true,
                             lastSyncTimestamp = System.currentTimeMillis(),
                         )
+                    // Best-effort enrichment — LN history, on-chain, min-relay in parallel.
+                    try {
+                        val payments =
+                            coroutineScope {
+                                val paysDeferred =
+                                    async {
+                                        runCatching { client.listPayments(HISTORY_LIMIT) }
+                                            .getOrDefault(emptyList())
+                                            .sortedByDescending { it.timestamp }
+                                    }
+                                val onchainDeferred =
+                                    async {
+                                        runCatching {
+                                            refreshOnchainStateUnlocked(
+                                                client,
+                                                transactionLimit = HISTORY_LIMIT,
+                                            )
+                                        }
+                                    }
+                                val minRelayDeferred =
+                                    async { runCatching { refreshOnchainMinFeeRateUnlocked(client) } }
+                                onchainDeferred.await()
+                                minRelayDeferred.await()
+                                paysDeferred.await()
+                            }
+                        if (_loadedWalletId.value == walletId && backend === client) {
+                            _walletState.value =
+                                _walletState.value.copy(
+                                    payments = payments,
+                                    isSyncing = false,
+                                    lastSyncTimestamp = System.currentTimeMillis(),
+                                )
+                        }
+                    } catch (_: Exception) {
+                        if (_loadedWalletId.value == walletId && backend === client) {
+                            _walletState.value = _walletState.value.copy(isSyncing = false)
+                        }
+                    }
                 } catch (e: Exception) {
                     if (e is CancellationException) {
                         disconnectUnlocked()
@@ -429,25 +486,48 @@ class LightningNodeRepository(
         val walletId = _loadedWalletId.value ?: return
         _walletState.value = _walletState.value.copy(isSyncing = true, error = null)
         try {
-            val balance = client.getBalance()
-            val payments =
-                runCatching { client.listPayments(50) }
-                    .getOrNull()
-                    ?.let { mergeStablePaymentTimestamps(_walletState.value.payments, it) }
-                    ?: _walletState.value.payments
-            val channelList =
-                runCatching { client.listChannels() }
-                    .onSuccess {
-                        _channelsError.value = null
-                        _channels.value = it
-                    }
-                    .onFailure { err ->
-                        _channelsError.value =
-                            err.message?.takeIf { it.isNotBlank() } ?: "Failed to load channels"
-                    }
-                    .getOrDefault(_channels.value)
+            // Fan out balance / payments / channels / on-chain so wall time ≈ slowest RPC.
+            val (balance, payments, channelList) =
+                coroutineScope {
+                    val balanceDeferred = async { client.getBalance() }
+                    val paymentsDeferred =
+                        async {
+                            runCatching { client.listPayments(HISTORY_LIMIT) }
+                                .getOrNull()
+                                ?.let {
+                                    mergeStablePaymentTimestamps(_walletState.value.payments, it)
+                                }
+                                ?: _walletState.value.payments
+                        }
+                    val channelsDeferred =
+                        async {
+                            runCatching { client.listChannels() }
+                                .onSuccess {
+                                    _channelsError.value = null
+                                }
+                                .onFailure { err ->
+                                    _channelsError.value =
+                                        err.message?.takeIf { it.isNotBlank() }
+                                            ?: "Failed to load channels"
+                                }
+                                .getOrDefault(_channels.value)
+                        }
+                    val onchainDeferred =
+                        async {
+                            runCatching {
+                                refreshOnchainStateUnlocked(
+                                    client,
+                                    transactionLimit = HISTORY_LIMIT,
+                                )
+                            }
+                        }
+                    val minRelayDeferred =
+                        async { runCatching { refreshOnchainMinFeeRateUnlocked(client) } }
+                    onchainDeferred.await()
+                    minRelayDeferred.await()
+                    Triple(balanceDeferred.await(), paymentsDeferred.await(), channelsDeferred.await())
+                }
             _channels.value = channelList
-            refreshOnchainStateUnlocked(client)
             _walletState.value =
                 _walletState.value.copy(
                     isSyncing = false,
@@ -479,7 +559,7 @@ class LightningNodeRepository(
             if (_receiveState.value !is LightningNodeReceiveState.Ready) return@withContext
             val client = backend ?: return@withContext
             val payments =
-                runCatching { client.listPayments(50) }
+                runCatching { client.listPayments(HISTORY_LIMIT) }
                     .getOrNull()
                     ?: return@withContext
             val merged = mergeStablePaymentTimestamps(_walletState.value.payments, payments)
@@ -588,8 +668,18 @@ class LightningNodeRepository(
                 val info = client.connect(connectConfig)
                 onPhase(LightningNodeConnectionTestPhase.FETCHING_BALANCE)
                 val balance = client.getBalance()
+                val sessionConfig =
+                    (client as? LndRestClient)?.sessionConfig
+                        ?: (client as? ClnRestClient)?.sessionConfig
+                        ?: connectConfig
                 client.disconnect()
-                LightningNodeConnectionTestResult.Success(info, balance)
+                // Hint for Save without flipping the TLS toggle.
+                val preferSessionTls = !config.useTls && sessionConfig.tlsEnabled
+                LightningNodeConnectionTestResult.Success(
+                    info = info,
+                    balance = balance,
+                    preferSessionTls = preferSessionTls,
+                )
             } catch (e: Exception) {
                 // TimeoutCancellationException is a CancellationException; convert before it
                 // escapes and wipes the test UI without a Failure payload.
@@ -620,7 +710,23 @@ class LightningNodeRepository(
         walletId: String,
         config: LightningNodeConfig,
     ) {
-        secureStorage.setLightningNodeConfig(walletId, config)
+        val existing = secureStorage.getLightningNodeConfig(walletId)
+        val sameEndpoint =
+            existing.type == config.type &&
+                existing.host.equals(config.host.trim(), ignoreCase = true) &&
+                existing.port == config.port &&
+                existing.useTls == config.useTls
+        // Keep the LAN speed hint across edit/save; drop it when host/port/TLS change.
+        val toSave =
+            config.copy(
+                preferSessionTls =
+                    if (sameEndpoint) {
+                        existing.preferSessionTls || config.preferSessionTls
+                    } else {
+                        config.preferSessionTls
+                    },
+            )
+        secureStorage.setLightningNodeConfig(walletId, toSave)
     }
 
     suspend fun createInvoice(
@@ -879,7 +985,7 @@ class LightningNodeRepository(
     suspend fun sendOnchain(
         address: String,
         amountSats: Long?,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         sendAll: Boolean,
         label: String?,
         spendUnconfirmed: Boolean,
@@ -915,7 +1021,7 @@ class LightningNodeRepository(
 
     suspend fun sendOnchainMany(
         addrToAmountSats: Map<String, Long>,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         label: String?,
         spendUnconfirmed: Boolean,
         selectedOutpoints: List<UtxoInfo>?,
@@ -952,7 +1058,7 @@ class LightningNodeRepository(
      */
     suspend fun bumpOnchainFee(
         parentTxid: String,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
     ): String =
         mutex.withLock {
             withContext(Dispatchers.IO) {
@@ -1045,14 +1151,37 @@ class LightningNodeRepository(
             config
         }
 
-    private suspend fun refreshOnchainStateUnlocked(client: LightningNodeBackend) {
+    /** Query node chain-backend min relay (sat/vB) for LN L1 fee floor. */
+    private suspend fun refreshOnchainMinFeeRateUnlocked(client: LightningNodeBackend) {
+        val rate =
+            runCatching { client.getOnchainMinRelayFeeSatPerVb() }
+                .getOrNull()
+                ?.takeIf { it in 0.01..100.0 }
+        if (rate != null) {
+            _onchainMinFeeRate.value = rate
+        }
+        // Keep prior value on transient failure so the fee picker does not jump to Electrum default.
+    }
+
+    private suspend fun refreshOnchainStateUnlocked(
+        client: LightningNodeBackend,
+        transactionLimit: Int = HISTORY_LIMIT,
+    ) {
         val previous = _onchainState.value
         _onchainState.value = previous.copy(isSyncing = true, error = null)
         // Balance alone is enough to mark L1 available; history/utxos are best-effort so a
         // permissions/list/network failure does not blank the entire on-chain layer.
-        val balanceResult = runCatching { client.getOnchainBalanceDetails() }
-        val txsResult = runCatching { client.listOnchainTransactions(200) }
-        val utxosResult = runCatching { client.listOnchainUtxos() }
+        // Fetch in parallel — sequential UTXO + history was the dominant LAN/Tor lag.
+        val (balanceResult, txsResult, utxosResult) =
+            coroutineScope {
+                val balanceDeferred = async { runCatching { client.getOnchainBalanceDetails() } }
+                val txsDeferred =
+                    async {
+                        runCatching { client.listOnchainTransactions(transactionLimit) }
+                    }
+                val utxosDeferred = async { runCatching { client.listOnchainUtxos() } }
+                Triple(balanceDeferred.await(), txsDeferred.await(), utxosDeferred.await())
+            }
         when {
             balanceResult.isSuccess -> {
                 val details = balanceResult.getOrThrow()
@@ -1210,5 +1339,6 @@ class LightningNodeRepository(
         runCatching { backend?.disconnect() }
         backend = null
         loadedConfig = null
+        _onchainMinFeeRate.value = null
     }
 }

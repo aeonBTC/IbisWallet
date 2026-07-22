@@ -43,21 +43,21 @@ object TlsCertMaterial {
     }
 
     /**
-     * Apply trust (optional pin) + optional client identity for mTLS.
+     * Apply trust (pin to the provided certs) + optional client identity for mTLS.
      *
-     * [preferTrustAll] — clnrest / onion / Zeus-style flows typically use self-signed
-     * server certs and auth via rune or macaroon; pin only when explicitly requested.
-     * Still installs mTLS client identity when key+cert parse successfully.
+     * Always pins when certificates parse successfully — the provided material acts as
+     * the trust anchor (TOFU-style). Falls back to trust-all only when no certificates
+     * are present; callers must restrict that case to Tor, where onion routing already
+     * authenticates the endpoint.
      */
     fun applyToOkHttp(
         builder: OkHttpClient.Builder,
         rawMaterial: String,
-        preferTrustAll: Boolean = false,
     ) {
         val parsed = parse(rawMaterial)
         val trustManager =
             when {
-                preferTrustAll || parsed.certificates.isEmpty() -> trustAllManager()
+                parsed.certificates.isEmpty() -> trustAllManager()
                 else -> pinnedTrustManager(parsed.certificates)
             }
         val keyManagers =

@@ -42,13 +42,19 @@ data class LightningNodeConfig(
     val macaroonHex: String = "",
     val tlsCertPem: String = "",
     /**
-     * When true, ER connect over HTTPS and optionally pin [tlsCertPem].
-     * When false, connect over cleartext HTTP.
+     * When true, connect over HTTPS and optionally pin [tlsCertPem].
+     * When false, prefer cleartext HTTP (may still auto-try HTTPS for the session).
      * [allowInsecureTls] is retained for backup compatibility; prefer [useTls].
      */
     val useTls: Boolean = false,
     /** Legacy flag: true means HTTP/cleartext (TLS disabled). */
     val allowInsecureTls: Boolean = true,
+    /**
+     * Last transport that successfully opened getinfo for this host/port.
+     * Used only to skip a slow cleartext probe when the node is HTTPS-only.
+     * Does not affect the TLS toggle / [useTls] preference shown in UI.
+     */
+    val preferSessionTls: Boolean = false,
     val nwcUri: String = "",
     /** Core Lightning clnrest authorization rune (createrune / showrunes). */
     val clnRune: String = "",
@@ -64,15 +70,13 @@ data class LightningNodeConfig(
                     host.isNotBlank() && port in 1..65535 && clnRune.isNotBlank()
             }
 
-    /** Effective TLS: explicit [useTls], or historically “not insecure and/or cert present”. */
+    /**
+     * Effective TLS follows the user's [useTls] preference.
+     * A pasted cert is only a pin when TLS is on — it must not force TLS=
+     * true when the user explicitly chose plain HTTP.
+     */
     val tlsEnabled: Boolean
-        get() =
-            when {
-                useTls -> true
-                tlsCertPem.isNotBlank() -> true
-                !allowInsecureTls -> true
-                else -> false
-            }
+        get() = useTls
 
     /** Short type label for wallet lists (no secrets). Protocol tokens stay English. */
     fun listTypeLabel(lightningFallback: String = "Lightning"): String =
@@ -499,7 +503,12 @@ sealed class LightningNodeEvent {
 }
 
 sealed interface LightningNodeConnectionTestResult {
-    data class Success(val info: LightningNodeInfo, val balance: LightningNodeBalance) : LightningNodeConnectionTestResult
+    data class Success(
+        val info: LightningNodeInfo,
+        val balance: LightningNodeBalance,
+        /** True when connect used HTTPS while the user left TLS off — save as a speed hint. */
+        val preferSessionTls: Boolean = false,
+    ) : LightningNodeConnectionTestResult
 
     data class Failure(val message: String) : LightningNodeConnectionTestResult
 }

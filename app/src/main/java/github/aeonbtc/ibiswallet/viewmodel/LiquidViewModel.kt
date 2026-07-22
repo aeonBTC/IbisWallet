@@ -32,6 +32,7 @@ import github.aeonbtc.ibiswallet.data.model.LightningPaymentBackend
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentExecutionPlan
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidElectrumConfig
+import github.aeonbtc.ibiswallet.data.model.LiquidPsetDetails
 import github.aeonbtc.ibiswallet.data.model.LiquidPsetState
 import github.aeonbtc.ibiswallet.data.model.LiquidSendKind
 import github.aeonbtc.ibiswallet.data.model.LiquidSendPreview
@@ -111,7 +112,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         private const val TAG = "LiquidViewModel"
         private const val BOLTZ_LOG_TAG = "BoltzDebug"
-        private const val PSET_DISABLED_MESSAGE = "PSET is temporarily unavailable for live use."
+
         private const val CONNECTION_TIMEOUT_TOR_MS = 30_000L
         private const val CONNECTION_TIMEOUT_CLEARNET_MS = 15_000L
         private const val TOR_BOOTSTRAP_TIMEOUT_MS = 60_000L
@@ -225,6 +226,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
 
     // PSET export/sign/broadcast flow state for watch-only Liquid wallets
     private val _psetState = MutableStateFlow(LiquidPsetState())
+    val psetState: StateFlow<LiquidPsetState> = _psetState
 
     // Connection state (mirrors WalletViewModel pattern)
     private val _isLiquidConnecting = MutableStateFlow(false)
@@ -3679,14 +3681,10 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun disablePsetFlow(assetId: String? = null) {
-        _psetState.value = LiquidPsetState(error = PSET_DISABLED_MESSAGE, assetId = assetId)
-        viewModelScope.launch {
-            _events.emit(LiquidEvent.Error(PSET_DISABLED_MESSAGE))
-        }
-    }
+    // ════════════════════════════════════════════
+    // PSET flow (watch-only Liquid wallets)
+    // ════════════════════════════════════════════
 
-    @Suppress("UNUSED_PARAMETER")
     fun createUnsignedAssetPset(
         address: String,
         amount: Long,
@@ -3696,14 +3694,29 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         label: String? = null,
     ) {
         requireLiquidAvailable()
-        disablePsetFlow(assetId)
+        launchLiquidJob {
+            _psetState.value = LiquidPsetState(isCreating = true, assetId = assetId)
+            try {
+                val details = repository.createUnsignedAssetPset(
+                    address = address,
+                    amount = amount,
+                    assetId = assetId,
+                    feeRateSatPerVb = feeRate,
+                    selectedUtxos = selectedUtxos,
+                )
+                applyPsetDetails(details, label)
+                clearSendDraft()
+                _events.emit(LiquidEvent.PsetCreated)
+            } catch (e: Exception) {
+                _psetState.value = LiquidPsetState(
+                    error = safeLiquidErrorMessage(e, "Failed to create PSET"),
+                    assetId = assetId,
+                )
+                _events.emit(LiquidEvent.Error(safeLiquidErrorMessage(e, "Failed to create PSET")))
+            }
+        }
     }
 
-    // ════════════════════════════════════════════
-    // PSET flow (watch-only Liquid wallets)
-    // ════════════════════════════════════════════
-
-    @Suppress("UNUSED_PARAMETER")
     fun createUnsignedPset(
         address: String,
         amountSats: Long,
@@ -3712,7 +3725,119 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         isMaxSend: Boolean = false,
         label: String? = null,
     ) {
-        disablePsetFlow()
+        requireLiquidAvailable()
+        launchLiquidJob {
+            _psetState.value = LiquidPsetState(isCreating = true)
+            try {
+                val details = repository.createUnsignedPset(
+                    address = address,
+                    amountSats = amountSats,
+                    feeRateSatPerVb = feeRateSatPerVb,
+                    selectedUtxos = selectedUtxos,
+                    isMaxSend = isMaxSend,
+                )
+                applyPsetDetails(details, label)
+                clearSendDraft()
+                _events.emit(LiquidEvent.PsetCreated)
+            } catch (e: Exception) {
+                _psetState.value = LiquidPsetState(
+                    error = safeLiquidErrorMessage(e, "Failed to create PSET"),
+                )
+                _events.emit(LiquidEvent.Error(safeLiquidErrorMessage(e, "Failed to create PSET")))
+            }
+        }
+    }
+
+    private fun applyPsetDetails(details: LiquidPsetDetails, label: String?) {
+        _psetState.value = LiquidPsetState(
+            isCreating = false,
+            unsignedPsetBase64 = details.psetBase64,
+            pendingLabel = label,
+            recipientAddress = details.recipientAddress,
+            recipientAmountSats = details.recipientAmountSats,
+            feeSats = details.feeSats,
+            changeAmountSats = details.changeAmountSats,
+            totalInputSats = details.totalInputSats,
+            unsignedPsetInputCount = details.inputCount,
+            unsignedPsetOutputCount = details.outputCount,
+            assetId = details.assetId,
+        )
+    }
+
+    fun setSignedPsetData(data: String) {
+        val unsigned = _psetState.value.unsignedPsetBase64
+        if (unsigned == null) {
+            _psetState.value = _psetState.value.copy(error = "No unsigned PSET to combine with")
+            return
+        }
+        launchLiquidJob {
+            _psetState.value = _psetState.value.copy(isCombining = true, error = null)
+            try {
+                val result = repository.importSignedPset(data, unsigned)
+                if (!result.isReadyToBroadcast) {
+                    val missing = result.missingFingerprints.joinToString().ifBlank { "unknown" }
+                    _psetState.value = _psetState.value.copy(
+                        isCombining = false,
+                        error = "PSET still missing signatures ($missing)",
+                    )
+                    return@launchLiquidJob
+                }
+                _psetState.value = _psetState.value.copy(
+                    isCombining = false,
+                    signedData = result.combinedPsetBase64,
+                    isReadyToBroadcast = true,
+                    error = null,
+                )
+            } catch (e: Exception) {
+                _psetState.value = _psetState.value.copy(
+                    isCombining = false,
+                    error = safeLiquidErrorMessage(e, "Failed to import signed PSET"),
+                )
+                _events.emit(LiquidEvent.Error(safeLiquidErrorMessage(e, "Failed to import signed PSET")))
+            }
+        }
+    }
+
+    fun confirmBroadcastPset() {
+        val signed = _psetState.value.signedData ?: return
+        val unsigned = _psetState.value.unsignedPsetBase64
+        if (unsigned == null) {
+            _psetState.value = _psetState.value.copy(error = "Original PSET missing")
+            return
+        }
+        launchLiquidJob {
+            _psetState.value = _psetState.value.copy(isBroadcasting = true, broadcastStatus = null, error = null)
+            val pendingLabel = _psetState.value.pendingLabel
+            val recipient = _psetState.value.recipientAddress
+            try {
+                val txid = repository.broadcastSignedPset(
+                    signedPsetBase64 = signed,
+                    unsignedPsetBase64 = unsigned,
+                    pendingLabel = pendingLabel,
+                    recipientAddress = recipient,
+                    onProgress = { status ->
+                        _psetState.value = _psetState.value.copy(broadcastStatus = status)
+                    },
+                )
+                _psetState.value = LiquidPsetState()
+                _events.emit(LiquidEvent.TransactionSent(txid))
+            } catch (e: Exception) {
+                _psetState.value = _psetState.value.copy(
+                    isBroadcasting = false,
+                    broadcastStatus = null,
+                    error = safeLiquidErrorMessage(e, "Broadcast failed"),
+                )
+                _events.emit(LiquidEvent.Error(safeLiquidErrorMessage(e, "Broadcast failed")))
+            }
+        }
+    }
+
+    fun cancelPsetBroadcast() {
+        _psetState.value = _psetState.value.copy(
+            signedData = null,
+            isReadyToBroadcast = false,
+            error = null,
+        )
     }
 
     fun cancelPsetFlow() {
@@ -6454,6 +6579,7 @@ sealed class LiquidEvent {
         val settlementTxid: String? = null,
         val fundingTxid: String? = null,
     ) : LiquidEvent()
+    data object PsetCreated : LiquidEvent()
     data class Error(val message: String) : LiquidEvent()
 }
 

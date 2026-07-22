@@ -109,7 +109,10 @@ class SparkRepository(
 
     private val mutex = Mutex()
     private val reconnectMutex = Mutex()
-    private var refreshMutex = Mutex()
+
+    // Never replaced (even on wallet detach): swapping the mutex would let an
+    // in-flight refresh for the old wallet run concurrently with the new one.
+    private val refreshMutex = Mutex()
     private val eventScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var sdk: BreezSdk? = null
     private var listenerId: String? = null
@@ -573,7 +576,9 @@ class SparkRepository(
                 }
             }
             val info = activeSdk.getInfo(GetInfoRequest(ensureSynced = false))
-            if (walletId != null) {
+            // Guard every write to shared mutable state with an identity check: a
+            // wallet switch may have happened while the SDK calls above were in flight.
+            if (walletId != null && _loadedWalletId.value == walletId) {
                 localPendingDeposits = secureStorage.getAllSparkPendingDeposits(walletId)
             }
             val storedPaymentRecipients = walletId?.let { secureStorage.getAllSparkPaymentRecipients(it) }.orEmpty()
@@ -609,11 +614,13 @@ class SparkRepository(
                     }
                     .map(::sparkDepositKey)
                     .toSet()
-            localPendingDeposits =
-                localPendingDeposits.filter { pending ->
-                    unclaimedDeposits.none { sparkDepositKey(it) == sparkDepositKey(pending) } &&
-                        sparkDepositKey(pending) !in claimedDepositKeys
-                }
+            if (_loadedWalletId.value == walletId) {
+                localPendingDeposits =
+                    localPendingDeposits.filter { pending ->
+                        unclaimedDeposits.none { sparkDepositKey(it) == sparkDepositKey(pending) } &&
+                            sparkDepositKey(pending) !in claimedDepositKeys
+                    }
+            }
             if (walletId != null) {
                 val resolvedPendingTxids =
                     (unclaimedDeposits.map { it.txid } + claimedDepositKeys.map { it.substringBefore(':') }).toSet()
@@ -625,7 +632,7 @@ class SparkRepository(
                 .filterNot { sparkDepositKey(it) in claimedDepositKeys }
             val filteredUnclaimedDeposits = filterHiddenSparkDeposits(walletId, visibleUnclaimedDeposits)
             val depositKeys = filteredUnclaimedDeposits.map { "${it.txid}:${it.vout}" }.toSet()
-            if (walletId != null && depositKeys.any { it !in depositsRotatedForAddress }) {
+            if (walletId != null && _loadedWalletId.value == walletId && depositKeys.any { it !in depositsRotatedForAddress }) {
                 secureStorage.clearSparkOnchainDepositAddress(walletId)
             }
             val lightningAddress = runCatching { activeSdk.getLightningAddress()?.lightningAddress }.getOrNull()
@@ -835,7 +842,6 @@ class SparkRepository(
         }
         sdk = null
         listenerId = null
-        refreshMutex = Mutex()
         preparedSend = null
         depositsRotatedForAddress = emptySet()
         localPendingDeposits = emptyList()
@@ -1246,8 +1252,15 @@ class SparkRepository(
 
     private fun Long.toSparkBigInteger(): BigInteger = BigInteger.valueOf(this)
 
-    private fun Any?.toLongSafe(): Long =
-        this?.toString()?.toLongOrNull() ?: 0L
+    private fun Any?.toLongSafe(): Long {
+        val parsed = this?.toString()?.toLongOrNull()
+        if (parsed == null && this != null && this.toString().isNotBlank() && BuildConfig.DEBUG) {
+            // Surface silent 0-coercion of malformed/overflowing SDK values in debug
+            // builds instead of displaying a bogus "0 sats" fee without any trace.
+            android.util.Log.w(TAG, "toLongSafe: unparseable numeric value coerced to 0: $this")
+        }
+        return parsed ?: 0L
+    }
 
     private fun Exception.safeMessage(fallback: String): String =
         when {

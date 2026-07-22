@@ -194,7 +194,7 @@ class NwcClient(
     override suspend fun sendOnchain(
         address: String,
         amountSats: Long?,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         sendAll: Boolean,
         label: String?,
         spendUnconfirmed: Boolean,
@@ -203,7 +203,7 @@ class NwcClient(
 
     override suspend fun sendOnchainMany(
         addrToAmountSats: Map<String, Long>,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         label: String?,
         spendUnconfirmed: Boolean,
         selectedOutpoints: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>?,
@@ -211,7 +211,7 @@ class NwcClient(
 
     override suspend fun bumpOnchainFee(
         outpoint: github.aeonbtc.ibiswallet.data.model.UtxoInfo,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         immediate: Boolean,
         budgetSats: Long?,
     ): String = throw UnsupportedOperationException("NWC does not expose the node's on-chain wallet")

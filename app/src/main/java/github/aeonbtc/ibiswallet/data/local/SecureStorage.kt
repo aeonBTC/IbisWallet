@@ -2,6 +2,7 @@ package github.aeonbtc.ibiswallet.data.local
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.os.SystemClock
 import android.util.Base64
 import androidx.biometric.BiometricPrompt
 import androidx.core.content.edit
@@ -194,7 +195,19 @@ class SecureStorage private constructor(private val context: Context) {
         val wrapped = readWrappedSecret(KEY_SPEND_MASTER_BIOMETRIC_WRAPPED)
         val master =
             if (wrapped != null) {
-                cipher.doFinal(wrapped.ciphertext)
+                try {
+                    cipher.doFinal(wrapped.ciphertext)
+                } catch (e: Exception) {
+                    // The biometric key was invalidated and recreated (e.g. a legacy key
+                    // killed by a fingerprint enrollment change), so this wrap can never
+                    // be decrypted again. Drop the dead wrap so the state is consistent
+                    // and biometric can be re-enrolled, then surface a clear error.
+                    securePrefs.edit { remove(KEY_SPEND_MASTER_BIOMETRIC_WRAPPED) }
+                    throw IllegalStateException(
+                        "Biometric key changed; disable and re-enable biometric unlock in Security settings",
+                        e,
+                    )
+                }
             } else {
                 val newMaster =
                     spendSecretKey
@@ -364,7 +377,13 @@ class SecureStorage private constructor(private val context: Context) {
         }
         val rawKey = spendSecretKey ?: return null
         val payload = Base64.decode(value.removePrefix(ENCRYPTED_SPEND_SECRET_PREFIX), Base64.NO_WRAP)
-        return decryptWithRawKey(payload, rawKey).toString(Charsets.UTF_8)
+        return try {
+            decryptWithRawKey(payload, rawKey).toString(Charsets.UTF_8)
+        } catch (_: Exception) {
+            // Corrupt payload or wrong session key (e.g. orphaned after a biometric
+            // key loss): treat the secret as unavailable instead of crashing.
+            null
+        }
     }
 
     private fun putSpendSecret(
@@ -3880,6 +3899,8 @@ class SecureStorage private constructor(private val context: Context) {
             putInt(KEY_PIN_LENGTH, pin.length)
             remove(KEY_PIN_FAILED_ATTEMPTS)
             remove(KEY_PIN_LOCKOUT_UNTIL)
+            remove(KEY_PIN_LOCKOUT_SET_ELAPSED)
+            remove(KEY_PIN_LOCKOUT_DURATION)
         }
         unlockSpendSecretsWithPin(pin)
     }
@@ -3890,11 +3911,7 @@ class SecureStorage private constructor(private val context: Context) {
      * Returns false if locked out.
      */
     fun verifyPin(pin: String): Boolean {
-        // Check lockout
-        val lockoutUntil = securePrefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
-        if (lockoutUntil > 0 && System.currentTimeMillis() < lockoutUntil) {
-            return false // Still locked out
-        }
+        if (isPinLockedOut()) return false
 
         val storedHash = securePrefs.getString(KEY_PIN_CODE, null) ?: return false
         val storedSaltStr = securePrefs.getString(KEY_PIN_SALT, null)
@@ -3909,6 +3926,9 @@ class SecureStorage private constructor(private val context: Context) {
             if (matches) {
                 // Migrate to hashed format on successful verification
                 savePin(pin)
+            } else {
+                // Legacy plaintext PINs get the same rate limiting as hashed PINs
+                recordFailedPinAttempt()
             }
             return matches
         }
@@ -3921,27 +3941,84 @@ class SecureStorage private constructor(private val context: Context) {
         val matches = constantTimeEquals(inputHash, storedHashBytes)
 
         if (matches) {
-            // Reset failed attempts on success
-            securePrefs.edit {
-                remove(KEY_PIN_FAILED_ATTEMPTS)
-                remove(KEY_PIN_LOCKOUT_UNTIL)
-            }
+            clearPinLockoutState()
             unlockSpendSecretsWithPin(pin)
         } else {
-            // Increment failed attempts and apply lockout if needed
-            val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
-            securePrefs.edit { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
+            recordFailedPinAttempt()
+        }
 
-            if (attempts >= MAX_PIN_ATTEMPTS) {
-                // Exponential backoff: 30s, 60s, 120s, 240s, ...
-                val lockoutMs = 30_000L * (1L shl (attempts - MAX_PIN_ATTEMPTS).coerceAtMost(6))
-                securePrefs.edit {
-                    putLong(KEY_PIN_LOCKOUT_UNTIL, System.currentTimeMillis() + lockoutMs)
+        return matches
+    }
+
+    /**
+     * True while a PIN lockout is active.
+     *
+     * Same boot: active if the wall-clock deadline is still in the future OR the
+     * monotonic duration has not elapsed (so moving the device clock forward cannot
+     * alone clear the lockout).
+     *
+     * After reboot: elapsedRealtime resets and the stored set-elapsed from the
+     * previous boot is meaningless — drop the monotonic arm and rely on the wall
+     * deadline only. Treating a negative (elapsed - setElapsed) as "still locked"
+     * would brick the real PIN for the entire uptime.
+     */
+    private fun isPinLockedOut(): Boolean {
+        val lockoutUntil = securePrefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
+        if (lockoutUntil <= 0) return false
+
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = SystemClock.elapsedRealtime()
+        val setElapsed = securePrefs.getLong(KEY_PIN_LOCKOUT_SET_ELAPSED, -1L)
+        val duration = securePrefs.getLong(KEY_PIN_LOCKOUT_DURATION, 0L)
+
+        val wallActive = nowWall < lockoutUntil
+        // Monotonic arm is only valid within the same boot (elapsed must be >= setElapsed).
+        val monotonicActive =
+            setElapsed >= 0 &&
+                nowElapsed >= setElapsed &&
+                nowElapsed - setElapsed < duration
+
+        if (!wallActive && !monotonicActive && setElapsed >= 0 && nowElapsed < setElapsed) {
+            // Stale monotonic keys from a previous boot — drop them so prefs stay clean.
+            securePrefs.edit(commit = true) {
+                remove(KEY_PIN_LOCKOUT_SET_ELAPSED)
+                remove(KEY_PIN_LOCKOUT_DURATION)
+                if (nowWall >= lockoutUntil) {
+                    remove(KEY_PIN_LOCKOUT_UNTIL)
                 }
             }
         }
 
-        return matches
+        return wallActive || monotonicActive
+    }
+
+    /**
+     * Increment the shared failed-attempt counter and arm the exponential-backoff
+     * lockout when MAX_PIN_ATTEMPTS is reached. Uses synchronous commits so the
+     * counter/lockout survive an immediate process kill (relevant for auto-wipe).
+     */
+    private fun recordFailedPinAttempt() {
+        val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
+        securePrefs.edit(commit = true) { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
+
+        if (attempts >= MAX_PIN_ATTEMPTS) {
+            // Exponential backoff: 30s, 60s, 120s, 240s, ...
+            val lockoutMs = 30_000L * (1L shl (attempts - MAX_PIN_ATTEMPTS).coerceAtMost(6))
+            securePrefs.edit(commit = true) {
+                putLong(KEY_PIN_LOCKOUT_UNTIL, System.currentTimeMillis() + lockoutMs)
+                putLong(KEY_PIN_LOCKOUT_SET_ELAPSED, SystemClock.elapsedRealtime())
+                putLong(KEY_PIN_LOCKOUT_DURATION, lockoutMs)
+            }
+        }
+    }
+
+    private fun clearPinLockoutState() {
+        securePrefs.edit {
+            remove(KEY_PIN_FAILED_ATTEMPTS)
+            remove(KEY_PIN_LOCKOUT_UNTIL)
+            remove(KEY_PIN_LOCKOUT_SET_ELAPSED)
+            remove(KEY_PIN_LOCKOUT_DURATION)
+        }
     }
 
     /**
@@ -3954,6 +4031,8 @@ class SecureStorage private constructor(private val context: Context) {
             remove(KEY_PIN_LENGTH)
             remove(KEY_PIN_FAILED_ATTEMPTS)
             remove(KEY_PIN_LOCKOUT_UNTIL)
+            remove(KEY_PIN_LOCKOUT_SET_ELAPSED)
+            remove(KEY_PIN_LOCKOUT_DURATION)
         }
     }
 
@@ -4159,17 +4238,16 @@ class SecureStorage private constructor(private val context: Context) {
     /**
      * Verify if the provided PIN matches the stored duress PIN hash.
      * Shares lockout counters with the real PIN to prevent double-attempt attacks.
+     *
+     * The hash is compared BEFORE the lockout check: on the lock screen the real PIN
+     * is probed first, and its failure may set the lockout within the same entry.
+     * A correct duress PIN must still succeed (and reset the counter) — otherwise the
+     * duress PIN becomes unusable after MAX_PIN_ATTEMPTS and can even trip auto-wipe.
      */
     fun verifyDuressPin(
         pin: String,
         incrementFailedAttempts: Boolean = true,
     ): Boolean {
-        // Check lockout (shared with real PIN)
-        val lockoutUntil = securePrefs.getLong(KEY_PIN_LOCKOUT_UNTIL, 0L)
-        if (lockoutUntil > 0 && System.currentTimeMillis() < lockoutUntil) {
-            return false
-        }
-
         val storedHash = securePrefs.getString(KEY_DURESS_PIN_CODE, null) ?: return false
         val storedSaltStr = securePrefs.getString(KEY_DURESS_PIN_SALT, null) ?: return false
 
@@ -4180,26 +4258,21 @@ class SecureStorage private constructor(private val context: Context) {
         val matches = constantTimeEquals(inputHash, storedHashBytes)
 
         if (matches) {
-            // Reset shared failed attempts on success
-            securePrefs.edit {
-                remove(KEY_PIN_FAILED_ATTEMPTS)
-                remove(KEY_PIN_LOCKOUT_UNTIL)
-            }
+            // Correct duress PIN always wins: reset the shared counter/lockout so a
+            // duress unlock can never be blocked by, or trigger, rate limiting/auto-wipe.
+            clearPinLockoutState()
             unlockSpendSecretsWithDuressPin(pin)
-        } else if (incrementFailedAttempts) {
-            // Increment shared failed attempts and apply lockout if needed
-            val attempts = securePrefs.getInt(KEY_PIN_FAILED_ATTEMPTS, 0) + 1
-            securePrefs.edit { putInt(KEY_PIN_FAILED_ATTEMPTS, attempts) }
-
-            if (attempts >= MAX_PIN_ATTEMPTS) {
-                val lockoutMs = 30_000L * (1L shl (attempts - MAX_PIN_ATTEMPTS).coerceAtMost(6))
-                securePrefs.edit {
-                    putLong(KEY_PIN_LOCKOUT_UNTIL, System.currentTimeMillis() + lockoutMs)
-                }
-            }
+            return true
         }
 
-        return matches
+        // Check lockout (shared with real PIN) — only wrong PINs are throttled
+        if (isPinLockedOut()) return false
+
+        if (incrementFailedAttempts) {
+            recordFailedPinAttempt()
+        }
+
+        return false
     }
 
     /**
@@ -4565,6 +4638,8 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_PIN_LENGTH = "pin_length"
         private const val KEY_PIN_FAILED_ATTEMPTS = "pin_failed_attempts"
         private const val KEY_PIN_LOCKOUT_UNTIL = "pin_lockout_until"
+        private const val KEY_PIN_LOCKOUT_SET_ELAPSED = "pin_lockout_set_elapsed"
+        private const val KEY_PIN_LOCKOUT_DURATION = "pin_lockout_duration"
         private const val PIN_PBKDF2_ITERATIONS = 150_000
         private const val PIN_HASH_LENGTH = 256
         /** Failed PIN tries (real + duress shared counter) before lockout; keep UI in sync via this constant. */
@@ -4618,6 +4693,7 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_LN_NODE_USE_TOR_PREFIX = "ln_node_use_tor_"
         private const val KEY_LN_NODE_USE_TLS_PREFIX = "ln_node_use_tls_"
         private const val KEY_LN_NODE_ALLOW_INSECURE_TLS_PREFIX = "ln_node_allow_insecure_tls_"
+        private const val KEY_LN_NODE_PREFER_SESSION_TLS_PREFIX = "ln_node_prefer_session_tls_"
         private const val KEY_LN_NODE_MACAROON_PREFIX = "ln_node_macaroon_"
         private const val KEY_LN_NODE_TLS_CERT_PREFIX = "ln_node_tls_cert_"
         private const val KEY_LN_NODE_NWC_URI_PREFIX = "ln_node_nwc_uri_"
@@ -4793,6 +4869,8 @@ class SecureStorage private constructor(private val context: Context) {
                     else -> false
                 }
             }
+        val preferSessionTls =
+            regularPrefs.getBoolean("${KEY_LN_NODE_PREFER_SESSION_TLS_PREFIX}$walletId", false)
         return LightningNodeConfig(
             type = type,
             host = host,
@@ -4802,6 +4880,7 @@ class SecureStorage private constructor(private val context: Context) {
             tlsCertPem = tlsCertPem,
             useTls = useTls,
             allowInsecureTls = !useTls,
+            preferSessionTls = preferSessionTls,
             nwcUri = nwcUri,
             clnRune = clnRune,
         )
@@ -4811,7 +4890,8 @@ class SecureStorage private constructor(private val context: Context) {
         walletId: String,
         config: LightningNodeConfig,
     ) {
-        val useTls = config.tlsEnabled
+        // Persist the explicit user preference (useTls), not a derived flag.
+        val useTls = config.useTls
         regularPrefs.edit {
             putString("${KEY_LN_NODE_TYPE_PREFIX}$walletId", config.type.name)
             putString("${KEY_LN_NODE_HOST_PREFIX}$walletId", config.host.trim())
@@ -4819,6 +4899,7 @@ class SecureStorage private constructor(private val context: Context) {
             putBoolean("${KEY_LN_NODE_USE_TOR_PREFIX}$walletId", config.useTor)
             putBoolean("${KEY_LN_NODE_USE_TLS_PREFIX}$walletId", useTls)
             putBoolean("${KEY_LN_NODE_ALLOW_INSECURE_TLS_PREFIX}$walletId", !useTls)
+            putBoolean("${KEY_LN_NODE_PREFER_SESSION_TLS_PREFIX}$walletId", config.preferSessionTls)
         }
         if (config.macaroonHex.isNotBlank()) {
             putSpendSecret("${KEY_LN_NODE_MACAROON_PREFIX}$walletId", config.macaroonHex.trim())
@@ -4850,6 +4931,7 @@ class SecureStorage private constructor(private val context: Context) {
             remove("${KEY_LN_NODE_USE_TOR_PREFIX}$walletId")
             remove("${KEY_LN_NODE_USE_TLS_PREFIX}$walletId")
             remove("${KEY_LN_NODE_ALLOW_INSECURE_TLS_PREFIX}$walletId")
+            remove("${KEY_LN_NODE_PREFER_SESSION_TLS_PREFIX}$walletId")
             remove("${KEY_LN_NODE_LIGHTNING_ADDRESS_PREFIX}$walletId")
         }
         removeSpendSecret("${KEY_LN_NODE_MACAROON_PREFIX}$walletId")

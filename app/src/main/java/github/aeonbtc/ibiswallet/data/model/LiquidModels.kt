@@ -194,20 +194,39 @@ data class LiquidSendPreview(
 }
 
 /**
+ * Result of building an unsigned Liquid PSET for external signing.
+ */
+data class LiquidPsetDetails(
+    val psetBase64: String,
+    val recipientAddress: String?,
+    val recipientAmountSats: Long,
+    val feeSats: Long,
+    val changeAmountSats: Long?,
+    val totalInputSats: Long,
+    val inputCount: Int,
+    val outputCount: Int,
+    val assetId: String?,
+    val missingFingerprints: List<String> = emptyList(),
+)
+
+/**
  * State for the Liquid PSET export/sign/broadcast flow (watch-only wallets).
  * Mirrors [github.aeonbtc.ibiswallet.viewmodel.PsbtState] for Bitcoin.
  */
 data class LiquidPsetState(
     val isCreating: Boolean = false,
+    val isCombining: Boolean = false,
     val isBroadcasting: Boolean = false,
     val broadcastStatus: String? = null,
     val unsignedPsetBase64: String? = null,
-    val signedPsetBase64: String? = null,
+    val signedData: String? = null,
     val pendingLabel: String? = null,
     val error: String? = null,
+    val isReadyToBroadcast: Boolean = false,
     val recipientAddress: String? = null,
     val recipientAmountSats: Long = 0,
     val feeSats: Long = 0,
+    val changeAmountSats: Long? = null,
     val totalInputSats: Long = 0,
     val unsignedPsetInputCount: Int = 0,
     val unsignedPsetOutputCount: Int = 0,

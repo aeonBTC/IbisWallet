@@ -369,6 +369,9 @@ object Bbqr {
         for (i in 0 until len) {
             val hi = Character.digit(hex[i * 2], 16)
             val lo = Character.digit(hex[i * 2 + 1], 16)
+            // Strict: invalid hex must fail the whole decode, not silently
+            // become 0xFF bytes that corrupt the payload.
+            require(hi >= 0 && lo >= 0) { "Invalid hex character in BBQr payload" }
             result[i] = ((hi shl 4) or lo).toByte()
         }
         return result
@@ -404,7 +407,9 @@ object Bbqr {
 
         for (c in encoded) {
             val value = BASE32_ALPHABET.indexOf(c.uppercaseChar())
-            if (value < 0) continue // skip invalid chars
+            // Strict: invalid chars must fail the whole decode, not silently
+            // shift every subsequent bit group.
+            require(value >= 0) { "Invalid base32 character in BBQr payload: '$c'" }
 
             buffer = (buffer shl 5) or value
             bitsLeft += 5

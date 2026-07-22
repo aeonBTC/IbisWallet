@@ -8,10 +8,12 @@ import org.json.JSONObject
 
 object MultisigWalletParser {
     private val descriptorPrefixRegex = Regex("""^(wsh|sh\s*\(\s*wsh)\(""", RegexOption.IGNORE_CASE)
-    private val xpubRegex = Regex("""[xyz]pub[1-9A-HJ-NP-Za-km-z]+""")
-    private val extendedKeyRegex = Regex("""[xyz](?:pub|prv)[1-9A-HJ-NP-Za-km-z]+""")
+    // Includes uppercase Ypub/Zpub (SLIP-132 multisig versions used by
+    // Electrum/Specter exports) alongside lowercase xpub/ypub/zpub.
+    private val xpubRegex = Regex("""[xyzYZ]pub[1-9A-HJ-NP-Za-km-z]+""")
+    private val extendedKeyRegex = Regex("""(?:[xyzYZ]pub|[xyz]prv)[1-9A-HJ-NP-Za-km-z]+""")
     private val policyRegex = Regex("""(\d+)\s*(?:of|/)\s*(\d+)""", RegexOption.IGNORE_CASE)
-    private val keyLineRegex = Regex("""^\s*([0-9a-fA-F]{8})\s*[:=]\s*([xyz]pub[1-9A-HJ-NP-Za-km-z]+)\s*$""")
+    private val keyLineRegex = Regex("""^\s*([0-9a-fA-F]{8})\s*[:=]\s*([xyzYZ]pub[1-9A-HJ-NP-Za-km-z]+)\s*$""")
 
     fun looksLikeMultisig(input: String): Boolean {
         val trimmed = input.trim()
@@ -28,17 +30,21 @@ object MultisigWalletParser {
             lowered.contains("policy:") && lowered.contains(" of ")
     }
 
+    /**
+     * Parse any supported multisig format. Never throws: malformed JSON, bad
+     * key versions, and broken descriptors all return null — several callers
+     * invoke this during Compose composition where an exception crashes the app.
+     */
     fun parse(input: String): MultisigWalletConfig? {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return null
 
-        if (trimmed.startsWith("{")) {
-            parseJson(trimmed)?.let { return it }
-        }
-
-        parseDescriptorInput(trimmed)?.let { return it }
-        parseBsms(trimmed)?.let { return it }
-        return null
+        return runCatching {
+            if (trimmed.startsWith("{")) {
+                parseJson(trimmed)?.let { return@runCatching it }
+            }
+            parseDescriptorInput(trimmed) ?: parseBsms(trimmed)
+        }.getOrNull()
     }
 
     fun normalizeDescriptorPair(input: String): Pair<String, String>? =
@@ -329,7 +335,7 @@ object MultisigWalletParser {
         extendedKeyRegex.findAll(descriptor).count()
 
     private fun extractCosigners(descriptor: String): List<MultisigCosigner> {
-        val cosignerRegex = Regex("""\[([0-9a-fA-F]{8})/([^]]+)]([xyz]pub[1-9A-HJ-NP-Za-km-z]+)""")
+        val cosignerRegex = Regex("""\[([0-9a-fA-F]{8})/([^]]+)]([xyzYZ]pub[1-9A-HJ-NP-Za-km-z]+)""")
         return cosignerRegex.findAll(descriptor).map { match ->
             MultisigCosigner(
                 fingerprint = match.groupValues[1].lowercase(),
@@ -384,10 +390,15 @@ object MultisigWalletParser {
      * Extracts cosigner lines (`fingerprint: xpub`) from a single scanned QR payload.
      * Supports BSMS key lines, full multisig configs, key-origin strings, and descriptors.
      */
+    /** Never throws — called from QR scanner callbacks; bad input yields an empty list. */
     fun parseCosignerScanLines(input: String): List<String> {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return emptyList()
 
+        return runCatching { parseCosignerScanLinesUnsafe(trimmed) }.getOrDefault(emptyList())
+    }
+
+    private fun parseCosignerScanLinesUnsafe(trimmed: String): List<String> {
         parse(trimmed)?.cosigners?.takeIf { it.isNotEmpty() }?.let { cosigners ->
             return cosigners.map { cosigner -> cosigner.toScanLine() }
         }
@@ -411,7 +422,7 @@ object MultisigWalletParser {
         "${groupValues[1].lowercase()}: ${BitcoinUtils.convertToXpub(groupValues[2])}"
 
     private val descriptorCosignerRegex =
-        Regex("""\[([0-9a-fA-F]{8})/[^]]+]([xyz]pub[1-9A-HJ-NP-Za-km-z]+)""")
+        Regex("""\[([0-9a-fA-F]{8})/[^]]+]([xyzYZ]pub[1-9A-HJ-NP-Za-km-z]+)""")
 }
 
 private fun MultisigCosigner.toScanLine(): String = "$fingerprint: ${BitcoinUtils.convertToXpub(xpub)}"

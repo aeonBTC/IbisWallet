@@ -13,7 +13,12 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentResult
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentStatus
 import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails
 import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
+import github.aeonbtc.ibiswallet.util.BitcoinUtils
+import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
@@ -21,6 +26,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.bitcoindevkit.Address
+import org.bitcoindevkit.Network
+import org.bitcoindevkit.Transaction as BdkTransaction
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.EOFException
@@ -28,6 +36,7 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToLong
 
 /**
  * LND node client via HTTP REST API (lnd REST proxy / litd).
@@ -72,47 +81,76 @@ class LndRestClient(
             val normalized = config.copy(useTor = needsTor, host = host)
 
             // Prefer configured TLS. If cleartext fails because the node expects HTTPS
-            // (common for LND REST :8080 / Tor), auto-retry once with TLS + trust-all.
+            // (common for LND REST :8080 / Tor), auto-retry once with TLS.
             // Also retry once after Tor stream flakiness (unexpected end of stream).
             connectWithRetries(normalized)
         }
 
     private fun connectWithRetries(normalized: LightningNodeConfig): LightningNodeInfo {
         var lastError: Exception? = null
+        val viaTor =
+            normalized.useTor || normalized.host.endsWith(".onion", ignoreCase = true)
+        // Scheme order:
+        // - TLS on → that scheme only
+        // - LAN + TLS off → short HTTP probe, then HTTPS
+        // - Tor + TLS off → HTTPS first (LND/CLN REST over .onion is almost always TLS);
+        //   cleartext only as a last short probe — never burned minutes on dead HTTP circuits
+        // - preferSessionTls → HTTPS first (LAN or Tor)
+        val httpsFallback =
+            if (!normalized.tlsEnabled) {
+                normalized.copy(
+                    useTls = true,
+                    allowInsecureTls = true,
+                    tlsCertPem = normalized.tlsCertPem,
+                )
+            } else {
+                null
+            }
         val candidates =
             buildList {
-                add(normalized)
-                if (!normalized.tlsEnabled) {
-                    add(
-                        normalized.copy(
-                            useTls = true,
-                            allowInsecureTls = false,
-                            tlsCertPem = normalized.tlsCertPem,
-                        ),
-                    )
+                when {
+                    normalized.tlsEnabled -> add(normalized)
+                    httpsFallback == null -> add(normalized)
+                    viaTor || normalized.preferSessionTls -> {
+                        add(httpsFallback)
+                        // Last-resort cleartext only on clearnet (rare plain-HTTP nodes).
+                        // Over Tor a failing HTTPS would just waste another circuit on HTTP.
+                        if (!viaTor) add(normalized)
+                    }
+                    else -> {
+                        add(normalized)
+                        add(httpsFallback)
+                    }
                 }
             }
         for ((candidateIndex, candidate) in candidates.withIndex()) {
-            for (attempt in 0 until STREAM_RETRY_ATTEMPTS) {
+            val isCleartextProbe = !candidate.tlsEnabled && !normalized.tlsEnabled
+            // Connect: one attempt per scheme over Tor (new circuit is expensive).
+            // Clearnet HTTPS keeps a single stream retry; cleartext is always one-shot.
+            val maxAttempts =
+                when {
+                    isCleartextProbe -> 1
+                    viaTor -> 1
+                    else -> CONNECT_CLEAR_STREAM_ATTEMPTS
+                }
+            for (attempt in 0 until maxAttempts) {
                 try {
-                    openSession(candidate)
+                    openSession(candidate, probeTimeouts = isCleartextProbe)
                     return getInfo()
                 } catch (e: Exception) {
                     lastError = e
-                    val forceTlsCandidate =
-                        !candidate.tlsEnabled && isHttpToHttpsMismatch(e)
                     val streamRetry =
-                        isTransientStreamError(e) && attempt < STREAM_RETRY_ATTEMPTS - 1
-                    if (forceTlsCandidate) {
-                        // Use the next HTTPS candidate (if any).
-                        break
-                    }
+                        !isCleartextProbe &&
+                            isTransientStreamError(e) &&
+                            attempt < maxAttempts - 1
                     if (streamRetry) {
                         closeClientQuietly()
                         continue
                     }
+                    // Auth / 4xx on the chosen scheme is definitive — don't mask with TLS.
+                    if (isDefinitiveHttpFailure(e)) throw e
                     if (candidateIndex == candidates.lastIndex) throw e
-                    // Fall through to next TLS/config candidate.
+                    closeClientQuietly()
                     break
                 }
             }
@@ -120,11 +158,14 @@ class LndRestClient(
         throw lastError ?: IllegalStateException("Connection failed")
     }
 
-    private fun openSession(config: LightningNodeConfig) {
+    private fun openSession(
+        config: LightningNodeConfig,
+        probeTimeouts: Boolean = false,
+    ) {
         closeClientQuietly()
         val scheme = if (config.tlsEnabled) "https" else "http"
         baseUrl = "$scheme://${config.host}:${config.port}"
-        client = buildHttpClient(config)
+        client = buildHttpClient(config, probeTimeouts = probeTimeouts)
         activeConfig = config
     }
 
@@ -135,15 +176,14 @@ class LndRestClient(
         activeConfig = null
     }
 
-    private fun isHttpToHttpsMismatch(error: Exception): Boolean {
+    /** Failures that are about credentials/API, not transport scheme. */
+    private fun isDefinitiveHttpFailure(error: Exception): Boolean {
         val message = error.message.orEmpty().lowercase()
-        return message.contains("http request to an https") ||
-            message.contains("client sent an http request to an https server") ||
-            (
-                message.contains("http 400") &&
-                    message.contains("/v1/getinfo") &&
-                    message.contains("https")
-            )
+        return message.contains("http 401") ||
+            message.contains("http 403") ||
+            message.contains("permission denied") ||
+            message.contains("macaroon") && message.contains("invalid") ||
+            message.contains("unknown macaroon")
     }
 
     private fun isTransientStreamError(error: Throwable): Boolean {
@@ -324,14 +364,25 @@ class LndRestClient(
 
     override suspend fun listPayments(limit: Int): List<LightningNodePayment> =
         withContext(Dispatchers.IO) {
-            val payments = mutableListOf<LightningNodePayment>()
-            // Include incomplete / failed so FAILURE_REASON surfaces in history.
-            val paymentsJson =
-                runCatching {
-                    getJson("/v1/payments?include_incomplete=true&max_payments=$limit")
-                }.getOrElse {
-                    getJson("/v1/payments?include_incomplete=false&max_payments=$limit")
+            val capped = limit.coerceIn(1, 100)
+            // Fetch pays + settled invoices in parallel; sequential doubled Tor/LAN latency.
+            val (paymentsJson, invoicesJson) =
+                coroutineScope {
+                    val paymentsDeferred =
+                        async {
+                            runCatching {
+                                getJson("/v1/payments?include_incomplete=true&max_payments=$capped")
+                            }.getOrElse {
+                                getJson("/v1/payments?include_incomplete=false&max_payments=$capped")
+                            }
+                        }
+                    val invoicesDeferred =
+                        async {
+                            getJson("/v1/invoices?num_max_invoices=$capped&reversed=true")
+                        }
+                    paymentsDeferred.await() to invoicesDeferred.await()
                 }
+            val payments = mutableListOf<LightningNodePayment>()
             val paymentArr = paymentsJson.optJSONArray("payments") ?: JSONArray()
             for (i in 0 until paymentArr.length()) {
                 val p = paymentArr.getJSONObject(i)
@@ -361,7 +412,6 @@ class LndRestClient(
                     )
             }
 
-            val invoicesJson = getJson("/v1/invoices?num_max_invoices=$limit&reversed=true")
             val invArr = invoicesJson.optJSONArray("invoices") ?: JSONArray()
             for (i in 0 until invArr.length()) {
                 val inv = invArr.getJSONObject(i)
@@ -389,7 +439,7 @@ class LndRestClient(
 
             payments
                 .sortedByDescending { it.timestamp }
-                .take(limit)
+                .take(capped)
         }
 
     override suspend fun getOnchainBalance(): Long =
@@ -446,18 +496,14 @@ class LndRestClient(
 
     override suspend fun listOnchainTransactions(limit: Int): List<LightningNodeOnchainTransaction> =
         withContext(Dispatchers.IO) {
+            val capped = limit.coerceIn(1, 200)
             // LND REST uses max_transactions (proto field name).
+            // Do NOT call listChannels / closed-channels here — that forked 4+ extra RPCs
+            // on every balance sync. Channel open/close badges use LND tx labels only.
             val response =
-                runCatching { getJson("/v1/transactions?max_transactions=$limit") }
+                runCatching { getJson("/v1/transactions?max_transactions=$capped") }
                     .recoverCatching { getJson("/v1/transactions") }
                     .getOrThrow()
-            val channelFundingTxids =
-                runCatching {
-                    listChannels()
-                        .mapNotNull { it.fundingTxid?.lowercase()?.takeIf(String::isNotBlank) }
-                        .toSet()
-                }.getOrDefault(emptySet())
-            val channelClosingTxids = loadLndChannelClosingTxids()
             val transactions = response.optJSONArray("transactions") ?: JSONArray()
             buildList {
                 for (i in 0 until transactions.length()) {
@@ -473,39 +519,33 @@ class LndRestClient(
                             ?: tx.optLong("time_stamp", 0L)
                     val txid = tx.optString("tx_hash")
                     val label = tx.optString("label")
-                    val outputDetails = tx.optJSONArray("output_details") ?: JSONArray()
-                    var recipientAddress: String? = null
-                    var recipientAmount: Long? = null
-                    var changeAddress: String? = null
-                    var changeAmount: Long? = null
-                    for (j in 0 until outputDetails.length()) {
-                        val detail = outputDetails.optJSONObject(j) ?: continue
-                        val address = detail.optString("address").ifBlank { null } ?: continue
-                        val outputAmount = readLndAmount(detail, "amount").takeIf { it > 0L }
-                        if (detail.optBoolean("is_our_address", false)) {
-                            if (changeAddress == null) {
-                                changeAddress = address
-                                changeAmount = outputAmount
+                    val outputs =
+                        buildList {
+                            val outputDetails = tx.optJSONArray("output_details") ?: JSONArray()
+                            for (j in 0 until outputDetails.length()) {
+                                val detail = outputDetails.optJSONObject(j) ?: continue
+                                val outAddress = detail.optString("address").ifBlank { null } ?: continue
+                                add(
+                                    LndTxOutput(
+                                        address = outAddress,
+                                        amountSats = readLndAmount(detail, "amount").coerceAtLeast(0L),
+                                        isOurs = detail.optBoolean("is_our_address", false),
+                                    ),
+                                )
                             }
-                        } else if (recipientAddress == null) {
-                            recipientAddress = address
-                            recipientAmount = outputAmount
                         }
-                    }
-                    val address = recipientAddress ?: destinations?.optString(0)?.ifBlank { null }
-                    val lowerTxid = txid.lowercase()
+                    val destFallback = destinations?.optString(0)?.ifBlank { null }
+                    val resolved = resolveLndTxAddresses(amount, outputs, destFallback)
                     val isChannelOpen =
                         amount < 0L &&
                             (
-                                lowerTxid in channelFundingTxids ||
-                                    label.contains("openchannel", ignoreCase = true) ||
+                                label.contains("openchannel", ignoreCase = true) ||
                                     label.contains("funding", ignoreCase = true)
                             )
                     val isChannelClose =
                         !isChannelOpen &&
                             (
-                                lowerTxid in channelClosingTxids ||
-                                    label.contains("closechannel", ignoreCase = true) ||
+                                label.contains("closechannel", ignoreCase = true) ||
                                     label.contains("coop close", ignoreCase = true) ||
                                     label.contains("force close", ignoreCase = true) ||
                                     label.contains("channel close", ignoreCase = true)
@@ -518,10 +558,10 @@ class LndRestClient(
                             vsize = transactionVsize(tx.optString("raw_tx_hex")),
                             timestamp = stamp * 1000L,
                             confirmations = conf,
-                            address = address,
-                            addressAmountSats = recipientAmount ?: kotlin.math.abs(amount).takeIf { address != null },
-                            changeAddress = changeAddress,
-                            changeAmountSats = changeAmount,
+                            address = resolved.address,
+                            addressAmountSats = resolved.addressAmountSats,
+                            changeAddress = resolved.changeAddress,
+                            changeAmountSats = resolved.changeAmountSats,
                             isChannelOpen = isChannelOpen,
                             isChannelClose = isChannelClose,
                         ),
@@ -532,7 +572,7 @@ class LndRestClient(
                     .thenByDescending { it.timestamp }
                     .thenByDescending { it.txid },
             )
-                .take(limit.coerceAtLeast(1))
+                .take(capped)
         }
 
     private fun loadLndChannelClosingTxids(): Set<String> {
@@ -605,6 +645,9 @@ class LndRestClient(
                                 ?: 0
                         ).coerceAtLeast(0).toUInt()
                     if (txid.isBlank() || address.isBlank()) continue
+                    // Locked/leased outs stay visible but frozen so Max/coin control
+                    // match spendable balance (SendCoins will not spend them).
+                    val locked = isLndUtxoUnavailable(u)
                     add(
                         github.aeonbtc.ibiswallet.data.model.UtxoInfo(
                             outpoint = "$txid:$vout",
@@ -613,7 +656,7 @@ class LndRestClient(
                             address = address,
                             amountSats = amount,
                             isConfirmed = conf > 0,
-                            isFrozen = false,
+                            isFrozen = locked,
                         ),
                     )
                 }
@@ -643,17 +686,21 @@ class LndRestClient(
      */
     private fun pendingLndOutgoingAmount(): Long =
         runCatching {
-            val transactions = getJson("/v1/transactions?max_transactions=200")
-                .optJSONArray("transactions")
-                ?: return@runCatching 0L
+            // Only recent unconfirmed outs matter; pulling 200 full txs for balance was
+            // the single slowest hop on every on-chain refresh (then txs were fetched again).
+            val transactions =
+                getJson("/v1/transactions?max_transactions=25")
+                    .optJSONArray("transactions")
+                    ?: return@runCatching 0L
             var total = 0L
             for (i in 0 until transactions.length()) {
                 val tx = transactions.optJSONObject(i) ?: continue
                 val confirmations =
                     tx.optString("num_confirmations").toIntOrNull()
                         ?: tx.optInt("num_confirmations", 0)
+                if (confirmations > 0) continue
                 val amount = readLndAmount(tx, "amount")
-                if (confirmations <= 0 && amount < 0L) {
+                if (amount < 0L) {
                     total += -amount
                 }
             }
@@ -692,7 +739,7 @@ class LndRestClient(
     override suspend fun sendOnchain(
         address: String,
         amountSats: Long?,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         sendAll: Boolean,
         label: String?,
         spendUnconfirmed: Boolean,
@@ -707,6 +754,18 @@ class LndRestClient(
             } else {
                 require(amountSats != null && amountSats > 0) { "Amount must be positive" }
             }
+            // Fractional sat/vB (0.5, 1.25, …): control via sat_per_kw (SendCoins is integer only).
+            if (needsFractionalFee(satPerVbyte)) {
+                return@withContext sendOnchainFractionalSweep(
+                    address = address.trim(),
+                    amountSats = amountSats,
+                    sendAll = sendAll,
+                    satPerVbyte = satPerVbyte!!,
+                    label = label,
+                    spendUnconfirmed = spendUnconfirmed,
+                    selectedOutpoints = selectedOutpoints,
+                )
+            }
             val body =
                 JSONObject().apply {
                     put("addr", address.trim())
@@ -715,24 +774,12 @@ class LndRestClient(
                     } else {
                         put("amount", amountSats!!.toString())
                     }
-                    if (satPerVbyte != null && satPerVbyte > 0) {
-                        put("sat_per_vbyte", satPerVbyte.toString())
-                    }
+                    putIntegerSatPerVbyte(this, satPerVbyte)
                     if (!label.isNullOrBlank()) {
                         put("label", label.trim().take(500))
                     }
                     put("spend_unconfirmed", spendUnconfirmed)
-                    if (!selectedOutpoints.isNullOrEmpty()) {
-                        val arr = JSONArray()
-                        selectedOutpoints.forEach { utxo ->
-                            arr.put(
-                                JSONObject()
-                                    .put("txid_str", utxo.txid)
-                                    .put("output_index", utxo.vout.toInt()),
-                            )
-                        }
-                        put("outpoints", arr)
-                    }
+                    putOutpoints(this, selectedOutpoints)
                 }
             val response = postJson("/v1/transactions", body)
             response.optString("txid").takeIf { it.isNotBlank() }
@@ -741,7 +788,7 @@ class LndRestClient(
 
     override suspend fun sendOnchainMany(
         addrToAmountSats: Map<String, Long>,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         label: String?,
         spendUnconfirmed: Boolean,
         selectedOutpoints: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>?,
@@ -751,6 +798,15 @@ class LndRestClient(
             require(addrToAmountSats.all { it.key.isNotBlank() && it.value > 0 }) {
                 "Each recipient needs a valid address and positive amount"
             }
+            if (needsFractionalFee(satPerVbyte)) {
+                return@withContext sendOnchainFractional(
+                    addrToAmountSats = addrToAmountSats,
+                    satPerVbyte = satPerVbyte!!,
+                    label = label,
+                    spendUnconfirmed = spendUnconfirmed,
+                    selectedOutpoints = selectedOutpoints,
+                )
+            }
             val amountMap = JSONObject()
             addrToAmountSats.forEach { (addr, amount) ->
                 amountMap.put(addr.trim(), amount.toString())
@@ -759,24 +815,12 @@ class LndRestClient(
                 JSONObject().apply {
                     // LND REST uses camel-style map field names for this RPC.
                     put("AddrToAmount", amountMap)
-                    if (satPerVbyte != null && satPerVbyte > 0) {
-                        put("sat_per_vbyte", satPerVbyte.toString())
-                    }
+                    putIntegerSatPerVbyte(this, satPerVbyte)
                     if (!label.isNullOrBlank()) {
                         put("label", label.trim().take(500))
                     }
                     put("spend_unconfirmed", spendUnconfirmed)
-                    if (!selectedOutpoints.isNullOrEmpty()) {
-                        val arr = JSONArray()
-                        selectedOutpoints.forEach { utxo ->
-                            arr.put(
-                                JSONObject()
-                                    .put("txid_str", utxo.txid)
-                                    .put("output_index", utxo.vout.toInt()),
-                            )
-                        }
-                        put("outpoints", arr)
-                    }
+                    putOutpoints(this, selectedOutpoints)
                 }
             val response =
                 runCatching { postJson("/v1/transactions/many", body) }
@@ -790,14 +834,39 @@ class LndRestClient(
                 ?: throw IllegalStateException("Node did not return a transaction ID")
         }
 
+    override suspend fun getOnchainMinRelayFeeSatPerVb(): Double? =
+        withContext(Dispatchers.IO) {
+            // WalletKit EstimateFee returns the bitcoind/btcd min relay fee from the
+            // chain backend — same role as Electrum blockchain.relayfee for L1 wallets.
+            // conf_target only affects sat_per_kw estimate; min_relay is independent.
+            val json =
+                runCatching { getJson("/v2/wallet/estimatefee/6") }
+                    .recoverCatching { getJson("/v2/wallet/estimatefee/2") }
+                    .getOrNull()
+                    ?: return@withContext null
+            val satPerKw =
+                json.optString("min_relay_fee_sat_per_kw")
+                    .toLongOrNull()
+                    ?: json.optLong("min_relay_fee_sat_per_kw", 0L)
+            if (satPerKw <= 0L) return@withContext null
+            // 1 sat/vB = 250 sat/kw (kWU).
+            val satPerVb = satPerKw.toDouble() / 250.0
+            satPerVb.takeIf { it in 0.01..100.0 }
+        }
+
     override suspend fun bumpOnchainFee(
         outpoint: github.aeonbtc.ibiswallet.data.model.UtxoInfo,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         immediate: Boolean,
         budgetSats: Long?,
     ): String =
         withContext(Dispatchers.IO) {
             require(outpoint.txid.isNotBlank()) { "Outpoint txid is required" }
+            // BumpFee only accepts integer sat/vB — round (keeps UI decimals for send path).
+            val integerRate =
+                satPerVbyte
+                    ?.takeIf { it > 0.0 }
+                    ?.let { kotlin.math.ceil(it).toLong().coerceAtLeast(1L) }
             val body =
                 JSONObject().apply {
                     put(
@@ -806,8 +875,8 @@ class LndRestClient(
                             .put("txid_str", outpoint.txid)
                             .put("output_index", outpoint.vout.toInt()),
                     )
-                    if (satPerVbyte != null && satPerVbyte > 0) {
-                        put("sat_per_vbyte", satPerVbyte.toString())
+                    if (integerRate != null) {
+                        put("sat_per_vbyte", integerRate.toString())
                     }
                     put("immediate", immediate)
                     if (budgetSats != null && budgetSats > 0) {
@@ -819,6 +888,301 @@ class LndRestClient(
                 "Fee bump submitted"
             }
         }
+
+    /**
+     * WalletKit SendOutputs platform path for fractional sat/vB. For max/send_all the output
+     * value is derived from spendable−weight-fee, then reduced on construction errors
+     * (reserve / fee shortfall / dust) until the node accepts the package.
+     */
+    private fun sendOnchainFractionalSweep(
+        address: String,
+        amountSats: Long?,
+        sendAll: Boolean,
+        satPerVbyte: Double,
+        label: String?,
+        spendUnconfirmed: Boolean,
+        selectedOutpoints: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>?,
+    ): String {
+        if (!selectedOutpoints.isNullOrEmpty()) {
+            throw IllegalStateException(
+                "Coin control with sub-sat fee rates is not supported on LND — " +
+                    "use a whole-number sat/vB or leave coin control off",
+            )
+        }
+        val startAmount =
+            if (sendAll) {
+                estimateSendAllAmountSats(
+                    feeRate = satPerVbyte,
+                    selectedOutpoints = null,
+                    recipientAddress = address,
+                )
+            } else {
+                amountSats!!
+            }
+        var attempt = startAmount
+        var lastError: Exception? = null
+        // Shrink output if WalletKit rejects construction (fee/reserve/shortfall).
+        repeat(12) {
+            if (attempt <= 0L) return@repeat
+            try {
+                return sendOnchainFractional(
+                    addrToAmountSats = mapOf(address to attempt),
+                    satPerVbyte = satPerVbyte,
+                    label = label,
+                    spendUnconfirmed = spendUnconfirmed,
+                    selectedOutpoints = null,
+                )
+            } catch (e: Exception) {
+                lastError = e
+                if (!isLndInsufficientFundsError(e) || !sendAll) throw e
+                // Drop a few sats and retry — common when weight estimate is low or
+                // RequiredReserve slightly exceeds our available−fee headroom.
+                attempt = (attempt - 5L).coerceAtLeast(0L)
+            }
+        }
+        throw lastError ?: IllegalStateException("On-chain send failed")
+    }
+
+    /**
+     * WalletKit SendOutputs (`POST /v2/wallet/send`) with [sat_per_kw] for sub-sat / fractional
+     * sat/vB. SendCoins/SendMany only take integer [sat_per_vbyte].
+     */
+    private fun sendOnchainFractional(
+        addrToAmountSats: Map<String, Long>,
+        satPerVbyte: Double,
+        label: String?,
+        spendUnconfirmed: Boolean,
+        selectedOutpoints: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>?,
+    ): String {
+        if (!selectedOutpoints.isNullOrEmpty()) {
+            throw IllegalStateException(
+                "Coin control with sub-sat fee rates is not supported on LND — " +
+                    "use a whole-number sat/vB or leave coin control off",
+            )
+        }
+        val satPerKw = BitcoinUtils.feeRateToSatPerKwu(satPerVbyte).toLong().coerceAtLeast(1L)
+        val outputs = JSONArray()
+        addrToAmountSats.forEach { (addr, amount) ->
+            val scriptBytes =
+                runCatching {
+                    Address(addr.trim(), Network.BITCOIN)
+                        .scriptPubkey()
+                        .toBytes()
+                        .toUByteArray()
+                        .toByteArray()
+                }.getOrElse {
+                    throw IllegalArgumentException("Invalid address: $addr")
+                }
+            outputs.put(
+                JSONObject()
+                    .put("value", amount.toString())
+                    .put("pk_script", Base64.encodeToString(scriptBytes, Base64.NO_WRAP)),
+            )
+        }
+        val body =
+            JSONObject().apply {
+                put("sat_per_kw", satPerKw.toString())
+                put("outputs", outputs)
+                if (!label.isNullOrBlank()) {
+                    put("label", label.trim().take(500))
+                }
+                put("spend_unconfirmed", spendUnconfirmed)
+                // Explicit min_confs so REST gateways that ignore bool alone still allow 0-conf.
+                if (spendUnconfirmed) {
+                    put("min_confs", 0)
+                }
+            }
+        val response = postJson("/v2/wallet/send", body)
+        val rawTxB64 =
+            response.optString("raw_tx").ifBlank {
+                throw IllegalStateException("Node did not return a transaction")
+            }
+        val rawTx =
+            runCatching { Base64.decode(rawTxB64, Base64.DEFAULT) }
+                .getOrElse { throw IllegalStateException("Invalid raw transaction from node") }
+        return runCatching {
+            BdkTransaction(rawTx).computeTxid().toString()
+        }.getOrElse {
+            // Fallback: double-SHA256 of the serialized tx (bitcoin wire id order).
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val hash = digest.digest(digest.digest(rawTx))
+            hash.reversedArray().joinToString("") { b -> "%02x".format(b) }
+        }
+    }
+
+    private fun isLndInsufficientFundsError(error: Exception): Boolean {
+        val msg = error.message.orEmpty().lowercase()
+        return msg.contains("insufficient") ||
+            msg.contains("not enough") ||
+            msg.contains("reserve") ||
+            msg.contains("unable to create") ||
+            msg.contains("construct")
+    }
+
+    private fun estimateSendAllAmountSats(
+        feeRate: Double,
+        selectedOutpoints: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>?,
+        recipientAddress: String,
+    ): Long {
+        val utxos =
+            if (!selectedOutpoints.isNullOrEmpty()) {
+                selectedOutpoints
+            } else {
+                // Prefer concrete utxo list so multi-input sweeps size fee correctly.
+                runCatching { listOnchainUtxosBlocking() }.getOrDefault(emptyList())
+            }
+        val utxoSum = utxos.sumOf { it.amountSats.toLong() }
+        // ListUnspent can briefly include coins washed by pending outs —
+        // clamp to spendable; also hold back LND anchor required reserve.
+        val spendable = getOnchainBalanceDetailsBlocking().spendableSats
+        val reserve = runCatching { fetchRequiredReserveSats() }.getOrDefault(0L).coerceAtLeast(0L)
+        val available =
+            when {
+                !selectedOutpoints.isNullOrEmpty() -> utxoSum
+                utxoSum > 0L && spendable > 0L -> minOf(utxoSum, spendable)
+                utxoSum > 0L -> utxoSum
+                else -> spendable
+            }.let { bal -> (bal - reserve).coerceAtLeast(0L) }
+        val inputAddresses =
+            utxos.map { it.address }.ifEmpty {
+                // Unknown composition: oversize as several P2WPKH inputs.
+                List(3) { "bc1qplaceholder000000000000000000000000000" }
+            }
+        val fee =
+            BitcoinUtils.estimateOnchainSendFeeSats(
+                satPerVb = feeRate,
+                inputAddresses = inputAddresses,
+                outputAddresses = listOf(recipientAddress),
+                includeChange = false,
+            )
+        val amount = available - fee
+        require(amount > 0L) { "Insufficient funds for fee at ${formatFeeRateForError(feeRate)} sat/vB" }
+        return amount
+    }
+
+    /** LND anchor reserve that SendOutputs refuses to spend below. */
+    private fun fetchRequiredReserveSats(): Long {
+        val json =
+            runCatching { getJson("/v2/wallet/requiredreserve") }
+                .recoverCatching { getJson("/v2/wallet/requiredreserve?additional_public_channels=0") }
+                .getOrNull()
+                ?: return 0L
+        return readLndAmount(json, "required_reserve").coerceAtLeast(0L)
+    }
+
+    private fun listOnchainUtxosBlocking(): List<github.aeonbtc.ibiswallet.data.model.UtxoInfo> {
+        val response =
+            runCatching { getJson("/v1/utxos?min_confs=0&max_confs=9999999") }
+                .recoverCatching { getJson("/v2/wallet/utxos?min_confs=0&max_confs=9999999") }
+                .getOrThrow()
+        val utxos = response.optJSONArray("utxos") ?: JSONArray()
+        return buildList {
+            for (i in 0 until utxos.length()) {
+                val u = utxos.optJSONObject(i) ?: continue
+                if (isLndUtxoUnavailable(u)) continue
+                val amount = readLndAmount(u, "amount_sat").coerceAtLeast(0L).toULong()
+                val address = u.optString("address").orEmpty()
+                val conf =
+                    u.optString("confirmations").toLongOrNull()
+                        ?: u.optLong("confirmations", 0L)
+                val out = u.optJSONObject("outpoint")
+                val txid =
+                    out?.optString("txid_str")?.ifBlank { null }
+                        ?: out?.optString("txid")?.ifBlank { null }
+                        ?: ""
+                val vout =
+                    (
+                        out?.optString("output_index")?.toIntOrNull()
+                            ?: out?.optInt("output_index", 0)
+                            ?: 0
+                    ).coerceAtLeast(0).toUInt()
+                if (txid.isBlank() || address.isBlank()) continue
+                add(
+                    github.aeonbtc.ibiswallet.data.model.UtxoInfo(
+                        outpoint = "$txid:$vout",
+                        txid = txid,
+                        vout = vout,
+                        address = address,
+                        amountSats = amount,
+                        isConfirmed = conf > 0,
+                        isFrozen = false,
+                    ),
+                )
+            }
+        }
+    }
+
+    /** Synchronous helper — only called from already-IO backend methods. */
+    private fun getOnchainBalanceDetailsBlocking(): github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails {
+        val utxos =
+            runCatching { getJson("/v1/utxos?min_confs=0&max_confs=9999999") }
+                .recoverCatching { getJson("/v2/wallet/utxos?min_confs=0&max_confs=9999999") }
+                .getOrNull()
+                ?.optJSONArray("utxos")
+        if (utxos != null) {
+            var available = 0L
+            var locked = 0L
+            for (i in 0 until utxos.length()) {
+                val utxo = utxos.optJSONObject(i) ?: continue
+                val amount = readLndAmount(utxo, "amount_sat").coerceAtLeast(0L)
+                if (isLndUtxoUnavailable(utxo)) {
+                    locked += amount
+                } else {
+                    available += amount
+                }
+            }
+            val pendingOut = pendingLndOutgoingAmount()
+            val spendable = (available - pendingOut).coerceAtLeast(0L)
+            return github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails(
+                spendableSats = spendable,
+                reservedSats = locked + (available - spendable).coerceAtLeast(0L),
+            )
+        }
+        val balance = getJson("/v1/balance/blockchain")
+        val confirmed = readLndAmount(balance, "confirmed_balance").coerceAtLeast(0L)
+        val pendingOut = pendingLndOutgoingAmount()
+        val spendable = (confirmed - pendingOut).coerceAtLeast(0L)
+        return github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails(
+            spendableSats = spendable,
+            reservedSats = (confirmed - spendable).coerceAtLeast(0L),
+        )
+    }
+
+    private fun needsFractionalFee(satPerVbyte: Double?): Boolean {
+        if (satPerVbyte == null || satPerVbyte <= 0.0) return false
+        val whole = satPerVbyte.toLong().toDouble()
+        return kotlin.math.abs(satPerVbyte - whole) > 1e-9
+    }
+
+    private fun putIntegerSatPerVbyte(
+        body: JSONObject,
+        satPerVbyte: Double?,
+    ) {
+        if (satPerVbyte == null || satPerVbyte <= 0.0) return
+        // Whole sat/vB only on SendCoins/SendMany (proto uint64).
+        body.put("sat_per_vbyte", satPerVbyte.roundToLong().coerceAtLeast(1L).toString())
+    }
+
+    private fun putOutpoints(
+        body: JSONObject,
+        selectedOutpoints: List<github.aeonbtc.ibiswallet.data.model.UtxoInfo>?,
+    ) {
+        if (selectedOutpoints.isNullOrEmpty()) return
+        val arr = JSONArray()
+        selectedOutpoints.forEach { utxo ->
+            arr.put(
+                JSONObject()
+                    .put("txid_str", utxo.txid)
+                    .put("output_index", utxo.vout.toInt()),
+            )
+        }
+        body.put("outpoints", arr)
+    }
+
+    private fun formatFeeRateForError(rate: Double): String {
+        val formatted = String.format(java.util.Locale.US, "%.4f", rate)
+        return formatted.trimEnd('0').trimEnd('.')
+    }
 
     override suspend fun createInvoice(
         amountSats: Long?,
@@ -871,7 +1235,13 @@ class LndRestClient(
             val request = bolt11.trim().removePrefix("lightning:").trim()
             // The repository passes amount only for zero-amount invoices.
             val payAmountSats = amountSats?.takeIf { it > 0 }
-            val routingAmountSats = payAmountSats ?: 0L
+            // Fee limits need the payment amount as a base. For fixed-amount
+            // invoices the amount isn't passed in, so decode it from the node.
+            val routingAmountSats =
+                payAmountSats
+                    ?: runCatching { decodeInvoice(request).amountSats }.getOrNull()
+                    ?: 0L
+            val feeLimitSat = routerFeeLimitSats(routingAmountSats, maxFeePercent)
             // LND classic REST: SendPaymentSync → /v1/channels/transactions
             // Some proxies / litd reverse-proxies omit that route; fall back to Router.
             val classicBody =
@@ -881,6 +1251,9 @@ class LndRestClient(
                         put("amt", payAmountSats.toString())
                     }
                     put("timeout_seconds", 60)
+                    // SendPaymentSync defaults to a fee limit of 100% of the payment
+                    // amount when unset — enforce the same capped limit as the router.
+                    put("fee_limit", JSONObject().put("fixed", feeLimitSat.toString()))
                 }
             val classic =
                 runCatching { postJson("/v1/channels/transactions", classicBody) }
@@ -897,10 +1270,7 @@ class LndRestClient(
                                 put("timeout_seconds", 60)
                                 // Router defaults to a zero-fee budget, which only permits free
                                 // routes. Match normal wallet behavior with a 5% capped fee limit.
-                                put(
-                                    "fee_limit_sat",
-                                    routerFeeLimitSats(routingAmountSats, maxFeePercent).toString(),
-                                )
+                                put("fee_limit_sat", feeLimitSat.toString())
                                 // Router is streaming. Request only the final update so we do not
                                 // mistake its initial IN_FLIGHT/FAILURE_REASON_NONE event for a failure.
                                 put("no_inflight_updates", true)
@@ -1063,7 +1433,7 @@ class LndRestClient(
                             .build()
                     }
                 http.newCall(request).execute().use { response ->
-                    val responseBody = response.body?.string().orEmpty()
+                    val responseBody = response.body?.stringWithLimit(InputLimits.LARGE_JSON_BYTES).orEmpty()
                     if (!response.isSuccessful) {
                         throw IllegalStateException(extractError(responseBody, response.code, path))
                     }
@@ -1084,30 +1454,51 @@ class LndRestClient(
         throw lastError ?: IllegalStateException("Request failed: $path")
     }
 
-    private fun buildHttpClient(config: LightningNodeConfig): OkHttpClient {
+    private fun buildHttpClient(
+        config: LightningNodeConfig,
+        probeTimeouts: Boolean = false,
+    ): OkHttpClient {
         val viaTor = config.useTor || config.host.endsWith(".onion", ignoreCase = true)
-        val timeoutSeconds = if (viaTor) 90L else 30L
+        // Cleartext probe before HTTPS fallback must fail fast on LAN HTTPS-only nodes
+        // (otherwise users wait 30–90s × retries staring at a working HTTPS endpoint).
+        val timeoutSeconds =
+            when {
+                probeTimeouts && viaTor -> CLEARTEXT_PROBE_TOR_SECONDS
+                probeTimeouts -> CLEARTEXT_PROBE_SECONDS
+                // Initial RPCs over Tor circs: stay responsive (was 90s × retries = multi-minute).
+                viaTor -> TOR_RPC_SECONDS
+                else -> 30L
+            }
+        val callTimeoutSeconds =
+            when {
+                probeTimeouts -> timeoutSeconds + 1L
+                viaTor -> timeoutSeconds + 15L
+                else -> timeoutSeconds + 30L
+            }
         val builder =
             OkHttpClient.Builder()
                 .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                .callTimeout(timeoutSeconds + 30, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(true)
+                .callTimeout(callTimeoutSeconds, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(!probeTimeouts)
 
         if (viaTor) {
             applyTorProxy(builder, torSocksPort)
-            // HTTP/2 + connection reuse over Tor SOCKS is a common source of
-            // "unexpected end of stream" after the first successful RPC.
+            // HTTP/1.1 only — HTTP/2 multiplexing over Tor SOCKS flakes badly.
+            // Small keep-alive pool so parallel sync RPCs can reuse circuits instead of
+            // opening a brand-new dial for every getinfo/payments/tx call.
             builder.protocols(listOf(Protocol.HTTP_1_1))
-            builder.connectionPool(ConnectionPool(0, 1, TimeUnit.MILLISECONDS))
+            builder.connectionPool(ConnectionPool(2, 45, TimeUnit.SECONDS))
         }
 
         if (config.tlsEnabled) {
             when {
+                // Pin when the user supplied a cert (typical Umbrel/LND tls.cert paste).
                 config.tlsCertPem.isNotBlank() ->
                     TlsCertMaterial.applyToOkHttp(builder, config.tlsCertPem)
-                // Self-signed LND is common; empty PEM still means HTTPS with trust-all.
+                // No cert: user is connecting to their own node. Self-signed LND is
+                // common; trust-all here. Prefer pasting tls.cert when available.
                 else -> TlsCertMaterial.applyInsecureTrust(builder)
             }
         }
@@ -1129,6 +1520,11 @@ class LndRestClient(
 
     companion object {
         private const val STREAM_RETRY_ATTEMPTS = 3
+        /** Clearnet getinfo stream flakiness only — keep low so LAN does not stall. */
+        private const val CONNECT_CLEAR_STREAM_ATTEMPTS = 2
+        private const val CLEARTEXT_PROBE_SECONDS = 3L
+        private const val CLEARTEXT_PROBE_TOR_SECONDS = 6L
+        private const val TOR_RPC_SECONDS = 45L
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
         fun normalizeMacaroon(raw: String): String {
@@ -1280,4 +1676,65 @@ class LndRestClient(
             return "$stateLabel $cappedCurrent/$total"
         }
     }
+}
+
+data class LndTxOutput(
+    val address: String,
+    val amountSats: Long,
+    val isOurs: Boolean,
+)
+
+data class LndResolvedTxAddresses(
+    val address: String?,
+    val addressAmountSats: Long?,
+    val changeAddress: String?,
+    val changeAmountSats: Long?,
+)
+
+/**
+ * Map LND [Transaction.output_details] into detail-dialog fields.
+ * Incoming txs must use our receive output(s), never an external change UTXO
+ * belonging to the sender (common when dest_addresses lists both outs).
+ */
+fun resolveLndTxAddresses(
+    amountSats: Long,
+    outputs: List<LndTxOutput>,
+    destAddressesFallback: String? = null,
+): LndResolvedTxAddresses {
+    var recipientAddress: String? = null
+    var recipientAmount: Long? = null
+    var ourAddress: String? = null
+    var ourAmountSats = 0L
+    for (output in outputs) {
+        if (output.isOurs) {
+            if (ourAddress == null) {
+                ourAddress = output.address
+            }
+            ourAmountSats += output.amountSats.coerceAtLeast(0L)
+        } else if (recipientAddress == null) {
+            recipientAddress = output.address
+            recipientAmount = output.amountSats.takeIf { it > 0L }
+        }
+    }
+    val isReceived = amountSats >= 0L
+    val address =
+        if (isReceived) {
+            ourAddress
+        } else {
+            recipientAddress ?: destAddressesFallback?.ifBlank { null }
+        }
+    val addressAmountSats =
+        if (isReceived) {
+            ourAmountSats.takeIf { it > 0L } ?: amountSats.takeIf { it > 0L }
+        } else {
+            recipientAmount ?: kotlin.math.abs(amountSats).takeIf { address != null }
+        }
+    val changeAddress = ourAddress?.takeIf { !isReceived && it.isNotBlank() }
+    val changeAmountSats = ourAmountSats.takeIf { changeAddress != null && it > 0L }
+    return LndResolvedTxAddresses(
+        address = address,
+        addressAmountSats = addressAmountSats,
+        changeAddress = changeAddress,
+        changeAmountSats = changeAmountSats,
+    )
 }

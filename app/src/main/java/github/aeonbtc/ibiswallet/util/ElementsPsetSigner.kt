@@ -34,6 +34,46 @@ object ElementsPsetSigner {
 
     private const val SIGHASH_ALL = 1
 
+    // BIP 174 / BIP 370 global types
+    private const val PSBT_GLOBAL_UNSIGNED_TX = 0x00
+    private const val PSBT_GLOBAL_TX_VERSION = 0x02
+    private const val PSBT_GLOBAL_FALLBACK_LOCKTIME = 0x03
+    private const val PSBT_GLOBAL_INPUT_COUNT = 0x04
+    private const val PSBT_GLOBAL_OUTPUT_COUNT = 0x05
+
+    // BIP 174 / BIP 370 input types
+    private const val PSBT_IN_WITNESS_UTXO = 0x01
+    private const val PSBT_IN_PARTIAL_SIG = 0x02
+    private const val PSBT_IN_SIGHASH = 0x03
+    private const val PSBT_IN_BIP32_DERIVATION = 0x06
+    private const val PSBT_IN_PREVIOUS_TXID = 0x0e
+    private const val PSBT_IN_OUTPUT_INDEX = 0x0f
+    private const val PSBT_IN_SEQUENCE = 0x10
+    private const val PSBT_IN_REQUIRED_TIME_LOCKTIME = 0x11
+    private const val PSBT_IN_REQUIRED_HEIGHT_LOCKTIME = 0x12
+    private const val PSBT_IN_PROPRIETARY = 0xFC
+
+    // BIP 174 / BIP 370 output types
+    private const val PSBT_OUT_AMOUNT = 0x03
+    private const val PSBT_OUT_SCRIPT = 0x04
+    private const val PSBT_OUT_PROPRIETARY = 0xFC
+
+    // Elements proprietary input subtypes (prefix "pset")
+    private const val PSBT_ELEMENTS_IN_ISSUANCE_VALUE = 0x00
+    private const val PSBT_ELEMENTS_IN_ISSUANCE_VALUE_COMMITMENT = 0x01
+    private const val PSBT_ELEMENTS_IN_ISSUANCE_INFLATION_KEYS = 0x0a
+    private const val PSBT_ELEMENTS_IN_ISSUANCE_INFLATION_KEYS_COMMITMENT = 0x0b
+    private const val PSBT_ELEMENTS_IN_ISSUANCE_BLINDING_NONCE = 0x0c
+    private const val PSBT_ELEMENTS_IN_ISSUANCE_ASSET_ENTROPY = 0x0d
+
+    // Elements proprietary output subtypes (prefix "pset")
+    private const val PSBT_ELEMENTS_OUT_VALUE_COMMITMENT = 0x01
+    private const val PSBT_ELEMENTS_OUT_ASSET = 0x02
+    private const val PSBT_ELEMENTS_OUT_ASSET_COMMITMENT = 0x03
+    private const val PSBT_ELEMENTS_OUT_ECDH_PUBKEY = 0x07
+
+    private val PSET_PROP_PREFIX = byteArrayOf(0x70, 0x73, 0x65, 0x74) // "pset"
+
     /**
      * Sign a PSET (base64) using private keys derived from [seed]
      * (the BIP39 seed with the passphrase already baked in).
@@ -63,15 +103,44 @@ object ElementsPsetSigner {
         ) { "Not a valid PSET" }
 
         val globalMap = readKeyValueMap(buf)
-        val unsignedTx = globalMap.firstOrNull { it.keyType == 0x00 }?.value
-            ?: error("PSET missing unsigned transaction")
 
-        val txInfo = parseUnsignedTx(unsignedTx)
+        // PSBTv0 embeds the full unsigned tx at global key 0x00. Elements PSET
+        // (PSBTv2) removes that field — reconstruct tx fields from global + per-
+        // input/output maps (BIP 370 / Elements proprietary keys).
+        val unsignedTx = globalMap.firstOrNull { it.keyType == PSBT_GLOBAL_UNSIGNED_TX }?.value
+        val inputCountFromGlobal = globalMap
+            .firstOrNull { it.keyType == PSBT_GLOBAL_INPUT_COUNT }
+            ?.value
+            ?.let { decodeVarIntValue(it) }
+        val outputCountFromGlobal = globalMap
+            .firstOrNull { it.keyType == PSBT_GLOBAL_OUTPUT_COUNT }
+            ?.value
+            ?.let { decodeVarIntValue(it) }
+
+        val (provisionalInputCount, provisionalOutputCount) = when {
+            unsignedTx != null -> {
+                val parsed = parseUnsignedTx(unsignedTx)
+                parsed.inputs.size to parsed.outputs.size
+            }
+            inputCountFromGlobal != null && outputCountFromGlobal != null -> {
+                inputCountFromGlobal.toInt() to outputCountFromGlobal.toInt()
+            }
+            else -> error("PSET missing unsigned transaction and PSETv2 counts")
+        }
+
+        val inputMaps = (0 until provisionalInputCount).map { readKeyValueMap(buf) }
+        val outputMaps = (0 until provisionalOutputCount).map { readKeyValueMap(buf) }
+
+        val txInfo = if (unsignedTx != null) {
+            parseUnsignedTx(unsignedTx)
+        } else {
+            reconstructTxInfoFromPsetV2(globalMap, inputMaps, outputMaps)
+        }
         val inputCount = txInfo.inputs.size
         val outputCount = txInfo.outputs.size
-
-        val inputMaps = (0 until inputCount).map { readKeyValueMap(buf) }
-        val outputMaps = (0 until outputCount).map { readKeyValueMap(buf) }
+        require(inputCount == provisionalInputCount && outputCount == provisionalOutputCount) {
+            "PSET input/output map count mismatch"
+        }
 
         val masterFingerprint = ElectrumSeedUtil.computeMasterFingerprint(seed)
 
@@ -84,9 +153,9 @@ object ElementsPsetSigner {
 
         for (i in 0 until inputCount) {
             val map = inputMaps[i]
-            val witnessUtxo = map.firstOrNull { it.keyType == 0x01 }?.value ?: continue
-            val bip32Entries = map.filter { it.keyType == 0x06 }
-            val sighashType = map.firstOrNull { it.keyType == 0x03 }
+            val witnessUtxo = map.firstOrNull { it.keyType == PSBT_IN_WITNESS_UTXO }?.value ?: continue
+            val bip32Entries = map.filter { it.keyType == PSBT_IN_BIP32_DERIVATION }
+            val sighashType = map.firstOrNull { it.keyType == PSBT_IN_SIGHASH }
                 ?.value?.let { readUint32LE(it, 0).toInt() }
                 ?: SIGHASH_ALL
 
@@ -107,16 +176,30 @@ object ElementsPsetSigner {
                 val pubKeyHash = ElectrumSeedUtil.hash160(derivedPubKey)
                 val scriptCode = buildP2wpkhScriptCode(pubKeyHash)
 
+                val input = txInfo.inputs[i]
+                val baseType = sighashType and 0x1f
+                val selectedHashOutputs = when {
+                    baseType == SIGHASH_NONE -> ByteArray(32)
+                    baseType == SIGHASH_SINGLE -> {
+                        if (i < txInfo.outputs.size) {
+                            sha256d(txInfo.outputs[i].serialized)
+                        } else {
+                            ByteArray(32)
+                        }
+                    }
+                    else -> hashOutputs
+                }
                 val sighash = computeSegwitV0Sighash(
                     version = txInfo.version,
                     hashPrevouts = hashPrevouts,
                     hashSequences = hashSequences,
-                    outpoint = txInfo.inputs[i].outpoint,
+                    hashIssuances = hashIssuances,
+                    outpoint = input.outpoint,
                     scriptCode = scriptCode,
                     value = witnessValue,
-                    sequence = txInfo.inputs[i].sequence,
-                    hashIssuances = hashIssuances,
-                    hashOutputs = hashOutputs,
+                    sequence = input.sequence,
+                    inputIssuance = if (input.hasIssuance) input.issuanceData else null,
+                    hashOutputs = selectedHashOutputs,
                     locktime = txInfo.locktime,
                     sighashType = sighashType,
                 )
@@ -173,9 +256,9 @@ object ElementsPsetSigner {
             if (sigs != null) {
                 for ((pubKey, sig) in sigs) {
                     val rawKey = ByteArray(1 + pubKey.size)
-                    rawKey[0] = 0x02
+                    rawKey[0] = PSBT_IN_PARTIAL_SIG.toByte()
                     pubKey.copyInto(rawKey, 1)
-                    map.add(KvEntry(0x02, pubKey, sig, rawKey))
+                    map.add(KvEntry(PSBT_IN_PARTIAL_SIG, pubKey, sig, rawKey))
                 }
             }
             writeKeyValueMap(out, map)
@@ -196,57 +279,312 @@ object ElementsPsetSigner {
 
     // ── Unsigned transaction parser ─────────────────────────────────
 
-    private class TxInput(
+    internal class TxInput(
         val outpoint: ByteArray,
         val sequence: ByteArray,
         val hasIssuance: Boolean,
         val issuanceData: ByteArray,
     )
 
-    private class TxOutput(val serialized: ByteArray)
-    private class TxInfo(
+    internal class TxOutput(val serialized: ByteArray)
+    internal class TxInfo(
         val version: ByteArray,
         val locktime: ByteArray,
         val inputs: List<TxInput>,
         val outputs: List<TxOutput>,
     )
 
-    private fun parseUnsignedTx(data: ByteArray): TxInfo {
+    /**
+     * Rebuild the unsigned-tx fields needed for Elements segwit-v0 sighash from a
+     * PSETv2 (no global PSBT_GLOBAL_UNSIGNED_TX).
+     */
+    private fun reconstructTxInfoFromPsetV2(
+        globalMap: List<KvEntry>,
+        inputMaps: List<List<KvEntry>>,
+        outputMaps: List<List<KvEntry>>,
+    ): TxInfo {
+        val versionBytes = globalMap.firstOrNull { it.keyType == PSBT_GLOBAL_TX_VERSION }?.value
+            ?: error("PSETv2 missing global tx version")
+        require(versionBytes.size == 4) { "PSETv2 global tx version must be 4 bytes" }
+
+        val fallbackLocktime = globalMap
+            .firstOrNull { it.keyType == PSBT_GLOBAL_FALLBACK_LOCKTIME }
+            ?.value
+            ?.also { require(it.size == 4) { "PSETv2 fallback locktime must be 4 bytes" } }
+
+        val locktime = computePsetV2Locktime(inputMaps, fallbackLocktime)
+
+        val inputs = inputMaps.map { map -> reconstructInput(map) }
+        val outputs = outputMaps.map { map -> TxOutput(reconstructOutputSerialized(map)) }
+
+        return TxInfo(versionBytes, locktime, inputs, outputs)
+    }
+
+    /**
+     * BIP 370 locktime resolution (same rules as rust-elements `PSET::locktime`):
+     * unconstrained/unconstrained → fallback (or 0);
+     * time Minimum (any height) → max time;
+     * height Minimum → max height;
+     * both Disallowed → conflict.
+     */
+    private fun computePsetV2Locktime(
+        inputMaps: List<List<KvEntry>>,
+        fallbackLocktime: ByteArray?,
+    ): ByteArray {
+        // null=Unconstrained, -1=Disallowed, else Minimum(value)
+        var timeState: Long? = null
+        var heightState: Long? = null
+        var timeDisallowed = false
+        var heightDisallowed = false
+
+        for (map in inputMaps) {
+            val timeLt = map.firstOrNull { it.keyType == PSBT_IN_REQUIRED_TIME_LOCKTIME }
+                ?.value?.let {
+                    require(it.size == 4) { "time locktime must be 4 bytes" }
+                    readUint32LE(it, 0)
+                }
+            val heightLt = map.firstOrNull { it.keyType == PSBT_IN_REQUIRED_HEIGHT_LOCKTIME }
+                ?.value?.let {
+                    require(it.size == 4) { "height locktime must be 4 bytes" }
+                    readUint32LE(it, 0)
+                }
+
+            when {
+                timeLt != null && heightLt != null -> {
+                    timeState = maxOf(timeState ?: 0L, timeLt)
+                    heightState = maxOf(heightState ?: 0L, heightLt)
+                }
+                timeLt != null -> {
+                    timeState = maxOf(timeState ?: 0L, timeLt)
+                    heightDisallowed = true
+                }
+                heightLt != null -> {
+                    heightState = maxOf(heightState ?: 0L, heightLt)
+                    timeDisallowed = true
+                }
+            }
+        }
+
+        return when {
+            !timeDisallowed && timeState != null -> uint32LE(timeState)
+            !heightDisallowed && heightState != null -> uint32LE(heightState)
+            timeDisallowed && heightDisallowed -> error("PSETv2 locktime conflict")
+            else -> fallbackLocktime ?: uint32LE(0)
+        }
+    }
+
+    private fun reconstructInput(map: List<KvEntry>): TxInput {
+        val txid = map.firstOrNull { it.keyType == PSBT_IN_PREVIOUS_TXID }?.value
+            ?: error("PSETv2 input missing previous txid")
+        require(txid.size == 32) { "previous txid must be 32 bytes" }
+
+        val voutBytes = map.firstOrNull { it.keyType == PSBT_IN_OUTPUT_INDEX }?.value
+            ?: error("PSETv2 input missing output index")
+        require(voutBytes.size == 4) { "output index must be 4 bytes" }
+        val rawVout = readUint32LE(voutBytes, 0)
+
+        // Outpoint used in hashPrevouts / sighash uses flags-stripped vout (bits 30/31 cleared),
+        // except the full coinbase marker 0xffffffff. Matches extract_tx in rust-elements.
+        val outpointVout = if (rawVout == 0xFFFF_FFFFL) {
+            rawVout
+        } else {
+            rawVout and 0x3FFF_FFFFL
+        }
+        val outpoint = txid + uint32LE(outpointVout)
+
+        val sequence = map.firstOrNull { it.keyType == PSBT_IN_SEQUENCE }?.value
+            ?: uint32LE(0xFFFF_FFFFL)
+        require(sequence.size == 4) { "sequence must be 4 bytes" }
+
+        val flaggedIssuance = (rawVout != 0xFFFF_FFFFL) && (rawVout and 0x8000_0000L) != 0L
+        val issuanceData = if (flaggedIssuance) {
+            reconstructIssuanceData(map)
+        } else {
+            ByteArray(0)
+        }
+        val hasIssuance = flaggedIssuance && !isNullIssuance(issuanceData)
+
+        return TxInput(
+            outpoint,
+            sequence,
+            hasIssuance,
+            if (hasIssuance) issuanceData else ByteArray(0),
+        )
+    }
+
+    private fun reconstructIssuanceData(map: List<KvEntry>): ByteArray {
+        val out = ByteArrayOutputStream()
+        val nonce = findElementsProp(map, PSBT_IN_PROPRIETARY, PSBT_ELEMENTS_IN_ISSUANCE_BLINDING_NONCE)
+            ?: ByteArray(32)
+        require(nonce.size == 32) { "issuance blinding nonce must be 32 bytes" }
+        out.write(nonce)
+
+        val entropy = findElementsProp(map, PSBT_IN_PROPRIETARY, PSBT_ELEMENTS_IN_ISSUANCE_ASSET_ENTROPY)
+            ?: ByteArray(32)
+        require(entropy.size == 32) { "issuance asset entropy must be 32 bytes" }
+        out.write(entropy)
+
+        writeConfidentialValueFromPset(
+            out = out,
+            explicit = findElementsProp(map, PSBT_IN_PROPRIETARY, PSBT_ELEMENTS_IN_ISSUANCE_VALUE),
+            commitment = findElementsProp(
+                map,
+                PSBT_IN_PROPRIETARY,
+                PSBT_ELEMENTS_IN_ISSUANCE_VALUE_COMMITMENT,
+            ),
+        )
+        writeConfidentialValueFromPset(
+            out = out,
+            explicit = findElementsProp(map, PSBT_IN_PROPRIETARY, PSBT_ELEMENTS_IN_ISSUANCE_INFLATION_KEYS),
+            commitment = findElementsProp(
+                map,
+                PSBT_IN_PROPRIETARY,
+                PSBT_ELEMENTS_IN_ISSUANCE_INFLATION_KEYS_COMMITMENT,
+            ),
+        )
+        return out.toByteArray()
+    }
+
+    private fun reconstructOutputSerialized(map: List<KvEntry>): ByteArray {
+        val out = ByteArrayOutputStream()
+
+        val assetCommitment = findElementsProp(map, PSBT_OUT_PROPRIETARY, PSBT_ELEMENTS_OUT_ASSET_COMMITMENT)
+        val assetExplicit = findElementsProp(map, PSBT_OUT_PROPRIETARY, PSBT_ELEMENTS_OUT_ASSET)
+        when {
+            assetCommitment != null -> {
+                require(assetCommitment.size == 33) { "asset commitment must be 33 bytes" }
+                out.write(assetCommitment)
+            }
+            assetExplicit != null -> {
+                require(assetExplicit.size == 32) { "explicit asset must be 32 bytes" }
+                out.write(0x01)
+                out.write(assetExplicit)
+            }
+            else -> error("PSETv2 output missing asset")
+        }
+
+        val valueCommitment = findElementsProp(map, PSBT_OUT_PROPRIETARY, PSBT_ELEMENTS_OUT_VALUE_COMMITMENT)
+        val amountExplicit = map.firstOrNull { it.keyType == PSBT_OUT_AMOUNT }?.value
+        when {
+            valueCommitment != null -> {
+                require(valueCommitment.size == 33) { "value commitment must be 33 bytes" }
+                out.write(valueCommitment)
+            }
+            amountExplicit != null -> {
+                require(amountExplicit.size == 8) { "explicit amount must be 8 bytes" }
+                out.write(0x01)
+                // Confidential explicit values are big-endian u64; PSET stores little-endian.
+                out.write(amountExplicit.reversedArray())
+            }
+            else -> error("PSETv2 output missing amount")
+        }
+
+        val ecdh = findElementsProp(map, PSBT_OUT_PROPRIETARY, PSBT_ELEMENTS_OUT_ECDH_PUBKEY)
+        if (ecdh != null) {
+            require(ecdh.size == 33) { "ECDH pubkey must be 33 bytes" }
+            out.write(ecdh)
+        } else {
+            out.write(0x00)
+        }
+
+        val script = map.firstOrNull { it.keyType == PSBT_OUT_SCRIPT }?.value
+            ?: error("PSETv2 output missing script")
+        writeCompactSize(out, script.size.toLong())
+        out.write(script)
+
+        return out.toByteArray()
+    }
+
+    private fun writeConfidentialValueFromPset(
+        out: ByteArrayOutputStream,
+        explicit: ByteArray?,
+        commitment: ByteArray?,
+    ) {
+        when {
+            commitment != null -> {
+                require(commitment.size == 33) { "value commitment must be 33 bytes" }
+                out.write(commitment)
+            }
+            explicit != null -> {
+                require(explicit.size == 8) { "explicit value must be 8 bytes" }
+                out.write(0x01)
+                out.write(explicit.reversedArray())
+            }
+            else -> out.write(0x00)
+        }
+    }
+
+    /**
+     * Elements proprietary keys: type 0xFC, key = compactSize("pset") || subtype || rest.
+     */
+    private fun findElementsProp(map: List<KvEntry>, type: Int, subtype: Int): ByteArray? {
+        for (entry in map) {
+            if (entry.keyType != type) continue
+            val keyData = entry.keyData
+            if (keyData.size < 6) continue
+            // compactSize-prefixed "pset" (length 4)
+            if (keyData[0].toInt() and 0xFF != 4) continue
+            if (!keyData.copyOfRange(1, 5).contentEquals(PSET_PROP_PREFIX)) continue
+            if (keyData[5].toInt() and 0xFF != subtype) continue
+            return entry.value
+        }
+        return null
+    }
+
+    private fun decodeVarIntValue(value: ByteArray): Long {
+        val buf = ByteArrayInputStream(value)
+        val n = readCompactSize(buf)
+        require(buf.available() == 0) { "trailing bytes in compact size value" }
+        return n
+    }
+
+    /**
+     * Parse an Elements transaction serialization for sighash purposes.
+     *
+     * Elements wire format (unlike Bitcoin): always `version || wit_flag(0|1) ||
+     * inputs || outputs || locktime [|| witnesses]`. There is no separate 0x00
+     * marker before the flag. Vout high bits encode pegin (bit 30) / issuance
+     * (bit 31); the outpoint used in BIP143 hashes drops those bits.
+     */
+    internal fun parseUnsignedTx(data: ByteArray): TxInfo {
         val buf = ByteArrayInputStream(data)
         val version = ByteArray(4); buf.readExactly(version)
 
-        var peek = buf.read()
-        if (peek == 0x00) {
-            buf.read() // skip flag byte
-            peek = -1
+        val witFlag = buf.read()
+        require(witFlag == 0 || witFlag == 1) {
+            "Invalid Elements witness flag: $witFlag"
         }
 
-        val inputCount = if (peek >= 0) {
-            readCompactSizeFromFirstByte(peek, buf)
-        } else {
-            readCompactSize(buf)
-        }
-
+        val inputCount = readCompactSize(buf)
         val inputs = mutableListOf<TxInput>()
         repeat(inputCount.toInt()) {
             val txid = ByteArray(32); buf.readExactly(txid)
             val voutBytes = ByteArray(4); buf.readExactly(voutBytes)
-            val vout = readUint32LE(voutBytes, 0)
-            val outpoint = txid + voutBytes
+            val rawVout = readUint32LE(voutBytes, 0)
+
+            // Coinbase (0xffffffff) keeps full value; otherwise strip pegin/issuance flag bits.
+            val cleanVout = if (rawVout == 0xFFFF_FFFFL) {
+                rawVout
+            } else {
+                rawVout and 0x3FFF_FFFFL
+            }
+            val outpoint = txid + uint32LE(cleanVout)
 
             val scriptSigLen = readCompactSize(buf)
             if (scriptSigLen > 0) buf.skip(scriptSigLen)
 
             val seq = ByteArray(4); buf.readExactly(seq)
 
-            val hasIssuance = (vout and 0x80000000u.toLong()) != 0L
-            val issuanceData = if (hasIssuance) {
+            val flaggedIssuance = (rawVout != 0xFFFF_FFFFL) && (rawVout and 0x8000_0000L) != 0L
+            val issuanceData = if (flaggedIssuance) {
                 readIssuanceData(buf)
             } else {
                 ByteArray(0)
             }
+            // rust-elements: has_issuance() is !issuance.is_null() (null amount AND null inflation keys).
+            val hasIssuance = flaggedIssuance && !isNullIssuance(issuanceData)
 
-            inputs.add(TxInput(outpoint, seq, hasIssuance, issuanceData))
+            inputs.add(TxInput(outpoint, seq, hasIssuance, if (hasIssuance) issuanceData else ByteArray(0)))
         }
 
         val outputCount = readCompactSize(buf)
@@ -256,7 +594,15 @@ object ElementsPsetSigner {
         }
 
         val locktime = ByteArray(4); buf.readExactly(locktime)
+        // Witnesses ignored for sighash (fields already collected).
         return TxInfo(version, locktime, inputs, outputs)
+    }
+
+    /** Null AssetIssuance: both amount and inflation_keys are Null (prefix 0x00). */
+    private fun isNullIssuance(issuanceData: ByteArray): Boolean {
+        if (issuanceData.size < 66) return true
+        // nonce(32) + entropy(32) + amount_prefix + inflation_prefix
+        return issuanceData[64] == 0.toByte() && issuanceData[65] == 0.toByte()
     }
 
     private fun readIssuanceData(buf: ByteArrayInputStream): ByteArray {
@@ -315,65 +661,143 @@ object ElementsPsetSigner {
 
     // ── Elements segwit v0 sighash ──────────────────────────────────
 
-    private fun computeHashPrevouts(inputs: List<TxInput>): ByteArray {
+    internal fun computeHashPrevouts(inputs: List<TxInput>): ByteArray {
         val out = ByteArrayOutputStream()
         for (inp in inputs) out.write(inp.outpoint)
         return sha256d(out.toByteArray())
     }
 
-    private fun computeHashSequences(inputs: List<TxInput>): ByteArray {
+    internal fun computeHashSequences(inputs: List<TxInput>): ByteArray {
         val out = ByteArrayOutputStream()
         for (inp in inputs) out.write(inp.sequence)
         return sha256d(out.toByteArray())
     }
 
-    private fun computeHashIssuances(inputs: List<TxInput>): ByteArray {
+    /**
+     * Elements BIP143 issuances prefimage: each input contributes either its
+     * full `AssetIssuance` serialization, or a single 0x00 when absent
+     * (rust-elements `common_cache.issuances`, not a null issuance struct).
+     */
+    internal fun computeHashIssuances(inputs: List<TxInput>): ByteArray {
         val out = ByteArrayOutputStream()
         for (inp in inputs) {
             if (inp.hasIssuance) {
                 out.write(inp.issuanceData)
             } else {
-                out.write(ByteArray(64))
-                out.write(0x00)
                 out.write(0x00)
             }
         }
         return sha256d(out.toByteArray())
     }
 
-    private fun computeHashOutputs(outputs: List<TxOutput>): ByteArray {
+    internal fun computeHashOutputs(outputs: List<TxOutput>): ByteArray {
         val out = ByteArrayOutputStream()
         for (o in outputs) out.write(o.serialized)
         return sha256d(out.toByteArray())
     }
 
-    private fun computeSegwitV0Sighash(
+    private const val SIGHASH_NONE = 2
+    private const val SIGHASH_SINGLE = 3
+    private const val SIGHASH_ANYONECANPAY = 0x80
+
+    /**
+     * Elements BIP143 / segwit-v0 signing preimage
+     * (`encode_segwitv0_signing_data_to` in rust-elements).
+     */
+    internal fun computeSegwitV0Sighash(
         version: ByteArray,
         hashPrevouts: ByteArray,
         hashSequences: ByteArray,
+        hashIssuances: ByteArray,
         outpoint: ByteArray,
         scriptCode: ByteArray,
         value: ByteArray,
         sequence: ByteArray,
-        hashIssuances: ByteArray,
+        inputIssuance: ByteArray?,
         hashOutputs: ByteArray,
         locktime: ByteArray,
         sighashType: Int,
     ): ByteArray {
+        val baseType = sighashType and 0x1f
+        val anyoneCanPay = (sighashType and SIGHASH_ANYONECANPAY) != 0
+        val zeroHash = ByteArray(32)
+
         val out = ByteArrayOutputStream()
-        out.write(version)              // 4
-        out.write(hashPrevouts)         // 32
-        out.write(hashSequences)        // 32
-        out.write(outpoint)             // 36
+        out.write(version)
+
+        // hashPrevouts — zero if ANYONECANPAY
+        out.write(if (anyoneCanPay) zeroHash else hashPrevouts)
+
+        // hashSequences — zero if ANYONECANPAY or SINGLE or NONE
+        val includeSequences = !anyoneCanPay && baseType != SIGHASH_SINGLE && baseType != SIGHASH_NONE
+        out.write(if (includeSequences) hashSequences else zeroHash)
+
+        // hashIssuances (Elements) — zero if ANYONECANPAY
+        out.write(if (anyoneCanPay) zeroHash else hashIssuances)
+
+        // input-specific
+        out.write(outpoint)
         writeCompactSize(out, scriptCode.size.toLong())
-        out.write(scriptCode)           // 25 for P2WPKH
-        out.write(value)                // 9 or 33
-        out.write(sequence)             // 4
-        out.write(hashIssuances)        // 32
-        out.write(hashOutputs)          // 32
-        out.write(locktime)             // 4
-        out.write(uint32LE(sighashType.toLong()))  // 4
+        out.write(scriptCode)
+        out.write(value)
+        out.write(sequence)
+        if (inputIssuance != null) {
+            out.write(inputIssuance)
+        }
+
+        // hashOutputs — for SINGLE/NONE the caller supplies the preimage hash
+        // (single-output hash or zero). For ALL it is hash of all outputs.
+        out.write(hashOutputs)
+
+        out.write(locktime)
+        out.write(uint32LE(sighashType.toLong()))
         return sha256d(out.toByteArray())
+    }
+
+    /**
+     * Compute the Elements segwit-v0 sighash for a fully-serialized unsigned
+     * Elements transaction (no flag/witness). Used by regression tests that
+     * port rust-elements `test_segwit_sighash` vectors.
+     */
+    internal fun computeSegwitV0SighashFromTx(
+        txBytes: ByteArray,
+        inputIndex: Int,
+        scriptCode: ByteArray,
+        value: ByteArray,
+        sighashType: Int,
+    ): ByteArray {
+        val txInfo = parseUnsignedTx(txBytes)
+        require(inputIndex in txInfo.inputs.indices) { "input index out of range" }
+        val baseType = sighashType and 0x1f
+        val hashPrevouts = computeHashPrevouts(txInfo.inputs)
+        val hashSequences = computeHashSequences(txInfo.inputs)
+        val hashIssuances = computeHashIssuances(txInfo.inputs)
+        val hashOutputs = when {
+            baseType == SIGHASH_NONE -> ByteArray(32)
+            baseType == SIGHASH_SINGLE -> {
+                if (inputIndex < txInfo.outputs.size) {
+                    sha256d(txInfo.outputs[inputIndex].serialized)
+                } else {
+                    ByteArray(32)
+                }
+            }
+            else -> computeHashOutputs(txInfo.outputs)
+        }
+        val input = txInfo.inputs[inputIndex]
+        return computeSegwitV0Sighash(
+            version = txInfo.version,
+            hashPrevouts = hashPrevouts,
+            hashSequences = hashSequences,
+            hashIssuances = hashIssuances,
+            outpoint = input.outpoint,
+            scriptCode = scriptCode,
+            value = value,
+            sequence = input.sequence,
+            inputIssuance = if (input.hasIssuance) input.issuanceData else null,
+            hashOutputs = hashOutputs,
+            locktime = txInfo.locktime,
+            sighashType = sighashType,
+        )
     }
 
     private fun buildP2wpkhScriptCode(pubKeyHash: ByteArray): ByteArray =

@@ -206,7 +206,13 @@ object Bip329Labels {
                     }
 
                     Type.OUTPUT -> {
-                        if (parsed.spendable != null && resolveNetwork(parsed, defaultScope) == Bip329LabelNetwork.BITCOIN) {
+                        // Validate the outpoint ref before honoring spendable flags —
+                        // an imported file/QR must not be able to freeze arbitrary
+                        // garbage refs (or non-outpoint strings).
+                        if (parsed.spendable != null &&
+                            isValidOutputRef(parsed.ref) &&
+                            resolveNetwork(parsed, defaultScope) == Bip329LabelNetwork.BITCOIN
+                        ) {
                             outputSpendable[parsed.ref] = parsed.spendable
                         }
                     }
@@ -242,6 +248,13 @@ object Bip329Labels {
         )
     }
 
+    /** BIP329 output refs are outpoints: 64-hex txid + ":" + numeric vout. */
+    private fun isValidOutputRef(ref: String): Boolean {
+        val txid = ref.substringBefore(':', "")
+        val vout = ref.substringAfter(':', "")
+        return txid.matches(Regex("^[0-9a-fA-F]{64}$")) && vout.toIntOrNull() != null
+    }
+
     private data class ParsedLabel(
         val type: Type,
         val ref: String,
@@ -263,7 +276,10 @@ object Bip329Labels {
             ParsedLabel(
                 type = type,
                 ref = ref,
-                label = json.optString("label").takeIf { it.isNotEmpty() && it != "null" },
+                label =
+                    json.optString("label")
+                        .takeIf { it.isNotEmpty() && it != "null" }
+                        ?.let { BitcoinUtils.sanitizeExternalLabel(it) },
                 origin = json.optString("origin").takeIf { it.isNotEmpty() && it != "null" },
                 spendable = if (json.has("spendable")) json.optBoolean("spendable") else null,
                 network = Bip329LabelNetwork.fromWireValue(json.optString("network")),

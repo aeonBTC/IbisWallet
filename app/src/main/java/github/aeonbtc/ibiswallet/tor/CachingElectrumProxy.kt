@@ -94,9 +94,18 @@ class CachingElectrumProxy(
     companion object {
         private const val TAG = "CachingElectrumProxy"
         private const val BUFFER_SIZE = 32768
+
+    // Max chars for a single Electrum protocol line. Verbose txs are the largest
+    // legitimate payloads; an uncapped readLine() lets a malicious server OOM the app.
+    private const val MAX_ELECTRUM_LINE_CHARS = 8 * 1024 * 1024
         private const val TOR_CONNECT_RETRIES = 3
         private const val TOR_RETRY_DELAY_MS = 2000L
-        const val DEFAULT_MIN_FEE_RATE = 1.0
+        /**
+         * Fallback when Electrum relayfee is unavailable (LN-only wallets, offline bootstrap).
+         * Mainnet minrelay is commonly sub-sat; 0.1 allows 0.1 / 0.5 sat/vB entry without
+         * Electrum. Real [getMinAcceptableFeeRate] overrides this when L1 is connected.
+         */
+        const val DEFAULT_MIN_FEE_RATE = 0.1
         private const val BTC_PER_KB_TO_SAT_PER_VB = 100_000.0
         private const val PIPELINE_CHUNK_SIZE = 100
         private const val SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE = 500
@@ -127,7 +136,10 @@ class CachingElectrumProxy(
 
     @Volatile private var isRunning = false
     private var bridgeJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // stop() cancels this scope; start() recreates it so a reused instance
+    // doesn't silently launch acceptConnections into a dead scope.
+    private var scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     private var clientSocket: Socket? = null
     private var bridgeTargetSocket: Socket? = null
@@ -161,6 +173,10 @@ class CachingElectrumProxy(
 
     @Volatile private var subListenerPaused = false
 
+    // Push notifications received while the listener is paused for
+    // subscribeAdditionalScriptHashes — dispatched after the pause ends.
+    private val pausedPushNotifications = java.util.concurrent.ConcurrentLinkedQueue<JSONObject>()
+
     private val _notifications = MutableSharedFlow<ElectrumNotification>(extraBufferCapacity = 64)
 
     /** Server push notifications (script hash changes, new blocks). Collect from repository. */
@@ -173,6 +189,9 @@ class CachingElectrumProxy(
         if (isRunning) {
             if (BuildConfig.DEBUG) Log.d(TAG, "${roleTag("lifecycle")} Proxy already running on port $localPort")
             return localPort
+        }
+        if (!scope.isActive) {
+            scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         }
 
         try {
@@ -397,7 +416,7 @@ class CachingElectrumProxy(
 
         try {
             while (true) {
-                val line = bdkReader.readLine() ?: break
+                val line = bdkReader.readLineBounded() ?: break
                 if (line.isBlank()) continue
 
                 val json =
@@ -472,7 +491,7 @@ class CachingElectrumProxy(
 
         try {
             while (true) {
-                val line = serverReader.readLine() ?: break
+                val line = serverReader.readLineBounded() ?: break
 
                 // Opportunistically cache tx.get responses
                 tryCacheServerResponse(line)
@@ -702,7 +721,7 @@ class CachingElectrumProxy(
 
             // Read response, skipping push notifications
             while (true) {
-                val line = reader.readLine() ?: return false
+                val line = reader.readLineBounded() ?: return false
                 if (!isServerPushNotification(line)) break
             }
 
@@ -734,9 +753,28 @@ class CachingElectrumProxy(
 
         // Read response, skipping push notifications
         while (true) {
-            val line = reader.readLine() ?: return null
+            val line = reader.readLineBounded() ?: return null
             if (isServerPushNotification(line)) continue
             return line
+        }
+    }
+
+    /**
+     * Bounded replacement for [BufferedReader.readLine]: a malicious or broken peer
+     * could emit a single line of arbitrary size (no newline) to exhaust app memory,
+     * so every Electrum socket read is capped at [MAX_ELECTRUM_LINE_CHARS].
+     */
+    private fun BufferedReader.readLineBounded(): String? {
+        val sb = StringBuilder()
+        while (true) {
+            val ch = read()
+            if (ch == -1) return if (sb.isEmpty()) null else sb.toString()
+            if (ch == '\n'.code) return sb.toString()
+            if (ch == '\r'.code) continue
+            sb.append(ch.toChar())
+            if (sb.length > MAX_ELECTRUM_LINE_CHARS) {
+                throw IOException("Electrum line exceeds $MAX_ELECTRUM_LINE_CHARS chars")
+            }
         }
     }
 
@@ -780,7 +818,7 @@ class CachingElectrumProxy(
 
                     var received = 0
                     while (received < chunk.size) {
-                        val line = reader.readLine()
+                        val line = reader.readLineBounded()
                         if (line == null) {
                             closeDirectConnectionLocked()
                             return@withLock emptyMap()
@@ -955,7 +993,7 @@ class CachingElectrumProxy(
 
             // Read response, skipping any stale push notifications
             while (true) {
-                val line = reader.readLine() ?: return false
+                val line = reader.readLineBounded() ?: return false
                 if (!isServerPushNotification(line)) break
             }
 
@@ -999,10 +1037,10 @@ class CachingElectrumProxy(
                 writer.flush()
 
                 // 2. Read block header response
-                var headerLine = reader.readLine()
+                var headerLine = reader.readLineBounded()
                 // Skip any interleaved push notifications
                 while (headerLine != null && isServerPushNotification(headerLine)) {
-                    headerLine = reader.readLine()
+                    headerLine = reader.readLineBounded()
                 }
                 if (headerLine != null) {
                     try {
@@ -1041,7 +1079,7 @@ class CachingElectrumProxy(
 
                     var received = 0
                     while (received < chunk.size) {
-                        val line = reader.readLine()
+                        val line = reader.readLineBounded()
                         if (line == null) {
                             closeSubConnectionLocked()
                             return@withLock emptyMap()
@@ -1101,11 +1139,9 @@ class CachingElectrumProxy(
         val socket = subSocket ?: return emptyMap()
         if (socket.isClosed || !socket.isConnected) return emptyMap()
 
-        // Pause the listener — it will ignore lines while this flag is set.
-        // The listener may still read some lines, but they'll be silently
-        // dropped. This is fine — subscription responses have our request IDs,
-        // and push notifications will be re-delivered by the server on the next
-        // status change.
+        // Pause the listener — it consumes our subscription responses while this
+        // flag is set. Push notifications arriving during the pause are buffered
+        // (Electrum only notifies on change, so dropping one misses a payment).
         subListenerPaused = true
         try {
             for (chunk in scriptHashes.chunked(SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE)) {
@@ -1141,6 +1177,11 @@ class CachingElectrumProxy(
             return emptyMap()
         } finally {
             subListenerPaused = false
+            // Dispatch push notifications buffered while the listener was paused
+            while (true) {
+                val buffered = pausedPushNotifications.poll() ?: break
+                runCatching { dispatchPushNotification(buffered) }
+            }
         }
     }
 
@@ -1168,7 +1209,7 @@ class CachingElectrumProxy(
                         val line =
                             withContext(Dispatchers.IO) {
                                 try {
-                                    reader.readLine()
+                                    reader.readLineBounded()
                                 } catch (_: SocketTimeoutException) {
                                     // No data in SUB_SOCKET_TIMEOUT_MS — verify connection
                                     // is alive with a lightweight ping on the direct socket.
@@ -1203,9 +1244,27 @@ class CachingElectrumProxy(
 
                         if (line.isBlank()) continue
 
-                        // If paused (subscribeAdditionalScriptHashes is reading),
-                        // skip dispatching — the caller handles its own responses.
-                        if (subListenerPaused) continue
+                        if (subListenerPaused) {
+                            // subscribeAdditionalScriptHashes is writing on this socket and
+                            // its responses are consumed here. Genuine push notifications
+                            // must NOT be dropped — Electrum only notifies on CHANGE, so a
+                            // discarded notification is a permanently missed payment event.
+                            // Buffer and dispatch them after the pause ends.
+                            runCatching {
+                                val json = JSONObject(line)
+                                if (isServerPushNotification(line)) {
+                                    pausedPushNotifications.add(json)
+                                }
+                            }
+                            continue
+                        }
+
+                        // Drain anything buffered during a previous pause (belt-and-braces;
+                        // the writer also drains when it unpauses).
+                        while (true) {
+                            val buffered = pausedPushNotifications.poll() ?: break
+                            runCatching { dispatchPushNotification(buffered) }
+                        }
 
                         try {
                             val json = JSONObject(line)
@@ -1352,14 +1411,14 @@ class CachingElectrumProxy(
 
         var received = 0
         repeat(txids.size) {
-            val line = reader.readLine()
+            val line = reader.readLineBounded()
             if (line == null) {
                 closeDirectConnectionLocked()
                 return received
             }
             val json = JSONObject(line)
             if (json.has("method") && json.optString("method") == "blockchain.scripthash.subscribe") {
-                val extra = reader.readLine()
+                val extra = reader.readLineBounded()
                 if (extra == null) {
                     closeDirectConnectionLocked()
                     return received
@@ -1626,6 +1685,16 @@ class CachingElectrumProxy(
 
                 val result = json.optJSONObject("result")
                 if (result != null) {
+                    // A malicious server can return verbose data for a DIFFERENT
+                    // transaction; confirmed entries are cached permanently, so a
+                    // poisoned entry would survive forever. Reject mismatches.
+                    val resultTxid = result.optString("txid")
+                    if (!resultTxid.equals(txid, ignoreCase = true)) {
+                        if (BuildConfig.DEBUG) {
+                            Log.w(TAG, "Verbose tx response txid mismatch for $txid — discarding")
+                        }
+                        return@withLock null
+                    }
                     val confirmed = result.optInt("confirmations", 0) > 0
                     cache?.putVerboseTx(txid, result.toString(), confirmed)
                 }

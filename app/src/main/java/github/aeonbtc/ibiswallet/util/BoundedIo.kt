@@ -8,6 +8,8 @@ import java.io.InputStream
 object InputLimits {
     const val SMALL_JSON_BYTES: Int = 256 * 1024
     const val MEDIUM_JSON_BYTES: Int = 1024 * 1024
+    // Lightning node RPC responses (large channel/payment histories)
+    const val LARGE_JSON_BYTES: Int = 8 * 1024 * 1024
     const val BACKUP_FILE_BYTES: Int = 16 * 1024 * 1024
     const val TX_FILE_BYTES: Int = 8 * 1024 * 1024
     const val QR_PAYLOAD_BYTES: Int = 8 * 1024 * 1024

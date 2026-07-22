@@ -69,7 +69,10 @@ object BitcoinUtils {
                 trimmed.substringAfter("]").let { it.startsWith("yprv") || it.startsWith("uprv") } ->
                 UNSUPPORTED_NESTED_SEGWIT_MESSAGE
             lowered.startsWith("sh(wpkh(") -> UNSUPPORTED_NESTED_SEGWIT_MESSAGE
-            trimmed.startsWith("3") || trimmed.startsWith("2") -> UNSUPPORTED_NESTED_SEGWIT_MESSAGE
+            // Note: "3..." P2SH addresses are NOT rejected here — they are valid
+            // single-address watch-only imports. Nested SegWit keys are caught
+            // above via their ypub/upub/yprv/uprv prefixes. "2..." testnet P2SH
+            // addresses are rejected by unsupportedNonMainnetReason instead.
             else -> null
         }
     }
@@ -309,6 +312,20 @@ object BitcoinUtils {
         return Base58.encodeChecked(newData)
     }
 
+    /**
+     * Convert an extended private key (zprv) to xprv via Base58Check re-encode.
+     * xprv passes through unchanged.
+     */
+    fun convertToXprv(extendedKey: String): String {
+        if (extendedKey.startsWith("xprv")) {
+            return extendedKey
+        }
+        val decoded = Base58.decodeChecked(extendedKey)
+        val targetVersion = byteArrayOf(0x04, 0x88.toByte(), 0xAD.toByte(), 0xE4.toByte()) // xprv
+        val newData = targetVersion + decoded.sliceArray(4 until decoded.size)
+        return Base58.encodeChecked(newData)
+    }
+
     // ── Base58 Encoding/Decoding ─────────────────────────────────────
 
     /**
@@ -438,6 +455,22 @@ object BitcoinUtils {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val hash = digest.digest(scriptBytes)
         return hash.reversedArray().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Sanitize externally-supplied label/memo text for display: replaces control
+     * characters (including newlines) with spaces and collapses whitespace so a
+     * crafted label (BIP21 URI, BIP329 import, backup, invoice memo) can't
+     * inject line breaks or control sequences into the UI.
+     */
+    fun sanitizeExternalLabel(raw: String?): String? {
+        val cleaned =
+            raw
+                ?.map { if (it.isISOControl()) ' ' else it }
+                ?.joinToString("")
+                ?.replace(Regex("\\s+"), " ")
+                ?.trim()
+        return cleaned?.takeIf { it.isNotEmpty() }
     }
 
     // ── Descriptor String Building ───────────────────────────────────
@@ -656,12 +689,12 @@ object BitcoinUtils {
      * @param hasWitness true when the transaction contains at least one segwit/taproot input
      * @return estimated vsize (ceil of weight/4)
      */
-    fun estimateVsizeFromComponents(
+    fun estimateWeightFromComponents(
         numInputs: Int,
         inputWeightWU: Long,
         outputScriptLengths: List<Int>,
         hasWitness: Boolean,
-    ): Double {
+    ): Long {
         val overheadBytes =
             4 + compactSizeLength(numInputs) + compactSizeLength(outputScriptLengths.size) + 4
         val overheadWU = (overheadBytes * 4L) + if (hasWitness) 2L else 0L
@@ -671,8 +704,129 @@ object BitcoinUtils {
             totalOutputWU += (8L + compactSizeLength(scriptLen) + scriptLen) * 4L
         }
 
-        val totalWU = overheadWU + (numInputs.toLong() * inputWeightWU) + totalOutputWU
+        return overheadWU + (numInputs.toLong() * inputWeightWU) + totalOutputWU
+    }
+
+    fun estimateVsizeFromComponents(
+        numInputs: Int,
+        inputWeightWU: Long,
+        outputScriptLengths: List<Int>,
+        hasWitness: Boolean,
+    ): Double {
+        val totalWU =
+            estimateWeightFromComponents(
+                numInputs = numInputs,
+                inputWeightWU = inputWeightWU,
+                outputScriptLengths = outputScriptLengths,
+                hasWitness = hasWitness,
+            )
         return kotlin.math.ceil(totalWU.toDouble() / 4.0)
+    }
+
+    /**
+     * Bech32 / base58 scriptPubKey payload length used for weight estimates.
+     * P2WPKH=22, P2TR=34, P2PKH=25. Unknown → P2WPKH default.
+     */
+    fun outputScriptLength(address: String?): Int {
+        val type = address?.let { detectAddressType(it) } ?: return 22
+        return when (type) {
+            AddressType.LEGACY -> 25
+            AddressType.SEGWIT -> 22
+            AddressType.TAPROOT -> 34
+        }
+    }
+
+    /**
+     * Estimate signed vsize for an on-chain spend (LN L1 / collab paths without BDK dry-run).
+     * Uses largest input weight when UTXO types mix; defaults to P2WPKH for unknown addresses.
+     *
+     * @param inputAddresses one entry per selected (or all spendable) UTXO address
+     * @param outputAddresses recipient scripts; empty treated as one P2WPKH
+     * @param includeChange add one change output sized like typical wallet change of [changeAddress]
+     */
+    fun estimateOnchainSendWeightWU(
+        inputAddresses: List<String>,
+        outputAddresses: List<String>,
+        includeChange: Boolean = false,
+        changeAddress: String? = null,
+    ): Long {
+        val inputs = inputAddresses.ifEmpty { listOf("") }
+        // Sum per-input weights (not heaviest × N) so multi-input sweeps are accurate.
+        val inputTypes = inputs.map { detectAddressType(it) ?: AddressType.SEGWIT }
+        val inputWU = inputTypes.sumOf { inputWeightWU(it) }
+        val hasWitness = inputTypes.any { it != AddressType.LEGACY }
+        val outputs =
+            buildList {
+                if (outputAddresses.isEmpty()) {
+                    add(22)
+                } else {
+                    outputAddresses.forEach { add(outputScriptLength(it)) }
+                }
+                if (includeChange) {
+                    add(outputScriptLength(changeAddress))
+                }
+            }
+        val overheadBytes =
+            4 + compactSizeLength(inputs.size) + compactSizeLength(outputs.size) + 4
+        val overheadWU = (overheadBytes * 4L) + if (hasWitness) 2L else 0L
+        var totalOutputWU = 0L
+        for (scriptLen in outputs) {
+            totalOutputWU += (8L + compactSizeLength(scriptLen) + scriptLen) * 4L
+        }
+        return overheadWU + inputWU + totalOutputWU
+    }
+
+    fun estimateOnchainSendVsize(
+        inputAddresses: List<String>,
+        outputAddresses: List<String>,
+        includeChange: Boolean = false,
+        changeAddress: String? = null,
+    ): Double {
+        val weight =
+            estimateOnchainSendWeightWU(
+                inputAddresses = inputAddresses,
+                outputAddresses = outputAddresses,
+                includeChange = includeChange,
+                changeAddress = changeAddress,
+            )
+        return kotlin.math.ceil(weight.toDouble() / 4.0)
+    }
+
+    /**
+     * LND WalletKit / btcwallet fee: floor(weightWU * satPerKw / 1000).
+     * Matches chainfee.SatPerKWeight.FeeForWeight style used by SendOutputs.
+     */
+    fun lndFeeForWeight(
+        weightWU: Long,
+        satPerKw: Long,
+    ): Long {
+        if (weightWU <= 0L || satPerKw <= 0L) return 0L
+        return (weightWU * satPerKw) / 1000L
+    }
+
+    /**
+     * Fee for a sweep/send sized the way LND SendOutputs does — via sat/kWU on weight,
+     * not ceil(sat/vB * vsize). Adds +1 sat cushion for DER / estimate drift.
+     */
+    fun estimateOnchainSendFeeSats(
+        satPerVb: Double,
+        inputAddresses: List<String>,
+        outputAddresses: List<String>,
+        includeChange: Boolean = false,
+        changeAddress: String? = null,
+    ): Long {
+        if (satPerVb <= 0.0) return 0L
+        val weight =
+            estimateOnchainSendWeightWU(
+                inputAddresses = inputAddresses,
+                outputAddresses = outputAddresses,
+                includeChange = includeChange,
+                changeAddress = changeAddress,
+            )
+        val satPerKw = feeRateToSatPerKwu(satPerVb).toLong().coerceAtLeast(1L)
+        // Ceil division + cushion so amount+fee covers WalletKit construction.
+        val exact = (weight * satPerKw + 999L) / 1000L
+        return (exact + 1L).coerceAtLeast(1L)
     }
 
     // ── Backup JSON Parsing ──────────────────────────────────────────

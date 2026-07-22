@@ -45,6 +45,8 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
     val loadedWalletId = repository.loadedWalletId
     val isConnected = repository.isConnected
     val isConnecting = repository.isConnecting
+    /** Min relay sat/vB from node bitcoind — use for LN L1 fee floor when connected. */
+    val onchainMinFeeRate = repository.onchainMinFeeRate
 
     private var invoiceWatchJob: Job? = null
 
@@ -505,7 +507,7 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
     fun sendOnchain(
         address: String,
         amountSats: Long?,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         sendAll: Boolean,
         label: String?,
         selectedOutpoints: List<UtxoInfo>?,
@@ -528,7 +530,7 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
 
     fun sendOnchainMany(
         addrToAmountSats: Map<String, Long>,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         label: String?,
         selectedOutpoints: List<UtxoInfo>?,
         spendUnconfirmed: Boolean = true,
@@ -551,13 +553,13 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
 
     fun bumpOnchainFee(
         parentTxid: String,
-        satPerVbyte: Long,
+        satPerVbyte: Double,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 repository.bumpOnchainFee(
                     parentTxid = parentTxid,
-                    satPerVbyte = satPerVbyte.takeIf { it > 0 },
+                    satPerVbyte = satPerVbyte.takeIf { it > 0.0 },
                 )
             }
         }

@@ -51,6 +51,22 @@ class AppUpdateService(
         private const val USER_AGENT = "IbisWallet-UpdateCheck"
         private const val TIMEOUT_SECONDS = 15L
 
+        /**
+         * The release URL is opened in a browser with no further checks — only
+         * allow https links on github.com; anything else falls back to the
+         * hardcoded releases page (a tampered response can't become a phishing link).
+         */
+        private fun sanitizeReleaseUrl(raw: String): String {
+            val trimmed = raw.trim()
+            val uri = runCatching { java.net.URI(trimmed) }.getOrNull() ?: return DEFAULT_RELEASES_PAGE_URL
+            val isGithubHost = uri.host?.lowercase().let { it == "github.com" || it == "www.github.com" }
+            return if (uri.scheme.equals("https", ignoreCase = true) && isGithubHost) {
+                trimmed
+            } else {
+                DEFAULT_RELEASES_PAGE_URL
+            }
+        }
+
         fun parseLatestRelease(
             json: String,
             currentVersion: AppVersion? = null,
@@ -67,7 +83,7 @@ class AppUpdateService(
                     val version = AppVersion.parse(tagName) ?: continue
                     if (release.optBoolean("prerelease") || !version.isStableOrBeta) continue
 
-                    val htmlUrl = release.optString("html_url").trim().ifBlank { DEFAULT_RELEASES_PAGE_URL }
+                    val htmlUrl = sanitizeReleaseUrl(release.optString("html_url"))
                     add(
                         AppReleaseInfo(
                             versionName = tagName,

@@ -183,7 +183,7 @@ private fun parseSendRecipientInternal(input: String): ParsedSendRecipient {
                 ParsedSendRecipient.Bitcoin(
                     rawInput = trimmed,
                     address = bip21Address,
-                    amountSats = bip21.amount()?.toLong(),
+                    amountSats = bip21.amount().toLongFitting(),
                     label = bip21.label(),
                     message = bip21.message(),
                 )
@@ -198,7 +198,7 @@ private fun parseSendRecipientInternal(input: String): ParsedSendRecipient {
                     paymentInput = offer,
                     kind = LightningKind.BOLT12,
                     amountSats =
-                        bip21.amount()?.toLong()
+                        bip21.amount().toLongFitting()
                             ?: extractBolt12OfferAmountSats(offer),
                     fallbackBitcoin = fallbackBitcoin,
                 )
@@ -224,7 +224,7 @@ private fun parseSendRecipientInternal(input: String): ParsedSendRecipient {
             ParsedSendRecipient.Liquid(
                 rawInput = trimmed,
                 address = liquidBip21.address.toString(),
-                amountSats = liquidBip21.satoshi?.toLong(),
+                amountSats = liquidBip21.satoshi.toLongFitting(),
                 label = queryParams["label"],
                 message = queryParams["message"],
                 assetId = queryParams["assetid"],
@@ -749,10 +749,15 @@ private fun parseLiquidAmountToSats(amountText: String): Long? {
 private fun parseBitcoinAmountToSats(amountText: String): Long? =
     parseLiquidAmountToSats(amountText)
 
-private fun msatsToRoundedSats(amountMsats: ULong): Long {
+private fun msatsToRoundedSats(amountMsats: ULong): Long? {
+    if (amountMsats > Long.MAX_VALUE.toULong()) return null
     val value = amountMsats.toLong()
     return (value + 999L) / 1000L
 }
+
+/** ULong → Long without silent wraparound; absurd values yield null. */
+private fun ULong?.toLongFitting(): Long? =
+    this?.takeIf { it <= Long.MAX_VALUE.toULong() }?.toLong()
 
 /** Fixed msat amount encoded in a BOLT12 offer (`lno…`), decoded via lightning-kmp. */
 private fun extractBolt12OfferAmountSats(offer: String): Long? =

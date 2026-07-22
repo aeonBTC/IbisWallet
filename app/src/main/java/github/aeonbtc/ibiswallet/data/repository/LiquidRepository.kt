@@ -37,6 +37,7 @@ import github.aeonbtc.ibiswallet.data.model.LightningPaymentExecutionPlan
 import github.aeonbtc.ibiswallet.data.model.LiquidElectrumConfig
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidAssetBalance
+import github.aeonbtc.ibiswallet.data.model.LiquidPsetDetails
 import github.aeonbtc.ibiswallet.data.model.LiquidSendKind
 import github.aeonbtc.ibiswallet.data.model.LiquidSendPreview
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
@@ -1013,8 +1014,16 @@ class LiquidRepository(
         }
     }
 
-    private fun signPset(pset: Pset): Pset {
+    private fun signPset(
+        pset: Pset,
+        expectedWalletId: String? = null,
+    ): Pset {
         val walletId = currentWalletId ?: throw Exception("Wallet not loaded")
+        // A wallet switch mid-send must never sign the old wallet's PSET with the
+        // new wallet's key.
+        if (expectedWalletId != null && walletId != expectedWalletId) {
+            throw Exception("Wallet changed during send — aborted before signing")
+        }
         val passphrase = secureStorage.getPassphrase(walletId)
 
         if (passphrase.isNullOrEmpty()) {
@@ -2393,18 +2402,18 @@ class LiquidRepository(
             val shouldRefreshScriptHashStatusCache =
                 forceFullScan || subscribedScriptHashes.isEmpty() || hasUntrackedScriptHashes
 
+            // An empty status cache means there is no baseline of what LWK has
+            // already processed — the pre-check must be bypassed so a scan runs.
+            // Callers deliberately clear the cache to force exactly this.
             val canUseCachedStatuses =
                 !forceFullScan &&
                     !newBlockDetected &&
                     subscribedScriptHashes.isNotEmpty() &&
-                    !hasUntrackedScriptHashes
+                    !hasUntrackedScriptHashes &&
+                    scriptHashStatusCache.isNotEmpty()
             if (canUseCachedStatuses) {
                 val hasChanges =
-                    if (scriptHashStatusCache.isEmpty()) {
-                        false
-                    } else {
-                        liquidElectrumProxy?.checkForScriptHashChanges(scriptHashStatusCache) ?: true
-                    }
+                    liquidElectrumProxy?.checkForScriptHashChanges(scriptHashStatusCache) ?: true
                 if (!hasChanges) {
                     if (syncGeneration != walletSwitchGeneration) return false
                     if (currentTipHeight != null) {
@@ -2638,16 +2647,20 @@ class LiquidRepository(
                             rememberLiquidScriptHashStatuses(currentStatuses)
                         }
                         subscribeNewlyRevealedAddresses()
+                        saveLiquidScriptHashStatusSnapshot(walletId, scriptHashStatusCache.toMap())
                         SubscriptionResult.SYNCED
                     } else {
+                        // Sync failed — do NOT persist the server's statuses. Keeping the
+                        // stale persisted snapshot forces change detection (and a scan)
+                        // on the next launch instead of hiding the unprocessed changes.
                         SubscriptionResult.FAILED
                     }
                 } else {
                     rememberLiquidScriptHashStatuses(currentStatuses)
+                    saveLiquidScriptHashStatusSnapshot(walletId, scriptHashStatusCache.toMap())
                     SubscriptionResult.NO_CHANGES
                 }
 
-            saveLiquidScriptHashStatusSnapshot(walletId, scriptHashStatusCache.toMap())
             startNotificationCollector(proxy)
             result
         }
@@ -3399,6 +3412,8 @@ class LiquidRepository(
         label: String?,
         saveRecipientLabel: Boolean,
     ): String = withContext(Dispatchers.IO) {
+        val sendWalletId = currentWalletId ?: throw Exception("Wallet not loaded")
+        val sendGeneration = walletSwitchGeneration
         val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
         val client = lwkClient ?: throw Exception("Not connected to Electrum")
         val network = lwkNetwork ?: throw Exception("Network not initialized")
@@ -3414,7 +3429,10 @@ class LiquidRepository(
             )
             val feeDetails = extractLiquidTxFeeDetails(wollet, pset, feeRateSatPerVb)
 
-            val signedPset: Pset = signPset(pset)
+            val signedPset: Pset = signPset(pset, expectedWalletId = sendWalletId)
+            if (sendGeneration != walletSwitchGeneration || currentWalletId != sendWalletId) {
+                throw Exception("Wallet changed during send — aborted before broadcast")
+            }
 
             val finalizedPset: Pset = wollet.finalize(signedPset)
 
@@ -3583,6 +3601,8 @@ class LiquidRepository(
         label: String?,
         saveRecipientLabel: Boolean,
     ): String = withContext(Dispatchers.IO) {
+        val sendWalletId = currentWalletId ?: throw Exception("Wallet not loaded")
+        val sendGeneration = walletSwitchGeneration
         val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
         val client = lwkClient ?: throw Exception("Not connected to Electrum")
         val network = lwkNetwork ?: throw Exception("Network not initialized")
@@ -3596,7 +3616,10 @@ class LiquidRepository(
                 selectedUtxos = selectedUtxos,
             )
             val feeDetails = extractLiquidTxFeeDetails(wollet, pset, feeRateSatPerVb)
-            val signedPset: Pset = signPset(pset)
+            val signedPset: Pset = signPset(pset, expectedWalletId = sendWalletId)
+            if (sendGeneration != walletSwitchGeneration || currentWalletId != sendWalletId) {
+                throw Exception("Wallet changed during send — aborted before broadcast")
+            }
             val finalizedPset: Pset = wollet.finalize(signedPset)
             val tx = finalizedPset.extractTx()
             val txid = client.broadcast(tx)
@@ -3696,6 +3719,8 @@ class LiquidRepository(
         saveRecipientLabel: Boolean = true,
     ): String = withContext(Dispatchers.IO) {
         require(amount > 0L) { "Amount must be positive" }
+        val sendWalletId = currentWalletId ?: throw Exception("Wallet not loaded")
+        val sendGeneration = walletSwitchGeneration
         val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
         val client = lwkClient ?: throw Exception("Not connected to Electrum")
         val network = lwkNetwork ?: throw Exception("Network not initialized")
@@ -3711,7 +3736,10 @@ class LiquidRepository(
                 selectedUtxos = selectedUtxos,
             )
             val feeDetails = extractLiquidTxFeeDetails(wollet, pset, feeRateSatPerVb)
-            val signedPset: Pset = signPset(pset)
+            val signedPset: Pset = signPset(pset, expectedWalletId = sendWalletId)
+            if (sendGeneration != walletSwitchGeneration || currentWalletId != sendWalletId) {
+                throw Exception("Wallet changed during send — aborted before broadcast")
+            }
             val finalizedPset: Pset = wollet.finalize(signedPset)
             val tx = finalizedPset.extractTx()
             val txid = client.broadcast(tx)
@@ -3754,19 +3782,24 @@ class LiquidRepository(
         assetId: String,
         feeRateSatPerVb: Double = 0.1,
         selectedUtxos: List<UtxoInfo>? = null,
-    ): String = withContext(Dispatchers.IO) {
+    ): LiquidPsetDetails = withContext(Dispatchers.IO) {
         require(amount > 0L) { "Amount must be positive" }
         val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
         val network = lwkNetwork ?: throw Exception("Network not initialized")
-
+        val recipients = listOf(Recipient(address, amount.toULong(), assetId))
         val pset = buildLbtcSendPset(
             wollet = wollet,
             network = network,
-            recipients = listOf(Recipient(address, amount.toULong(), assetId)),
+            recipients = recipients,
             feeRateSatPerVb = feeRateSatPerVb,
             selectedUtxos = selectedUtxos,
         )
-        pset.toString()
+        buildLiquidPsetDetails(
+            pset = pset,
+            recipients = recipients,
+            selectedUtxos = selectedUtxos,
+            assetId = assetId,
+        )
     }
 
     // ════════════════════════════════════════════
@@ -6918,7 +6951,20 @@ class LiquidRepository(
                     throw Exception("Some selected Liquid UTXOs are no longer available")
                 }
                 txBuilder.setWalletUtxos(walletUtxos.map { it.outpoint() })
+                return
             }
+
+        // No manual selection: exclude frozen UTXOs from automatic coin selection.
+        // Frozen status is an app-level do-not-spend flag that LWK knows nothing about.
+        val frozenOutpoints = currentWalletId?.let { secureStorage.getFrozenUtxos(it) }.orEmpty()
+        if (frozenOutpoints.isNotEmpty()) {
+            val spendableUtxos =
+                wollet.utxos().filter { utxo ->
+                    val outpoint = utxo.outpoint()
+                    "${outpoint.txid()}:${outpoint.vout()}" !in frozenOutpoints
+                }
+            txBuilder.setWalletUtxos(spendableUtxos.map { it.outpoint() })
+        }
     }
 
     /**
@@ -6938,11 +6984,14 @@ class LiquidRepository(
         if (hasLbtcSelected) return selectedUtxos
 
         val policyAssetId = lwkNetwork?.policyAsset()
+        val frozenOutpoints = currentWalletId?.let { secureStorage.getFrozenUtxos(it) }.orEmpty()
         val lbtcUtxos = wollet.utxos()
             .filter { utxo ->
                 val outpoint = utxo.outpoint()
                 val op = "${outpoint.txid()}:${outpoint.vout()}"
-                op !in selectedOutpoints && utxo.unblinded().asset() == policyAssetId
+                op !in selectedOutpoints &&
+                    op !in frozenOutpoints &&
+                    utxo.unblinded().asset() == policyAssetId
             }
             .map { utxo ->
                 val outpoint = utxo.outpoint()
@@ -6964,8 +7013,7 @@ class LiquidRepository(
     }
 
     /**
-     * Create an unsigned PSET for watch-only wallets.
-     * Returns the PSET serialized as a base64 string.
+     * Create an unsigned PSET for watch-only wallets (external hardware signing).
      */
     suspend fun createUnsignedPset(
         address: String,
@@ -6973,7 +7021,7 @@ class LiquidRepository(
         feeRateSatPerVb: Double = 0.1,
         selectedUtxos: List<UtxoInfo>? = null,
         isMaxSend: Boolean = false,
-    ): String = withContext(Dispatchers.IO) {
+    ): LiquidPsetDetails = withContext(Dispatchers.IO) {
         val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
         val network = lwkNetwork ?: throw Exception("Network not initialized")
 
@@ -6995,8 +7043,192 @@ class LiquidRepository(
                 selectedUtxos = selectedUtxos,
             )
         }
-        pset.toString()
+        val recipients = listOf(Recipient(address, amountSats.coerceAtLeast(0L).toULong()))
+        buildLiquidPsetDetails(
+            pset = pset,
+            recipients = recipients,
+            selectedUtxos = selectedUtxos,
+            assetId = null,
+            isMaxSend = isMaxSend,
+        )
     }
+
+    /**
+     * Import a signed PSET from an external signer and combine with the original unsigned PSET
+     * so blinding metadata retained in the export survives QR size trimming.
+     */
+    suspend fun importSignedPset(
+        signedPsetBase64: String,
+        unsignedPsetBase64: String,
+    ): LiquidPsetImportResult = withContext(Dispatchers.IO) {
+        val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
+        val trimmed = signedPsetBase64.trim()
+        require(trimmed.isNotEmpty()) { "Empty PSET" }
+
+        val original = Pset(unsignedPsetBase64)
+        val signed = try {
+            Pset(trimmed)
+        } catch (e: Exception) {
+            throw Exception("Invalid signed PSET", e)
+        }
+
+        val originalId = try {
+            original.uniqueId().toString()
+        } catch (e: Exception) {
+            throw Exception("Could not read original PSET id", e)
+        }
+
+        val combined = try {
+            original.combine(signed)
+        } catch (_: Exception) {
+            try {
+                signed.combine(original)
+            } catch (e: Exception) {
+                throw Exception("Could not combine signed PSET with original", e)
+            }
+        }
+
+        val combinedId = try {
+            combined.uniqueId().toString()
+        } catch (e: Exception) {
+            throw Exception("Could not read combined PSET id", e)
+        }
+        if (combinedId != originalId) {
+            throw Exception("Signed PSET does not match the reviewed transaction")
+        }
+
+        val details = wollet.psetDetails(combined)
+        try {
+            val missing = details.fingerprintsMissing()
+            val ready = missing.isEmpty() || canFinalizePset(wollet, combined)
+            LiquidPsetImportResult(
+                combinedPsetBase64 = combined.toString(),
+                isReadyToBroadcast = ready,
+                missingFingerprints = missing,
+            )
+        } finally {
+            details.destroy()
+        }
+    }
+
+    /**
+     * Finalize and broadcast a signed PSET after combine with the reviewed unsigned original.
+     */
+    suspend fun broadcastSignedPset(
+        signedPsetBase64: String,
+        unsignedPsetBase64: String,
+        pendingLabel: String? = null,
+        recipientAddress: String? = null,
+        onProgress: (String) -> Unit = {},
+    ): String = withContext(Dispatchers.IO) {
+        val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
+        val client = lwkClient ?: throw Exception("Not connected to Electrum")
+        val sendWalletId = currentWalletId ?: throw Exception("Wallet not loaded")
+        val sendGeneration = walletSwitchGeneration
+
+        onProgress("Combining PSET...")
+        val imported = importSignedPset(signedPsetBase64, unsignedPsetBase64)
+        if (!imported.isReadyToBroadcast) {
+            val missing = imported.missingFingerprints.joinToString().ifBlank { "unknown" }
+            throw Exception("PSET still missing signatures ($missing)")
+        }
+
+        if (sendGeneration != walletSwitchGeneration || currentWalletId != sendWalletId) {
+            throw Exception("Wallet changed during send — aborted before broadcast")
+        }
+
+        onProgress("Finalizing PSET...")
+        val combined = Pset(imported.combinedPsetBase64)
+        val finalizedPset = try {
+            wollet.finalize(combined)
+        } catch (e: Exception) {
+            throw Exception("Finalize failed: ${e.message}", e)
+        }
+
+        onProgress("Broadcasting...")
+        val tx = finalizedPset.extractTx()
+        val txid = client.broadcast(tx)
+        val txidStr = txid.toString()
+
+        if (BuildConfig.DEBUG) Log.d(TAG, "Signed PSET broadcast: $txidStr")
+
+        persistLiquidSendLabel(
+            txid = txidStr,
+            label = pendingLabel,
+            recipientAddress = recipientAddress,
+            feeDetails = null,
+        )
+
+        runCatching { sync() }
+            .onFailure { error ->
+                val syncError = (error as? Exception) ?: Exception(error.message ?: "Post-send sync failed")
+                logWarn("Post-send sync failed after PSET broadcast", syncError)
+            }
+
+        txidStr
+    }
+
+    private fun buildLiquidPsetDetails(
+        pset: Pset,
+        recipients: List<Recipient>,
+        selectedUtxos: List<UtxoInfo>?,
+        assetId: String?,
+        isMaxSend: Boolean = false,
+    ): LiquidPsetDetails {
+        val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
+        val network = lwkNetwork ?: throw Exception("Network not initialized")
+        val details = wollet.psetDetails(pset)
+        val balance = details.balance()
+        try {
+            val feeSats = balance.fee().toLong()
+            val primaryRecipient = recipients.singleOrNull()
+            val recipientAmount = if (isMaxSend && primaryRecipient != null) {
+                extractLiquidPreviewRecipientAmount(pset, primaryRecipient.address)
+                    ?: primaryRecipient.amountSats.toLong()
+            } else {
+                recipients.sumOf { it.amountSats.toLong() }
+            }
+            val changeOutput = extractLiquidPreviewChangeOutput(pset, recipients, network, wollet)
+            val totalInputSats = selectedUtxos
+                ?.takeIf { it.isNotEmpty() }
+                ?.sumOf { it.amountSats.toLong() }
+                ?: (recipientAmount + feeSats + (changeOutput?.amountSats ?: 0L))
+            return LiquidPsetDetails(
+                psetBase64 = pset.toString(),
+                recipientAddress = primaryRecipient?.address,
+                recipientAmountSats = recipientAmount,
+                feeSats = feeSats,
+                changeAmountSats = changeOutput?.amountSats,
+                totalInputSats = totalInputSats,
+                inputCount = pset.inputs().size,
+                outputCount = pset.outputs().size,
+                assetId = assetId,
+                missingFingerprints = details.fingerprintsMissing(),
+            )
+        } finally {
+            balance.destroy()
+            details.destroy()
+        }
+    }
+
+    private fun canFinalizePset(wollet: Wollet, pset: Pset): Boolean =
+        try {
+            wollet.finalize(pset)
+            true
+        } catch (_: Exception) {
+            try {
+                pset.finalize()
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
+
+    data class LiquidPsetImportResult(
+        val combinedPsetBase64: String,
+        val isReadyToBroadcast: Boolean,
+        val missingFingerprints: List<String>,
+    )
 
 
     private fun persistLiquidSendLabel(

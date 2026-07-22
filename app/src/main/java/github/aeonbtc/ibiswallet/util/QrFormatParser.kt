@@ -284,25 +284,25 @@ object QrFormatParser {
                 AddressType.TAPROOT -> "p2tr" to "p2tr_deriv"
             }
 
-        // Try the preferred type first, then fall back to any available key
+        // Only the key matching the selected address type is usable — falling back
+        // to a different type would wrap it in the wrong script function and derive
+        // addresses no standard wallet would ever produce.
         var key = obj.optString(keyField, "").takeIf { it.isNotBlank() }
         var deriv = obj.optString(derivField, "").takeIf { it.isNotBlank() }
 
         if (key == null) {
-            // Fall back to first available key in priority order
-            val fallbacks =
+            val available =
                 listOf(
-                    "p2wpkh" to "p2wpkh_deriv",
-                    "p2tr" to "p2tr_deriv",
-                    "p2pkh" to "p2pkh_deriv",
+                    "p2wpkh" to "Native SegWit",
+                    "p2tr" to "Taproot",
+                    "p2pkh" to "Legacy",
+                ).filter { (field, _) -> obj.optString(field, "").isNotBlank() }
+            if (available.isNotEmpty()) {
+                throw IllegalArgumentException(
+                    "Wallet JSON has no key for the selected address type " +
+                        "(found: ${available.joinToString { it.second }}). " +
+                        "Select the matching address type.",
                 )
-            for ((kf, df) in fallbacks) {
-                val k = obj.optString(kf, "").takeIf { it.isNotBlank() }
-                if (k != null) {
-                    key = k
-                    deriv = obj.optString(df, "").takeIf { it.isNotBlank() }
-                    break
-                }
             }
         }
 
@@ -312,9 +312,10 @@ object QrFormatParser {
 
         if (key == null) return null
 
-        // Build key-origin string: [fingerprint/path]key
-        val fingerprint = xfp.lowercase()
-        val path = deriv?.removePrefix("m/") ?: addressType.accountPath
+        // Build key-origin string: [fingerprint/path]key — sanitize both fields
+        // so a crafted JSON can't inject characters into the key-origin string.
+        val fingerprint = sanitizeFingerprint(xfp) ?: return null
+        val path = deriv?.let { sanitizeDerivationPath(it) } ?: addressType.accountPath
 
         return "[$fingerprint/$path]$key"
     }
@@ -325,18 +326,28 @@ object QrFormatParser {
      */
     private fun parseSpecterFormat(obj: JSONObject): String? {
         val fingerprint =
-            obj.optString("MasterFingerprint", "").takeIf { it.isNotBlank() }
-                ?: return null
+            sanitizeFingerprint(obj.optString("MasterFingerprint", "")) ?: return null
         val extPubKey =
             obj.optString("ExtPubKey", "").takeIf { it.isNotBlank() }
                 ?: return null
-        val path = obj.optString("AccountKeyPath", "").takeIf { it.isNotBlank() }
+        val path = sanitizeDerivationPath(obj.optString("AccountKeyPath", ""))
 
         return if (path != null) {
-            "[${fingerprint.lowercase()}/${path.removePrefix("m/")}]$extPubKey"
+            "[$fingerprint/$path]$extPubKey"
         } else {
-            "[${fingerprint.lowercase()}]$extPubKey"
+            "[$fingerprint]$extPubKey"
         }
+    }
+
+    /** Fingerprints must be exactly 8 hex chars — anything else is dropped, not embedded. */
+    private fun sanitizeFingerprint(raw: String): String? =
+        raw.trim().lowercase().takeIf { it.matches(Regex("^[0-9a-f]{8}$")) }
+
+    /** Derivation paths may only contain digits, separators, and hardened markers. */
+    private fun sanitizeDerivationPath(raw: String): String? {
+        val trimmed = raw.trim().removePrefix("m/")
+        if (trimmed.isBlank()) return null
+        return trimmed.takeIf { it.matches(Regex("^[0-9'/hH]+$")) }
     }
 
     /**

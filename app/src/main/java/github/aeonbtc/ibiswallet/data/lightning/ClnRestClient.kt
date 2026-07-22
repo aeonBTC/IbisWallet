@@ -13,7 +13,11 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentStatus
 import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails
 import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
+import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
@@ -80,38 +84,59 @@ class ClnRestClient(
 
     private fun connectWithRetries(normalized: LightningNodeConfig): LightningNodeInfo {
         var lastError: Exception? = null
+        val viaTor =
+            normalized.useTor || normalized.host.endsWith(".onion", ignoreCase = true)
+        // See LndRestClient: Tor + TLS off → HTTPS first; never burn slow HTTP circuits.
+        val httpsFallback =
+            if (!normalized.tlsEnabled) {
+                normalized.copy(
+                    useTls = true,
+                    allowInsecureTls = true,
+                    tlsCertPem = normalized.tlsCertPem,
+                )
+            } else {
+                null
+            }
         val candidates =
             buildList {
-                add(normalized)
-                if (!normalized.tlsEnabled) {
-                    add(
-                        normalized.copy(
-                            useTls = true,
-                            allowInsecureTls = false,
-                            tlsCertPem = normalized.tlsCertPem,
-                        ),
-                    )
+                when {
+                    normalized.tlsEnabled -> add(normalized)
+                    httpsFallback == null -> add(normalized)
+                    viaTor || normalized.preferSessionTls -> {
+                        add(httpsFallback)
+                        if (!viaTor) add(normalized)
+                    }
+                    else -> {
+                        add(normalized)
+                        add(httpsFallback)
+                    }
                 }
             }
         for ((candidateIndex, candidate) in candidates.withIndex()) {
-            for (attempt in 0 until STREAM_RETRY_ATTEMPTS) {
+            val isCleartextProbe = !candidate.tlsEnabled && !normalized.tlsEnabled
+            val maxAttempts =
+                when {
+                    isCleartextProbe -> 1
+                    viaTor -> 1
+                    else -> CONNECT_CLEAR_STREAM_ATTEMPTS
+                }
+            for (attempt in 0 until maxAttempts) {
                 try {
-                    openSession(candidate)
+                    openSession(candidate, probeTimeouts = isCleartextProbe)
                     return getInfo()
                 } catch (e: Exception) {
                     lastError = e
-                    val forceTlsCandidate =
-                        !candidate.tlsEnabled && isHttpToHttpsMismatch(e)
                     val streamRetry =
-                        isTransientStreamError(e) && attempt < STREAM_RETRY_ATTEMPTS - 1
-                    if (forceTlsCandidate) {
-                        break
-                    }
+                        !isCleartextProbe &&
+                            isTransientStreamError(e) &&
+                            attempt < maxAttempts - 1
                     if (streamRetry) {
                         closeClientQuietly()
                         continue
                     }
+                    if (isDefinitiveHttpFailure(e)) throw e
                     if (candidateIndex == candidates.lastIndex) throw e
+                    closeClientQuietly()
                     break
                 }
             }
@@ -119,11 +144,14 @@ class ClnRestClient(
         throw lastError ?: IllegalStateException("Connection failed")
     }
 
-    private fun openSession(config: LightningNodeConfig) {
+    private fun openSession(
+        config: LightningNodeConfig,
+        probeTimeouts: Boolean = false,
+    ) {
         closeClientQuietly()
         val scheme = if (config.tlsEnabled) "https" else "http"
         baseUrl = "$scheme://${config.host}:${config.port}"
-        client = buildHttpClient(config)
+        client = buildHttpClient(config, probeTimeouts = probeTimeouts)
         activeConfig = config
         fundsCache = null
         knownOwnedOutpoints.clear()
@@ -137,14 +165,17 @@ class ClnRestClient(
         knownOwnedOutpoints.clear()
     }
 
-    private fun isHttpToHttpsMismatch(error: Exception): Boolean {
+    /** Failures that are about credentials/API, not transport scheme. */
+    private fun isDefinitiveHttpFailure(error: Exception): Boolean {
         val message = error.message.orEmpty().lowercase()
-        return message.contains("http request to an https") ||
-            message.contains("client sent an http request to an https server") ||
+        return message.contains("http 401") ||
+            message.contains("http 403") ||
+            message.contains("permission denied") ||
+            message.contains("rune") &&
             (
-                message.contains("http 400") &&
-                    message.contains("/v1/getinfo") &&
-                    message.contains("https")
+                message.contains("invalid") ||
+                    message.contains("unauthorized") ||
+                    message.contains("denied")
             )
     }
 
@@ -294,11 +325,15 @@ class ClnRestClient(
 
     override suspend fun listPayments(limit: Int): List<LightningNodePayment> =
         withContext(Dispatchers.IO) {
+            val capped = limit.coerceIn(1, 100)
             val payments = mutableListOf<LightningNodePayment>()
-
-            val pays =
-                runCatching { rpc("listpays") }
-                    .getOrElse { JSONObject() }
+            val (pays, invoices) =
+                coroutineScope {
+                    val paysDeferred = async { runCatching { rpc("listpays") }.getOrElse { JSONObject() } }
+                    val invDeferred =
+                        async { runCatching { rpc("listinvoices") }.getOrElse { JSONObject() } }
+                    paysDeferred.await() to invDeferred.await()
+                }
             val payArr = pays.optJSONArray("pays") ?: JSONArray()
             for (i in 0 until payArr.length()) {
                 val p = payArr.optJSONObject(i) ?: continue
@@ -350,9 +385,6 @@ class ClnRestClient(
                     )
             }
 
-            val invoices =
-                runCatching { rpc("listinvoices") }
-                    .getOrElse { JSONObject() }
             val invArr = invoices.optJSONArray("invoices") ?: JSONArray()
             for (i in 0 until invArr.length()) {
                 val inv = invArr.optJSONObject(i) ?: continue
@@ -382,7 +414,7 @@ class ClnRestClient(
 
             payments
                 .sortedByDescending { it.timestamp }
-                .take(limit.coerceAtLeast(1))
+                .take(capped)
         }
 
     override suspend fun getOnchainBalance(): Long =
@@ -431,25 +463,40 @@ class ClnRestClient(
 
     override suspend fun listOnchainTransactions(limit: Int): List<LightningNodeOnchainTransaction> =
         withContext(Dispatchers.IO) {
-            val response =
-                runCatching { rpc("listtransactions") }
-                    .getOrElse { JSONObject() }
-            val tipHeight =
-                runCatching { rpc("getinfo").optInt("blockheight", 0) }
-                    .getOrDefault(0)
-                    .coerceAtLeast(0)
+            val capped = limit.coerceIn(1, 200)
             val nowMs = System.currentTimeMillis()
-            // listtransactions returns *all* outputs on wallet-related txs (including
-            // counterparty outputs). Net wallet effect = wallet outs − wallet inputs,
-            // using listfunds outpoints (includes spent) as ownership oracle.
-            val ownedOutpoints = loadClnWalletOutpoints()
-            val channelFundingTxids =
-                runCatching {
-                    listChannels()
-                        .mapNotNull { it.fundingTxid?.lowercase()?.takeIf(String::isNotBlank) }
-                        .toSet()
-                }.getOrDefault(emptySet())
-            val channelClosingTxids = loadClnChannelClosingTxids()
+            // Parallelize the RPC fan-out. Sequential listtransactions + getinfo +
+            // listfunds(spent) + listpeerchannels + listclosedchannels was multi-minute on Tor.
+            val (response, tipHeight, ownedOutpoints, channelFundingTxids, channelClosingTxids) =
+                coroutineScope {
+                    val txsDeferred =
+                        async { runCatching { rpc("listtransactions") }.getOrElse { JSONObject() } }
+                    val tipDeferred =
+                        async {
+                            runCatching { rpc("getinfo").optInt("blockheight", 0) }
+                                .getOrDefault(0)
+                                .coerceAtLeast(0)
+                        }
+                    val ownedDeferred = async { loadClnWalletOutpoints() }
+                    val fundingDeferred =
+                        async {
+                            runCatching {
+                                listChannels()
+                                    .mapNotNull {
+                                        it.fundingTxid?.lowercase()?.takeIf(String::isNotBlank)
+                                    }
+                                    .toSet()
+                            }.getOrDefault(emptySet())
+                        }
+                    val closingDeferred = async { loadClnChannelClosingTxids() }
+                    Quintuple(
+                        txsDeferred.await(),
+                        tipDeferred.await(),
+                        ownedDeferred.await(),
+                        fundingDeferred.await(),
+                        closingDeferred.await(),
+                    )
+                }
             val txs = response.optJSONArray("transactions") ?: JSONArray()
             buildList {
                 for (i in 0 until txs.length()) {
@@ -606,8 +653,16 @@ class ClnRestClient(
                         .thenByDescending { it.timestamp }
                         .thenByDescending { it.txid },
                 )
-                .take(limit.coerceAtLeast(1))
+                .take(capped)
         }
+
+    private data class Quintuple<A, B, C, D, E>(
+        val first: A,
+        val second: B,
+        val third: C,
+        val fourth: D,
+        val fifth: E,
+    )
 
     private fun loadClnChannelClosingTxids(): Set<String> {
         val closing = linkedSetOf<String>()
@@ -802,7 +857,7 @@ class ClnRestClient(
     override suspend fun sendOnchain(
         address: String,
         amountSats: Long?,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         sendAll: Boolean,
         label: String?,
         spendUnconfirmed: Boolean,
@@ -828,11 +883,7 @@ class ClnRestClient(
                     } else {
                         put("satoshi", amountSats!!.toString())
                     }
-                    if (satPerVbyte != null && satPerVbyte > 0) {
-                        // CLN feerate: Nperkb or urgent/normal/slow; convert sat/vB → sat/kWU ≈ sat/vB * 250
-                        // Prefer explicit perkb: sat/vB * 1000
-                        put("feerate", "${satPerVbyte * 1000}perkb")
-                    }
+                    putClnFeerate(this, satPerVbyte)
                 }
             val response = rpc("withdraw", body)
             fundsCache = null
@@ -842,7 +893,7 @@ class ClnRestClient(
 
     override suspend fun sendOnchainMany(
         addrToAmountSats: Map<String, Long>,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         label: String?,
         spendUnconfirmed: Boolean,
         selectedOutpoints: List<UtxoInfo>?,
@@ -862,9 +913,7 @@ class ClnRestClient(
             val body =
                 JSONObject().apply {
                     put("outputs", outputs)
-                    if (satPerVbyte != null && satPerVbyte > 0) {
-                        put("feerate", "${satPerVbyte * 1000}perkb")
-                    }
+                    putClnFeerate(this, satPerVbyte)
                 }
             val response =
                 runCatching { rpc("multiwithdraw", body) }
@@ -884,13 +933,53 @@ class ClnRestClient(
 
     override suspend fun bumpOnchainFee(
         outpoint: UtxoInfo,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         immediate: Boolean,
         budgetSats: Long?,
     ): String =
         withContext(Dispatchers.IO) {
             throw IllegalStateException("Fee bump is not supported for CLN")
         }
+
+    override suspend fun getOnchainMinRelayFeeSatPerVb(): Double? =
+        withContext(Dispatchers.IO) {
+            // feerates perkw.floor = backend minrelayfee/mempoolminfee (sat per 1000 weight).
+            val json =
+                runCatching {
+                    rpc("feerates", JSONObject().put("style", "perkw"))
+                }.getOrNull()
+                    ?: return@withContext null
+            val perkw = json.optJSONObject("perkw") ?: return@withContext null
+            val satPerKw =
+                sequenceOf("floor", "min_acceptable")
+                    .mapNotNull { key ->
+                        perkw.optString(key).toLongOrNull()
+                            ?: perkw.optLong(key, 0L).takeIf { it > 0L }
+                    }
+                    .firstOrNull { it > 0L }
+                    ?: return@withContext null
+            val satPerVb = satPerKw.toDouble() / 250.0
+            satPerVb.takeIf { it in 0.01..100.0 }
+        }
+
+    /**
+     * CLN `feerate`: `Nperkb` where N = sat/kB ≈ sat/vB * 1000.
+     * Fractional sat/vB becomes a non-integer perkb only after rounding — use
+     * milli-kw (`Nperkw`) when available so 0.5 sat/vB → 125perkw.
+     */
+    private fun putClnFeerate(
+        body: JSONObject,
+        satPerVbyte: Double?,
+    ) {
+        if (satPerVbyte == null || satPerVbyte <= 0.0) return
+        val satPerKw =
+            github.aeonbtc.ibiswallet.util.BitcoinUtils
+                .feeRateToSatPerKwu(satPerVbyte)
+                .toLong()
+                .coerceAtLeast(1L)
+        // Prefer perkw (sat/kWU) — exact match for our kwu conversion (1 sat/vB = 250).
+        body.put("feerate", "${satPerKw}perkw")
+    }
 
     override suspend fun createInvoice(
         amountSats: Long?,
@@ -1201,7 +1290,7 @@ class ClnRestClient(
                         .post(params.toString().toRequestBody(JSON_MEDIA))
                         .build()
                 http.newCall(request).execute().use { response ->
-                    val responseBody = response.body?.string().orEmpty()
+                    val responseBody = response.body?.stringWithLimit(InputLimits.LARGE_JSON_BYTES).orEmpty()
                     if (!response.isSuccessful) {
                         throw IllegalStateException(
                             extractError(responseBody, response.code, "/v1/$method"),
@@ -1243,33 +1332,47 @@ class ClnRestClient(
         }
     }
 
-    private fun buildHttpClient(config: LightningNodeConfig): OkHttpClient {
+    private fun buildHttpClient(
+        config: LightningNodeConfig,
+        probeTimeouts: Boolean = false,
+    ): OkHttpClient {
         val viaTor = config.useTor || config.host.endsWith(".onion", ignoreCase = true)
-        val timeoutSeconds = if (viaTor) 90L else 30L
+        val timeoutSeconds =
+            when {
+                probeTimeouts && viaTor -> CLEARTEXT_PROBE_TOR_SECONDS
+                probeTimeouts -> CLEARTEXT_PROBE_SECONDS
+                viaTor -> TOR_RPC_SECONDS
+                else -> 30L
+            }
+        val callTimeoutSeconds =
+            when {
+                probeTimeouts -> timeoutSeconds + 1L
+                viaTor -> timeoutSeconds + 15L
+                else -> timeoutSeconds + 30L
+            }
         val builder =
             OkHttpClient.Builder()
                 .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
-                .callTimeout(timeoutSeconds + 30, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(true)
+                .callTimeout(callTimeoutSeconds, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(!probeTimeouts)
 
         if (viaTor) {
             applyTorProxy(builder, torSocksPort)
             builder.protocols(listOf(Protocol.HTTP_1_1))
-            builder.connectionPool(ConnectionPool(0, 1, TimeUnit.MILLISECONDS))
+            // Small pool so parallel payment/on-chain RPCs reuse Tor circuits.
+            builder.connectionPool(ConnectionPool(2, 45, TimeUnit.SECONDS))
         }
 
         if (config.tlsEnabled) {
             when {
+                // Zeus exports base64(client_key+client_cert+ca_cert). Pin to the bundle's
+                // certs and install the mTLS client identity when present.
                 config.tlsCertPem.isNotBlank() ->
-                    // Zeus exports base64(client_key+client_cert+ca_cert). Server is usually
-                    // self-signed for clnrest — trust-all + optional mTLS from the bundle.
-                    TlsCertMaterial.applyToOkHttp(
-                        builder,
-                        config.tlsCertPem,
-                        preferTrustAll = true,
-                    )
+                    TlsCertMaterial.applyToOkHttp(builder, config.tlsCertPem)
+                // No cert: user is connecting to their own node. Self-signed CLN is
+                // common; trust-all here. Prefer pasting the CA/server cert when available.
                 else -> TlsCertMaterial.applyInsecureTrust(builder)
             }
         }
@@ -1289,7 +1392,11 @@ class ClnRestClient(
 
     companion object {
         private const val STREAM_RETRY_ATTEMPTS = 3
-        private const val FUNDS_CACHE_TTL_MS = 5_000L
+        private const val CONNECT_CLEAR_STREAM_ATTEMPTS = 2
+        private const val CLEARTEXT_PROBE_SECONDS = 3L
+        private const val CLEARTEXT_PROBE_TOR_SECONDS = 6L
+        private const val TOR_RPC_SECONDS = 45L
+        private const val FUNDS_CACHE_TTL_MS = 15_000L
         private val JSON_MEDIA = "application/json; charset=utf-8".toMediaType()
 
         private fun mapPayStatus(status: String): LightningNodePaymentStatus =

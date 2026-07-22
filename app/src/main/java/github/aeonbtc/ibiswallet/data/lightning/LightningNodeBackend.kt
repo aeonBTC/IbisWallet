@@ -47,10 +47,19 @@ interface LightningNodeBackend {
 
     suspend fun listOnchainUtxos(): List<UtxoInfo>
 
+    /**
+     * Chain backend minimum relay fee in sat/vB (may be fractional).
+     * LND: WalletKit EstimateFee → min_relay_fee_sat_per_kw.
+     * CLN: feerates perkw floor / min_acceptable.
+     * Default null when unsupported (NWC) or unavailable.
+     */
+    suspend fun getOnchainMinRelayFeeSatPerVb(): Double? = null
+
     suspend fun sendOnchain(
         address: String,
         amountSats: Long? = null,
-        satPerVbyte: Long? = null,
+        /** sat/vB — may be fractional (e.g. 0.5); backends map to native precision. */
+        satPerVbyte: Double? = null,
         sendAll: Boolean = false,
         label: String? = null,
         spendUnconfirmed: Boolean = true,
@@ -60,7 +69,7 @@ interface LightningNodeBackend {
     /** Multi-output send via LND SendMany (`POST /v1/transactions/many`). */
     suspend fun sendOnchainMany(
         addrToAmountSats: Map<String, Long>,
-        satPerVbyte: Long? = null,
+        satPerVbyte: Double? = null,
         label: String? = null,
         spendUnconfirmed: Boolean = true,
         selectedOutpoints: List<UtxoInfo>? = null,
@@ -72,7 +81,7 @@ interface LightningNodeBackend {
      */
     suspend fun bumpOnchainFee(
         outpoint: UtxoInfo,
-        satPerVbyte: Long?,
+        satPerVbyte: Double?,
         immediate: Boolean = true,
         budgetSats: Long? = null,
     ): String
