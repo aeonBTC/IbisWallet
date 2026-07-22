@@ -115,6 +115,11 @@ fun LiquidPsetScreen(
         }
     }
 
+    val psetSavedText = stringResource(R.string.loc_pset_saved)
+    val psetSaveFailedText = stringResource(R.string.loc_pset_save_failed)
+    val psetReadFailedText = stringResource(R.string.loc_pset_read_failed)
+    val psetCopiedText = stringResource(R.string.loc_pset_copied)
+
     val savePsetLauncher =
         rememberLauncherForActivityResult(
             contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
@@ -125,9 +130,9 @@ fun LiquidPsetScreen(
                         val bytes = android.util.Base64.decode(exportBase64, android.util.Base64.DEFAULT)
                         stream.write(bytes)
                     }
-                    Toast.makeText(context, context.getString(R.string.loc_pset_saved), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, psetSavedText, Toast.LENGTH_SHORT).show()
                 } catch (_: Exception) {
-                    Toast.makeText(context, context.getString(R.string.loc_pset_save_failed), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, psetSaveFailedText, Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -145,7 +150,7 @@ fun LiquidPsetScreen(
                         }
                     }
                 } catch (_: Exception) {
-                    Toast.makeText(context, context.getString(R.string.loc_pset_read_failed), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, psetReadFailedText, Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -352,7 +357,7 @@ fun LiquidPsetScreen(
                                         SecureClipboard.copyAndScheduleClear(context, exportBase64)
                                         Toast.makeText(
                                             context,
-                                            context.getString(R.string.loc_pset_copied),
+                                            psetCopiedText,
                                             Toast.LENGTH_SHORT,
                                         ).show()
                                     },
