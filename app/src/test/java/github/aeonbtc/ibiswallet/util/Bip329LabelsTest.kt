@@ -178,9 +178,16 @@ class Bip329LabelsTest : FunSpec({
         }
 
         test("parses output spendable flag") {
+            val txid = "a".repeat(64)
+            val content = """{"type":"output","ref":"$txid:0","spendable":false}"""
+            val result = Bip329Labels.import(content)
+            result.outputSpendable["$txid:0"] shouldBe false
+        }
+
+        test("ignores output spendable flag with malformed ref") {
             val content = """{"type":"output","ref":"txid:0","spendable":false}"""
             val result = Bip329Labels.import(content)
-            result.outputSpendable["txid:0"] shouldBe false
+            result.outputSpendable.isEmpty() shouldBe true
         }
 
         test("routes spark network labels to spark maps") {

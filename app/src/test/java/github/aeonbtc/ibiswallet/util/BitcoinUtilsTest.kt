@@ -194,9 +194,8 @@ class BitcoinUtilsTest : FunSpec({
                 BitcoinUtils.UNSUPPORTED_NESTED_SEGWIT_MESSAGE
         }
 
-        test("returns message for nested SegWit address") {
-            BitcoinUtils.unsupportedNestedSegwitReason("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy") shouldBe
-                BitcoinUtils.UNSUPPORTED_NESTED_SEGWIT_MESSAGE
+        test("returns null for P2SH address (valid single-address watch-only import)") {
+            BitcoinUtils.unsupportedNestedSegwitReason("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy") shouldBe null
         }
     }
 
@@ -1466,6 +1465,85 @@ class BitcoinUtilsTest : FunSpec({
             shouldThrow<IllegalArgumentException> {
                 BitcoinUtils.parseFeeEstimatesJson(json)
             }
+        }
+    }
+
+    context("estimateOnchainSendVsize") {
+        test("single P2WPKH sweep is ~110 vB") {
+            val vsize =
+                BitcoinUtils.estimateOnchainSendVsize(
+                    inputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    outputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    includeChange = false,
+                )
+            // 10.5 overhead + 68 in + 31 out ≈ 109.5 → 110
+            vsize shouldBe 110.0
+        }
+
+        test("multi-input max send scales with input count") {
+            val one =
+                BitcoinUtils.estimateOnchainSendFeeSats(
+                    satPerVb = 2.0,
+                    inputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    outputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    includeChange = false,
+                )
+            val three =
+                BitcoinUtils.estimateOnchainSendFeeSats(
+                    satPerVb = 2.0,
+                    inputAddresses =
+                        listOf(
+                            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                            "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+                        ),
+                    outputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    includeChange = false,
+                )
+            // Fixed 140/180 vB pads undercount 3-in sweeps; fee must grow with inputs.
+            (three > one) shouldBe true
+            (three > 360L) shouldBe true // old roughMax used ~180 vB * 2
+        }
+
+        test("0.74 sat/vB single P2WPKH uses LND weight fee not vsize*rate") {
+            val addr = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+            val weight =
+                BitcoinUtils.estimateOnchainSendWeightWU(
+                    inputAddresses = listOf(addr),
+                    outputAddresses = listOf("bc1q29nz1sr2ktgzyc0511yynmehmt8y5pjfewj9t2"),
+                    includeChange = false,
+                )
+            // overhead 42 WU + 272 in + 124 out = 438 WU (single P2WPKH→P2WPKH)
+            weight shouldBe 438L
+            val fee =
+                BitcoinUtils.estimateOnchainSendFeeSats(
+                    satPerVb = 0.74,
+                    inputAddresses = listOf(addr),
+                    outputAddresses = listOf("bc1q29nz1sr2ktgzyc0511yynmehmt8y5pjfewj9t2"),
+                    includeChange = false,
+                )
+            // sat/kw=185; ceil(438*185/1000)+1 = 82+1 = 83
+            fee shouldBe 83L
+            val balance = 863L
+            val send = balance - fee
+            (send + fee) shouldBe balance
+            (send + fee > balance) shouldBe false
+        }
+
+        test("change output increases size vs sweep") {
+            val sweep =
+                BitcoinUtils.estimateOnchainSendVsize(
+                    inputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    outputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    includeChange = false,
+                )
+            val withChange =
+                BitcoinUtils.estimateOnchainSendVsize(
+                    inputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    outputAddresses = listOf("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"),
+                    includeChange = true,
+                )
+            (withChange > sweep) shouldBe true
         }
     }
 

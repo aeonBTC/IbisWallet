@@ -49,6 +49,38 @@ class TxFileParserTest : FunSpec({
         }
     }
 
+    // ── PSET detection (Elements / Liquid) ──
+
+    context("PSET binary detection") {
+        test("detects PSET magic bytes and returns base64") {
+            // PSET magic: 0x70 0x73 0x65 0x74 0xFF followed by some data
+            val psetBytes = byteArrayOf(
+                0x70, 0x73, 0x65, 0x74, 0xFF.toByte(),
+                0x0A, 0x0B, 0x0C,
+            )
+            val result = parseTxFileBytes(psetBytes)
+            result shouldBe TxFileResult(
+                data = java.util.Base64.getEncoder().encodeToString(psetBytes),
+                format = TxFileFormat.PSET_BINARY,
+            )
+        }
+
+        test("does not confuse PSET with PSBT") {
+            val psetBytes = byteArrayOf(
+                0x70, 0x73, 0x65, 0x74, 0xFF.toByte(),
+                0x01,
+            )
+            val result = parseTxFileBytes(psetBytes)
+            result?.format shouldBe TxFileFormat.PSET_BINARY
+        }
+
+        test("returns base64 PSET text as-is") {
+            val base64Pset = "cHNldP8BAHUCAAAAASaBcTce3/KF6Tta"
+            val result = parseTxFileBytes(base64Pset.toByteArray(Charsets.UTF_8))
+            result shouldBe TxFileResult(base64Pset, TxFileFormat.TEXT)
+        }
+    }
+
     // ── Text detection ──
 
     context("text content") {

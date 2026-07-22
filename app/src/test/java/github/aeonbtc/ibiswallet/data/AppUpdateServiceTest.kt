@@ -13,13 +13,13 @@ class AppUpdateServiceTest : FunSpec({
                 [
                   {
                     "tag_name": "v4.1.1-beta",
-                    "html_url": "https://example.com/411beta",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/411beta",
                     "draft": false,
                     "prerelease": false
                   },
                   {
                     "tag_name": "v4.1.0",
-                    "html_url": "https://example.com/410",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/410",
                     "draft": false,
                     "prerelease": false
                   }
@@ -28,7 +28,7 @@ class AppUpdateServiceTest : FunSpec({
             ).shouldNotBeNull()
 
         latest.versionName shouldBe "v4.1.1-beta"
-        latest.htmlUrl shouldBe "https://example.com/411beta"
+        latest.htmlUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases/tag/411beta"
     }
 
     test("picks the newest stable release and ignores prereleases") {
@@ -38,13 +38,13 @@ class AppUpdateServiceTest : FunSpec({
                 [
                   {
                     "tag_name": "v3.2.1-beta",
-                    "html_url": "https://example.com/beta",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/beta",
                     "draft": false,
                     "prerelease": true
                   },
                   {
                     "tag_name": "v3.2.0",
-                    "html_url": "https://example.com/320",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/320",
                     "draft": false,
                     "prerelease": false
                   }
@@ -53,7 +53,7 @@ class AppUpdateServiceTest : FunSpec({
             ).shouldNotBeNull()
 
         latest.versionName shouldBe "v3.2.0"
-        latest.htmlUrl shouldBe "https://example.com/320"
+        latest.htmlUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases/tag/320"
     }
 
     test("ignores draft releases even when numerically newer") {
@@ -63,13 +63,13 @@ class AppUpdateServiceTest : FunSpec({
                 [
                   {
                     "tag_name": "v3.2.1",
-                    "html_url": "https://example.com/draft",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/draft",
                     "draft": true,
                     "prerelease": false
                   },
                   {
                     "tag_name": "v3.2.0",
-                    "html_url": "https://example.com/live",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/live",
                     "draft": false,
                     "prerelease": false
                   }
@@ -87,13 +87,13 @@ class AppUpdateServiceTest : FunSpec({
                 [
                   {
                     "tag_name": "v3.1.3-beta",
-                    "html_url": "https://example.com/beta1",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/beta1",
                     "draft": false,
                     "prerelease": true
                   },
                   {
                     "tag_name": "v3.1.2-beta",
-                    "html_url": "https://example.com/beta2",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/beta2",
                     "draft": false,
                     "prerelease": true
                   }
@@ -111,13 +111,13 @@ class AppUpdateServiceTest : FunSpec({
                 [
                   {
                     "tag_name": "v3.2.1-rc.1",
-                    "html_url": "https://example.com/rc",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/rc",
                     "draft": false,
                     "prerelease": false
                   },
                   {
                     "tag_name": "v3.2.0",
-                    "html_url": "https://example.com/stable",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/stable",
                     "draft": false,
                     "prerelease": false
                   }
@@ -126,7 +126,7 @@ class AppUpdateServiceTest : FunSpec({
             ).shouldNotBeNull()
 
         latest.versionName shouldBe "v3.2.0"
-        latest.htmlUrl shouldBe "https://example.com/stable"
+        latest.htmlUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases/tag/stable"
     }
 
     test("ignores beta tags when GitHub marks them as prerelease") {
@@ -136,13 +136,13 @@ class AppUpdateServiceTest : FunSpec({
                 [
                   {
                     "tag_name": "v4.1.1-beta",
-                    "html_url": "https://example.com/411beta",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/411beta",
                     "draft": false,
                     "prerelease": true
                   },
                   {
                     "tag_name": "v4.1.0",
-                    "html_url": "https://example.com/410",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/410",
                     "draft": false,
                     "prerelease": false
                   }
@@ -151,7 +151,7 @@ class AppUpdateServiceTest : FunSpec({
             ).shouldNotBeNull()
 
         latest.versionName shouldBe "v4.1.0"
-        latest.htmlUrl shouldBe "https://example.com/410"
+        latest.htmlUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases/tag/410"
     }
 
     test("prefers stable 1.x over newer legacy beta versions during migration") {
@@ -162,13 +162,13 @@ class AppUpdateServiceTest : FunSpec({
                     [
                       {
                         "tag_name": "v4.4-beta",
-                        "html_url": "https://example.com/44beta",
+                        "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/44beta",
                         "draft": false,
                         "prerelease": false
                       },
                       {
                         "tag_name": "v1.0",
-                        "html_url": "https://example.com/10",
+                        "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/10",
                         "draft": false,
                         "prerelease": false
                       }
@@ -178,7 +178,7 @@ class AppUpdateServiceTest : FunSpec({
             ).shouldNotBeNull()
 
         latest.versionName shouldBe "v1.0"
-        latest.htmlUrl shouldBe "https://example.com/10"
+        latest.htmlUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases/tag/10"
     }
 
     test("ignores legacy beta releases after migrating to stable 1.x") {
@@ -189,7 +189,7 @@ class AppUpdateServiceTest : FunSpec({
                     [
                       {
                         "tag_name": "v4.4-beta",
-                        "html_url": "https://example.com/44beta",
+                        "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/44beta",
                         "draft": false,
                         "prerelease": false
                       }
@@ -199,5 +199,41 @@ class AppUpdateServiceTest : FunSpec({
             )
 
         latest shouldBe null
+    }
+
+    test("falls back to the hardcoded releases page for non-github URLs") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                """
+                [
+                  {
+                    "tag_name": "v4.1.0",
+                    "html_url": "https://phishing.example.com/fake-release",
+                    "draft": false,
+                    "prerelease": false
+                  }
+                ]
+                """.trimIndent(),
+            ).shouldNotBeNull()
+
+        latest.htmlUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases"
+    }
+
+    test("falls back to the hardcoded releases page for non-https URLs") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                """
+                [
+                  {
+                    "tag_name": "v4.1.0",
+                    "html_url": "http://github.com/aeonBTC/IbisWallet/releases/tag/v4.1.0",
+                    "draft": false,
+                    "prerelease": false
+                  }
+                ]
+                """.trimIndent(),
+            ).shouldNotBeNull()
+
+        latest.htmlUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases"
     }
 })
