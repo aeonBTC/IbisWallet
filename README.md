@@ -28,7 +28,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Transaction Search** - Search transaction history by date, amount, address, or label
 - **Built on** [BDK](https://bitcoindevkit.org/)
 
-### Layer 2 — Liquid & Spark (Ark coming soon)
+### Layer 2 — Native Lightning, Liquid, and Spark (Ark coming soon)
 - **Modular Integration** - Choose which Layer 2 to enable for each wallet
 - **Lightning** - Connect a remote node over LND (REST + macaroon), CLN (clnrest + Rune), or NWC
 - **Liquid** - Full Liquid wallet with doconfidential transactions (Built on [LWK](https://github.com/Blockstream/lwk))
