@@ -56,6 +56,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 ### Connectivity & Servers
 - **Custom Servers** - Connect to your own Electrum, block explorer, and fee estimation servers
 - **NFC Support** - Broadcast and receive payment requests via NFC tap
+- **Update Notifications** - Toggle new version update notifications
 - **Bitcoin URI Handling** - Register as a handler for `bitcoin:` links
 
 ### Localization
