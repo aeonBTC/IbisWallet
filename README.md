@@ -41,17 +41,16 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Coin Control** - Select specific UTXOs for swaps and payments
 - **BIP329 Labels** - Label support for Liquid and Spark transactions
 
-
 ### Privacy & Security
 - **Offline by Default** - App launches with zero external connections
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
 - **PIN & Biometrics** - With configurable lock timing
-- **Privacy Toggle** - Hide all wallet amounts and balances
-- **Wipe Hisory** - Locally wipe specific wallet transactions or entire history
-- **Wallet Locks** - Lock specific wallets independently
 - **Duress PIN** - Configure a duress PIN that opens a decoy wallet
 - **Auto-Wipe** - Set a threshold for failed unlocks that automatically and irreversibly wipes all app data
 - **Cloak Mode** - Disguise Ibis as a calculator app
+- **Privacy Toggle** - Hide all wallet amounts and balances
+- **Wipe Hisory** - Locally wipe specific wallet transactions or entire history
+- **Wallet Locks** - Lock specific wallets independently
 - **Hardened Metadata** - Sanitized logs and UI errors for reduced OS-visible metadata
 
 ### Connectivity & Servers
