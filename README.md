@@ -1,6 +1,6 @@
 # Ibis Wallet
 
-Ibis is a self-custodial modular Bitcoin wallet with a focus on intutive design, privacy, and customizability.
+Ibis is a self-custodial modular Bitcoin wallet with a focus on intuitive design, privacy, and customizability.
 
 Designed for experienced users - no hand-holding, no training wheels.
 
@@ -25,13 +25,13 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Silent Payments** - Send to BIP-352 Silent Payment addresses
 - **Message Signing** - Sign and verify messages with BIP137
 - **BIP329 Labels** - Industry-standard wallet labels for transactions and addresses
-- **Transaction Search** - Search transaction history by date, amount, address, or label
+- **Transaction Search** - Search transaction history by date, address, or label
 - **Built on** [BDK](https://bitcoindevkit.org/)
 
 ### Layer 2 — Native Lightning, Liquid, and Spark (Ark coming soon)
 - **Modular Integration** - Choose which Layer 2 to enable for each wallet
 - **Lightning** - Connect a remote node over LND (REST + macaroon), CLN (clnrest + Rune), or NWC
-- **Liquid** - Full Liquid wallet with doconfidential transactions (Built on [LWK](https://github.com/Blockstream/lwk))
+- **Liquid** - Full Liquid wallet with confidential transactions (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Spark** - Spark wallet integration with Lightning and on-chain send and receive (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Lightning Payments** - Pay Bolt 11 and Bolt 12 invoices, or Lightning addresses
 - **Lightning Invoices** - Generate Bolt 11 invoices
@@ -49,7 +49,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Auto-Wipe** - Set a threshold for failed unlocks that automatically and irreversibly wipes all app data
 - **Cloak Mode** - Disguise Ibis as a calculator app
 - **Privacy Toggle** - Hide all wallet amounts and balances
-- **Wipe Hisory** - Locally wipe specific wallet transactions or entire history
+- **Wipe History** - Locally wipe specific wallet transactions or entire history
 - **Wallet Locks** - Lock specific wallets independently
 - **Hardened Metadata** - Sanitized logs and UI errors for reduced OS-visible metadata
 
@@ -77,7 +77,7 @@ Requires Android Studio with JDK 17.
 ./gradlew jacocoUnitTestReport    # Generate coverage report
 ```
 
-**Min SDK:** 26 (Android 8.0) | **Target SDK:** 35 | **ARM only** (armeabi-v7a, arm64-v8a)
+**Min SDK:** 26 (Android 8.0) | **Target SDK:** 36 | **ARM64 only** (arm64-v8a)
 
 ## Bug Bounty
 
@@ -93,7 +93,7 @@ Ibis is coded and audited by the most current frontier AI models.
 
 ## Donations
 
-As I originally made this wallet for myself, I do not expect donations. However, tokens arent cheap. So if you wish to show thanks, please do. 
+As I originally made this wallet for myself, I do not expect donations. However, tokens aren't cheap. So if you wish to show thanks, please do. 
 
 <img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
 
