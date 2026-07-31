@@ -91,6 +91,8 @@ Lower severity issues, theoretical vulnerabilities without a practical exploit p
 
 Ibis is coded and audited by the most current frontier AI models.
 
+Most recent audit: [July 22nd, 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.6-beta)
+
 ## Donations
 
 As I originally made this wallet for myself, I do not expect donations. However, tokens aren't cheap. So if you wish to show thanks, please do. 
