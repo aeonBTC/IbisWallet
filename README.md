@@ -30,7 +30,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 
 ### Layer 2 — Native Lightning, Liquid, and Spark (Ark coming soon)
 - **Modular Integration** - Choose which Layer 2 to enable for each wallet
-- **Lightning** - Connect a remote node over LND (REST + macaroon), CLN (clnrest + Rune), or NWC
+- **Lightning** - Connect a remote node over LND (LND REST), CLN (clnrest), or NWC (NIP-47)
 - **Liquid** - Full Liquid wallet with confidential transactions (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Spark** - Spark wallet integration with Lightning and on-chain send and receive (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Lightning Payments** - Pay Bolt 11 and Bolt 12 invoices, or Lightning addresses
