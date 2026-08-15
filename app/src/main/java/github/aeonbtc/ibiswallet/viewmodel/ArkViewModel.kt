@@ -48,7 +48,7 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     val isArkConnected = repository.isConnected
     val isArkConnecting = repository.isConnecting
 
-    private val _isArkLayer2Enabled = MutableStateFlow(effectiveArkLayer2Enabled())
+    private val _isArkLayer2Enabled = MutableStateFlow(secureStorage.isArkLayer2Enabled())
     val isArkLayer2Enabled: StateFlow<Boolean> = _isArkLayer2Enabled.asStateFlow()
 
     private val _autoDelegatedRefreshEnabled =
@@ -824,7 +824,6 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         )
 
     fun isArkEnabledForWallet(walletId: String): Boolean {
-        if (!ARK_LAYER2_TOGGLE_ENABLED) return false
         // Prefer live storage (other L2s may have cleared ARK) over a stale map hit.
         val stored = secureStorage.isArkEnabledForWallet(walletId)
         val mapped = _arkEnabledWallets.value[walletId]
@@ -838,10 +837,9 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setArkLayer2Enabled(enabled: Boolean) {
-        if (enabled && !ARK_LAYER2_TOGGLE_ENABLED) return
         secureStorage.setArkLayer2Enabled(enabled)
-        _isArkLayer2Enabled.value = enabled && ARK_LAYER2_TOGGLE_ENABLED
-        if (!_isArkLayer2Enabled.value) {
+        _isArkLayer2Enabled.value = enabled
+        if (!enabled) {
             unloadArkWallet()
         }
     }
@@ -943,7 +941,6 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setArkEnabledForWallet(walletId: String, enabled: Boolean) {
-        if (enabled && !ARK_LAYER2_TOGGLE_ENABLED) return
         if (enabled) {
             secureStorage.setArkLayer2Enabled(true)
             _isArkLayer2Enabled.value = true
@@ -968,7 +965,6 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         secureStorage.getLayer2ProviderForWallet(walletId)
 
     fun setLayer2ProviderForWallet(walletId: String, provider: Layer2Provider) {
-        if (provider == Layer2Provider.ARK && !ARK_LAYER2_TOGGLE_ENABLED) return
         secureStorage.setLayer2ProviderForWallet(walletId, provider)
         if (provider == Layer2Provider.ARK) {
             _isArkLayer2Enabled.value = true
@@ -1025,11 +1021,8 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
 
     fun isEligible(walletId: String): Boolean = repository.isEligible(walletId)
 
-    private fun effectiveArkLayer2Enabled(): Boolean =
-        ARK_LAYER2_TOGGLE_ENABLED && secureStorage.isArkLayer2Enabled()
-
     fun reloadRestoredSettings() {
-        val arkLayer2Enabled = effectiveArkLayer2Enabled()
+        val arkLayer2Enabled = secureStorage.isArkLayer2Enabled()
         _isArkLayer2Enabled.value = arkLayer2Enabled
         _autoDelegatedRefreshEnabled.value = secureStorage.isArkAutoDelegatedRefreshEnabled()
         _autoBoardEnabled.value = secureStorage.isArkAutoBoardEnabled()
@@ -1038,15 +1031,11 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         refreshAutoDbBackupMeta(loadedWalletId.value ?: secureStorage.getActiveWalletId())
         _arkEsploraAddress.value = secureStorage.getArkEsploraAddress()
         _arkEnabledWallets.value =
-            if (!ARK_LAYER2_TOGGLE_ENABLED) {
-                emptyMap()
-            } else {
-                secureStorage.getWalletIds().associateWith { walletId ->
-                    ArkRestoredSettings.isWalletArkEnabled(
-                        storedArkEnabled = secureStorage.isArkEnabledForWallet(walletId),
-                        provider = secureStorage.getLayer2ProviderForWallet(walletId),
-                    )
-                }
+            secureStorage.getWalletIds().associateWith { walletId ->
+                ArkRestoredSettings.isWalletArkEnabled(
+                    storedArkEnabled = secureStorage.isArkEnabledForWallet(walletId),
+                    provider = secureStorage.getLayer2ProviderForWallet(walletId),
+                )
             }
         syncForegroundConnectivityPolicy()
         if (!arkLayer2Enabled) {
@@ -1096,8 +1085,6 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         private const val HEARTBEAT_INTERVAL_MS = 60_000L
         private const val MAINTENANCE_INTERVAL_MS = 5 * 60_000L
         private const val ARK_WALLET_SWITCH_CANCEL_TIMEOUT_MS = 2_000L
-
-        const val ARK_LAYER2_TOGGLE_ENABLED = false
     }
 }
 

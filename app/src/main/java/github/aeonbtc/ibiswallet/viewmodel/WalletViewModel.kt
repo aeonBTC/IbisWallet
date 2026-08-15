@@ -75,6 +75,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -153,6 +154,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private var lastBtcPriceFetchElapsedMs = 0L
     private var lastBtcPriceFetchSource = SecureStorage.PRICE_SOURCE_OFF
     private var lastBtcPriceFetchCurrency = SecureStorage.DEFAULT_PRICE_CURRENCY
+    private var feeFetchJob: Job? = null
+    private var lastFeeFetchElapsedMs = 0L
+    private var lastFeeFetchSource = SecureStorage.FEE_SOURCE_OFF
     private val historicalPriceSeriesCache = mutableMapOf<String, List<BtcPriceService.HistoricalPricePoint>>()
     private var appUpdateCheckJob: Job? = null
     private var lastAppUpdateCheckElapsedMs = 0L
@@ -181,6 +185,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     // Mempool server state
     private val _mempoolServerState = MutableStateFlow(repository.getMempoolServer())
     val mempoolServerState: StateFlow<String> = _mempoolServerState.asStateFlow()
+    private val _mempoolUrlState = MutableStateFlow(repository.getMempoolUrl())
+    val mempoolUrlState: StateFlow<String> = _mempoolUrlState.asStateFlow()
 
     // Fee estimation state
     private val _feeSourceState = MutableStateFlow(repository.getFeeSource())
@@ -427,6 +433,15 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 refreshServersState()
                 refreshPricePreferences()
 
+                fetchFeeEstimates()
+                if (repository.isAppUpdateCheckEnabled()) {
+                    checkForAppUpdate()
+                }
+                if (_priceSourceState.value != SecureStorage.PRICE_SOURCE_OFF) {
+                    fetchBtcPrice()
+                    startBtcPriceRefreshLoop()
+                }
+
                 if (repository.isWalletInitialized()) {
                     _uiState.value = _uiState.value.copy(isLoading = true, error = null)
                     when (val result = repository.loadWallet()) {
@@ -463,15 +478,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     // still needs initial sync marked complete.
                     _initialSyncComplete.value = true
                 }
-
-                fetchFeeEstimates()
-                if (repository.isAppUpdateCheckEnabled()) {
-                    checkForAppUpdate()
-                }
-                if (_priceSourceState.value != SecureStorage.PRICE_SOURCE_OFF) {
-                    fetchBtcPrice()
-                    startBtcPriceRefreshLoop()
-                }
             }
     }
 
@@ -486,6 +492,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         appUpdateCheckJob = null
         btcPriceFetchJob?.cancel()
         btcPriceFetchJob = null
+        feeFetchJob?.cancel()
+        feeFetchJob = null
         stopBtcPriceRefreshLoop()
         stopBackgroundSync()
         stopHeartbeat()
@@ -582,6 +590,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             combine(
                 walletState
+                    .filter { state -> !state.isSyncing && !state.isFullSyncing }
                     .map { state ->
                         HistoricalTxWalletSnapshot(
                             walletId = state.activeWallet?.id,
@@ -1044,8 +1053,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                     repository.getServerVersion()
                                 }
                             _uiState.value = _uiState.value.copy(serverVersion = serverVersion)
-                            // Refresh fee estimates (server may support sub-sat fees)
-                            fetchFeeEstimates()
+                            // Electrum fees need a live client; HTTP sources already raced unlock.
+                            if (repository.getFeeSource() == SecureStorage.FEE_SOURCE_ELECTRUM) {
+                                fetchFeeEstimates(force = true)
+                            }
                             startHeartbeat()
                             // Smart sync + real-time subscriptions (Sparrow-style).
                             // Runs in the background — does NOT block the connection
@@ -2695,7 +2706,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         newFingerprint: String? = null,
     ) {
         if (!isWalletVisibleInCurrentPersona(walletId)) return
-        repository.editWallet(walletId, newName, newGapLimit, newFingerprint)
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.editWallet(walletId, newName, newGapLimit, newFingerprint)
+        }
     }
 
     /**
@@ -2703,7 +2716,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setWalletLocked(walletId: String, locked: Boolean) {
         if (!isWalletVisibleInCurrentPersona(walletId)) return
-        repository.setWalletLocked(walletId, locked)
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.setWalletLocked(walletId, locked)
+        }
     }
 
     /**
@@ -2713,8 +2728,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun reorderWallets(orderedIds: List<String>) {
         val visibleIds = orderedIds.filter { isWalletVisibleInCurrentPersona(it) }
         if (visibleIds.isEmpty()) return
-        repository.reorderWallets(visibleIds)
-        refreshWalletLastFullSyncTimes()
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.reorderWallets(visibleIds)
+            refreshWalletLastFullSyncTimes()
+        }
     }
 
     /** True when [walletId] belongs to the current duress/normal persona. */
@@ -2937,8 +2954,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                 )
                             refreshServersState()
                             _events.emit(WalletEvent.Connected)
-                            // Refresh fee estimates (server may support sub-sat fees)
-                            fetchFeeEstimates()
+                            if (repository.getFeeSource() == SecureStorage.FEE_SOURCE_ELECTRUM) {
+                                fetchFeeEstimates(force = true)
+                            }
                             startHeartbeat()
                             launchSubscriptions()
                         }
@@ -4856,6 +4874,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     fun setMempoolServer(server: String) {
         repository.setMempoolServer(server)
         _mempoolServerState.value = server
+        _mempoolUrlState.value = repository.getMempoolUrl()
     }
 
     /**
@@ -4875,6 +4894,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun setCustomMempoolUrl(url: String) {
         repository.setCustomMempoolUrl(url)
+        _mempoolUrlState.value = repository.getMempoolUrl()
     }
 
     /**
@@ -5014,10 +5034,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         syncForegroundConnectivityPolicy()
 
         if (source == SecureStorage.FEE_SOURCE_OFF) {
+            lastFeeFetchElapsedMs = 0L
+            lastFeeFetchSource = SecureStorage.FEE_SOURCE_OFF
             _feeEstimationState.value = FeeEstimationResult.Disabled
         } else {
-            // Immediately fetch when enabling a fee source
-            fetchFeeEstimates()
+            fetchFeeEstimates(force = true)
         }
     }
 
@@ -5026,7 +5047,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Call this when opening the Send screen
      * Uses precise endpoint only if the connected Electrum server supports sub-sat fees
      */
-    fun fetchFeeEstimates() {
+    fun fetchFeeEstimates(force: Boolean = false) {
         val feeSource = repository.getFeeSource()
 
         if (feeSource == SecureStorage.FEE_SOURCE_OFF) {
@@ -5035,64 +5056,87 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (!isAppSessionUnlocked) return
 
-        viewModelScope.launch {
-            _feeEstimationState.value = FeeEstimationResult.Loading
+        val now = SystemClock.elapsedRealtime()
+        if (
+            FeeFetchDedupPolicy.shouldSkip(
+                force = force,
+                inFlight = feeFetchJob?.isActive == true,
+                lastSource = lastFeeFetchSource,
+                currentSource = feeSource,
+                lastSuccessElapsedMs = lastFeeFetchElapsedMs,
+                nowElapsedMs = now,
+                lastResultWasSuccess = _feeEstimationState.value is FeeEstimationResult.Success,
+            )
+        ) {
+            return
+        }
 
-            if (feeSource == SecureStorage.FEE_SOURCE_ELECTRUM) {
-                // Fetch from connected Electrum server via BDK's estimateFee()
-                val result = repository.fetchElectrumFeeEstimates()
-                _feeEstimationState.value =
-                    result.fold(
-                        onSuccess = { estimates -> FeeEstimationResult.Success(estimates) },
-                        onFailure = { error -> FeeEstimationResult.Error(error.message ?: "Not connected to server") },
-                    )
-                return@launch
-            }
+        feeFetchJob?.cancel()
+        feeFetchJob =
+            viewModelScope.launch {
+                lastFeeFetchSource = feeSource
+                _feeEstimationState.value = FeeEstimationResult.Loading
 
-            // Fetch from mempool.space-compatible HTTP API
-            val feeSourceUrl =
-                repository.getFeeSourceUrl() ?: run {
-                    _feeEstimationState.value = FeeEstimationResult.Disabled
+                if (feeSource == SecureStorage.FEE_SOURCE_ELECTRUM) {
+                    val result = repository.fetchElectrumFeeEstimates()
+                    _feeEstimationState.value =
+                        result.fold(
+                            onSuccess = { estimates ->
+                                lastFeeFetchElapsedMs = SystemClock.elapsedRealtime()
+                                FeeEstimationResult.Success(estimates)
+                            },
+                            onFailure = { error ->
+                                lastFeeFetchElapsedMs = 0L
+                                FeeEstimationResult.Error(error.message ?: "Not connected to server")
+                            },
+                        )
                     return@launch
                 }
 
-            val useTorProxy =
-                try {
-                    java.net.URI(feeSourceUrl).host?.endsWith(".onion") == true
-                } catch (_: Exception) {
-                    feeSourceUrl.endsWith(".onion")
-                }
-
-            // If Tor is required, ensure it's running — fee source manages its own Tor needs
-            if (useTorProxy) {
-                if (!torManager.isReady()) {
-                    torManager.start()
-                    if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
-                        val msg = if (torState.value.status == TorStatus.ERROR) {
-                            "Tor failed to start"
-                        } else {
-                            "Tor connection timed out"
-                        }
-                        _feeEstimationState.value = FeeEstimationResult.Error(msg)
+                val feeSourceUrl =
+                    repository.getFeeSourceUrl() ?: run {
+                        _feeEstimationState.value = FeeEstimationResult.Disabled
                         return@launch
                     }
-                    // Brief settle time for the SOCKS proxy after bootstrap
-                    delay(TOR_POST_BOOTSTRAP_DELAY_MS)
+
+                val useTorProxy =
+                    try {
+                        java.net.URI(feeSourceUrl).host?.endsWith(".onion") == true
+                    } catch (_: Exception) {
+                        feeSourceUrl.endsWith(".onion")
+                    }
+
+                if (useTorProxy) {
+                    if (!torManager.isReady()) {
+                        torManager.start()
+                        if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
+                            val msg = if (torState.value.status == TorStatus.ERROR) {
+                                "Tor failed to start"
+                            } else {
+                                "Tor connection timed out"
+                            }
+                            lastFeeFetchElapsedMs = 0L
+                            _feeEstimationState.value = FeeEstimationResult.Error(msg)
+                            return@launch
+                        }
+                        delay(TOR_POST_BOOTSTRAP_DELAY_MS)
+                    }
                 }
+
+                val result = feeEstimationService.fetchFeeEstimates(feeSourceUrl, useTorProxy, usePrecise = true)
+
+                _feeEstimationState.value =
+                    result.fold(
+                        onSuccess = { estimates ->
+                            lastFeeFetchElapsedMs = SystemClock.elapsedRealtime()
+                            FeeEstimationResult.Success(estimates)
+                        },
+                        onFailure = { error ->
+                            lastFeeFetchElapsedMs = 0L
+                            FeeEstimationResult.Error(error.message ?: "Unknown error")
+                        },
+                    )
             }
-
-            // HTTP fee providers should decide whether `/precise` works; the service
-            // already falls back to `/recommended` when the endpoint is unsupported.
-            val usePrecise = true
-
-            val result = feeEstimationService.fetchFeeEstimates(feeSourceUrl, useTorProxy, usePrecise)
-
-            _feeEstimationState.value =
-                result.fold(
-                    onSuccess = { estimates -> FeeEstimationResult.Success(estimates) },
-                    onFailure = { error -> FeeEstimationResult.Error(error.message ?: "Unknown error") },
-                )
-        }
     }
 
     // ==================== BTC/Fiat Price ====================
@@ -5149,6 +5193,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         _denominationState.value = repository.getLayer1Denomination()
         _appLocale.value = repository.getAppLocale()
         _mempoolServerState.value = repository.getMempoolServer()
+        _mempoolUrlState.value = repository.getMempoolUrl()
         _feeSourceState.value = repository.getFeeSource()
         refreshPricePreferences()
         _privacyMode.value = repository.getPrivacyMode()
@@ -5165,9 +5210,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         )
 
         if (_feeSourceState.value == SecureStorage.FEE_SOURCE_OFF) {
+            lastFeeFetchElapsedMs = 0L
+            lastFeeFetchSource = SecureStorage.FEE_SOURCE_OFF
             _feeEstimationState.value = FeeEstimationResult.Disabled
         } else {
-            fetchFeeEstimates()
+            fetchFeeEstimates(force = true)
         }
 
         if (_priceSourceState.value == SecureStorage.PRICE_SOURCE_OFF) {
