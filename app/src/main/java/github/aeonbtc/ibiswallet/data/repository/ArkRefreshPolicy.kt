@@ -63,6 +63,7 @@ object ArkRefreshPolicy {
         }
         val million = java.math.BigInteger.valueOf(1_000_000L)
         val ppmFee = numerator.add(million - java.math.BigInteger.ONE).divide(million)
-        return runCatching { Math.addExact(baseFeeSats, ppmFee.longValueExact()) }.getOrNull()
+        if (ppmFee.bitLength() > 63) return null
+        return runCatching { Math.addExact(baseFeeSats, ppmFee.toLong()) }.getOrNull()
     }
 }
