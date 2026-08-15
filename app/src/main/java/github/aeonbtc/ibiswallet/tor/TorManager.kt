@@ -394,7 +394,7 @@ class TorManager private constructor(context: Context) {
                     Log.d(TAG, "SOCKS probe attempt ${attempt + 1}/$maxAttempts failed (port ${socksPort()})")
                 }
                 if (attempt < maxAttempts - 1) {
-                    Thread.sleep(SOCKS_PROBE_INTERVAL_MS)
+                    delay(SOCKS_PROBE_INTERVAL_MS)
                 }
             }
             if (BuildConfig.DEBUG && maxAttempts > 1) {

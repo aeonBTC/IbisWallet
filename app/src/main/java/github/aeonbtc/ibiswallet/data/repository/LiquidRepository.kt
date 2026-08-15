@@ -338,6 +338,8 @@ class LiquidRepository(
     private var boltzSessionKeepAliveExpiryJob: Job? = null
     private var currentWalletId: String? = null
     private var notificationCollectorJob: Job? = null
+    private var notificationDebounceJob: Job? = null
+    private var notificationSyncJob: Job? = null
     private var transactionRefreshJob: Job? = null
     private var liquidSearchIndexJob: Job? = null
     private val subscribedScriptHashes = mutableSetOf<String>()
@@ -2746,11 +2748,42 @@ class LiquidRepository(
 
     private fun startNotificationCollector(proxy: CachingElectrumProxy) {
         notificationCollectorJob?.cancel()
+        notificationDebounceJob?.cancel()
+        notificationDebounceJob = null
+        notificationSyncJob?.cancel()
+        notificationSyncJob = null
         val collectorGeneration = walletSwitchGeneration
         notificationCollectorJob =
             repositoryScope.launch {
                 val pendingNotifications = mutableListOf<ElectrumNotification>()
-                var lastNotificationTime: Long
+
+                fun launchDebouncedSync() {
+                    notificationDebounceJob?.cancel()
+                    notificationDebounceJob =
+                        launch {
+                            delay(NOTIFICATION_DEBOUNCE_MS)
+                            if (collectorGeneration != walletSwitchGeneration) return@launch
+                            notificationSyncJob?.join()
+                            if (collectorGeneration != walletSwitchGeneration) return@launch
+                            val batch = pendingNotifications.toList()
+                            pendingNotifications.clear()
+                            if (batch.isEmpty()) return@launch
+
+                            notificationSyncJob =
+                                repositoryScope.launch {
+                                    if (collectorGeneration != walletSwitchGeneration) return@launch
+                                    scriptHashStatusCache.clear()
+                                    if (sync()) {
+                                        subscribeNewlyRevealedAddresses()
+                                        currentWalletId?.let { walletId ->
+                                            if (scriptHashStatusCache.isNotEmpty()) {
+                                                saveLiquidScriptHashStatusSnapshot(walletId, scriptHashStatusCache.toMap())
+                                            }
+                                        }
+                                    }
+                                }
+                        }
+                }
 
                 proxy.notifications.collect { notification ->
                     if (!isActive || collectorGeneration != walletSwitchGeneration) return@collect
@@ -2765,34 +2798,16 @@ class LiquidRepository(
                     }
 
                     pendingNotifications.add(notification)
-                    lastNotificationTime = System.currentTimeMillis()
-
-                    launch debounceSync@{
-                        delay(NOTIFICATION_DEBOUNCE_MS)
-                        if (collectorGeneration != walletSwitchGeneration) return@debounceSync
-                        if (System.currentTimeMillis() - lastNotificationTime < NOTIFICATION_DEBOUNCE_MS) {
-                            return@debounceSync
-                        }
-
-                        val batch = pendingNotifications.toList()
-                        pendingNotifications.clear()
-                        if (batch.isEmpty()) return@debounceSync
-
-                        scriptHashStatusCache.clear()
-                        if (sync()) {
-                            subscribeNewlyRevealedAddresses()
-                            currentWalletId?.let { walletId ->
-                                if (scriptHashStatusCache.isNotEmpty()) {
-                                    saveLiquidScriptHashStatusSnapshot(walletId, scriptHashStatusCache.toMap())
-                                }
-                            }
-                        }
-                    }
+                    launchDebouncedSync()
                 }
             }
     }
 
     private fun stopNotificationCollector() {
+        notificationDebounceJob?.cancel()
+        notificationDebounceJob = null
+        notificationSyncJob?.cancel()
+        notificationSyncJob = null
         notificationCollectorJob?.cancel()
         notificationCollectorJob = null
     }

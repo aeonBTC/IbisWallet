@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet.data.repository
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import github.aeonbtc.ibiswallet.BuildConfig
@@ -730,9 +731,12 @@ class WalletRepository(context: Context) {
     // Real-time notification collector — listens for server push notifications
     // (script hash changes, new blocks) and triggers targeted sync.
     private var notificationCollectorJob: Job? = null
+    private var notificationDebounceJob: Job? = null
+    private var notificationSyncJob: Job? = null
     private var transactionRefreshJob: Job? = null
     private var bitcoinSearchIndexJob: Job? = null
     private var pendingBlockSyncJob: Job? = null
+    private val lastSyncProgressPublishElapsedMs = java.util.concurrent.atomic.AtomicLong(0L)
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     // Tracks which script hashes are subscribed on the subscription socket.
@@ -3321,6 +3325,7 @@ class WalletRepository(context: Context) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "Starting quick sync (batch=$currentBatchSize)")
                 val hadPendingTransactions = _walletState.value.hasPendingBitcoinTransactions()
 
+                lastSyncProgressPublishElapsedMs.set(0L)
                 val syncProgress = java.util.concurrent.atomic.AtomicLong(0)
                 val syncRequest =
                     currentWallet.startSyncWithRevealedSpks()
@@ -3331,10 +3336,9 @@ class WalletRepository(context: Context) {
                                     total: ULong,
                                 ) {
                                     val current = syncProgress.incrementAndGet().toULong()
-                                    _walletState.value =
-                                        _walletState.value.copy(
-                                            syncProgress = SyncProgress(current = current, total = total),
-                                        )
+                                    publishThrottledSyncProgress(
+                                        SyncProgress(current = current, total = total),
+                                    )
                                 }
                             },
                         )
@@ -3497,6 +3501,7 @@ class WalletRepository(context: Context) {
                     _walletState.value = _walletState.value.copy(isSyncing = true, isFullSyncing = showProgress, error = null)
                     if (BuildConfig.DEBUG) Log.d(TAG, "Starting full sync (address discovery, batch=$fullScanBatchSize)")
 
+                    lastSyncProgressPublishElapsedMs.set(0L)
                     val fullScanProgress = java.util.concurrent.atomic.AtomicLong(0)
                     fun buildFullScanRequest() =
                         currentWallet.startFullScan()
@@ -3509,16 +3514,14 @@ class WalletRepository(context: Context) {
                                     ) {
                                         val current = fullScanProgress.incrementAndGet().toULong()
                                         val keychainName = if (keychain == KeychainKind.EXTERNAL) "receive" else "change"
-                                        _walletState.value =
-                                            _walletState.value.copy(
-                                                syncProgress =
-                                                    SyncProgress(
-                                                        current = current,
-                                                        total = 0UL,
-                                                        keychain = "$keychainName #$index",
-                                                        status = "Scanned $current addresses...",
-                                                    ),
-                                            )
+                                        publishThrottledSyncProgress(
+                                            SyncProgress(
+                                                current = current,
+                                                total = 0UL,
+                                                keychain = "$keychainName #$index",
+                                                status = "Scanned $current addresses...",
+                                            ),
+                                        )
                                     }
                                 },
                             )
@@ -4132,6 +4135,23 @@ class WalletRepository(context: Context) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Error getting sample script hashes: ${e.message}")
         }
         return hashSet.toList()
+    }
+
+    private fun publishThrottledSyncProgress(progress: SyncProgress) {
+        val now = SystemClock.elapsedRealtime()
+        val last = lastSyncProgressPublishElapsedMs.get()
+        if (
+            !SyncProgressPublishPolicy.shouldPublish(
+                current = progress.current,
+                total = progress.total,
+                nowElapsedMs = now,
+                lastPublishElapsedMs = last,
+            )
+        ) {
+            return
+        }
+        lastSyncProgressPublishElapsedMs.set(now)
+        _walletState.value = _walletState.value.copy(syncProgress = progress)
     }
 
     /**
@@ -4867,13 +4887,41 @@ class WalletRepository(context: Context) {
      */
     private fun startNotificationCollector(proxy: CachingElectrumProxy) {
         notificationCollectorJob?.cancel()
+        notificationDebounceJob?.cancel()
+        notificationDebounceJob = null
+        notificationSyncJob?.cancel()
+        notificationSyncJob = null
         notificationCollectorJob =
             repositoryScope.launch {
                 if (BuildConfig.DEBUG) Log.d(TAG, "Notification collector started")
 
-                // Debounce buffer: accumulate notifications for 1 second of quiet
                 val pendingNotifications = mutableListOf<ElectrumNotification>()
-                var lastNotificationTime: Long
+
+                fun launchDebouncedSync() {
+                    notificationDebounceJob?.cancel()
+                    notificationDebounceJob =
+                        launch {
+                            delay(NOTIFICATION_DEBOUNCE_MS)
+                            notificationSyncJob?.join()
+                            val batch = pendingNotifications.toList()
+                            pendingNotifications.clear()
+                            if (batch.isEmpty()) return@launch
+
+                            if (BuildConfig.DEBUG) {
+                                Log.d(TAG, "Debounced sync trigger: ${batch.size} script hash changes")
+                            }
+
+                            notificationSyncJob =
+                                repositoryScope.launch {
+                                    scriptHashStatusCache.clear()
+                                    val result = sync(force = true)
+                                    if (result is WalletResult.Success) {
+                                        subscribeNewlyRevealedAddresses()
+                                        electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
+                                    }
+                                }
+                        }
+                }
 
                 proxy.notifications.collect { notification ->
                     if (!isActive) return@collect
@@ -4911,35 +4959,8 @@ class WalletRepository(context: Context) {
                         return@collect
                     }
 
-                    // Script hash changes trigger targeted syncs; new blocks also force
-                    // one while there are pending txs so confirmations are not missed.
                     pendingNotifications.add(notification)
-                    lastNotificationTime = System.currentTimeMillis()
-
-                    launch debounceSync@{
-                        delay(NOTIFICATION_DEBOUNCE_MS)
-
-                        if (System.currentTimeMillis() - lastNotificationTime < NOTIFICATION_DEBOUNCE_MS) {
-                            return@debounceSync
-                        }
-
-                        val batch = pendingNotifications.toList()
-                        pendingNotifications.clear()
-
-                        if (batch.isEmpty()) return@debounceSync
-
-                        if (BuildConfig.DEBUG) {
-                            Log.d(TAG, "Debounced sync trigger: ${batch.size} script hash changes")
-                        }
-
-                        scriptHashStatusCache.clear()
-                        val result = sync(force = true)
-
-                        if (result is WalletResult.Success) {
-                            subscribeNewlyRevealedAddresses()
-                            electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
-                        }
-                    }
+                    launchDebouncedSync()
                 }
             }
     }
@@ -4967,6 +4988,10 @@ class WalletRepository(context: Context) {
      * Stop the notification collector coroutine.
      */
     private fun stopNotificationCollector() {
+        notificationDebounceJob?.cancel()
+        notificationDebounceJob = null
+        notificationSyncJob?.cancel()
+        notificationSyncJob = null
         notificationCollectorJob?.cancel()
         notificationCollectorJob = null
     }
@@ -8206,11 +8231,11 @@ class WalletRepository(context: Context) {
             if (walletId == secureStorage.getActiveWalletId()) {
                 wallet?.let { currentWallet ->
                     if (revealConfiguredGapLimit(currentWallet, walletId)) {
-                        clearScriptHashCache()
+                        subscribeNewlyRevealedAddresses()
                     }
                 }
             }
-            updateWalletState()
+            refreshWalletListMetadata()
         }
     }
 
@@ -8219,7 +8244,7 @@ class WalletRepository(context: Context) {
      */
     fun setWalletLocked(walletId: String, locked: Boolean) {
         if (secureStorage.setWalletLocked(walletId, locked)) {
-            updateWalletState()
+            refreshWalletListMetadata()
         }
     }
 
@@ -8230,7 +8255,7 @@ class WalletRepository(context: Context) {
      */
     fun reorderWallets(orderedIds: List<String>) {
         secureStorage.reorderWalletIds(orderedIds)
-        updateWalletState()
+        refreshWalletListMetadata()
     }
 
     /**
@@ -9635,6 +9660,27 @@ class WalletRepository(context: Context) {
                     }
                 }
             }
+    }
+
+    private fun refreshWalletListMetadata() {
+        val previousState = _walletState.value
+        val activeWalletId = secureStorage.getActiveWalletId()
+        val allWallets: List<StoredWallet>
+        val activeWallet: StoredWallet?
+        try {
+            allWallets = secureStorage.getAllWallets()
+            activeWallet = activeWalletId?.let { secureStorage.getWalletMetadata(it) }
+        } catch (_: IllegalArgumentException) {
+            return
+        }
+        _walletState.value =
+            WalletListMetadataPolicy.apply(
+                previous = previousState,
+                allWallets = allWallets,
+                activeWallet = activeWallet,
+                loadedWalletId = loadedWalletId,
+                activeWalletId = activeWalletId,
+            )
     }
 
     private fun updateWalletState() {
