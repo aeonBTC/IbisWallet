@@ -70,7 +70,7 @@ object NwcUriParser {
             multi["relay"]
                 .orEmpty()
                 .map { it.trim() }
-                .filter { it.startsWith("wss://", ignoreCase = true) || it.startsWith("ws://", ignoreCase = true) }
+                .filter { it.startsWith("wss://", ignoreCase = true) }
                 .map { it.trim().replace(" ", "") }
         require(relays.isNotEmpty()) { "NWC URI must include at least one relay" }
 

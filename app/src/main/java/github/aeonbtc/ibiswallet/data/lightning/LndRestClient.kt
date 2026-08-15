@@ -7,12 +7,12 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodeChannel
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
 import github.aeonbtc.ibiswallet.data.model.LightningNodeInfo
 import github.aeonbtc.ibiswallet.data.model.LightningNodeInvoice
+import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails
+import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
 import github.aeonbtc.ibiswallet.data.model.LightningNodePayment
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentDirection
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentResult
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentStatus
-import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails
-import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.stringWithLimit
@@ -28,7 +28,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.bitcoindevkit.Address
 import org.bitcoindevkit.Network
-import org.bitcoindevkit.Transaction as BdkTransaction
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.EOFException
@@ -37,6 +36,7 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import kotlin.math.roundToLong
+import org.bitcoindevkit.Transaction as BdkTransaction
 
 /**
  * LND node client via HTTP REST API (lnd REST proxy / litd).
@@ -72,81 +72,64 @@ class LndRestClient : LightningNodeBackend {
                     .substringBefore(':') // strip accidental :port in host field
                     .trimEnd('/')
             require(host.isNotBlank()) { "Host is required" }
-            val needsTor = config.useTor || host.endsWith(".onion", ignoreCase = true)
-            if (host.endsWith(".onion", ignoreCase = true) && !needsTor) {
-                throw IllegalStateException("Onion hosts require Tor")
-            }
-            val normalized = config.copy(useTor = needsTor, host = host)
+            val hostIsOnion = host.endsWith(".onion", ignoreCase = true)
+            val normalized = config.copy(useTor = hostIsOnion, host = host)
 
-            // Prefer configured TLS. If cleartext fails because the node expects HTTPS
-            // (common for LND REST :8080 / Tor), auto-retry once with TLS.
-            // Also retry once after Tor stream flakiness (unexpected end of stream).
             connectWithRetries(normalized)
         }
 
     private fun connectWithRetries(normalized: LightningNodeConfig): LightningNodeInfo {
+        val viaTor = normalized.host.endsWith(".onion", ignoreCase = true)
+        val probing = !normalized.useTls
+        return tryConnectCandidates(
+            normalized = normalized,
+            probeTimeouts = probing && !viaTor,
+        )
+    }
+
+    private fun tryConnectCandidates(
+        normalized: LightningNodeConfig,
+        probeTimeouts: Boolean,
+    ): LightningNodeInfo {
         var lastError: Exception? = null
-        val viaTor =
-            normalized.useTor || normalized.host.endsWith(".onion", ignoreCase = true)
-        // Scheme order:
-        // - TLS on → that scheme only
-        // - LAN + TLS off → short HTTP probe, then HTTPS
-        // - Tor + TLS off → HTTPS first (LND/CLN REST over .onion is almost always TLS);
-        //   cleartext only as a last short probe — never burned minutes on dead HTTP circuits
-        // - preferSessionTls → HTTPS first (LAN or Tor)
-        val httpsFallback =
-            if (!normalized.tlsEnabled) {
-                normalized.copy(
-                    useTls = true,
-                    allowInsecureTls = true,
-                    tlsCertPem = normalized.tlsCertPem,
-                )
-            } else {
-                null
-            }
-        val candidates =
-            buildList {
-                when {
-                    normalized.tlsEnabled -> add(normalized)
-                    httpsFallback == null -> add(normalized)
-                    viaTor || normalized.preferSessionTls -> {
-                        add(httpsFallback)
-                        // Last-resort cleartext only on clearnet (rare plain-HTTP nodes).
-                        // Over Tor a failing HTTPS would just waste another circuit on HTTP.
-                        if (!viaTor) add(normalized)
-                    }
-                    else -> {
-                        add(normalized)
-                        add(httpsFallback)
-                    }
-                }
-            }
+        val viaTor = normalized.host.endsWith(".onion", ignoreCase = true)
+        val candidates = normalized.connectCandidates()
+        val httpsCandidate = candidates.firstOrNull { it.tlsEnabled }
         for ((candidateIndex, candidate) in candidates.withIndex()) {
-            val isCleartextProbe = !candidate.tlsEnabled && !normalized.tlsEnabled
-            // Connect: one attempt per scheme over Tor (new circuit is expensive).
-            // Clearnet HTTPS keeps a single stream retry; cleartext is always one-shot.
             val maxAttempts =
                 when {
-                    isCleartextProbe -> 1
+                    probeTimeouts -> 1
                     viaTor -> 1
                     else -> CONNECT_CLEAR_STREAM_ATTEMPTS
                 }
             for (attempt in 0 until maxAttempts) {
                 try {
-                    openSession(candidate, probeTimeouts = isCleartextProbe)
-                    return getInfo()
+                    openSession(candidate, probeTimeouts = probeTimeouts)
+                    val info = getInfo()
+                    if (probeTimeouts) {
+                        openSession(candidate, probeTimeouts = false)
+                    }
+                    return info
                 } catch (e: Exception) {
                     lastError = e
                     val streamRetry =
-                        !isCleartextProbe &&
+                        !probeTimeouts &&
                             isTransientStreamError(e) &&
                             attempt < maxAttempts - 1
                     if (streamRetry) {
                         closeClientQuietly()
                         continue
                     }
-                    // Auth / 4xx on the chosen scheme is definitive — don't mask with TLS.
                     if (isDefinitiveHttpFailure(e)) throw e
+                    if (
+                        isHttpsRequiredFailure(e) &&
+                        !candidate.tlsEnabled &&
+                        httpsCandidate != null
+                    ) {
+                        closeClientQuietly()
+                        openSession(httpsCandidate, probeTimeouts = false)
+                        return getInfo()
+                    }
                     if (candidateIndex == candidates.lastIndex) throw e
                     closeClientQuietly()
                     break
@@ -172,6 +155,12 @@ class LndRestClient : LightningNodeBackend {
         runCatching { client?.connectionPool?.evictAll() }
         client = null
         activeConfig = null
+    }
+
+    private fun isHttpsRequiredFailure(error: Exception): Boolean {
+        val message = error.message.orEmpty().lowercase()
+        return message.contains("http request to an https server") ||
+            message.contains("client sent an http request to an https")
     }
 
     /** Failures that are about credentials/API, not transport scheme. */
@@ -779,7 +768,7 @@ class LndRestClient : LightningNodeBackend {
                     put("spend_unconfirmed", spendUnconfirmed)
                     putOutpoints(this, selectedOutpoints)
                 }
-            val response = postJson("/v1/transactions", body)
+            val response = postJson("/v1/transactions", body, retry = false)
             response.optString("txid").takeIf { it.isNotBlank() }
                 ?: throw IllegalStateException("Node did not return a transaction ID")
         }
@@ -821,12 +810,12 @@ class LndRestClient : LightningNodeBackend {
                     putOutpoints(this, selectedOutpoints)
                 }
             val response =
-                runCatching { postJson("/v1/transactions/many", body) }
-                    .recoverCatching {
-                        // Some proxies only accept snake_case map field.
+                runCatching { postJson("/v1/transactions/many", body, retry = false) }
+                    .recoverCatching { first ->
+                        if (isTransientStreamError(first)) throw first
                         body.remove("AddrToAmount")
                         body.put("addr_to_amount", amountMap)
-                        postJson("/v1/transactions/many", body)
+                        postJson("/v1/transactions/many", body, retry = false)
                     }.getOrThrow()
             response.optString("txid").takeIf { it.isNotBlank() }
                 ?: throw IllegalStateException("Node did not return a transaction ID")
@@ -990,7 +979,7 @@ class LndRestClient : LightningNodeBackend {
                     put("min_confs", 0)
                 }
             }
-        val response = postJson("/v2/wallet/send", body)
+        val response = postJson("/v2/wallet/send", body, retry = false)
         val rawTxB64 =
             response.optString("raw_tx").ifBlank {
                 throw IllegalStateException("Node did not return a transaction")
@@ -1406,15 +1395,18 @@ class LndRestClient : LightningNodeBackend {
     private fun postJson(
         path: String,
         body: JSONObject,
-    ): JSONObject = executeJson(path, methodGet = false, body = body)
+        retry: Boolean = true,
+    ): JSONObject = executeJson(path, methodGet = false, body = body, retry = retry)
 
     private fun executeJson(
         path: String,
         methodGet: Boolean,
         body: JSONObject?,
+        retry: Boolean = true,
     ): JSONObject {
         var lastError: Exception? = null
-        repeat(STREAM_RETRY_ATTEMPTS) { attempt ->
+        val attempts = if (retry) STREAM_RETRY_ATTEMPTS else 1
+        repeat(attempts) { attempt ->
             try {
                 val http = client ?: throw IllegalStateException("Not connected")
                 val builder =
@@ -1439,7 +1431,7 @@ class LndRestClient : LightningNodeBackend {
                 }
             } catch (e: Exception) {
                 lastError = e
-                if (!isTransientStreamError(e) || attempt == STREAM_RETRY_ATTEMPTS - 1) {
+                if (!retry || !isTransientStreamError(e) || attempt == attempts - 1) {
                     throw e
                 }
                 // Drop pooled SOCKS/TLS sockets and rebuild from last known config.
@@ -1456,9 +1448,8 @@ class LndRestClient : LightningNodeBackend {
         config: LightningNodeConfig,
         probeTimeouts: Boolean = false,
     ): OkHttpClient {
-        val viaTor = config.useTor || config.host.endsWith(".onion", ignoreCase = true)
-        // Cleartext probe before HTTPS fallback must fail fast on LAN HTTPS-only nodes
-        // (otherwise users wait 30–90s × retries staring at a working HTTPS endpoint).
+        val viaTor = config.host.endsWith(".onion", ignoreCase = true)
+        // TLS-off scheme probes must fail fast so HTTPS→HTTP fallback stays snappy.
         val timeoutSeconds =
             when {
                 probeTimeouts && viaTor -> CLEARTEXT_PROBE_TOR_SECONDS
@@ -1479,7 +1470,7 @@ class LndRestClient : LightningNodeBackend {
                 .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .callTimeout(callTimeoutSeconds, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(!probeTimeouts)
+                .retryOnConnectionFailure(false)
 
         if (viaTor) {
             applyTorProxy(builder, github.aeonbtc.ibiswallet.tor.TorManager.socksPort())
@@ -1492,12 +1483,12 @@ class LndRestClient : LightningNodeBackend {
 
         if (config.tlsEnabled) {
             when {
-                // Pin when the user supplied a cert (typical Umbrel/LND tls.cert paste).
                 config.tlsCertPem.isNotBlank() ->
-                    TlsCertMaterial.applyToOkHttp(builder, config.tlsCertPem)
-                // No cert: user is connecting to their own node. Self-signed LND is
-                // common; trust-all here. Prefer pasting tls.cert when available.
-                else -> TlsCertMaterial.applyInsecureTrust(builder)
+                    TlsCertMaterial.applyToOkHttp(builder, config.tlsCertPem, config.host)
+                config.allowInsecureTls || viaTor ->
+                    TlsCertMaterial.applyInsecureTrust(builder, config.host)
+                else ->
+                    throw IllegalStateException("TLS requires a certificate or an explicit insecure-TLS opt-in")
             }
         }
 

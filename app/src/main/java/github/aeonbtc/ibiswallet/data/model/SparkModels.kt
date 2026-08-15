@@ -69,8 +69,35 @@ sealed interface SparkSendState {
         val onchainFeeSpeed: SparkOnchainFeeSpeed? = null,
         val onchainFeeQuotes: List<SparkOnchainFeeQuote> = emptyList(),
     ) : SparkSendState
+
+    /** Sequential multi-payment preview (Spark addresses only). */
+    data class MultiPreview(
+        val items: List<MultiItem>,
+        val totalAmountSats: Long,
+        val totalFeeSats: Long,
+    ) : SparkSendState {
+        data class MultiItem(
+            val paymentRequest: String,
+            val amountSats: Long,
+            val feeSats: Long,
+        )
+    }
+
     data object Sending : SparkSendState
+
+    data class MultiSending(
+        val completed: Int,
+        val total: Int,
+    ) : SparkSendState
+
     data class Sent(val paymentId: String?) : SparkSendState
+
+    data class MultiSent(
+        val succeeded: Int,
+        val failed: Int,
+        val detail: String? = null,
+    ) : SparkSendState
+
     data class Error(val message: String) : SparkSendState
 }
 

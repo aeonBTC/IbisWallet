@@ -41,17 +41,17 @@ data class LightningNodeConfig(
     val useTor: Boolean = false,
     val macaroonHex: String = "",
     val tlsCertPem: String = "",
-    /**
-     * When true, connect over HTTPS and optionally pin [tlsCertPem].
-     * When false, prefer cleartext HTTP (may still auto-try HTTPS for the session).
-     * [allowInsecureTls] is retained for backup compatibility; prefer [useTls].
-     */
-    val useTls: Boolean = false,
-    /** Legacy flag: true means HTTP/cleartext (TLS disabled). */
-    val allowInsecureTls: Boolean = true,
+     /**
+      * When true, connect over HTTPS and pin [tlsCertPem].
+      * When false, connect over explicit cleartext HTTP (never auto-probed with credentials).
+      * [allowInsecureTls] is only for already-saved no-cert HTTPS until resaved.
+      */
+     val useTls: Boolean = false,
+     /** Legacy: trust-all TLS when no cert is pasted. New UI never sets this. */
+     val allowInsecureTls: Boolean = false,
     /**
      * Last transport that successfully opened getinfo for this host/port.
-     * Used only to skip a slow cleartext probe when the node is HTTPS-only.
+     * Speed hint only — TLS off still probes HTTPS then HTTP.
      * Does not affect the TLS toggle / [useTls] preference shown in UI.
      */
     val preferSessionTls: Boolean = false,
@@ -77,6 +77,33 @@ data class LightningNodeConfig(
      */
     val tlsEnabled: Boolean
         get() = useTls
+
+    /** Tor is only valid for .onion LND/CLN hosts or NWC relays — never clearnet-over-Tor. */
+    fun requiresOnionTor(): Boolean {
+        val normalizedHost = host.trim().lowercase()
+        val hostOnion = normalizedHost.endsWith(".onion") || normalizedHost.contains(".onion:")
+        val nwcOnion =
+            type == LightningNodeConnectionType.NWC &&
+                nwcUri.contains(".onion", ignoreCase = true)
+        return hostOnion || nwcOnion
+    }
+
+    fun withOnionOnlyTor(): LightningNodeConfig {
+        val onion = requiresOnionTor()
+        return if (useTor == onion) this else copy(useTor = onion)
+    }
+
+    /**
+     * TLS on uses this config as-is.
+     * TLS off probes HTTPS (insecure, no cert) then falls back to HTTP.
+     */
+    fun connectCandidates(): List<LightningNodeConfig> {
+        if (useTls) return listOf(this)
+        return listOf(
+            copy(useTls = true, allowInsecureTls = true),
+            copy(useTls = false, allowInsecureTls = false),
+        )
+    }
 
     /** Short type label for wallet lists (no secrets). Protocol tokens stay English. */
     fun listTypeLabel(lightningFallback: String = "Lightning"): String =

@@ -13,6 +13,7 @@ import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundResponse
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineResponse
 import github.aeonbtc.ibiswallet.data.model.BoltzSwapUpdate
 import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.SocksProxyHostnameDns
 import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -98,6 +99,7 @@ class BoltzApiClient(
                         InetSocketAddress("127.0.0.1", github.aeonbtc.ibiswallet.tor.TorManager.socksPort()),
                     ),
                 )
+                .dns(SocksProxyHostnameDns)
                 .build()
         } else {
             baseHttpClient
@@ -121,6 +123,7 @@ class BoltzApiClient(
                     InetSocketAddress("127.0.0.1", github.aeonbtc.ibiswallet.tor.TorManager.socksPort()),
                 ),
             )
+            builder.dns(SocksProxyHostnameDns)
         }
         return builder.build()
     }

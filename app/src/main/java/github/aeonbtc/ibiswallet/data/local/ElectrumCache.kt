@@ -376,6 +376,14 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    fun deleteHistory(scriptHash: String) {
+        try {
+            writableDatabase.delete(TABLE_SCRIPT_HASH_HISTORY, "$COL_SCRIPT_HASH = ?", arrayOf(scriptHash))
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "Failed to delete history cache for $scriptHash: ${e.message}")
+        }
+    }
+
     fun deleteTransactionCache(
         txid: String,
         walletId: String? = null,
@@ -1003,11 +1011,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         whereArgs += layer.dbValue
 
         when (layer) {
-            TransactionSearchLayer.BITCOIN -> {
-                if (filters.swapOnly) {
-                    whereClauses += "$TABLE_TX_SEARCH_DOCS.$COL_IS_SWAP = 1"
-                }
-            }
+            TransactionSearchLayer.BITCOIN -> Unit
 
             TransactionSearchLayer.LIQUID -> {
                 val allSourcesIncluded =

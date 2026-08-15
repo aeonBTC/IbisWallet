@@ -70,6 +70,7 @@ enum class Layer2Provider {
     LIQUID,
     SPARK,
     LIGHTNING,
+    ARK,
 }
 
 /** Liquid wallet state — parallel to WalletState for Bitcoin */

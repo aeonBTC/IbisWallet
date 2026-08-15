@@ -13,7 +13,6 @@ enum class TransactionSearchLayer(
 }
 
 data class TransactionSearchFilters(
-    val swapOnly: Boolean = false,
     val includeSwap: Boolean = true,
     val includeLightning: Boolean = true,
     val includeNative: Boolean = true,

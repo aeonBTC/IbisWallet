@@ -4,6 +4,8 @@ import android.util.Log
 import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.PreferIpv4Dns
+import github.aeonbtc.ibiswallet.util.SocksProxyHostnameDns
 import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -12,13 +14,12 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -47,6 +48,7 @@ class BtcPriceService {
         private const val COINGECKO_PRICE_URL = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies="
         private const val YADIO_BASE_URL = "https://api.yadio.io"
         private const val YADIO_HISTORICAL_RANGE_DAYS = 365
+        private const val CONNECT_TIMEOUT_SECONDS = 10L
         private const val TIMEOUT_SECONDS = 15L
         private val yadioHistoricalDateFormatter =
             DateTimeFormatter.ofPattern("MM/dd/yyyy", Locale.US)
@@ -174,7 +176,8 @@ class BtcPriceService {
 
     private val client =
         OkHttpClient.Builder()
-            .connectTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .dns(PreferIpv4Dns)
+            .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .build()
 
@@ -192,10 +195,7 @@ class BtcPriceService {
                     ),
                 ),
             )
-            .dns { hostname ->
-                // Send hostname through SOCKS5 proxy for Tor resolution, avoiding DNS leaks
-                listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
-            }
+            .dns(SocksProxyHostnameDns)
             .build()
 
     /**

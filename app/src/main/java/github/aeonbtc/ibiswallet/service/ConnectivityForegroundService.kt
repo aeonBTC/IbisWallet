@@ -65,6 +65,8 @@ class ConnectivityForegroundService : Service() {
             WalletNotificationHelper.buildConnectivityForegroundNotification(
                 context = this,
                 snapshot = snapshot,
+                // Lockscreen redaction is always applied; shade keeps live status.
+                contentLocked = false,
             )
         startForeground(WalletNotificationHelper.CONNECTIVITY_NOTIFICATION_ID, notification)
     }

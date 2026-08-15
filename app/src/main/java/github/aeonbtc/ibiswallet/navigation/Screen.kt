@@ -61,6 +61,20 @@ sealed class Screen(val route: String) {
 
     data object SparkTransfer : Screen("spark_transfer")
 
+    data object ArkTransfer : Screen("ark_transfer")
+
+    data object ArkLifecycle : Screen("ark_lifecycle?tab={tab}") {
+        const val BASE_ROUTE = "ark_lifecycle"
+        const val TAB_ARG = "tab"
+
+        fun createRoute(tab: String? = null): String =
+            if (tab.isNullOrBlank()) {
+                BASE_ROUTE
+            } else {
+                "$BASE_ROUTE?$TAB_ARG=$tab"
+            }
+    }
+
     data object LightningNodeConnection : Screen("lightning_node_connection?walletId={walletId}") {
         const val BASE_ROUTE = "lightning_node_connection"
         const val WALLET_ID_ARG = "walletId"

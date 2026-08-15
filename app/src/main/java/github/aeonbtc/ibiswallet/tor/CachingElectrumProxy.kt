@@ -3,12 +3,22 @@ package github.aeonbtc.ibiswallet.tor
 import android.util.Log
 import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.local.ElectrumCache
+import github.aeonbtc.ibiswallet.tor.CachingElectrumProxy.Companion.MAX_ELECTRUM_LINE_CHARS
 import github.aeonbtc.ibiswallet.util.TofuTrustManager
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import org.bitcoindevkit.Transaction
 import org.json.JSONArray
 import org.json.JSONObject
@@ -106,6 +116,18 @@ class CachingElectrumProxy(
          * Electrum. Real [getMinAcceptableFeeRate] overrides this when L1 is connected.
          */
         const val DEFAULT_MIN_FEE_RATE = 0.1
+
+        internal fun electrumHistoryStatus(history: JSONArray): String {
+            if (history.length() == 0) return ""
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            for (i in 0 until history.length()) {
+                val item = history.optJSONObject(i) ?: continue
+                val txHash = item.optString("tx_hash", "")
+                val height = item.optInt("height", 0)
+                digest.update("$txHash:$height:".toByteArray(Charsets.US_ASCII))
+            }
+            return digest.digest().joinToString("") { "%02x".format(it) }
+        }
         private const val BTC_PER_KB_TO_SAT_PER_VB = 100_000.0
         private const val PIPELINE_CHUNK_SIZE = 100
         private const val SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE = 500
@@ -592,6 +614,11 @@ class CachingElectrumProxy(
                     if (scriptHash.isBlank()) return null
                     val status = validScriptHashStatuses[scriptHash] ?: return null
                     val cachedHistory = electrumCache.getHistory(scriptHash, status) ?: return null
+                    if (electrumHistoryStatus(JSONArray(cachedHistory)) != status) {
+                        electrumCache.deleteHistory(scriptHash)
+                        if (BuildConfig.DEBUG) Log.w(TAG, "Cache DROP: history $scriptHash failed status verification")
+                        return null
+                    }
                     if (BuildConfig.DEBUG) Log.d(TAG, "Cache HIT: history $scriptHash")
                     JSONObject().apply {
                         put("jsonrpc", "2.0")
@@ -671,6 +698,10 @@ class CachingElectrumProxy(
             val scriptHash = pendingHistoryRequests.remove(id) ?: return
             val status = validScriptHashStatuses[scriptHash] ?: return
             val result = json.optJSONArray("result") ?: return
+            if (electrumHistoryStatus(result) != status) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Cache SKIP: history $scriptHash response failed status verification")
+                return
+            }
             electrumCache.putHistory(scriptHash, status, result.toString())
             if (BuildConfig.DEBUG) Log.d(TAG, "Cache STORE: history $scriptHash (${result.length()} entries)")
         } catch (_: Exception) {

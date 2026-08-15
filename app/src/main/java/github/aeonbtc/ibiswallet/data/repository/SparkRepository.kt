@@ -28,17 +28,17 @@ import breez_sdk_spark.ReceivePaymentMethod
 import breez_sdk_spark.ReceivePaymentRequest
 import breez_sdk_spark.SdkEvent
 import breez_sdk_spark.Seed
+import breez_sdk_spark.SendOnchainSpeedFeeQuote
 import breez_sdk_spark.SendPaymentMethod
 import breez_sdk_spark.SendPaymentOptions
 import breez_sdk_spark.SendPaymentRequest
-import breez_sdk_spark.SendOnchainSpeedFeeQuote
 import breez_sdk_spark.SyncWalletRequest
 import breez_sdk_spark.UpdateUserSettingsRequest
 import breez_sdk_spark.connect
 import breez_sdk_spark.defaultConfig
 import github.aeonbtc.ibiswallet.BuildConfig
-import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.BitcoinTxSource
 import github.aeonbtc.ibiswallet.data.model.FeeEstimateSource
 import github.aeonbtc.ibiswallet.data.model.FeeEstimates
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
@@ -53,7 +53,7 @@ import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
 import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.util.SecureLog
-import github.aeonbtc.ibiswallet.util.isTransactionInsufficientFundsError
+import github.aeonbtc.ibiswallet.util.SparkServiceErrors
 import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -98,6 +98,8 @@ class SparkRepository(
     val sparkTransactionLabels: StateFlow<Map<String, String>> = _sparkTransactionLabels.asStateFlow()
     private val _sparkAddressLabels = MutableStateFlow<Map<String, String>>(emptyMap())
     val sparkAddressLabels: StateFlow<Map<String, String>> = _sparkAddressLabels.asStateFlow()
+    private val _sparkTransactionSources = MutableStateFlow<Map<String, String>>(emptyMap())
+    val sparkTransactionSources: StateFlow<Map<String, String>> = _sparkTransactionSources.asStateFlow()
 
     private val _loadedWalletId = MutableStateFlow<String?>(null)
     val loadedWalletId: StateFlow<String?> = _loadedWalletId.asStateFlow()
@@ -121,6 +123,13 @@ class SparkRepository(
     private var localPendingDeposits: List<SparkUnclaimedDeposit> = emptyList()
     private var recoverySyncCompletedForWalletId: String? = null
     private var reconnectInProgress = false
+
+    // prepareSendPayment is network-bound; cache + coalesce identical quote requests.
+    private val onchainFeeQuoteCacheMutex = Mutex()
+    private val onchainFeeQuoteCache =
+        LinkedHashMap<OnchainFeeQuoteCacheKey, CachedOnchainFeeQuotes>(16, 0.75f, true)
+    private val onchainFeeQuoteInflight =
+        HashMap<OnchainFeeQuoteCacheKey, kotlinx.coroutines.CompletableDeferred<List<SparkOnchainFeeQuote>>>()
 
     suspend fun loadWallet(walletId: String) = withContext(Dispatchers.IO) {
         var refreshMode = SparkRefreshMode.ExplicitSdkSync
@@ -199,14 +208,21 @@ class SparkRepository(
     }
 
     fun clearWalletDisplayState() {
+        val walletId = _loadedWalletId.value ?: _sparkState.value.walletId
         _loadedWalletId.value = null
         _isConnected.value = false
         _isConnecting.value = false
-        _sparkTransactionLabels.value = emptyMap()
-        _sparkAddressLabels.value = emptyMap()
-        _sparkState.value = SparkWalletState(isInitialized = true)
         _sendState.value = SparkSendState.Idle
         _receiveState.value = SparkReceiveState.Idle
+        // Keep last-known balance/history offline (cache), same as L1 local DB paint.
+        if (walletId.isNullOrBlank()) {
+            _sparkTransactionLabels.value = emptyMap()
+            _sparkAddressLabels.value = emptyMap()
+            _sparkTransactionSources.value = emptyMap()
+            _sparkState.value = SparkWalletState(isInitialized = true)
+        } else {
+            applyDisconnectedSparkStateLocked(walletId)
+        }
     }
 
     fun markLoadFailed(walletId: String, message: String) {
@@ -378,16 +394,81 @@ class SparkRepository(
         useAllFunds: Boolean = false,
     ): List<SparkOnchainFeeQuote> =
         withContext(Dispatchers.IO) {
-            val response = sdkOrThrow().prepareSendPayment(
-                PrepareSendPaymentRequest(
-                    paymentRequest = PaymentRequest.Input(paymentRequest),
-                    amount = amountSats.toSparkBigInteger(),
-                    tokenIdentifier = null,
-                    conversionOptions = null,
-                    feePolicy = if (useAllFunds) FeePolicy.FEES_INCLUDED else FeePolicy.FEES_EXCLUDED,
-                ),
+            val normalizedRequest = paymentRequest.trim()
+            if (normalizedRequest.isEmpty() || amountSats <= 0L) return@withContext emptyList()
+            val cacheKey = OnchainFeeQuoteCacheKey(normalizedRequest, amountSats, useAllFunds)
+
+            data class QuoteLookup(
+                val cached: List<SparkOnchainFeeQuote>?,
+                val deferred: kotlinx.coroutines.CompletableDeferred<List<SparkOnchainFeeQuote>>?,
+                val isOwner: Boolean,
             )
-            response.paymentMethod.onchainFeeQuotes()
+
+            val lookup =
+                onchainFeeQuoteCacheMutex.withLock {
+                    val now = System.currentTimeMillis()
+                    val cached = onchainFeeQuoteCache[cacheKey]
+                    if (cached != null && now - cached.fetchedAtMs <= ONCHAIN_FEE_QUOTE_CACHE_TTL_MS) {
+                        return@withLock QuoteLookup(cached.quotes, null, false)
+                    }
+                    onchainFeeQuoteInflight[cacheKey]?.let {
+                        return@withLock QuoteLookup(null, it, false)
+                    }
+                    val deferred =
+                        kotlinx.coroutines.CompletableDeferred<List<SparkOnchainFeeQuote>>()
+                    onchainFeeQuoteInflight[cacheKey] = deferred
+                    QuoteLookup(null, deferred, true)
+                }
+
+            lookup.cached?.let { return@withContext it }
+            val deferred = lookup.deferred ?: return@withContext emptyList()
+            if (!lookup.isOwner) {
+                return@withContext deferred.await()
+            }
+
+            try {
+                val response =
+                    sdkOrThrow().prepareSendPayment(
+                        PrepareSendPaymentRequest(
+                            paymentRequest = PaymentRequest.Input(normalizedRequest),
+                            amount = amountSats.toSparkBigInteger(),
+                            tokenIdentifier = null,
+                            conversionOptions = null,
+                            feePolicy =
+                                if (useAllFunds) {
+                                    FeePolicy.FEES_INCLUDED
+                                } else {
+                                    FeePolicy.FEES_EXCLUDED
+                                },
+                        ),
+                    )
+                val quotes = response.paymentMethod.onchainFeeQuotes()
+                onchainFeeQuoteCacheMutex.withLock {
+                    onchainFeeQuoteCache[cacheKey] =
+                        CachedOnchainFeeQuotes(quotes, System.currentTimeMillis())
+                    while (onchainFeeQuoteCache.size > ONCHAIN_FEE_QUOTE_CACHE_MAX) {
+                        val eldest = onchainFeeQuoteCache.entries.iterator()
+                        if (!eldest.hasNext()) break
+                        eldest.next()
+                        eldest.remove()
+                    }
+                    onchainFeeQuoteInflight.remove(cacheKey)
+                }
+                deferred.complete(quotes)
+                quotes
+            } catch (e: CancellationException) {
+                onchainFeeQuoteCacheMutex.withLock {
+                    onchainFeeQuoteInflight.remove(cacheKey)
+                }
+                deferred.cancel(e)
+                throw e
+            } catch (e: Exception) {
+                onchainFeeQuoteCacheMutex.withLock {
+                    onchainFeeQuoteInflight.remove(cacheKey)
+                }
+                deferred.completeExceptionally(e)
+                throw e
+            }
         }
 
     suspend fun getRecommendedFeeEstimates(): FeeEstimates =
@@ -420,9 +501,37 @@ class SparkRepository(
         try {
             val result = sendPreparedInternal()
             preparedSend = null
-            _sendState.value = SparkSendState.Sent(result?.id)
+            val paymentId = result?.id
+            val walletId = _loadedWalletId.value
+            // Center Swap control (Spark Transfer) only — not Spark Send screen.
+            if (walletId != null && !paymentId.isNullOrBlank()) {
+                secureStorage.saveSparkTransactionSource(
+                    walletId,
+                    paymentId,
+                    BitcoinTxSource.CENTER_SWAP,
+                )
+                _sparkTransactionSources.value = secureStorage.getAllSparkTransactionSources(walletId)
+            }
+            _sendState.value = SparkSendState.Sent(paymentId)
             refreshFromEvent()
-            result?.id
+            // After refresh, tag the L1 settlement tx when the withdraw onchain txid is known.
+            if (walletId != null && !paymentId.isNullOrBlank()) {
+                val onchainTxid =
+                    _sparkState.value.payments
+                        .firstOrNull { it.id == paymentId }
+                        ?.onchainTxid
+                        ?.trim()
+                        ?.takeIf { it.length == 64 }
+                if (!onchainTxid.isNullOrBlank()) {
+                    secureStorage.saveTransactionSource(
+                        walletId,
+                        onchainTxid,
+                        BitcoinTxSource.CENTER_SWAP,
+                    )
+                }
+                _sparkTransactionSources.value = secureStorage.getAllSparkTransactionSources(walletId)
+            }
+            paymentId
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             _sendState.value = SparkSendState.Error(e.safeMessage("Spark send failed"))
@@ -430,10 +539,136 @@ class SparkRepository(
         }
     }
 
+    private var preparedMultiItems: List<SparkSendState.MultiPreview.MultiItem> = emptyList()
+
     fun resetSendState() {
         preparedSend = null
+        preparedMultiItems = emptyList()
         _sendState.value = SparkSendState.Idle
     }
+
+    /**
+     * Sequential multi-payment prepare for **Spark addresses only** (one SDK payment each).
+     * [recipients] is payment request → amount sats; requires ≥2 entries.
+     */
+    suspend fun prepareSendMany(recipients: List<Pair<String, Long>>) =
+        withContext(Dispatchers.IO) {
+            if (recipients.size < 2) {
+                _sendState.value = SparkSendState.Error(
+                    // reuse shared string via app context when available — set from UI otherwise
+                    "Add at least two recipients",
+                )
+                return@withContext
+            }
+            _sendState.value = SparkSendState.Preparing
+            try {
+                val items = mutableListOf<SparkSendState.MultiPreview.MultiItem>()
+                var totalAmount = 0L
+                var totalFee = 0L
+                for ((paymentRequest, amount) in recipients) {
+                    if (amount <= 0L) {
+                        _sendState.value = SparkSendState.Error("Amount required")
+                        return@withContext
+                    }
+                    val preview =
+                        prepareSendPreviewInternal(
+                            paymentRequest = paymentRequest,
+                            amountSats = amount,
+                            onchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
+                            useAllFunds = false,
+                        )
+                    // Reject non-Spark-address rails for multi (LN / on-chain cooperative exit).
+                    val method = preview.method.lowercase()
+                    if (method.contains("lightning") ||
+                        method.contains("lnurl") ||
+                        method.contains("bolt") ||
+                        method.contains("onchain") ||
+                        preview.onchainFeeSpeed != null
+                    ) {
+                        preparedSend = null
+                        _sendState.value =
+                            SparkSendState.Error("Multiple mode supports Spark addresses only")
+                        return@withContext
+                    }
+                    val fee = preview.feeSats ?: 0L
+                    totalAmount += amount
+                    totalFee += fee
+                    items.add(
+                        SparkSendState.MultiPreview.MultiItem(
+                            paymentRequest = paymentRequest,
+                            amountSats = amount,
+                            feeSats = fee,
+                        ),
+                    )
+                }
+                preparedSend = null
+                preparedMultiItems = items
+                _sendState.value =
+                    SparkSendState.MultiPreview(
+                        items = items,
+                        totalAmountSats = totalAmount,
+                        totalFeeSats = totalFee,
+                    )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                preparedSend = null
+                preparedMultiItems = emptyList()
+                _sendState.value = SparkSendState.Error(e.safeMessage("Spark multi send preview failed"))
+            }
+        }
+
+    suspend fun sendPreparedMany() =
+        withContext(Dispatchers.IO) {
+            val items = preparedMultiItems
+            if (items.size < 2) {
+                _sendState.value = SparkSendState.Error("No prepared multi payment")
+                return@withContext
+            }
+            var succeeded = 0
+            var failed = 0
+            var lastError: String? = null
+            try {
+                for ((index, item) in items.withIndex()) {
+                    _sendState.value =
+                        SparkSendState.MultiSending(
+                            completed = index,
+                            total = items.size,
+                        )
+                    try {
+                        prepareSendPreviewInternal(
+                            paymentRequest = item.paymentRequest,
+                            amountSats = item.amountSats,
+                            onchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
+                            useAllFunds = false,
+                        )
+                        sendPreparedInternal()
+                        succeeded++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failed++
+                        lastError = e.safeMessage("Spark multi send failed")
+                        break
+                    }
+                }
+                preparedMultiItems = emptyList()
+                preparedSend = null
+                refreshFromEvent()
+                _sendState.value =
+                    SparkSendState.MultiSent(
+                        succeeded = succeeded,
+                        failed = failed,
+                        detail = lastError,
+                    )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                preparedMultiItems = emptyList()
+                preparedSend = null
+                _sendState.value = SparkSendState.Error(e.safeMessage("Spark multi send failed"))
+            }
+        }
 
     fun resetReceiveState() {
         _receiveState.value = SparkReceiveState.Idle
@@ -587,10 +822,32 @@ class SparkRepository(
                 .listAllBitcoinPayments()
                 .map { it.toSparkPayment(storedPaymentRecipients, storedDepositAddresses) }
             if (walletId != null) {
-                secureStorage.saveSparkTransactionSources(
-                    walletId,
-                    payments.associate { payment -> payment.id to payment.method },
-                )
+                val existingSources = secureStorage.getAllSparkTransactionSources(walletId)
+                val l1Sources = secureStorage.getAllTransactionSources(walletId)
+                val mergedSources =
+                    payments.associate { payment ->
+                        val existing = existingSources[payment.id]
+                        val onchainSource =
+                            payment.onchainTxid
+                                ?.trim()
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { txid ->
+                                    l1Sources[txid]
+                                        ?: l1Sources.entries
+                                            .firstOrNull { it.key.equals(txid, ignoreCase = true) }
+                                            ?.value
+                                }
+                        payment.id to
+                            when {
+                                BitcoinTxSource.isSwapHistory(existing) -> existing!!
+                                BitcoinTxSource.isSwapHistory(onchainSource) -> BitcoinTxSource.CENTER_SWAP
+                                else -> payment.method
+                            }
+                    }
+                secureStorage.saveSparkTransactionSources(walletId, mergedSources)
+                if (_loadedWalletId.value == walletId) {
+                    _sparkTransactionSources.value = secureStorage.getAllSparkTransactionSources(walletId)
+                }
             }
             val visiblePayments = filterHiddenSparkPayments(walletId, payments)
             val unclaimedDeposits =
@@ -695,6 +952,7 @@ class SparkRepository(
     private fun applyLoadingSparkStateLocked(walletId: String) {
         _sparkTransactionLabels.value = secureStorage.getAllSparkTransactionLabels(walletId)
         _sparkAddressLabels.value = secureStorage.getAllSparkAddressLabels(walletId)
+        _sparkTransactionSources.value = secureStorage.getAllSparkTransactionSources(walletId)
         localPendingDeposits = secureStorage.getAllSparkPendingDeposits(walletId)
         val cachedState = secureStorage.getSparkWalletStateCache(walletId)
         val inMemoryState = _sparkState.value.takeIf { it.walletId == walletId && it.isInitialized }
@@ -834,6 +1092,16 @@ class SparkRepository(
     }
 
     private fun detachWalletLocked(): SparkSdkHandle? {
+        val walletId = _loadedWalletId.value
+        val liveState = _sparkState.value
+        if (
+            !walletId.isNullOrBlank() &&
+            liveState.walletId == walletId &&
+            liveState.isInitialized &&
+            liveState.error == null
+        ) {
+            secureStorage.saveSparkWalletStateCache(walletId, liveState)
+        }
         val handle = sdk?.let { activeSdk ->
             SparkSdkHandle(
                 sdk = activeSdk,
@@ -846,15 +1114,48 @@ class SparkRepository(
         depositsRotatedForAddress = emptySet()
         localPendingDeposits = emptyList()
         recoverySyncCompletedForWalletId = null
+        eventScope.launch {
+            onchainFeeQuoteCacheMutex.withLock {
+                onchainFeeQuoteCache.clear()
+                onchainFeeQuoteInflight.values.forEach { it.cancel() }
+                onchainFeeQuoteInflight.clear()
+            }
+        }
         _loadedWalletId.value = null
         _isConnected.value = false
         _isConnecting.value = false
-        _sparkTransactionLabels.value = emptyMap()
-        _sparkAddressLabels.value = emptyMap()
-        _sparkState.value = SparkWalletState(isInitialized = true)
         _sendState.value = SparkSendState.Idle
         _receiveState.value = SparkReceiveState.Idle
+        if (walletId.isNullOrBlank()) {
+            _sparkTransactionLabels.value = emptyMap()
+            _sparkAddressLabels.value = emptyMap()
+            _sparkTransactionSources.value = emptyMap()
+            _sparkState.value = SparkWalletState(isInitialized = true)
+        } else {
+            applyDisconnectedSparkStateLocked(walletId)
+        }
         return handle
+    }
+
+    /** Offline paint after SDK detach: last cache, not empty zeros. */
+    private fun applyDisconnectedSparkStateLocked(walletId: String) {
+        _sparkTransactionLabels.value = secureStorage.getAllSparkTransactionLabels(walletId)
+        _sparkAddressLabels.value = secureStorage.getAllSparkAddressLabels(walletId)
+        _sparkTransactionSources.value = secureStorage.getAllSparkTransactionSources(walletId)
+        localPendingDeposits = secureStorage.getAllSparkPendingDeposits(walletId)
+        val cached = secureStorage.getSparkWalletStateCache(walletId)
+        val inMemory = _sparkState.value.takeIf { it.walletId == walletId && it.isInitialized }
+        _sparkState.value =
+            (cached ?: inMemory)?.let { filterHiddenSparkHistory(walletId, it) }?.copy(
+                walletId = walletId,
+                isInitialized = true,
+                isSyncing = false,
+                error = null,
+            ) ?: SparkWalletState(
+                walletId = walletId,
+                isInitialized = true,
+                isSyncing = false,
+            )
     }
 
     private fun SparkSdkHandle.disconnectInBackground() {
@@ -1270,12 +1571,14 @@ class SparkRepository(
         return parsed ?: 0L
     }
 
-    private fun Exception.safeMessage(fallback: String): String =
-        when {
-            isTransactionInsufficientFundsError() ->
+    private fun Throwable.safeMessage(fallback: String): String =
+        SparkServiceErrors.mapFailure(sparkErrorLocalizer, this, fallback)
+
+    private val sparkErrorLocalizer =
+        object : SparkServiceErrors.Localizer {
+            override fun get(resId: Int): String =
                 AppLocale.createLocalizedContext(context.applicationContext, secureStorage.getAppLocale())
-                    .getString(R.string.loc_534e1eb2)
-            else -> message?.takeIf { it.isNotBlank() } ?: fallback
+                    .getString(resId)
         }
 
     companion object {
@@ -1284,8 +1587,21 @@ class SparkRepository(
         internal const val SPARK_PAYMENT_HISTORY_MAX = 1000
         private const val SPARK_REFRESH_TIMEOUT_MS = 120_000L
         private const val SPARK_DISCONNECT_TIMEOUT_MS = 15_000L
+        private const val ONCHAIN_FEE_QUOTE_CACHE_TTL_MS = 45_000L
+        private const val ONCHAIN_FEE_QUOTE_CACHE_MAX = 24
     }
 }
+
+private data class OnchainFeeQuoteCacheKey(
+    val paymentRequest: String,
+    val amountSats: Long,
+    val useAllFunds: Boolean,
+)
+
+private data class CachedOnchainFeeQuotes(
+    val quotes: List<SparkOnchainFeeQuote>,
+    val fetchedAtMs: Long,
+)
 
 private data class SparkRefreshTarget(
     val sdk: BreezSdk,

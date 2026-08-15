@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet.data.lightning
 
 import android.util.Base64
+import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
 import java.security.KeyFactory
 import java.security.KeyStore
@@ -9,13 +10,12 @@ import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.security.spec.PKCS8EncodedKeySpec
 import java.util.regex.Pattern
+import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
 import javax.net.ssl.TrustManagerFactory
 import javax.net.ssl.X509TrustManager
-import okhttp3.OkHttpClient
-import javax.net.ssl.HostnameVerifier
 
 /**
  * Parses server/client TLS material for LND/CLN connect forms.
@@ -46,23 +46,21 @@ object TlsCertMaterial {
      * Apply trust (pin to the provided certs) + optional client identity for mTLS.
      *
      * Always pins when certificates parse successfully — the provided material acts as
-     * the trust anchor (TOFU-style). Falls back to trust-all only when no certificates
-     * are present; callers must restrict that case to Tor, where onion routing already
-     * authenticates the endpoint.
+     * the trust anchor (TOFU-style). Non-blank material that yields zero certs is a
+     * hard error; callers must not fall open to trust-all.
      */
     fun applyToOkHttp(
         builder: OkHttpClient.Builder,
         rawMaterial: String,
+        hostname: String,
     ) {
         val parsed = parse(rawMaterial)
-        val trustManager =
-            when {
-                parsed.certificates.isEmpty() -> trustAllManager()
-                else -> pinnedTrustManager(parsed.certificates)
-            }
+        require(parsed.certificates.isNotEmpty()) {
+            "TLS certificate could not be parsed"
+        }
+        val trustManager = pinnedTrustManager(parsed.certificates)
         val keyManagers =
-            if (parsed.privateKey != null && parsed.certificates.isNotEmpty()) {
-                // Prefer leaf labeled client_cert order: first non-CA-looking cert if multiple
+            if (parsed.privateKey != null) {
                 clientKeyManagers(parsed.privateKey, parsed.certificates)
             } else {
                 null
@@ -72,17 +70,39 @@ object TlsCertMaterial {
                 init(keyManagers, arrayOf<TrustManager>(trustManager), null)
             }
         builder.sslSocketFactory(sslContext.socketFactory, trustManager)
-        builder.hostnameVerifier(HostnameVerifier { _, _ -> true })
+        builder.hostnameVerifier(hostnameVerifierFor(hostname, skipHostnameVerification = false))
     }
 
-    fun applyInsecureTrust(builder: OkHttpClient.Builder) {
+    fun hostnameVerifierFor(
+        hostname: String,
+        skipHostnameVerification: Boolean,
+    ): HostnameVerifier {
+        if (skipHostnameVerification || shouldSkipHostnameVerification(hostname)) {
+            return HostnameVerifier { _, _ -> true }
+        }
+        return HostnameVerifier { host, session ->
+            javax.net.ssl.HttpsURLConnection.getDefaultHostnameVerifier().verify(host, session)
+        }
+    }
+
+    fun shouldSkipHostnameVerification(hostname: String): Boolean {
+        val host = hostname.trim().trim('[', ']')
+        if (host.endsWith(".onion", ignoreCase = true)) return true
+        if (host.equals("localhost", ignoreCase = true)) return true
+        return host.matches(IPV4_LITERAL) || host.contains(':')
+    }
+
+    fun applyInsecureTrust(
+        builder: OkHttpClient.Builder,
+        hostname: String,
+    ) {
         val trustAll = trustAllManager()
         val sslContext =
             SSLContext.getInstance("TLS").apply {
                 init(null, arrayOf<TrustManager>(trustAll), null)
             }
         builder.sslSocketFactory(sslContext.socketFactory, trustAll)
-        builder.hostnameVerifier(HostnameVerifier { _, _ -> true })
+        builder.hostnameVerifier(hostnameVerifierFor(hostname, skipHostnameVerification = true))
     }
 
     private fun expandInput(raw: String): String? {
@@ -140,9 +160,28 @@ object TlsCertMaterial {
         for (bytes in candidates) {
             if (bytes == null || bytes.isEmpty()) continue
             val text = bytes.toString(Charsets.UTF_8)
-            // Prefer decodes that look like PEM / bundle text
             if (text.contains("BEGIN") || text.contains("client_") || text.contains("ca_cert")) {
                 return text
+            }
+        }
+        return null
+    }
+
+    private fun decodeDerCertificate(raw: String): X509Certificate? {
+        val compact = raw.trim().replace("\\s".toRegex(), "")
+        if (compact.length < 16) return null
+        val candidates =
+            listOf(
+                runCatching { Base64.decode(compact, Base64.DEFAULT) }.getOrNull(),
+                runCatching { Base64.decode(compact, Base64.URL_SAFE or Base64.NO_WRAP) }.getOrNull(),
+                runCatching { java.util.Base64.getDecoder().decode(compact) }.getOrNull(),
+                runCatching { java.util.Base64.getUrlDecoder().decode(compact) }.getOrNull(),
+            )
+        val factory = CertificateFactory.getInstance("X.509")
+        for (bytes in candidates) {
+            if (bytes == null || bytes.isEmpty()) continue
+            runCatching {
+                return factory.generateCertificate(ByteArrayInputStream(bytes)) as X509Certificate
             }
         }
         return null
@@ -170,6 +209,9 @@ object TlsCertMaterial {
                 factory.generateCertificates(ByteArrayInputStream(text.toByteArray(Charsets.UTF_8)))
                     .mapNotNull { it as? X509Certificate }
             }.getOrNull()?.let { certs += it }
+        }
+        if (certs.isEmpty()) {
+            decodeDerCertificate(text)?.let { certs += it }
         }
         return certs
     }
@@ -252,4 +294,6 @@ object TlsCertMaterial {
 
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         }
+
+    private val IPV4_LITERAL = Regex("""^\d{1,3}(\.\d{1,3}){3}$""")
 }

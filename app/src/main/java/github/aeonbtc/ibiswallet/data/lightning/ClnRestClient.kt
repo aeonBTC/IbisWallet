@@ -6,12 +6,12 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodeChannel
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
 import github.aeonbtc.ibiswallet.data.model.LightningNodeInfo
 import github.aeonbtc.ibiswallet.data.model.LightningNodeInvoice
+import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails
+import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
 import github.aeonbtc.ibiswallet.data.model.LightningNodePayment
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentDirection
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentResult
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentStatus
-import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainBalanceDetails
-import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.stringWithLimit
@@ -72,60 +72,47 @@ class ClnRestClient : LightningNodeBackend {
                     .substringBefore(':')
                     .trimEnd('/')
             require(host.isNotBlank()) { "Host is required" }
-            val needsTor = config.useTor || host.endsWith(".onion", ignoreCase = true)
-            if (host.endsWith(".onion", ignoreCase = true) && !needsTor) {
-                throw IllegalStateException("Onion hosts require Tor")
-            }
-            val normalized = config.copy(useTor = needsTor, host = host)
+            val hostIsOnion = host.endsWith(".onion", ignoreCase = true)
+            val normalized = config.copy(useTor = hostIsOnion, host = host)
             connectWithRetries(normalized)
         }
 
     private fun connectWithRetries(normalized: LightningNodeConfig): LightningNodeInfo {
+        val viaTor = normalized.host.endsWith(".onion", ignoreCase = true)
+        val probing = !normalized.useTls
+        return tryConnectCandidates(
+            normalized = normalized,
+            probeTimeouts = probing && !viaTor,
+        )
+    }
+
+    private fun tryConnectCandidates(
+        normalized: LightningNodeConfig,
+        probeTimeouts: Boolean,
+    ): LightningNodeInfo {
         var lastError: Exception? = null
-        val viaTor =
-            normalized.useTor || normalized.host.endsWith(".onion", ignoreCase = true)
-        // See LndRestClient: Tor + TLS off → HTTPS first; never burn slow HTTP circuits.
-        val httpsFallback =
-            if (!normalized.tlsEnabled) {
-                normalized.copy(
-                    useTls = true,
-                    allowInsecureTls = true,
-                    tlsCertPem = normalized.tlsCertPem,
-                )
-            } else {
-                null
-            }
-        val candidates =
-            buildList {
-                when {
-                    normalized.tlsEnabled -> add(normalized)
-                    httpsFallback == null -> add(normalized)
-                    viaTor || normalized.preferSessionTls -> {
-                        add(httpsFallback)
-                        if (!viaTor) add(normalized)
-                    }
-                    else -> {
-                        add(normalized)
-                        add(httpsFallback)
-                    }
-                }
-            }
+        val viaTor = normalized.host.endsWith(".onion", ignoreCase = true)
+        val candidates = normalized.connectCandidates()
+        val httpsCandidate = candidates.firstOrNull { it.tlsEnabled }
         for ((candidateIndex, candidate) in candidates.withIndex()) {
-            val isCleartextProbe = !candidate.tlsEnabled && !normalized.tlsEnabled
             val maxAttempts =
                 when {
-                    isCleartextProbe -> 1
+                    probeTimeouts -> 1
                     viaTor -> 1
                     else -> CONNECT_CLEAR_STREAM_ATTEMPTS
                 }
             for (attempt in 0 until maxAttempts) {
                 try {
-                    openSession(candidate, probeTimeouts = isCleartextProbe)
-                    return getInfo()
+                    openSession(candidate, probeTimeouts = probeTimeouts)
+                    val info = getInfo()
+                    if (probeTimeouts) {
+                        openSession(candidate, probeTimeouts = false)
+                    }
+                    return info
                 } catch (e: Exception) {
                     lastError = e
                     val streamRetry =
-                        !isCleartextProbe &&
+                        !probeTimeouts &&
                             isTransientStreamError(e) &&
                             attempt < maxAttempts - 1
                     if (streamRetry) {
@@ -133,6 +120,15 @@ class ClnRestClient : LightningNodeBackend {
                         continue
                     }
                     if (isDefinitiveHttpFailure(e)) throw e
+                    if (
+                        isHttpsRequiredFailure(e) &&
+                        !candidate.tlsEnabled &&
+                        httpsCandidate != null
+                    ) {
+                        closeClientQuietly()
+                        openSession(httpsCandidate, probeTimeouts = false)
+                        return getInfo()
+                    }
                     if (candidateIndex == candidates.lastIndex) throw e
                     closeClientQuietly()
                     break
@@ -161,6 +157,12 @@ class ClnRestClient : LightningNodeBackend {
         activeConfig = null
         fundsCache = null
         knownOwnedOutpoints.clear()
+    }
+
+    private fun isHttpsRequiredFailure(error: Exception): Boolean {
+        val message = error.message.orEmpty().lowercase()
+        return message.contains("http request to an https server") ||
+            message.contains("client sent an http request to an https")
     }
 
     /** Failures that are about credentials/API, not transport scheme. */
@@ -883,7 +885,7 @@ class ClnRestClient : LightningNodeBackend {
                     }
                     putClnFeerate(this, satPerVbyte)
                 }
-            val response = rpc("withdraw", body)
+            val response = rpc("withdraw", body, retry = false)
             fundsCache = null
             response.optString("txid").takeIf { it.isNotBlank() }
                 ?: throw IllegalStateException("Node did not return a transaction ID")
@@ -914,7 +916,7 @@ class ClnRestClient : LightningNodeBackend {
                     putClnFeerate(this, satPerVbyte)
                 }
             val response =
-                runCatching { rpc("multiwithdraw", body) }
+                runCatching { rpc("multiwithdraw", body, retry = false) }
                     .getOrElse { e ->
                         throw IllegalStateException(
                             e.message?.takeIf { it.isNotBlank() }
@@ -1275,9 +1277,11 @@ class ClnRestClient : LightningNodeBackend {
     private fun rpc(
         method: String,
         params: JSONObject = JSONObject(),
+        retry: Boolean = true,
     ): JSONObject {
         var lastError: Exception? = null
-        repeat(STREAM_RETRY_ATTEMPTS) { attempt ->
+        val attempts = if (retry) STREAM_RETRY_ATTEMPTS else 1
+        repeat(attempts) { attempt ->
             try {
                 val http = client ?: throw IllegalStateException("Not connected")
                 val request =
@@ -1298,7 +1302,7 @@ class ClnRestClient : LightningNodeBackend {
                 }
             } catch (e: Exception) {
                 lastError = e
-                if (!isTransientStreamError(e) || attempt == STREAM_RETRY_ATTEMPTS - 1) {
+                if (!retry || !isTransientStreamError(e) || attempt == attempts - 1) {
                     throw e
                 }
                 val cfg = activeConfig
@@ -1334,7 +1338,7 @@ class ClnRestClient : LightningNodeBackend {
         config: LightningNodeConfig,
         probeTimeouts: Boolean = false,
     ): OkHttpClient {
-        val viaTor = config.useTor || config.host.endsWith(".onion", ignoreCase = true)
+        val viaTor = config.host.endsWith(".onion", ignoreCase = true)
         val timeoutSeconds =
             when {
                 probeTimeouts && viaTor -> CLEARTEXT_PROBE_TOR_SECONDS
@@ -1354,7 +1358,7 @@ class ClnRestClient : LightningNodeBackend {
                 .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .callTimeout(callTimeoutSeconds, TimeUnit.SECONDS)
-                .retryOnConnectionFailure(!probeTimeouts)
+                .retryOnConnectionFailure(false)
 
         if (viaTor) {
             applyTorProxy(builder, github.aeonbtc.ibiswallet.tor.TorManager.socksPort())
@@ -1365,13 +1369,12 @@ class ClnRestClient : LightningNodeBackend {
 
         if (config.tlsEnabled) {
             when {
-                // Zeus exports base64(client_key+client_cert+ca_cert). Pin to the bundle's
-                // certs and install the mTLS client identity when present.
                 config.tlsCertPem.isNotBlank() ->
-                    TlsCertMaterial.applyToOkHttp(builder, config.tlsCertPem)
-                // No cert: user is connecting to their own node. Self-signed CLN is
-                // common; trust-all here. Prefer pasting the CA/server cert when available.
-                else -> TlsCertMaterial.applyInsecureTrust(builder)
+                    TlsCertMaterial.applyToOkHttp(builder, config.tlsCertPem, config.host)
+                config.allowInsecureTls || viaTor ->
+                    TlsCertMaterial.applyInsecureTrust(builder, config.host)
+                else ->
+                    throw IllegalStateException("TLS requires a certificate or an explicit insecure-TLS opt-in")
             }
         }
 

@@ -35,9 +35,9 @@ import github.aeonbtc.ibiswallet.data.model.LightningInvoiceCreation
 import github.aeonbtc.ibiswallet.data.model.LightningInvoiceLimits
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentBackend
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentExecutionPlan
-import github.aeonbtc.ibiswallet.data.model.LiquidElectrumConfig
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidAssetBalance
+import github.aeonbtc.ibiswallet.data.model.LiquidElectrumConfig
 import github.aeonbtc.ibiswallet.data.model.LiquidPsetDetails
 import github.aeonbtc.ibiswallet.data.model.LiquidSendKind
 import github.aeonbtc.ibiswallet.data.model.LiquidSendPreview
@@ -46,9 +46,6 @@ import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidTxType
-import github.aeonbtc.ibiswallet.data.model.TransactionSearchFilters
-import github.aeonbtc.ibiswallet.data.model.TransactionSearchLayer
-import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
 import github.aeonbtc.ibiswallet.data.model.PendingLightningInvoice
 import github.aeonbtc.ibiswallet.data.model.PendingLightningInvoiceSession
@@ -64,6 +61,9 @@ import github.aeonbtc.ibiswallet.data.model.SwapLimits
 import github.aeonbtc.ibiswallet.data.model.SwapQuote
 import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.SyncProgress
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchFilters
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchLayer
+import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.WalletAddress
 import github.aeonbtc.ibiswallet.data.remote.Bip353Resolver
@@ -243,6 +243,7 @@ class LiquidRepository(
         private const val TYPICAL_LIQUID_TX_VSIZE = 200
         private const val SIDESWAP_PEG_IN_LIQUID_TX_VSIZE = 2860
         private const val DEFAULT_LIQUID_SWAP_FEE_RATE = 0.1
+        private const val MAX_SIDESWAP_LIQUID_FEE_RATE = 25.0
         private const val BOLTZ_METADATA_CACHE_MS = 30_000L
         private const val BOLTZ_LIGHTNING_RESOLUTION_CACHE_MS = 120_000L
         private const val BOLTZ_OPERATION_LOCK_LOG_THRESHOLD_MS = 250L
@@ -2289,7 +2290,9 @@ class LiquidRepository(
         var candidateIndex = currentIndex + 1u
 
         repeat(MAX_LIQUID_ADDRESS_SCAN_ATTEMPTS) {
-            val candidateAddress = liquidExternalAddressAt(wollet, candidateIndex)
+            val candidateAddress =
+                liquidExternalAddressAt(wollet, candidateIndex)
+                    ?: throw IllegalStateException("Liquid wallet unloaded during address scan")
             if (candidateIndex !in occupiedIndices && candidateAddress !in reservedAddresses) {
                 return LiquidExternalAddressSelection(
                     index = candidateIndex,
@@ -2966,12 +2969,27 @@ class LiquidRepository(
     /**
      * Memoised external-address derivation. `wollet.address(i)` crosses a JNI boundary and
      * is called hundreds–thousands of times on large wallets when rebuilding the address book.
+     *
+     * Returns null if [wollet] was destroyed mid-switch (L2 provider toggle race).
      */
-    private fun liquidExternalAddressAt(wollet: Wollet, index: UInt): String {
+    private fun liquidExternalAddressAt(wollet: Wollet, index: UInt): String? {
+        if (wollet !== lwkWollet) return null
         liquidExternalAddressCache[index]?.let { return it }
-        val address = wollet.address(index).address().toString()
-        liquidExternalAddressCache[index] = address
-        return address
+        return try {
+            val address = wollet.address(index).address().toString()
+            if (wollet === lwkWollet) {
+                liquidExternalAddressCache[index] = address
+            }
+            address
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // "object has already been destroyed" when unload races address-book refresh.
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "liquidExternalAddressAt failed at $index: ${e.message}")
+            }
+            null
+        }
     }
 
     /**
@@ -3010,6 +3028,8 @@ class LiquidRepository(
         val wollet = lwkWollet ?: return Triple(emptyList(), emptyList(), emptyList())
         val walletId = currentWalletId ?: return Triple(emptyList(), emptyList(), emptyList())
         val network = lwkNetwork ?: return Triple(emptyList(), emptyList(), emptyList())
+        // Bail if unload destroyed Wollet between the reads above and first use.
+        if (wollet !== lwkWollet) return Triple(emptyList(), emptyList(), emptyList())
         val labels = secureStorage.getAllLiquidAddressLabels(walletId)
         val balanceByAddress = HashMap<String, ULong>()
         val addressesWithUtxos = HashSet<String>()
@@ -3019,6 +3039,7 @@ class LiquidRepository(
         try {
             val policyAsset = network.policyAsset()
             wollet.utxos().forEach { utxo ->
+                if (wollet !== lwkWollet) return Triple(emptyList(), emptyList(), emptyList())
                 val address = utxo.address().toString()
                 addressesWithUtxos.add(address)
                 val secrets = utxo.unblinded()
@@ -3026,8 +3047,11 @@ class LiquidRepository(
                     balanceByAddress[address] = (balanceByAddress[address] ?: 0UL) + secrets.value()
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Error listing Liquid UTXOs for address preview", e)
+            if (wollet !== lwkWollet) return Triple(emptyList(), emptyList(), emptyList())
         }
 
         try {
@@ -3046,7 +3070,7 @@ class LiquidRepository(
         val externalUsedIndices = externalTxCountByIndex.keys
 
         externalUsedIndices.sorted().take(limitPerSection).forEach { index ->
-            val address = liquidExternalAddressAt(wollet, index)
+            val address = liquidExternalAddressAt(wollet, index) ?: return@forEach
             usedAddresses.add(
                 WalletAddress(
                     address = address,
@@ -3062,9 +3086,11 @@ class LiquidRepository(
 
         val receiveAddresses = mutableListOf<WalletAddress>()
         var externalIndex = 0u
-        while (receiveAddresses.size < limitPerSection) {
+        var externalScanAttempts = 0
+        while (receiveAddresses.size < limitPerSection && externalScanAttempts < limitPerSection * 4) {
+            externalScanAttempts++
             if (externalIndex !in externalUsedIndices) {
-                val address = liquidExternalAddressAt(wollet, externalIndex)
+                val address = liquidExternalAddressAt(wollet, externalIndex) ?: break
                 val label = labels[address]
                 val entry = WalletAddress(
                     address = address,
@@ -3136,6 +3162,7 @@ class LiquidRepository(
         val wollet = lwkWollet ?: return Triple(emptyList(), emptyList(), emptyList())
         val walletId = currentWalletId ?: return Triple(emptyList(), emptyList(), emptyList())
         val network = lwkNetwork ?: return Triple(emptyList(), emptyList(), emptyList())
+        if (wollet !== lwkWollet) return Triple(emptyList(), emptyList(), emptyList())
         val labels = secureStorage.getAllLiquidAddressLabels(walletId)
 
         // Bucket balances/counts by (chain, index) from wallet-owned utxos/txos. For UTXOs
@@ -3152,6 +3179,7 @@ class LiquidRepository(
         try {
             val policyAsset = network.policyAsset()
             wollet.utxos().forEach { utxo ->
+                if (wollet !== lwkWollet) return Triple(emptyList(), emptyList(), emptyList())
                 val address = utxo.address().toString()
                 addressesWithUtxos.add(address)
                 val secrets = utxo.unblinded()
@@ -3159,8 +3187,11 @@ class LiquidRepository(
                     balanceByAddress[address] = (balanceByAddress[address] ?: 0UL) + secrets.value()
                 }
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Error listing Liquid UTXOs for address balances", e)
+            if (wollet !== lwkWollet) return Triple(emptyList(), emptyList(), emptyList())
         }
 
         try {
@@ -3248,7 +3279,7 @@ class LiquidRepository(
             if (lastExternalIndex >= 0) {
                 for (i in 0..lastExternalIndex) {
                     val index = i.toUInt()
-                    val address = liquidExternalAddressAt(wollet, index)
+                    val address = liquidExternalAddressAt(wollet, index) ?: break
                     val txCount = externalTxCountByIndex[index] ?: 0
                     val label = labels[address]
                     // Used = on-chain activity only. Labels reserve receive selection, not Used tab.
@@ -3272,7 +3303,7 @@ class LiquidRepository(
             val extraCount = maxOf(0, targetUnusedCount - receiveAddresses.size)
             for (offset in 0 until extraCount) {
                 val index = nextIndex + offset.toUInt()
-                val address = liquidExternalAddressAt(wollet, index)
+                val address = liquidExternalAddressAt(wollet, index) ?: break
                 val label = labels[address]
                 val entry = WalletAddress(
                     address = address,
@@ -3338,11 +3369,21 @@ class LiquidRepository(
     fun getAllUtxos(): List<UtxoInfo> {
         val wollet = lwkWollet ?: return emptyList()
         val walletId = currentWalletId ?: return emptyList()
+        if (wollet !== lwkWollet) return emptyList()
         val labels = secureStorage.getAllLiquidAddressLabels(walletId)
         val frozenUtxos = secureStorage.getFrozenUtxos(walletId)
 
         return try {
+            val txTimestamps =
+                runCatching {
+                    wollet.transactions().associate { walletTx ->
+                        val txid = walletTx.txid().toString()
+                        val ts = walletTx.timestamp()?.toLong()?.takeIf { it > 0L }
+                        txid to ts
+                    }
+                }.getOrDefault(emptyMap())
             wollet.utxos().mapNotNull { utxo ->
+                if (wollet !== lwkWollet) return emptyList()
                 try {
                     val address = utxo.address().toString()
                     val outpointObj = utxo.outpoint()
@@ -3361,6 +3402,7 @@ class LiquidRepository(
                         isConfirmed = utxo.height() != null,
                         isFrozen = frozenUtxos.contains(outpoint),
                         assetId = secrets.asset(),
+                        timestamp = txTimestamps[txid],
                     )
                 } catch (e: Exception) {
                     if (BuildConfig.DEBUG) Log.e(TAG, "Error parsing Liquid UTXO", e)
@@ -4152,7 +4194,7 @@ class LiquidRepository(
             liquidNetworkFee = estimateNetworkFeeSats(SIDESWAP_PEG_IN_LIQUID_TX_VSIZE, liquidFeeRate)
             recvAmount = (amountSats - serviceFee - liquidNetworkFee).coerceAtLeast(0)
         } else {
-            liquidNetworkFee = estimateNetworkFeeSats(TYPICAL_LIQUID_TX_VSIZE, DEFAULT_LIQUID_SWAP_FEE_RATE)
+            liquidNetworkFee = estimateNetworkFeeSats(TYPICAL_LIQUID_TX_VSIZE, liquidFeeRate)
             btcNetworkFee = estimateNetworkFeeSats(status.pegOutBitcoinTxVsize, btcFeeRate)
             recvAmount = (amountSats - serviceFee - btcNetworkFee).coerceAtLeast(0)
         }
@@ -4183,11 +4225,13 @@ class LiquidRepository(
 
     private fun normalizeSideSwapLiquidFeeRate(rawElementsFeeRate: Double): Double {
         if (rawElementsFeeRate <= 0.0) return DEFAULT_LIQUID_SWAP_FEE_RATE
-        return if (rawElementsFeeRate < 0.001) {
-            rawElementsFeeRate * 100_000.0
-        } else {
-            rawElementsFeeRate
-        }
+        val candidate =
+            if (rawElementsFeeRate < 0.001) {
+                rawElementsFeeRate * 100_000.0
+            } else {
+                rawElementsFeeRate
+            }
+        return candidate.coerceIn(DEFAULT_LIQUID_SWAP_FEE_RATE, MAX_SIDESWAP_LIQUID_FEE_RATE)
     }
 
     // ════════════════════════════════════════════
@@ -5327,24 +5371,6 @@ class LiquidRepository(
                 amountSats = invoiceAmountSats,
             )
         } catch (e: Exception) {
-            if (canUseRestSubmarineFallback(resolvedPayment)) {
-                logBoltzTrace(
-                    "lwk_failed_falling_back_to_rest",
-                    trace,
-                    level = BoltzTraceLevel.WARN,
-                    throwable = e,
-                    "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                    "reason" to lightningPaymentFallbackReason(e),
-                )
-                destroyBoltzSessionAfterPreparePayFailure()
-                return@withContext prepareRestSubmarineSwapFallback(
-                    executionPlan = executionPlan,
-                    resolvedPayment = resolvedPayment,
-                    requestKey = requestKey,
-                    trace = trace,
-                    traceStartedAt = traceStartedAt,
-                )
-            }
             logBoltzTrace(
                 "failed",
                 trace,
@@ -5356,111 +5382,6 @@ class LiquidRepository(
         } finally {
             logTiming("prepareLightningPaymentExecutionPlan[fromPreview]", startedAt)
         }
-    }
-
-    private fun canUseRestSubmarineFallback(resolvedPayment: ResolvedLightningPaymentInput): Boolean {
-        val invoice = resolvedPayment.fetchedInvoice ?: resolvedPayment.paymentInput
-        val payment = runCatching { Payment(invoice) }.getOrNull()
-        return payment?.kind() == PaymentKind.LIGHTNING_INVOICE
-    }
-
-    private fun lightningPaymentFallbackReason(error: Exception): String {
-        val message = error.message.orEmpty()
-        return when {
-            message.contains("BoltzApi(HTTP", ignoreCase = true) -> "lwk_http"
-            message.contains("timeout", ignoreCase = true) -> "timeout"
-            message.contains("connection", ignoreCase = true) -> "connection"
-            else -> "lwk_prepare_pay"
-        }
-    }
-
-    private suspend fun destroyBoltzSessionAfterPreparePayFailure() {
-        if (hasActiveBoltzResponses()) {
-            logDebug("preparePay failed; keeping shared Boltz session because active responses exist")
-            return
-        }
-        destroyBoltzSession(persistNextIndex = true)
-    }
-
-    private suspend fun prepareRestSubmarineSwapFallback(
-        executionPlan: LightningPaymentExecutionPlan.BoltzQuote,
-        resolvedPayment: ResolvedLightningPaymentInput,
-        requestKey: String,
-        trace: BoltzTraceContext,
-        traceStartedAt: Long,
-    ): LightningPaymentExecutionPlan.BoltzSwap {
-        val fetchedInvoice = resolvedPayment.fetchedInvoice ?: resolvedPayment.paymentInput
-        val refundDetails = allocateBoltzSubmarineRefundDetails()
-        logBoltzTrace(
-            "prepare_rest_submarine_fallback",
-            trace.copy(backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE.name, source = "rest"),
-            "invoice" to summarizeValue(fetchedInvoice),
-            "refundAddress" to summarizeValue(refundDetails.refundAddress),
-        )
-        val response =
-            boltzProvider.createLegacySubmarineSwap(
-                invoice = fetchedInvoice,
-                refundPublicKey = refundDetails.refundPublicKey,
-            )
-        val paymentAmountSats =
-            executionPlan.requestedAmountSats.takeIf { it != null && it > 0L }
-                ?: executionPlan.paymentAmountSats
-        val lockupAmountSats = maxOf(response.expectedAmount, safeAddSats(paymentAmountSats, 0L))
-        val swapFeeSats = (lockupAmountSats - paymentAmountSats).coerceAtLeast(0L)
-        val session =
-            PendingLightningPaymentSession(
-                swapId = response.id,
-                backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE,
-                requestKey = requestKey,
-                paymentInput = executionPlan.paymentInput,
-                lockupAddress = response.address,
-                lockupAmountSats = lockupAmountSats,
-                refundAddress = refundDetails.refundAddress,
-                requestedAmountSats = executionPlan.requestedAmountSats,
-                resolvedPaymentInput = resolvedPayment.paymentInput,
-                fetchedInvoice = fetchedInvoice,
-                refundPublicKey = refundDetails.refundPublicKey,
-                paymentAmountSats = paymentAmountSats,
-                swapFeeSats = swapFeeSats,
-                phase = PendingLightningPaymentPhase.PREPARED,
-                status = "Prepared Lightning payment. Awaiting funding.",
-                boltzClaimPublicKey = response.claimPublicKey,
-                timeoutBlockHeight = response.timeoutBlockHeight,
-                swapTree = response.swapTree,
-                blindingKey = response.blindingKey,
-                refundKeySource = refundDetails.keySource,
-                refundKeyPath = refundDetails.keyPath,
-                refundKeyIndex = refundDetails.keyIndex,
-            )
-        persistPreparedLightningPaymentSession(session)
-        logBoltzTrace(
-            "prepared",
-            trace.copy(
-                swapId = response.id,
-                backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE.name,
-                source = "rest",
-            ),
-            "elapsedMs" to boltzElapsedMs(traceStartedAt),
-            "lockupAmountSats" to lockupAmountSats,
-            "paymentAmountSats" to paymentAmountSats,
-            "swapFeeSats" to swapFeeSats,
-            "timeoutBlockHeight" to response.timeoutBlockHeight,
-        )
-        return LightningPaymentExecutionPlan.BoltzSwap(
-            paymentInput = executionPlan.paymentInput,
-            backend = LightningPaymentBackend.BOLTZ_REST_SUBMARINE,
-            requestKey = requestKey,
-            resolvedPaymentInput = resolvedPayment.paymentInput,
-            requestedAmountSats = executionPlan.requestedAmountSats,
-            swapId = response.id,
-            lockupAddress = response.address,
-            lockupAmountSats = lockupAmountSats,
-            refundAddress = refundDetails.refundAddress,
-            fetchedInvoice = fetchedInvoice,
-            refundPublicKey = refundDetails.refundPublicKey,
-            paymentAmountSats = paymentAmountSats,
-            swapFeeSats = swapFeeSats,
-        )
     }
 
     suspend fun resolveLightningPaymentPreview(
@@ -7046,18 +6967,20 @@ class LiquidRepository(
             selectedUtxos
         }
 
-        val txBuilder = network.txBuilder()
-        applyUtxoSelection(txBuilder, wollet, effectiveUtxos)
-        recipients.forEach { recipient ->
-            val assetId = recipient.assetId
-            if (assetId != null && !LiquidAsset.isPolicyAsset(assetId)) {
-                txBuilder.addRecipient(Address(recipient.address), recipient.amountSats, assetId)
-            } else {
-                txBuilder.addLbtcRecipient(Address(recipient.address), recipient.amountSats)
+        return withLiquidConsolidateFallback(effectiveUtxos) { preferChangeOnly ->
+            val txBuilder = network.txBuilder()
+            applyUtxoSelection(txBuilder, wollet, effectiveUtxos, preferChangeOnly)
+            recipients.forEach { recipient ->
+                val assetId = recipient.assetId
+                if (assetId != null && !LiquidAsset.isPolicyAsset(assetId)) {
+                    txBuilder.addRecipient(Address(recipient.address), recipient.amountSats, assetId)
+                } else {
+                    txBuilder.addLbtcRecipient(Address(recipient.address), recipient.amountSats)
+                }
             }
+            txBuilder.feeRate((feeRateSatPerVb.coerceIn(DEFAULT_LIQUID_SWAP_FEE_RATE, MAX_SIDESWAP_LIQUID_FEE_RATE) * 1000.0).toFloat())
+            txBuilder.finish(wollet)
         }
-        txBuilder.feeRate((feeRateSatPerVb * 1000.0).toFloat())
-        return txBuilder.finish(wollet)
     }
 
     /**
@@ -7072,11 +6995,12 @@ class LiquidRepository(
         feeRateSatPerVb: Double,
         selectedUtxos: List<UtxoInfo>? = null,
     ): Pset {
+        // Drain intentionally is not change-only — spend the full balance.
         val txBuilder = network.txBuilder()
-        applyUtxoSelection(txBuilder, wollet, selectedUtxos)
+        applyUtxoSelection(txBuilder, wollet, selectedUtxos, preferChangeOnly = false)
         txBuilder.drainLbtcWallet()
         txBuilder.drainLbtcTo(Address(address))
-        txBuilder.feeRate((feeRateSatPerVb * 1000.0).toFloat())
+        txBuilder.feeRate((feeRateSatPerVb.coerceIn(DEFAULT_LIQUID_SWAP_FEE_RATE, MAX_SIDESWAP_LIQUID_FEE_RATE) * 1000.0).toFloat())
         return txBuilder.finish(wollet)
     }
 
@@ -7084,6 +7008,7 @@ class LiquidRepository(
         txBuilder: lwk.TxBuilder,
         wollet: Wollet,
         selectedUtxos: List<UtxoInfo>?,
+        preferChangeOnly: Boolean? = null,
     ) {
         selectedUtxos
             ?.takeIf { it.isNotEmpty() }
@@ -7103,14 +7028,71 @@ class LiquidRepository(
 
         // No manual selection: exclude frozen UTXOs from automatic coin selection.
         // Frozen status is an app-level do-not-spend flag that LWK knows nothing about.
+        // When consolidate-change is on, prefer INTERNAL (change) outs first.
         val frozenOutpoints = currentWalletId?.let { secureStorage.getFrozenUtxos(it) }.orEmpty()
-        if (frozenOutpoints.isNotEmpty()) {
-            val spendableUtxos =
-                wollet.utxos().filter { utxo ->
-                    val outpoint = utxo.outpoint()
-                    "${outpoint.txid()}:${outpoint.vout()}" !in frozenOutpoints
+        val useChangeOnly = preferChangeOnly ?: secureStorage.getConsolidateChange()
+        val allUtxos = wollet.utxos()
+        val spendableUtxos =
+            allUtxos.filter { utxo ->
+                val outpoint = utxo.outpoint()
+                "${outpoint.txid()}:${outpoint.vout()}" !in frozenOutpoints
+            }
+        val pool =
+            if (useChangeOnly) {
+                val changeAddresses = liquidChangeAddressSet(wollet)
+                val changeOnly =
+                    spendableUtxos.filter { utxo ->
+                        runCatching { utxo.address().toString() in changeAddresses }.getOrDefault(false)
+                    }
+                // Empty change set → normal pool (toggle must not brick sends).
+                changeOnly.ifEmpty { spendableUtxos }
+            } else {
+                spendableUtxos
+            }
+        if (pool.size != allUtxos.size || frozenOutpoints.isNotEmpty() || useChangeOnly) {
+            txBuilder.setWalletUtxos(pool.map { it.outpoint() })
+        }
+    }
+
+    /** Collect known INTERNAL (change) addresses from spent/unspent TXOs + a short lookahead. */
+    private fun liquidChangeAddressSet(wollet: Wollet): Set<String> {
+        val addresses = linkedSetOf<String>()
+        val descriptor = runCatching { wollet.descriptor() }.getOrNull() ?: return emptySet()
+        val isMainnet = lwkNetwork?.isMainnet() == true
+        try {
+            wollet.txos().forEach { txo ->
+                if (txo.extInt() == Chain.INTERNAL) {
+                    liquidInternalAddressAt(descriptor, isMainnet, txo.wildcardIndex())?.let { addresses += it }
                 }
-            txBuilder.setWalletUtxos(spendableUtxos.map { it.outpoint() })
+            }
+        } catch (_: Exception) {
+            // Best-effort: still try lookahead below.
+        }
+        // Lookahead so fresh unused change outs still count as INTERNAL.
+        var i = 0u
+        while (i < 40u) {
+            liquidInternalAddressAt(descriptor, isMainnet, i)?.let { addresses += it }
+            i++
+        }
+        return addresses
+    }
+
+    /**
+     * Prefer change UTXOs first when enabled; retry without the restriction if
+     * selection fails for insufficient funds. Manual coin control skips this.
+     */
+    private fun <T> withLiquidConsolidateFallback(
+        selectedUtxos: List<UtxoInfo>?,
+        build: (preferChangeOnly: Boolean?) -> T,
+    ): T {
+        if (!secureStorage.getConsolidateChange() || !selectedUtxos.isNullOrEmpty()) {
+            return build(null)
+        }
+        return try {
+            build(true)
+        } catch (e: Exception) {
+            if (!e.isTransactionInsufficientFundsError()) throw e
+            build(false)
         }
     }
 

@@ -219,13 +219,18 @@ class LightningNodeRepository(
                         useTls = config.tlsEnabled,
                     )
 
-                if (!config.isConfigured) {
+                if (!config.isConfigured || secureStorage.lightningNodeRestoreNeedsConfirm(walletId)) {
                     _isConnecting.value = false
                     _walletState.value =
                         LightningNodeWalletState(
                             walletId = walletId,
                             isInitialized = true,
-                            error = "Not connected — set up Lightning Node in Layer 2",
+                            error =
+                                if (secureStorage.lightningNodeRestoreNeedsConfirm(walletId)) {
+                                    "Confirm Lightning Node connection after restore"
+                                } else {
+                                    "Not connected — set up Lightning Node in Layer 2"
+                                },
                             connectionType = config.type,
                             host = config.host.ifBlank { null },
                             port = config.port.takeIf { it > 0 },
@@ -471,7 +476,7 @@ class LightningNodeRepository(
 
     fun currentConfigUsesTor(): Boolean {
         val config = loadedConfig ?: return _walletState.value.useTor
-        return config.useTor || config.host.endsWith(".onion", ignoreCase = true)
+        return config.requiresOnionTor()
     }
 
     suspend fun refreshState() =
@@ -694,7 +699,7 @@ class LightningNodeRepository(
                     when {
                         raw.contains("HTTP request to an HTTPS server", ignoreCase = true) ||
                             raw.contains("http request to an https", ignoreCase = true) ->
-                            "$raw — enable TLS (LND REST / CLN clnrest usually use HTTPS)"
+                            "$raw — HTTPS and HTTP both failed"
                         raw.contains("timed out", ignoreCase = true) ||
                             raw.contains("timeout", ignoreCase = true) ->
                             "$raw. For NWC: confirm the URI is active, relays are reachable, and Tor is off for clearnet Alby relays."
@@ -727,6 +732,7 @@ class LightningNodeRepository(
                     },
             )
         secureStorage.setLightningNodeConfig(walletId, toSave)
+        secureStorage.setLightningNodeRestoreNeedsConfirm(walletId, false)
     }
 
     suspend fun createInvoice(
@@ -906,7 +912,6 @@ class LightningNodeRepository(
                 preview.amountSats.takeUnless { preview.isFixedAmount },
                 preview.maxFeePercent,
             )
-            // Belt-and-suspenders: backends must return a real preimage for success.
             val preimage = result.preimage?.trim().orEmpty()
             if (
                 preimage.isBlank() ||
@@ -914,6 +919,11 @@ class LightningNodeRepository(
                 preimage.matches(Regex("^(00)+$"))
             ) {
                 throw IllegalStateException("Payment did not complete")
+            }
+            val invoiceHash =
+                runCatching { NwcClient.bolt11PaymentHash(preview.paymentRequest) }.getOrNull()
+            if (invoiceHash != null && !NwcClient.preimageMatchesInvoice(preimage, invoiceHash)) {
+                throw IllegalStateException("Payment preimage does not match invoice")
             }
             _sendState.value =
                 LightningNodeSendState.Paid(
@@ -1119,14 +1129,7 @@ class LightningNodeRepository(
                 throw IllegalStateException("No connection type configured")
         }
 
-    private fun configNeedsTor(config: LightningNodeConfig): Boolean {
-        val host = config.host.trim().lowercase()
-        val onionHost = host.endsWith(".onion") || host.contains(".onion:")
-        val onionNwc =
-            config.type == LightningNodeConnectionType.NWC &&
-                config.nwcUri.contains(".onion", ignoreCase = true)
-        return config.useTor || onionHost || onionNwc
-    }
+    private fun configNeedsTor(config: LightningNodeConfig): Boolean = config.requiresOnionTor()
 
     private suspend fun ensureTorIfNeeded(
         config: LightningNodeConfig,
@@ -1143,13 +1146,9 @@ class LightningNodeRepository(
         }
     }
 
-    /** Normalize onion → useTor before handoff to backends. */
+    /** Onion hosts/relays use Tor; clearnet-over-Tor is stripped. */
     private fun withTorIfNeeded(config: LightningNodeConfig): LightningNodeConfig =
-        if (configNeedsTor(config) && !config.useTor) {
-            config.copy(useTor = true)
-        } else {
-            config
-        }
+        config.withOnionOnlyTor()
 
     /** Query node chain-backend min relay (sat/vB) for LN L1 fee floor. */
     private suspend fun refreshOnchainMinFeeRateUnlocked(client: LightningNodeBackend) {

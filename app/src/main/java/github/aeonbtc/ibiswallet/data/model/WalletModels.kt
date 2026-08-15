@@ -126,6 +126,27 @@ data class StoredWallet(
     val localCosignerFingerprint: String? = null,
     val walletKind: WalletKind = WalletKind.BITCOIN,
 ) {
+    fun inputDerivationPath(
+        change: Boolean,
+        index: Long,
+    ): String {
+        val branch = if (change) 1L else 0L
+        return when (seedFormat) {
+            SeedFormat.ELECTRUM_STANDARD -> "m/$branch/$index"
+            SeedFormat.ELECTRUM_SEGWIT -> "m/0'/$branch/$index"
+            SeedFormat.BIP39 -> {
+                val base = derivationPath.trim().ifBlank { addressType.defaultPath }
+                val branchPath =
+                    if (base.endsWith("/0") || base.endsWith("/1")) {
+                        base.dropLast(2) + "/$branch"
+                    } else {
+                        "$base/$branch"
+                    }
+                "$branchPath/$index"
+            }
+        }
+    }
+
     companion object {
         const val DEFAULT_GAP_LIMIT = 20
         const val MAX_GAP_LIMIT = 99999
@@ -198,6 +219,11 @@ data class TransactionDetails(
     val changeAmount: ULong? = null, // Amount returned as change
     val isSelfTransfer: Boolean = false, // True when sending to yourself (all outputs are yours)
     val swapDetails: LiquidSwapDetails? = null,
+    /**
+     * True when this L1 tx was initiated from the center Swap control
+     * (Liquid chain swap, Spark transfer, or Ark transfer).
+     */
+    val isSwapHistory: Boolean = false,
     /** Unconfirmed outgoing tx eligible for RBF (Bump Fee). */
     val canRbf: Boolean = false,
     /** Unconfirmed incoming tx with wallet-owned outputs eligible for CPFP. */
@@ -338,6 +364,8 @@ data class UtxoInfo(
     val isConfirmed: Boolean,
     val isFrozen: Boolean = false,
     val assetId: String? = null,
+    /** Unix seconds when the parent tx was confirmed (or first seen if unconfirmed). */
+    val timestamp: Long? = null,
 )
 
 /**

@@ -5,12 +5,13 @@ import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.model.FeeEstimates
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.PreferIpv4Dns
+import github.aeonbtc.ibiswallet.util.SocksProxyHostnameDns
 import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
@@ -25,7 +26,9 @@ class FeeEstimationService {
         private const val PRECISE_ENDPOINT = "/api/v1/fees/precise"
         private const val RECOMMENDED_ENDPOINT = "/api/v1/fees/recommended"
         private const val TOR_PROXY_HOST = "127.0.0.1"
-        private const val TIMEOUT_SECONDS = 30L
+        // Connect is short — broken IPv6 routes used to burn the full 30s before A records.
+        private const val CONNECT_TIMEOUT_SECONDS = 10L
+        private const val TIMEOUT_SECONDS = 20L
         private const val TOR_TIMEOUT_SECONDS = 30L
 
         private val clearnetClient: OkHttpClient by lazy {
@@ -35,7 +38,10 @@ class FeeEstimationService {
         private fun buildClient(useTorProxy: Boolean): OkHttpClient {
             val builder =
                 OkHttpClient.Builder()
-                    .connectTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .connectTimeout(
+                        if (useTorProxy) TOR_TIMEOUT_SECONDS else CONNECT_TIMEOUT_SECONDS,
+                        TimeUnit.SECONDS,
+                    )
                     .readTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
                     .writeTimeout(if (useTorProxy) TOR_TIMEOUT_SECONDS else TIMEOUT_SECONDS, TimeUnit.SECONDS)
 
@@ -51,9 +57,10 @@ class FeeEstimationService {
                 builder.proxy(proxy)
                 // Prevent local DNS resolution — send hostname through SOCKS5 proxy
                 // so Tor resolves it at the exit node, avoiding DNS leaks.
-                builder.dns { hostname ->
-                    listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
-                }
+                builder.dns(SocksProxyHostnameDns)
+            } else {
+                // Prefer A records — idle/broken IPv6 synth routes are common on mobile/Wi‑Fi.
+                builder.dns(PreferIpv4Dns)
             }
 
             return builder.build()

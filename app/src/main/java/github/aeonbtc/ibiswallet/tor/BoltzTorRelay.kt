@@ -163,7 +163,12 @@ class BoltzTorRelay(
                     val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
                     factory.createSocket(plain, clearnetHostOverride, clearnetPortOverride, true).also { ssl ->
                         ssl.soTimeout = READ_TIMEOUT_MS
-                        (ssl as SSLSocket).startHandshake()
+                        val tls = ssl as SSLSocket
+                        tls.sslParameters =
+                            tls.sslParameters.apply {
+                                endpointIdentificationAlgorithm = "HTTPS"
+                            }
+                        tls.startHandshake()
                     }
                 }
             }

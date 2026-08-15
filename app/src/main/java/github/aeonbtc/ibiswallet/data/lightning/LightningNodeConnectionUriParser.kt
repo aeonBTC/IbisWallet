@@ -146,7 +146,7 @@ object LightningNodeConnectionUriParser {
                         .ifBlank { json.optString("tls") }
                 val protocol =
                     json.optString("protocol").ifBlank {
-                        if (json.optBoolean("useTls", true)) "https" else "http"
+                        if (json.optBoolean("useTls", false)) "https" else "http"
                     }
                 val nwc =
                     json.optString("nostrWalletConnectUrl")
@@ -321,8 +321,8 @@ object LightningNodeConnectionUriParser {
                     useTor = onion,
                     macaroonHex = macaroon,
                     tlsCertPem = certPem,
-                    useTls = useTls || onion,
-                    allowInsecureTls = !useTls && !onion,
+                    useTls = useTls,
+                    allowInsecureTls = false,
                 ),
             type = LightningNodeConnectionType.LND_REST,
         )
@@ -416,8 +416,8 @@ object LightningNodeConnectionUriParser {
                     useTor = onion,
                     clnRune = rune,
                     tlsCertPem = tlsMaterial,
-                    useTls = useTls || onion,
-                    allowInsecureTls = !useTls && !onion,
+                    useTls = useTls,
+                    allowInsecureTls = false,
                 ),
             type = LightningNodeConnectionType.CLN_REST,
         )

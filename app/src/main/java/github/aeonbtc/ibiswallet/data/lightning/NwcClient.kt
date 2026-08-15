@@ -6,11 +6,11 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionType
 import github.aeonbtc.ibiswallet.data.model.LightningNodeInfo
 import github.aeonbtc.ibiswallet.data.model.LightningNodeInvoice
+import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
 import github.aeonbtc.ibiswallet.data.model.LightningNodePayment
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentDirection
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentResult
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentStatus
-import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -59,12 +59,7 @@ class NwcClient : LightningNodeBackend {
             require(config.type == LightningNodeConnectionType.NWC) { "Expected NWC connection type" }
             val uri = NwcUriParser.parse(config.nwcUri)
             parsed = uri
-            useTor =
-                config.useTor ||
-                uri.relays.any { it.contains(".onion", ignoreCase = true) }
-            if (uri.relays.any { it.contains(".onion", ignoreCase = true) } && !useTor) {
-                throw IllegalStateException("Onion NWC relays require Tor")
-            }
+            useTor = uri.relays.any { it.contains(".onion", ignoreCase = true) }
             val secretBytes = hexToBytes(uri.secret)
             val key = ECKey.fromPrivate(BigInteger(1, secretBytes), true)
             clientSecretKey = key
@@ -243,20 +238,31 @@ class NwcClient : LightningNodeBackend {
     override suspend fun decodeInvoice(bolt11: String): DecodedLightningNodeInvoice =
         withContext(Dispatchers.IO) {
             val requestStr = bolt11.trim().removePrefix("lightning:").trim()
+            val local = decodeBolt11Locally(requestStr)
             val params = JSONObject().put("invoice", requestStr)
-            val result =
-                runCatching { request("lookup_invoice", params) }
-                    .getOrElse {
-                        // Fallback: basic emptiness check; amount filled by user if unknown
-                        return@withContext DecodedLightningNodeInvoice(paymentRequest = requestStr)
-                    }
+            val result = runCatching { request("lookup_invoice", params) }.getOrNull()
+            val remoteAmountSats =
+                result
+                    ?.optLong("amount", 0L)
+                    ?.takeIf { it > 0 }
+                    ?.div(1000L)
+                    ?: result
+                        ?.optLong("amount_msat", 0L)
+                        ?.takeIf { it > 0 }
+                        ?.div(1000L)
             DecodedLightningNodeInvoice(
                 paymentRequest = requestStr,
-                paymentHash = result.optString("payment_hash").ifBlank { null },
-                amountSats = result.optLong("amount", 0L).takeIf { it > 0 }?.div(1000L),
-                description = result.optString("description").ifBlank { null },
+                paymentHash =
+                    local.paymentHash
+                        ?: result?.optString("payment_hash")?.ifBlank { null },
+                amountSats = local.amountSats ?: remoteAmountSats,
+                description =
+                    local.description
+                        ?: result?.optString("description")?.ifBlank { null },
                 destination = null,
-                expirySeconds = result.optLong("expires_at", 0L).takeIf { it > 0 },
+                expirySeconds =
+                    local.expirySeconds
+                        ?: result?.optLong("expires_at", 0L)?.takeIf { it > 0 },
             )
         }
 
@@ -282,22 +288,20 @@ class NwcClient : LightningNodeBackend {
                     }
                 }
 
-            val result =
-                runCatching { request("pay_invoice", buildParams(amountMsats)) }
-                    .getOrElse { firstError ->
-                        // If wallet still rejects amount on a fixed invoice (decode failed earlier),
-                        // retry once without amount.
-                        val msg = firstError.message.orEmpty()
-                        val isFixedAmountReject =
-                            amountMsats != null &&
-                                (
-                                    msg.contains("must not be specified", ignoreCase = true) ||
-                                        msg.contains("amount must not", ignoreCase = true) ||
-                                        msg.contains("non-zero amount invoice", ignoreCase = true)
-                                    )
-                        if (!isFixedAmountReject) throw firstError
-                        request("pay_invoice", buildParams(null))
-                    }
+            val localAmountSats = decodeBolt11Locally(requestStr).amountSats
+            if (localAmountSats != null && amountSats != null && amountSats > 0 && localAmountSats != amountSats) {
+                throw IllegalStateException("Invoice amount does not match the confirmed amount")
+            }
+            val payAmountMsats =
+                if (localAmountSats != null) {
+                    null
+                } else {
+                    amountMsats
+                }
+            if (localAmountSats == null && (payAmountMsats == null || payAmountMsats <= 0)) {
+                throw IllegalStateException("Amount is required for this invoice")
+            }
+            val result = request("pay_invoice", buildParams(payAmountMsats))
             if (result.has("error") && !result.isNull("error")) {
                 val err = result.opt("error")
                 val msg =
@@ -309,7 +313,6 @@ class NwcClient : LightningNodeBackend {
                     }
                 throw IllegalStateException(msg.ifBlank { "Payment failed" })
             }
-            // NIP-47: preimage is proof of payment — required before we show success.
             val preimage =
                 result.optString("preimage").ifBlank {
                     result.optString("payment_preimage")
@@ -318,10 +321,19 @@ class NwcClient : LightningNodeBackend {
             if (preimage.matches(Regex("^0+$")) || preimage.matches(Regex("^(00)+$"))) {
                 throw IllegalStateException("Payment did not return a preimage")
             }
+            val invoicePaymentHash = bolt11PaymentHash(requestStr)
+            val preimageHash = sha256Hex(decodeHexOrThrow(preimage, "preimage"))
+            if (!preimageHash.equals(invoicePaymentHash, ignoreCase = true)) {
+                throw IllegalStateException("Payment preimage does not match invoice")
+            }
+            val reportedHash = result.optString("payment_hash").ifBlank { invoicePaymentHash }
+            if (!reportedHash.equals(invoicePaymentHash, ignoreCase = true)) {
+                throw IllegalStateException("Payment hash does not match invoice")
+            }
             val fees = result.optLong("fees_paid", result.optLong("fee_msat", 0L)) / 1000L
             LightningNodePaymentResult(
-                paymentId = result.optString("payment_hash").ifBlank { null },
-                paymentHash = result.optString("payment_hash").ifBlank { null },
+                paymentId = invoicePaymentHash,
+                paymentHash = invoicePaymentHash,
                 feeSats = fees,
                 preimage = preimage,
             )
@@ -383,6 +395,7 @@ class NwcClient : LightningNodeBackend {
                             relayUrl = relay,
                             event = event,
                             eventId = eventId,
+                            expectedMethod = method,
                             subscriptionId = "ibis-${UUID.randomUUID().toString().take(8)}",
                             walletPubkey = uri.walletPubkey,
                             clientKey = clientKey,
@@ -415,6 +428,7 @@ class NwcClient : LightningNodeBackend {
         relayUrl: String,
         event: JSONObject,
         eventId: String,
+        expectedMethod: String,
         subscriptionId: String,
         walletPubkey: String,
         clientKey: ECKey,
@@ -450,69 +464,27 @@ class NwcClient : LightningNodeBackend {
                         val arr = JSONArray(text)
                         if (arr.length() < 2) return
                         when (arr.optString(0)) {
-                            "OK" -> {
-                                // ["OK", <event_id>, <true|false>, <message>]
-                                val okId = arr.optString(1)
-                                val accepted = arr.optBoolean(2, true)
-                                val msg = arr.optString(3, "")
-                                if (okId.equals(eventId, ignoreCase = true) && !accepted) {
-                                    deferred.completeExceptionally(
-                                        IllegalStateException(
-                                            "Relay rejected NWC request: ${msg.ifBlank { "invalid event" }}",
-                                        ),
-                                    )
-                                    webSocket.close(1000, null)
-                                }
-                            }
-                            "NOTICE" -> {
-                                val notice = arr.optString(1)
-                                if (notice.isNotBlank() &&
-                                    (
-                                        notice.contains("blocked", ignoreCase = true) ||
-                                            notice.contains("auth", ignoreCase = true) ||
-                                            notice.contains("error", ignoreCase = true)
-                                    )
-                                ) {
-                                    // Soft signal only for hard-looking notices; continue waiting otherwise.
-                                    if (!deferred.isCompleted && notice.contains("auth-required", ignoreCase = true)) {
-                                        deferred.completeExceptionally(
-                                            IllegalStateException("Relay requires auth: $notice"),
-                                        )
-                                        webSocket.close(1000, null)
-                                    }
-                                }
+                            "OK", "NOTICE" -> {
+                                // Relay control frames are unauthenticated. Keep waiting
+                                // for a signed wallet response or the request timeout.
                             }
                             "EVENT" -> {
                                 if (arr.length() < 3) return
                                 val eventObj = arr.optJSONObject(2) ?: return
-                                if (eventObj.optInt("kind") != 23195) return
-                                // Prefer responses that reference our request event id (NIP-47 `e` tag).
-                                val tags = eventObj.optJSONArray("tags")
-                                val referencedRequest =
-                                    tags?.let { tagArr ->
-                                        (0 until tagArr.length()).any { i ->
-                                            val t = tagArr.optJSONArray(i) ?: return@any false
-                                            t.optString(0) == "e" &&
-                                                t.optString(1).equals(eventId, ignoreCase = true)
-                                        }
-                                    } ?: true
-                                if (!referencedRequest) return
+                                if (!isAuthenticNwcResponse(eventObj, walletPubkey, eventId)) return
                                 val content = eventObj.optString("content")
                                 if (content.isBlank()) return
                                 val plaintext =
                                     runCatching {
                                         decryptNwcContent(content, clientKey, walletPubkey)
-                                    }.getOrElse { decryptError ->
-                                        deferred.completeExceptionally(
-                                            IllegalStateException(
-                                                "Failed to decrypt NWC response: ${decryptError.message}",
-                                                decryptError,
-                                            ),
-                                        )
-                                        webSocket.close(1000, null)
-                                        return
-                                    }
+                                    }.getOrNull() ?: return
                                 val responseJson = JSONObject(plaintext)
+                                val resultType = responseJson.optString("result_type")
+                                if (resultType.isNotBlank() &&
+                                    !resultType.equals(expectedMethod, ignoreCase = true)
+                                ) {
+                                    return
+                                }
                                 if (responseJson.has("error") && !responseJson.isNull("error")) {
                                     val err = responseJson.optJSONObject("error")
                                     val code = err?.optString("code").orEmpty()
@@ -527,7 +499,6 @@ class NwcClient : LightningNodeBackend {
                                     webSocket.close(1000, null)
                                     return
                                 }
-                                // NIP-47 success payload may be { result_type, result } or bare result.
                                 val result =
                                     responseJson.optJSONObject("result")
                                         ?: if (responseJson.has("result_type")) {
@@ -540,23 +511,11 @@ class NwcClient : LightningNodeBackend {
                                 webSocket.close(1000, null)
                             }
                             "CLOSED" -> {
-                                val reason = arr.optString(2)
-                                if (!deferred.isCompleted && reason.isNotBlank()) {
-                                    deferred.completeExceptionally(
-                                        IllegalStateException("Subscription closed: $reason"),
-                                    )
-                                }
+                                // Unauthenticated; do not treat as a payment outcome.
                             }
                         }
-                    }.onFailure { parseError ->
-                        if (!deferred.isCompleted) {
-                            deferred.completeExceptionally(
-                                IllegalStateException(
-                                    "Bad relay message: ${parseError.message}",
-                                    parseError,
-                                ),
-                            )
-                        }
+                    }.onFailure { _ ->
+                        // Ignore malformed frames; wait for an authentic response or timeout.
                     }
                 }
 
@@ -616,6 +575,121 @@ class NwcClient : LightningNodeBackend {
 
     companion object {
         private const val REQUEST_TIMEOUT_MS = 45_000L
+        private const val RESPONSE_MAX_AGE_SECONDS = 120L
+
+        internal fun isAuthenticNwcResponse(
+            eventObj: JSONObject,
+            walletPubkey: String,
+            requestEventId: String,
+        ): Boolean {
+            if (eventObj.optInt("kind") != 23195) return false
+            val pubkey = eventObj.optString("pubkey")
+            if (!pubkey.equals(walletPubkey, ignoreCase = true)) return false
+            val createdAt = eventObj.optLong("created_at", 0L)
+            val now = System.currentTimeMillis() / 1000L
+            if (createdAt <= 0L || kotlin.math.abs(now - createdAt) > RESPONSE_MAX_AGE_SECONDS) return false
+            val tags = eventObj.optJSONArray("tags") ?: return false
+            val referencedRequest =
+                (0 until tags.length()).any { i ->
+                    val t = tags.optJSONArray(i) ?: return@any false
+                    t.optString(0) == "e" && t.optString(1).equals(requestEventId, ignoreCase = true)
+                }
+            if (!referencedRequest) return false
+            val content = eventObj.optString("content")
+            val computedId =
+                computeEventId(
+                    pubkey = pubkey,
+                    createdAt = createdAt,
+                    kind = 23195,
+                    tags = tags,
+                    content = content,
+                )
+            val eventId = eventObj.optString("id")
+            if (!eventId.equals(computedId, ignoreCase = true)) return false
+            val signature = eventObj.optString("sig")
+            return runCatching { verifyEventId(computedId, signature, pubkey) }.getOrDefault(false)
+        }
+
+        internal fun bolt11PaymentHash(invoice: String): String {
+            val bolt11 = lwk.Bolt11Invoice(invoice)
+            return try {
+                bolt11.paymentHash().lowercase()
+            } finally {
+                runCatching { bolt11.destroy() }
+            }
+        }
+
+        private fun decodeBolt11Locally(invoice: String): LocalBolt11 {
+            return runCatching {
+                val bolt11 = lwk.Bolt11Invoice(invoice)
+                try {
+                    val amountMsats = bolt11.amountMilliSatoshis()
+                    LocalBolt11(
+                        paymentHash = bolt11.paymentHash().lowercase().ifBlank { null },
+                        amountSats = amountMsats?.takeIf { it > 0UL }?.let { ((it + 999UL) / 1000UL).toLong() },
+                        description = bolt11.invoiceDescription().ifBlank { null },
+                        expirySeconds = bolt11.expiryTime().toLong().takeIf { it > 0L },
+                    )
+                } finally {
+                    runCatching { bolt11.destroy() }
+                }
+            }.getOrDefault(LocalBolt11())
+        }
+
+        private data class LocalBolt11(
+            val paymentHash: String? = null,
+            val amountSats: Long? = null,
+            val description: String? = null,
+            val expirySeconds: Long? = null,
+        )
+
+        internal fun preimageMatchesInvoice(
+            preimageHex: String,
+            invoicePaymentHash: String,
+        ): Boolean {
+            val digest = runCatching { sha256Hex(decodeHexOrThrow(preimageHex, "preimage")) }.getOrNull()
+                ?: return false
+            return digest.equals(invoicePaymentHash, ignoreCase = true)
+        }
+
+        private fun decodeHexOrThrow(
+            value: String,
+            field: String,
+        ): ByteArray {
+            val clean = value.trim().removePrefix("0x")
+            require(clean.length % 2 == 0 && clean.matches(Regex("^[0-9a-fA-F]+$"))) {
+                "Invalid $field"
+            }
+            return hexToBytes(clean)
+        }
+
+        private fun verifyEventId(
+            eventIdHex: String,
+            signatureHex: String,
+            pubkeyHex: String,
+        ): Boolean = schnorrVerify(hexToBytes(eventIdHex), hexToBytes(signatureHex), hexToBytes(pubkeyHex))
+
+        private fun schnorrVerify(
+            message32: ByteArray,
+            signature64: ByteArray,
+            pubkey32: ByteArray,
+        ): Boolean {
+            if (message32.size != 32 || signature64.size != 64 || pubkey32.size != 32) return false
+            val curve = ECKey.ecDomainParameters()
+            val rx = BigInteger(1, signature64.copyOfRange(0, 32))
+            val s = BigInteger(1, signature64.copyOfRange(32, 64))
+            if (rx.signum() <= 0 || s.signum() <= 0 || s >= curve.n) return false
+            val p =
+                runCatching {
+                    ECKey.fromPublicOnly(byteArrayOf(0x02) + pubkey32).pubKeyPoint.normalize()
+                }.getOrNull() ?: return false
+            val eHASH = taggedHash("BIP0340/challenge", signature64.copyOfRange(0, 32) + pubkey32 + message32)
+            val e = BigInteger(1, eHASH).mod(curve.n)
+            val R = curve.g.multiply(s).add(p.multiply(curve.n.subtract(e))).normalize()
+            if (R.isInfinity) return false
+            if (R.yCoord.toBigInteger().testBit(0)) return false
+            return R.xCoord.toBigInteger() == rx
+        }
 
         /**
          * Prefer NIP-44 (modern wallets). Fall back to legacy NIP-04 payloads of the form

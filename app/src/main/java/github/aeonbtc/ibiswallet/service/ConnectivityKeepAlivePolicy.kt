@@ -14,12 +14,14 @@ data class ConnectivityKeepAliveSnapshot(
     val lightningConnected: Boolean = false,
     val lightningUsesTor: Boolean = false,
     val sparkConnected: Boolean = false,
+    val arkConnected: Boolean = false,
+    val arkUsesTor: Boolean = false,
 ) {
     val hasAnyElectrumConnection: Boolean
         get() = bitcoinConnected || liquidConnected
 
     val hasAnyLayer2Connection: Boolean
-        get() = lightningConnected || sparkConnected
+        get() = lightningConnected || sparkConnected || arkConnected
 
     val hasExternalTorRequirement: Boolean
         get() = bitcoinExternalTorRequired || liquidExternalTorRequired
@@ -29,6 +31,7 @@ data class ConnectivityKeepAliveSnapshot(
             (bitcoinConnected && bitcoinElectrumUsesTor) ||
                 (liquidConnected && liquidElectrumUsesTor) ||
                 (lightningConnected && lightningUsesTor) ||
+                (arkConnected && arkUsesTor) ||
                 hasExternalTorRequirement
 
     val shouldRunForegroundService: Boolean
@@ -56,6 +59,8 @@ object ConnectivityKeepAlivePolicy {
     private var lightningConnected = false
     private var lightningUsesTor = false
     private var sparkConnected = false
+    private var arkConnected = false
+    private var arkUsesTor = false
 
     fun updateForegroundConnectivityEnabled(
         context: Context,
@@ -127,6 +132,18 @@ object ConnectivityKeepAlivePolicy {
         }
     }
 
+    fun updateArkState(
+        context: Context,
+        connected: Boolean,
+        usesTor: Boolean,
+    ) {
+        synchronized(lock) {
+            arkConnected = connected
+            arkUsesTor = usesTor
+            syncForegroundServiceLocked(context)
+        }
+    }
+
     fun currentSnapshot(): ConnectivityKeepAliveSnapshot =
         synchronized(lock) {
             snapshotLocked()
@@ -134,7 +151,7 @@ object ConnectivityKeepAlivePolicy {
 
     /**
      * Returns true when the user has opted in to the background foreground
-     * service that keeps Electrum / Lightning / Spark sockets alive. ViewModels
+     * service that keeps Electrum / Lightning / Spark / Ark sockets alive. ViewModels
      * check this to decide whether to keep heartbeats / reconnect loops running
      * while the app is backgrounded.
      */
@@ -152,14 +169,16 @@ object ConnectivityKeepAlivePolicy {
         synchronized(lock) {
             (liquidConnected && liquidElectrumUsesTor) ||
                 liquidExternalTorRequired ||
-                (lightningConnected && lightningUsesTor)
+                (lightningConnected && lightningUsesTor) ||
+                (arkConnected && arkUsesTor)
         }
 
     fun hasTorRequirementOutsideLiquid(): Boolean =
         synchronized(lock) {
             (bitcoinConnected && bitcoinElectrumUsesTor) ||
                 bitcoinExternalTorRequired ||
-                (lightningConnected && lightningUsesTor)
+                (lightningConnected && lightningUsesTor) ||
+                (arkConnected && arkUsesTor)
         }
 
     private fun syncForegroundServiceLocked(context: Context) {
@@ -184,5 +203,7 @@ object ConnectivityKeepAlivePolicy {
             lightningConnected = lightningConnected,
             lightningUsesTor = lightningUsesTor,
             sparkConnected = sparkConnected,
+            arkConnected = arkConnected,
+            arkUsesTor = arkUsesTor,
         )
 }
