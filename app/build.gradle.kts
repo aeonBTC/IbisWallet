@@ -17,8 +17,8 @@ android {
         applicationId = "github.aeonbtc.ibiswallet"
         minSdk = 26
         targetSdk = 36
-        versionCode = 19
-        versionName = "4.6.2-beta"
+        versionCode = 20
+        versionName = "5.0-beta"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -29,11 +29,10 @@ android {
             .replace("\"", "\\\"")
         buildConfigField("String", "SPARK_API_KEY", "\"$escapedSparkApiKey\"")
 
-        // BDK native library only works reliably on ARM architectures
-        // x86/x86_64 emulators have compatibility issues
+        // ARM only — x86/x86_64 emulators have native-lib compatibility issues
         ndk {
             //noinspection ChromeOsAbiSupport
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
         }
     }
 
@@ -56,6 +55,10 @@ android {
         buildConfig = true
     }
     packaging {
+        // Extract native libs so Bark/JNA UniFFI can load libbark_ffi_kotlin.so
+        jniLibs {
+            useLegacyPackaging = true
+        }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/fr/acinq/secp256k1/jni/native/**"
@@ -164,6 +167,11 @@ dependencies {
 
     // Spark SDK - Breez Spark Layer 2 Android bindings
     implementation(libs.spark.sdk.android)
+
+    // Bark SDK - Second Ark protocol Android bindings (UniFFI/JNA)
+    implementation(libs.bark.sdk.android) {
+        exclude(group = "net.java.dev.jna", module = "jna")
+    }
 
     // Testing
     testImplementation(libs.kotest.runner.junit5)

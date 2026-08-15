@@ -54,8 +54,17 @@
 -keep class breez_sdk_spark.** { *; }
 -keep interface breez_sdk_spark.** { *; }
 
+# ==================== Bark SDK (Ark) ====================
+# Second Bark Android bindings are UniFFI/JNA-generated under uniffi.bark
+# plus thin Kotlin helpers under tech.second.bark.
+-keep class uniffi.bark.** { *; }
+-keep interface uniffi.bark.** { *; }
+-keep class tech.second.bark.** { *; }
+-keep interface tech.second.bark.** { *; }
+
 # ==================== Layer 2 enums persisted via .name/valueOf() ====================
 -keepclassmembers enum github.aeonbtc.ibiswallet.data.model.WalletLayer { *; }
+-keepclassmembers enum github.aeonbtc.ibiswallet.data.model.Layer2Provider { *; }
 -keepclassmembers enum github.aeonbtc.ibiswallet.data.model.SwapDirection { *; }
 -keepclassmembers enum github.aeonbtc.ibiswallet.data.model.SwapService { *; }
 
