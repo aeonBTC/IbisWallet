@@ -326,6 +326,23 @@ object BitcoinUtils {
         return Base58.encodeChecked(newData)
     }
 
+    /**
+     * True for bare or origin-prefixed xprv/zprv, or descriptors that embed them.
+     * Used to classify imports/backups as spend-capable rather than watch-only.
+     */
+    fun isExtendedPrivateKeyMaterial(input: String): Boolean {
+        val trimmed = input.trim()
+        if (trimmed.isEmpty()) return false
+        if (trimmed.contains('(')) return trimmed.contains("xprv") || trimmed.contains("zprv")
+        val bare =
+            if (trimmed.startsWith("[")) {
+                trimmed.substringAfter(']', missingDelimiterValue = trimmed)
+            } else {
+                trimmed
+            }.substringBefore('/')
+        return bare.startsWith("xprv") || bare.startsWith("zprv")
+    }
+
     // ── Base58 Encoding/Decoding ─────────────────────────────────────
 
     /**
@@ -878,14 +895,27 @@ object BitcoinUtils {
 
         val mnemonic = keyMaterialJson.optNonBlankString("mnemonic")
         val privateKey = keyMaterialJson.optNonBlankString("privateKey")
+        val extendedPrivateKey = keyMaterialJson.optNonBlankString("extendedPrivateKey")
         val watchAddress = keyMaterialJson.optNonBlankString("watchAddress")
         val xpub = keyMaterialJson.optNonBlankString("extendedPublicKey")
         val passphrase = keyMaterialJson.optNonBlankString("passphrase")
+        // Legacy full backups stored xprv/zprv under extendedPublicKey.
+        val legacyExtendedPrivate = xpub?.takeIf { isExtendedPrivateKeyMaterial(it) }
 
-        val keyMaterial = mnemonic ?: privateKey ?: watchAddress ?: xpub
-            ?: throw IllegalStateException("No key material found in backup")
+        val keyMaterial =
+            mnemonic
+                ?: privateKey
+                ?: extendedPrivateKey
+                ?: legacyExtendedPrivate
+                ?: watchAddress
+                ?: xpub
+                ?: throw IllegalStateException("No key material found in backup")
 
-        val isWatchOnly = mnemonic == null && privateKey == null
+        val isWatchOnly =
+            mnemonic == null &&
+                privateKey == null &&
+                extendedPrivateKey == null &&
+                legacyExtendedPrivate == null
 
         val customDerivationPath = walletJson.optNonBlankString("derivationPath")
 
@@ -973,5 +1003,5 @@ object BitcoinUtils {
         )
     }
 
-    private const val MAX_FEE_RATE_SAT_VB = 10_000.0
+    const val MAX_FEE_RATE_SAT_VB = 2_000.0
 }

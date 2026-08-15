@@ -141,7 +141,8 @@ object ElectrumSeedUtil {
      * "mnemonic" + normalized passphrase.
      */
     fun bip39MnemonicToSeed(mnemonic: String, passphrase: String? = null): ByteArray {
-        val normalizedMnemonic = Normalizer.normalize(mnemonic.trim(), Normalizer.Form.NFKD)
+        val canonicalMnemonic = mnemonic.trim().replace(Regex("\\s+"), " ")
+        val normalizedMnemonic = Normalizer.normalize(canonicalMnemonic, Normalizer.Form.NFKD)
         val normalizedPassphrase = Normalizer.normalize(passphrase.orEmpty(), Normalizer.Form.NFKD)
         val salt = "mnemonic$normalizedPassphrase"
         val spec = PBEKeySpec(

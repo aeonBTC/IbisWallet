@@ -69,6 +69,7 @@ object BackupJsonAdapters {
                 "liquidTorEnabled",
                 "liquidAutoSwitch",
                 "liquidServerSelectedByUser",
+                "electrumServerSelectedByUser",
                 "autoSwitchServer",
                 "priceSource",
                 "priceCurrency",

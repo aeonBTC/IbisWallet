@@ -10,7 +10,6 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionTestPhase
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionTestResult
 import github.aeonbtc.ibiswallet.data.model.LightningNodeEvent
 import github.aeonbtc.ibiswallet.data.model.LightningNodeReceiveState
-import github.aeonbtc.ibiswallet.data.model.LightningNodeSendState
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.repository.LightningNodeRepository
 import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy

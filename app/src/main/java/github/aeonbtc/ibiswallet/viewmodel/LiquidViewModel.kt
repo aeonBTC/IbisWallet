@@ -60,12 +60,12 @@ import github.aeonbtc.ibiswallet.data.model.WalletAddress
 import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import github.aeonbtc.ibiswallet.data.repository.LiquidRepository
 import github.aeonbtc.ibiswallet.data.repository.isBoltzSessionDeadSignalError
-import github.aeonbtc.ibiswallet.localization.AppLocale
-import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy
 import github.aeonbtc.ibiswallet.data.swap.buildBitcoinSwapFundingRequest
 import github.aeonbtc.ibiswallet.data.swap.buildLiquidSwapFundingRequest
 import github.aeonbtc.ibiswallet.data.swap.resolveBoltzAddressPlan
 import github.aeonbtc.ibiswallet.data.swap.resolveSideSwapRequestedReceiveAddress
+import github.aeonbtc.ibiswallet.localization.AppLocale
+import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy
 import github.aeonbtc.ibiswallet.tor.TorManager
 import github.aeonbtc.ibiswallet.tor.TorState
 import github.aeonbtc.ibiswallet.tor.TorStatus
@@ -74,8 +74,9 @@ import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.Bip329Labels
 import github.aeonbtc.ibiswallet.util.CertificateFirstUseException
 import github.aeonbtc.ibiswallet.util.CertificateMismatchException
-import github.aeonbtc.ibiswallet.util.isTransactionInsufficientFundsError
 import github.aeonbtc.ibiswallet.util.SecureLog
+import github.aeonbtc.ibiswallet.util.isTransactionInsufficientFundsError
+import github.aeonbtc.ibiswallet.viewmodel.LiquidViewModel.Companion.HEARTBEAT_MAX_FAILURES
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -138,6 +139,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         private const val RECONNECT_MAX_DELAY_MS = 60_000L
         private const val RECONNECT_MAX_ATTEMPTS = 10
         private const val ADDRESS_BOOK_PREVIEW_SIZE = 20
+        /** Max wait for cancelled LWK workers before destroying Wollet on unload. */
+        private const val LIQUID_UNLOAD_JOB_JOIN_TIMEOUT_MS = 2_000L
     }
 
     private val secureStorage = SecureStorage.getInstance(application)
@@ -460,13 +463,20 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         liquidAddressRefreshJob?.cancel()
         liquidAddressRefreshJob =
             launchLiquidJob(Dispatchers.IO) {
-                if (_allLiquidAddresses.value.first.isEmpty() &&
-                    _allLiquidAddresses.value.second.isEmpty() &&
-                    _allLiquidAddresses.value.third.isEmpty()
-                ) {
-                    _allLiquidAddresses.value = repository.getAddressPreview(ADDRESS_BOOK_PREVIEW_SIZE)
+                runCatching {
+                    if (_allLiquidAddresses.value.first.isEmpty() &&
+                        _allLiquidAddresses.value.second.isEmpty() &&
+                        _allLiquidAddresses.value.third.isEmpty()
+                    ) {
+                        _allLiquidAddresses.value =
+                            repository.getAddressPreview(ADDRESS_BOOK_PREVIEW_SIZE)
+                    }
+                    _allLiquidAddresses.value = repository.getAllAddresses()
+                }.onFailure { error ->
+                    if (error is CancellationException) throw error
+                    // Unload/switch can destroy Wollet while this refresh is in flight.
+                    SecureLog.w(TAG, "Liquid address book refresh skipped: ${error.message}")
                 }
-                _allLiquidAddresses.value = repository.getAllAddresses()
             }
     }
 
@@ -474,7 +484,12 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         liquidUtxoRefreshJob?.cancel()
         liquidUtxoRefreshJob =
             launchLiquidJob(Dispatchers.IO) {
-                _allLiquidUtxos.value = repository.getAllUtxos()
+                runCatching {
+                    _allLiquidUtxos.value = repository.getAllUtxos()
+                }.onFailure { error ->
+                    if (error is CancellationException) throw error
+                    SecureLog.w(TAG, "Liquid UTXO refresh skipped: ${error.message}")
+                }
             }
     }
 
@@ -614,13 +629,37 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun cancelManagedJobs() {
-        val jobs = synchronized(managedJobs) {
-            managedJobs.toList()
-        }
+        val jobs =
+            synchronized(managedJobs) {
+                managedJobs.toList()
+            }
         jobs.forEach { it.cancel() }
         connectionJob = null
         walletLifecycleJob = null
         pendingWalletLoadId = null
+    }
+
+    /**
+     * Cancel + briefly join managed jobs so address-book / sync workers leave LWK JNI
+     * before [LiquidRepository.unloadWallet] destroys the Wollet (prevents
+     * "object has already been destroyed" crashes when switching L2 providers).
+     */
+    private suspend fun cancelManagedJobsAndJoin() {
+        val jobs =
+            synchronized(managedJobs) {
+                managedJobs.toList()
+            }
+        jobs.forEach { it.cancel() }
+        connectionJob = null
+        walletLifecycleJob = null
+        pendingWalletLoadId = null
+        jobs.forEach { job ->
+            runCatching {
+                withTimeoutOrNull(LIQUID_UNLOAD_JOB_JOIN_TIMEOUT_MS) {
+                    job.join()
+                }
+            }
+        }
     }
 
     private fun resetLiquidUiState() {
@@ -1793,8 +1832,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         _isLayer2Enabled.value = enabled
         if (!enabled) {
             cancelAutomaticBoltzPrewarm()
-            cancelActiveLayerPersistence()
-            _activeLayer.value = WalletLayer.LAYER1
+            // Keep activeLayer: Spark/Ark can still be the active L2 and the main
+            // rails should stay on Receive/Balance/Send equivalent without bouncing L1.
             cancelManagedJobs()
             viewModelScope.launch(Dispatchers.IO) {
                 repository.unloadWallet()
@@ -1832,6 +1871,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     !repository.isUserDisconnected() &&
                     !_isLiquidConnecting.value
                 ) {
+                    _isLiquidConnecting.value = true
+                    _liquidConnectionError.value = null
                     // Reconnect to the user's chosen Liquid server on resume.
                     launchLiquidJob {
                         reconnectOnForeground()
@@ -1843,8 +1884,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
 
         // Do not cancel Boltz prewarm when leaving the Liquid UI context — session
         // warmup continues in the background so Receive/Swap stay warm on return.
-        cancelActiveLayerPersistence()
-        _activeLayer.value = WalletLayer.LAYER1
+        // Keep activeLayer (and its persisted value): switching L2 provider or hiding
+        // Liquid UI must not bounce the main Receive/Balance/Send rails to Layer 1.
         cancelManagedJobs()
         resetLiquidUiState()
         stopHeartbeat()
@@ -1910,17 +1951,21 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     // ════════════════════════════════════════════
 
     fun setActiveLayer(layer: WalletLayer, walletId: String? = null) {
-        if (_activeLayer.value == layer) return
+        if (_activeLayer.value == layer && walletId == null) return
         _activeLayer.value = layer
         if (walletId != null) {
-            persistActiveLayer(walletId, layer)
+            // Write immediately so a following loadActiveLayer / wallet load cannot
+            // race a delayed persist and snap the L1/L2 rail back to stale disk.
+            cancelActiveLayerPersistence()
+            secureStorage.setActiveLayer(walletId, layer.name)
         } else {
             cancelActiveLayerPersistence()
         }
     }
 
     fun loadActiveLayer(walletId: String) {
-        cancelActiveLayerPersistence()
+        // Prefer any pending memory→disk write for this session over overwriting it.
+        if (activeLayerPersistJob?.isActive == true) return
         val saved = secureStorage.getActiveLayer(walletId)
         _activeLayer.value = try {
             WalletLayer.valueOf(saved)
@@ -1934,7 +1979,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     // ════════════════════════════════════════════
 
     fun loadLiquidWallet(walletId: String, mnemonic: String? = null) {
-        loadActiveLayer(walletId)
+        // Do not call loadActiveLayer here — wallet-switch / explicit setActiveLayer
+        // own the L1/L2 rail. Reloading disk on every Liquid load undoes exclusive L2
+        // pin during provider toggles.
         _pendingSubmarineSwap.value = secureStorage.getPendingLightningPaymentSession(walletId)
         if (secureStorage.needsLiquidFullSync(walletId)) {
             showPendingFullSyncProgress("Loading Liquid wallet...")
@@ -1954,6 +2001,15 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         _initialLiquidSyncComplete.value = false
+        if (
+            !isLiquidConnected.value &&
+            !repository.isUserDisconnected() &&
+            secureStorage.hasUserSelectedLiquidServer() &&
+            secureStorage.getActiveLiquidServerId() != null
+        ) {
+            _isLiquidConnecting.value = true
+            _liquidConnectionError.value = null
+        }
 
         val previousLifecycleJob = walletLifecycleJob
         pendingWalletLoadId = walletId
@@ -2092,20 +2148,36 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
 
     fun unloadLiquidWallet() {
         cancelAutomaticBoltzPrewarm()
-        cancelActiveLayerPersistence()
+        // Do not cancel layer persistence or force LAYER1 — unloading Liquid when the
+        // user enables Spark/Ark must keep Receive/Balance/Send on the same L1/L2 rail.
         clearPreparedSwap()
         _pendingSwaps.value = emptyList()
         clearPendingFullSyncProgress()
-        cancelManagedJobs()
         stopBackgroundSync()
         stopSideSwapMonitor()
         stopAllSwapMonitors()
         resetLiquidUiState()
+        clearDerivedLiquidSnapshots()
         _initialLiquidSyncComplete.value = false
-        _activeLayer.value = WalletLayer.LAYER1
-        viewModelScope.launch(Dispatchers.IO) {
-            repository.unloadWallet()
-        }
+        val previousLifecycleJob = walletLifecycleJob
+        pendingWalletLoadId = null
+        walletLifecycleJob =
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    previousLifecycleJob?.let { prev ->
+                        prev.cancel()
+                        runCatching {
+                            withTimeoutOrNull(LIQUID_UNLOAD_JOB_JOIN_TIMEOUT_MS) { prev.join() }
+                        }
+                    }
+                    cancelManagedJobsAndJoin()
+                    repository.unloadWallet()
+                } finally {
+                    if (walletLifecycleJob?.isActive != true) {
+                        walletLifecycleJob = null
+                    }
+                }
+            }
     }
 
     suspend fun deleteWalletData(walletId: String) {
@@ -2552,14 +2624,17 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             showPendingFullSyncProgress("Connecting to Liquid server...")
         }
         if (!secureStorage.hasUserSelectedLiquidServer()) {
+            _isLiquidConnecting.value = false
             clearPendingFullSyncProgress()
             return
         }
         val activeId = secureStorage.getActiveLiquidServerId() ?: run {
+            _isLiquidConnecting.value = false
             clearPendingFullSyncProgress()
             return
         }
         val config = secureStorage.getLiquidServer(activeId) ?: run {
+            _isLiquidConnecting.value = false
             clearPendingFullSyncProgress()
             return
         }
@@ -3074,16 +3149,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     ): Boolean {
         val status = boltzUpdate?.status ?: return false
         if (isLiquidLightningInvoiceClaimedStatus(status)) {
-            val txid = boltzUpdate.transactionId
-            if (txid.isNullOrBlank()) {
-                logBoltzTrace("claimed_without_txid", trace, level = BoltzTraceLevel.WARN, "source" to source)
-                return completeLightningInvoiceClaim(swapId, trace, traceStartedAt, "${source}_claimed_no_txid")
-            }
-            SecureLog.w(TAG, "Boltz reported $status before LWK completed the lightning invoice; forcing success")
-            repository.finalizeLightningInvoiceClaimed(swapId = swapId, txid = txid)
-            publishLightningInvoiceClaimed(swapId = swapId, txid = txid)
-            logBoltzTrace("claimed_shortcut", trace, "elapsedMs" to boltzElapsedMs(traceStartedAt), "txid" to txid)
-            return true
+            return completeLightningInvoiceClaim(swapId, trace, traceStartedAt, "${source}_claimed")
         }
         if (!isLiquidLightningInvoiceClaimableStatus(status)) {
             markLightningInvoiceClaiming(swapId, claiming = false)
@@ -3578,7 +3644,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 _sendState.value = LiquidSendState.Success(
                     preview = preview,
-                    message = "The L-BTC transaction was sent successfully.",
+                    message = liquidString(R.string.liquid_send_success),
                     fundingTxid = txid,
                 )
                 _events.emit(LiquidEvent.TransactionSent(txid))
@@ -3623,7 +3689,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 _sendState.value = LiquidSendState.Success(
                     preview = preview,
-                    message = "The L-BTC transaction was sent successfully.",
+                    message = liquidString(R.string.liquid_send_success),
                     fundingTxid = txid,
                 )
                 _events.emit(LiquidEvent.TransactionSent(txid))
@@ -3702,7 +3768,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 _sendState.value = LiquidSendState.Success(
                     preview = preview,
-                    message = "$ticker sent successfully.",
+                    message = liquidString(R.string.liquid_send_success_asset_format, ticker),
                     fundingTxid = txid,
                 )
                 _events.emit(LiquidEvent.TransactionSent(txid))
@@ -3981,7 +4047,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         )
                         _sendState.value = LiquidSendState.Success(
                             preview = preview,
-                            message = "The Lightning payment was sent successfully.",
+                            message = liquidString(R.string.liquid_send_success_lightning),
                             fundingTxid = fundingTxid,
                         )
                         _events.emit(LiquidEvent.LightningSent(executionPlan.paymentInput))
@@ -4124,23 +4190,21 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                     }
                                 }
                                 "transaction.claimed" -> {
-                                    logBoltzTrace(
-                                        "claimed_shortcut",
-                                        trace,
-                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                                        "txid" to boltzUpdate.transactionId,
-                                    )
-                                    SecureLog.w(
-                                        TAG,
-                                        "Boltz reported transaction.claimed before LWK completed the prepared payment; forcing success",
-                                    )
-                                    clearLightningSession(swapId, fundingTxid)
-                                    finalizePreparedLightningPaymentSuccess(
-                                        fundingTxid = fundingTxid,
-                                        paymentReference = paymentReference,
-                                        preview = preview,
-                                    )
-                                    return@monitor
+                                    val completed = repository.finishPreparedLightningPayment(swapId)
+                                    if (completed != null) {
+                                        logBoltzTrace(
+                                            "completed",
+                                            trace,
+                                            "elapsedMs" to boltzElapsedMs(traceStartedAt),
+                                            "txid" to summarizeValue(fundingTxid),
+                                        )
+                                        finalizePreparedLightningPaymentSuccess(
+                                            fundingTxid = fundingTxid,
+                                            paymentReference = paymentReference,
+                                            preview = preview,
+                                        )
+                                        return@monitor
+                                    }
                                 }
                                 "invoice.failedToPay", "swap.expired", "transaction.lockupFailed" -> {
                                     if (refundingSince == null) refundingSince = System.currentTimeMillis()
@@ -4190,23 +4254,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                 }
                                 val boltzStatus = boltzUpdate?.status
                                 if (boltzStatus == "transaction.claimed") {
-                                    logBoltzTrace(
-                                        "claimed_after_success",
-                                        trace,
-                                        "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                                        "txid" to boltzUpdate.transactionId,
-                                    )
-                                    SecureLog.w(
-                                        TAG,
-                                        "Boltz reported transaction.claimed after LWK success path stalled; forcing success",
-                                    )
-                                    clearLightningSession(swapId, fundingTxid)
-                                    finalizePreparedLightningPaymentSuccess(
-                                        fundingTxid = fundingTxid,
-                                        paymentReference = paymentReference,
-                                        preview = preview,
-                                    )
-                                    return@monitor
+                                    continue
                                 }
                                 continue
                             }
@@ -4429,24 +4477,18 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                             )
                         }
                         isRestLightningPaymentSuccessStatus(boltzStatus) -> {
-                            // For the REST-backed BOLT12 path we do not yet submit the optional
-                            // cooperative claim signature, so provider-side onchain claiming may
-                            // continue after the recipient has already been paid. The user-facing
-                            // payment should complete as soon as Boltz confirms the invoice was paid.
-                            logBoltzTrace(
-                                "completed",
-                                trace,
-                                "elapsedMs" to boltzElapsedMs(traceStartedAt),
-                                "status" to boltzStatus,
-                                "txid" to boltzUpdate?.transactionId,
-                            )
-                            clearLightningSession(swapId, fundingTxid)
-                            finalizePreparedLightningPaymentSuccess(
+                            persistLightningPaymentProgress(
+                                session = session,
+                                status = "Boltz reported settlement. Confirming before closing refund state...",
                                 fundingTxid = fundingTxid,
-                                paymentReference = paymentReference,
-                                preview = preview,
                             )
-                            return@monitor
+                            _sendState.value = LiquidSendState.Sending(
+                                preview = preview,
+                                status = "Confirming Lightning settlement on-chain...",
+                                refundAddress = session.refundAddress,
+                                detail = "Refund state is kept until settlement is verified.",
+                                canDismiss = true,
+                            )
                         }
                         boltzStatus in setOf("invoice.failedToPay", "swap.expired", "transaction.lockupFailed") -> {
                             if (refundingSince == null) refundingSince = System.currentTimeMillis()
@@ -4639,7 +4681,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
         }
         _sendState.value = LiquidSendState.Success(
             preview = preview,
-            message = "The Lightning payment was sent successfully.",
+            message = liquidString(R.string.liquid_send_success_lightning),
             fundingTxid = fundingTxid.ifBlank { null },
         )
         _events.emit(LiquidEvent.LightningSent(paymentReference))
@@ -6234,12 +6276,15 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                 )
                             }
                             boltzUpdate?.status == "transaction.claimed" -> {
-                                finalizeBoltzChainSwapSuccess(
-                                    pendingSwap = active,
-                                    settlementTxid = boltzUpdate.transactionId ?: active.settlementTxid,
-                                    source = "claimed_status_shortcut",
-                                )
-                                return
+                                val completedClaimed = repository.finishBoltzChainSwap(active.swapId)
+                                if (completedClaimed == true) {
+                                    finalizeBoltzChainSwapSuccess(
+                                        pendingSwap = active,
+                                        settlementTxid = boltzUpdate.transactionId ?: active.settlementTxid,
+                                        source = "claimed_status_finish",
+                                    )
+                                    return
+                                }
                             }
                         }
                     }
@@ -6263,12 +6308,16 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                 lastBoltzUpdate = boltzUpdate
                             }
                             if (boltzUpdate?.status == "transaction.claimed") {
-                                finalizeBoltzChainSwapSuccess(
-                                    pendingSwap = active,
-                                    settlementTxid = boltzUpdate.transactionId ?: active.settlementTxid,
-                                    source = "success_claimed_status",
-                                )
-                                return
+                                val completedClaimed = repository.finishBoltzChainSwap(active.swapId)
+                                if (completedClaimed == true) {
+                                    finalizeBoltzChainSwapSuccess(
+                                        pendingSwap = active,
+                                        settlementTxid = boltzUpdate.transactionId ?: active.settlementTxid,
+                                        source = "success_claimed_status_finish",
+                                    )
+                                    return
+                                }
+                                continue
                             }
                             if (isBoltzChainSwapClaimableStatus(boltzUpdate?.status)) {
                                 val completedAfterUpdate = repository.finishBoltzChainSwap(active.swapId)
@@ -6389,9 +6438,6 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 settlementTxid = resolvedSettlementTxid,
             )
         applySwapTransactionLabels(completedSwap)
-        if (source.contains("shortcut")) {
-            repository.clearBoltzChainSwapRuntime(completedSwap.swapId, source)
-        }
         repository.deleteBoltzChainSwapDraftBySwapId(completedSwap.swapId)
         logDebug(
             "finalizeBoltzChainSwapSuccess source=$source swapId=${completedSwap.swapId} " +
@@ -6513,6 +6559,15 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     private fun logDebug(message: String) {
         if (BuildConfig.DEBUG) {
             Log.d(BOLTZ_LOG_TAG, message)
+        }
+    }
+
+    private fun liquidString(resId: Int, vararg formatArgs: Any): String {
+        val ctx = AppLocale.createLocalizedContext(appContext, secureStorage.getAppLocale())
+        return if (formatArgs.isEmpty()) {
+            ctx.getString(resId)
+        } else {
+            ctx.getString(resId, *formatArgs)
         }
     }
 

@@ -9,6 +9,8 @@ internal data class BitcoinSendPreparationState(
     val pendingOutgoingSats: ULong,
     val transactionCount: Int,
     val spendUnconfirmed: Boolean,
+    val rbfEnabled: Boolean = true,
+    val consolidateChange: Boolean = false,
 )
 
 internal data class BitcoinSendPreparationCacheKey(

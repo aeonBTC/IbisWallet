@@ -49,15 +49,23 @@ object SecureClipboard {
         clearJob =
             scope.launch {
                 delay(CLEAR_DELAY_MS)
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        clipboardManager.clearPrimaryClip()
-                    } else {
-                        clipboardManager.setPrimaryClip(ClipData.newPlainText("", ""))
-                    }
-                } catch (_: Exception) {
-                    // Ignore - app may have been killed
-                }
+                clearNow(context)
             }
+    }
+
+    /** Immediately clear the primary clipboard clip, if possible. */
+    fun clearNow(context: Context) {
+        clearJob?.cancel()
+        clearJob = null
+        try {
+            val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                clipboardManager.clearPrimaryClip()
+            } else {
+                clipboardManager.setPrimaryClip(ClipData.newPlainText("", ""))
+            }
+        } catch (_: Exception) {
+            // Ignore - clipboard service may be unavailable
+        }
     }
 }

@@ -1,15 +1,17 @@
 package github.aeonbtc.ibiswallet.util
 
+import android.content.Context
 import fr.acinq.lightning.wire.OfferTypes
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionType
 import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
+import lwk.Payment
+import lwk.PaymentKind
 import java.math.BigDecimal
 import java.net.URLDecoder
 import java.util.Locale
-import lwk.Payment
-import lwk.PaymentKind
 
 internal sealed interface ParsedSendRecipient {
     val rawInput: String
@@ -38,6 +40,13 @@ internal sealed interface ParsedSendRecipient {
     data class Spark(
         override val rawInput: String,
         val paymentRequest: String,
+        val amountSats: Long? = null,
+        val label: String? = null,
+    ) : ParsedSendRecipient
+
+    data class Ark(
+        override val rawInput: String,
+        val address: String,
         val amountSats: Long? = null,
         val label: String? = null,
     ) : ParsedSendRecipient
@@ -94,9 +103,12 @@ fun normalizeSparkAddressLabelRef(addressOrRequest: String): String {
     }
 }
 
-internal fun parseSendRecipient(input: String): ParsedSendRecipient {
+internal fun parseSendRecipient(
+    input: String,
+    context: Context? = null,
+): ParsedSendRecipient {
     return try {
-        parseSendRecipientInternal(input)
+        parseSendRecipientInternal(input, context)
     } catch (e: Exception) {
         ParsedSendRecipient.Unknown(
             rawInput = input.trim(),
@@ -105,7 +117,10 @@ internal fun parseSendRecipient(input: String): ParsedSendRecipient {
     }
 }
 
-private fun parseSendRecipientInternal(input: String): ParsedSendRecipient {
+private fun parseSendRecipientInternal(
+    input: String,
+    context: Context? = null,
+): ParsedSendRecipient {
     val trimmed = normalizePaymentUriInput(input.trim())
     if (trimmed.isEmpty()) {
         return ParsedSendRecipient.Empty()
@@ -117,6 +132,22 @@ private fun parseSendRecipientInternal(input: String): ParsedSendRecipient {
         return ParsedSendRecipient.Unknown(
             rawInput = trimmed,
             errorMessage = it,
+        )
+    }
+
+    if (trimmed.startsWith("tark1", ignoreCase = true)) {
+        return ParsedSendRecipient.Unknown(
+            rawInput = trimmed,
+            errorMessage =
+                context?.getString(R.string.ark_error_testnet_address)
+                    ?: "Testnet Ark addresses are not supported",
+        )
+    }
+
+    if (trimmed.startsWith("ark1", ignoreCase = true)) {
+        return ParsedSendRecipient.Ark(
+            rawInput = trimmed,
+            address = trimmed,
         )
     }
 
@@ -327,6 +358,19 @@ internal fun resolveSendRoute(
                 recipient = parsed,
             )
         }
+        is ParsedSendRecipient.Ark -> {
+            val route = if (isLiquidAvailable) WalletLayer.LAYER2 else WalletLayer.LAYER1
+            SendRouteResolution(
+                route = route,
+                draft =
+                    if (route == WalletLayer.LAYER2) {
+                        parsed.toLayer2Draft(layer2UseSats)
+                    } else {
+                        SendScreenDraft(recipientAddress = parsed.rawInput)
+                    },
+                recipient = parsed,
+            )
+        }
         is ParsedSendRecipient.UnsupportedLightning -> {
             if (isLiquidAvailable) {
                 SendRouteResolution(
@@ -365,6 +409,7 @@ internal fun isRecognizedSendInput(input: String): Boolean {
         is ParsedSendRecipient.Bitcoin,
         is ParsedSendRecipient.Liquid,
         is ParsedSendRecipient.Spark,
+        is ParsedSendRecipient.Ark,
         is ParsedSendRecipient.Lightning,
         is ParsedSendRecipient.UnsupportedLightning,
         -> true
@@ -379,10 +424,9 @@ internal fun resolveLayer2SendDraft(
 ): SendScreenDraft {
     return when (val parsed = parseSendRecipient(input)) {
         is ParsedSendRecipient.Bitcoin ->
-            if (provider == Layer2Provider.SPARK) {
-                parsed.toSparkDraft(layer2UseSats)
-            } else {
-                unsupportedLayer2Draft(parsed.rawInput)
+            when (provider) {
+                Layer2Provider.SPARK, Layer2Provider.ARK -> parsed.toBitcoinLayer2Draft(layer2UseSats)
+                else -> unsupportedLayer2Draft(parsed.rawInput)
             }
         is ParsedSendRecipient.Liquid ->
             if (provider == null || provider == Layer2Provider.LIQUID) {
@@ -392,6 +436,12 @@ internal fun resolveLayer2SendDraft(
             }
         is ParsedSendRecipient.Spark ->
             if (provider == null || provider == Layer2Provider.SPARK) {
+                parsed.toLayer2Draft(layer2UseSats)
+            } else {
+                unsupportedLayer2Draft(parsed.rawInput)
+            }
+        is ParsedSendRecipient.Ark ->
+            if (provider == null || provider == Layer2Provider.ARK) {
                 parsed.toLayer2Draft(layer2UseSats)
             } else {
                 unsupportedLayer2Draft(parsed.rawInput)
@@ -412,50 +462,81 @@ internal fun layer2RecipientValidationError(
     parsed: ParsedSendRecipient,
     provider: Layer2Provider? = null,
     connectionType: LightningNodeConnectionType? = null,
+    context: Context? = null,
 ): String? {
+    fun s(id: Int, fallback: String): String = context?.getString(id) ?: fallback
     return when (parsed) {
         is ParsedSendRecipient.Empty -> null
         is ParsedSendRecipient.Bitcoin ->
-            if (provider == Layer2Provider.SPARK) {
-                null
-            } else {
-                "Bitcoin addresses are not supported on Liquid send"
+            when (provider) {
+                Layer2Provider.SPARK, Layer2Provider.ARK ->
+                    if (SilentPayment.isSilentPaymentAddress(parsed.address)) {
+                        s(R.string.l2_error_silent_payments, "Silent payments are not supported here")
+                    } else {
+                        null
+                    }
+                else ->
+                    s(
+                        R.string.l2_error_bitcoin_not_on_liquid,
+                        "Bitcoin addresses are not supported on Liquid send",
+                    )
             }
         is ParsedSendRecipient.Liquid ->
             if (provider == null || provider == Layer2Provider.LIQUID) {
                 null
             } else {
-                "Liquid requests are not supported on Spark send"
+                s(R.string.l2_error_liquid_not_supported, "Liquid requests are not supported here")
             }
         is ParsedSendRecipient.Spark ->
             if (provider == null || provider == Layer2Provider.SPARK) {
                 null
             } else {
-                "Spark requests are not supported on Liquid send"
+                s(R.string.l2_error_spark_not_supported, "Spark requests are not supported here")
+            }
+        is ParsedSendRecipient.Ark ->
+            if (provider == null || provider == Layer2Provider.ARK) {
+                null
+            } else {
+                s(R.string.l2_error_ark_not_supported, "Ark addresses are not supported here")
             }
         is ParsedSendRecipient.Lightning ->
             when {
                 provider != Layer2Provider.SPARK &&
+                    provider != Layer2Provider.ARK &&
                     parsed.kind == LightningKind.BOLT11 &&
                     parsed.amountSats == null ->
-                    "Amountless Lightning invoices are not supported"
+                    s(
+                        R.string.l2_error_amountless_invoice,
+                        "Amountless Lightning invoices are not supported",
+                    )
                 provider == Layer2Provider.SPARK && parsed.kind == LightningKind.BOLT12 ->
-                    "BOLT12 offers are not supported on Spark send"
+                    s(
+                        R.string.l2_error_bolt12_not_on_spark,
+                        "BOLT12 offers are not supported on Spark send",
+                    )
                 provider == Layer2Provider.LIGHTNING &&
                     parsed.kind == LightningKind.BOLT12 &&
                     !isLightningAddressPayment(parsed) &&
                     connectionType != LightningNodeConnectionType.CLN_REST ->
-                    "BOLT12 offers require a CLN connection"
+                    s(
+                        R.string.l2_error_bolt12_requires_cln,
+                        "BOLT12 offers require a CLN connection",
+                    )
                 else -> null
             }
         is ParsedSendRecipient.UnsupportedLightning -> parsed.errorMessage
         else ->
             when (provider) {
-                Layer2Provider.LIQUID -> "Enter a Liquid, BOLT 11/12, or LN Address"
-                Layer2Provider.SPARK -> "Enter a Spark, BOLT 11, LNURL, or Bitcoin address"
+                Layer2Provider.LIQUID ->
+                    s(R.string.l2_hint_liquid, "Enter a Liquid, BOLT 11/12, or LN Address")
+                Layer2Provider.SPARK ->
+                    s(R.string.l2_hint_spark, "Enter a Spark, BOLT 11, LNURL, or Bitcoin address")
+                Layer2Provider.ARK ->
+                    s(R.string.l2_hint_ark, "Enter a Bitcoin, Ark, BOLT 11/12, or LNURL")
                 Layer2Provider.LIGHTNING ->
-                    lightningNodeRecipientHint(connectionType)
-                else -> "Enter a Liquid, Spark, BOLT 11/12, or LN Address"
+                    lightningNodeRecipientHint(connectionType, context)
+                else ->
+                    s(R.string.l2_hint_any, "Enter a Liquid, Spark, Ark, BOLT 11/12, or LN Address")
             }
     }
 }
@@ -470,15 +551,19 @@ internal fun isLightningAddressPayment(parsed: ParsedSendRecipient.Lightning): B
 
 internal fun lightningNodeRecipientHint(
     connectionType: LightningNodeConnectionType?,
+    context: Context? = null,
 ): String =
     when (connectionType) {
         LightningNodeConnectionType.CLN_REST ->
-            "Enter a BOLT11, BOLT12, LNURL, or LN Address"
+            context?.getString(R.string.l2_hint_ln_node_cln)
+                ?: "Enter a BOLT11, BOLT12, LNURL, or LN Address"
         LightningNodeConnectionType.LND_REST,
         LightningNodeConnectionType.NWC,
         LightningNodeConnectionType.NONE,
         null,
-        -> "Enter a BOLT11, LNURL, or LN Address"
+        ->
+            context?.getString(R.string.l2_hint_ln_node_default)
+                ?: "Enter a BOLT11, LNURL, or LN Address"
     }
 
 internal fun lightningNodeRecipientPlaceholder(
@@ -502,7 +587,11 @@ private fun ParsedSendRecipient.Bitcoin.toLayer1Draft(useSats: Boolean): SendScr
     )
 }
 
-private fun ParsedSendRecipient.Bitcoin.toSparkDraft(useSats: Boolean): SendScreenDraft {
+private fun ParsedSendRecipient.Bitcoin.toSparkDraft(useSats: Boolean): SendScreenDraft =
+    toBitcoinLayer2Draft(useSats)
+
+/** Bare address + BIP21 amount/label for Spark and Ark Bitcoin destinations. */
+private fun ParsedSendRecipient.Bitcoin.toBitcoinLayer2Draft(useSats: Boolean): SendScreenDraft {
     return SendScreenDraft(
         recipientAddress = address,
         amountInput = amountSats?.let { formatSatsForDraft(it, useSats) }.orEmpty(),
@@ -530,6 +619,15 @@ private fun ParsedSendRecipient.Liquid.toLayer2Draft(useSats: Boolean): SendScre
 private fun ParsedSendRecipient.Spark.toLayer2Draft(useSats: Boolean): SendScreenDraft {
     return SendScreenDraft(
         recipientAddress = paymentRequest,
+        amountInput = amountSats?.let { formatSatsForDraft(it, useSats) }.orEmpty(),
+        label = label.orEmpty(),
+        feeRate = LAYER2_DEFAULT_FEE_RATE,
+    )
+}
+
+private fun ParsedSendRecipient.Ark.toLayer2Draft(useSats: Boolean): SendScreenDraft {
+    return SendScreenDraft(
+        recipientAddress = address,
         amountInput = amountSats?.let { formatSatsForDraft(it, useSats) }.orEmpty(),
         label = label.orEmpty(),
         feeRate = LAYER2_DEFAULT_FEE_RATE,

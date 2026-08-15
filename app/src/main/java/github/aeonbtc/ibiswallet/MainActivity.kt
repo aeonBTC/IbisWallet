@@ -1,19 +1,22 @@
 package github.aeonbtc.ibiswallet
 
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.nfc.NdefMessage
 import android.nfc.NdefRecord
 import android.nfc.NfcAdapter
-import android.nfc.cardemulation.CardEmulation
 import android.nfc.Tag
-import android.nfc.tech.Ndef
+import android.nfc.cardemulation.CardEmulation
 import android.nfc.tech.IsoDep
+import android.nfc.tech.Ndef
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.WindowManager
 import android.widget.Toast
@@ -37,9 +40,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.ViewModelProvider
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.localization.LocalAppLocale
@@ -51,14 +54,17 @@ import github.aeonbtc.ibiswallet.ui.screens.CalculatorScreen
 import github.aeonbtc.ibiswallet.ui.screens.LockScreen
 import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
 import github.aeonbtc.ibiswallet.util.BiometricCrypto
+import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.isRecognizedSendInput
+import github.aeonbtc.ibiswallet.viewmodel.ArkViewModel
 import github.aeonbtc.ibiswallet.viewmodel.LiquidViewModel
 import github.aeonbtc.ibiswallet.viewmodel.SparkViewModel
 import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
 class MainActivity : FragmentActivity() {
     companion object {
         private const val TAG = "MainActivity"
@@ -91,15 +97,33 @@ class MainActivity : FragmentActivity() {
     private lateinit var walletViewModel: WalletViewModel
     private lateinit var liquidViewModel: LiquidViewModel
     private lateinit var sparkViewModel: SparkViewModel
+    private lateinit var arkViewModel: ArkViewModel
     private lateinit var lightningNodeViewModel: github.aeonbtc.ibiswallet.viewmodel.LightningNodeViewModel
     private var isUnlocked by mutableStateOf(false)
     private var appUnlockCounter by mutableIntStateOf(0)
     private var cloakBypassed by mutableStateOf(false)
     private var biometricPrompt: BiometricPrompt? = null
     private var wasInBackground = false
-    private var skipBackgroundLockUntilMs = 0L
+    private var skipBackgroundLockUntilElapsedMs = 0L
     private val biometricAutoCancelHandler = Handler(Looper.getMainLooper())
     private var isCloakActive = false
+    private var screenOffReceiverRegistered = false
+    private val screenOffReceiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(
+                context: android.content.Context?,
+                intent: Intent?,
+            ) {
+                if (intent?.action != Intent.ACTION_SCREEN_OFF) return
+                if (!::secureStorage.isInitialized) return
+                val securityMethod = secureStorage.getSecurityMethod()
+                if (securityMethod == SecureStorage.SecurityMethod.NONE) return
+                if (secureStorage.getLockTiming() != SecureStorage.LockTiming.ON_SCREEN_OFF) return
+                if (isActivityResultLockSkipActive()) return
+                if (!isUnlocked) return
+                lockApp()
+            }
+        }
 
     // NFC reader mode — enabled when Send/Balance screen is active.
     // Uses enableReaderMode() instead of enableForegroundDispatch() to suppress
@@ -325,8 +349,12 @@ class MainActivity : FragmentActivity() {
      * activity result can resume the in-flight operation.
      */
     fun skipNextBackgroundLockForActivityResult() {
-        skipBackgroundLockUntilMs = System.currentTimeMillis() + ACTIVITY_RESULT_LOCK_SKIP_WINDOW_MS
+        skipBackgroundLockUntilElapsedMs =
+            SystemClock.elapsedRealtime() + ACTIVITY_RESULT_LOCK_SKIP_WINDOW_MS
     }
+
+    private fun isActivityResultLockSkipActive(): Boolean =
+        SystemClock.elapsedRealtime() <= skipBackgroundLockUntilElapsedMs
 
     private fun activateNfcReaderMode() {
         if (isNfcReaderModeActive || !nfcReaderRequests.hasActiveRequests()) return
@@ -482,9 +510,15 @@ class MainActivity : FragmentActivity() {
     @Suppress("DEPRECATION")
     private fun updateTaskDescription() {
         if (isCloakActive) {
+            val icon =
+                android.graphics.BitmapFactory.decodeResource(
+                    resources,
+                    R.mipmap.ic_launcher_calculator,
+                )
             setTaskDescription(
                 ActivityManager.TaskDescription(
                     getString(R.string.cloak_calculator_label),
+                    icon,
                 ),
             )
         }
@@ -497,10 +531,23 @@ class MainActivity : FragmentActivity() {
             // Prevent tapjacking/overlay attacks
             window.decorView.filterTouchesWhenObscured = true
 
-            secureStorage = SecureStorage.getInstance(this)
+            secureStorage =
+                try {
+                    SecureStorage.getInstance(this)
+                } catch (e: SecureStorage.UnavailableException) {
+                    Log.e(TAG, "Secure storage unavailable: ${e.message}", e)
+                    Toast.makeText(
+                        this,
+                        getString(R.string.storage_unavailable),
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    finish()
+                    return
+                }
             walletViewModel = ViewModelProvider(this)[WalletViewModel::class.java]
             liquidViewModel = ViewModelProvider(this)[LiquidViewModel::class.java]
             sparkViewModel = ViewModelProvider(this)[SparkViewModel::class.java]
+            arkViewModel = ViewModelProvider(this)[ArkViewModel::class.java]
             lightningNodeViewModel =
                 ViewModelProvider(this)[github.aeonbtc.ibiswallet.viewmodel.LightningNodeViewModel::class.java]
             nfcAdapter = NfcAdapter.getDefaultAdapter(this)
@@ -509,7 +556,7 @@ class MainActivity : FragmentActivity() {
             applyPendingIconSwap()
 
             // Check cloak mode
-            isCloakActive = secureStorage.isCloakModeEnabled() && secureStorage.getCloakCode() != null
+            isCloakActive = secureStorage.isCloakModeEnabled() && secureStorage.hasCloakCode()
             updateTaskDescription()
 
             // Apply screenshot prevention if enabled
@@ -519,6 +566,8 @@ class MainActivity : FragmentActivity() {
                     WindowManager.LayoutParams.FLAG_SECURE,
                 )
             }
+
+            registerScreenOffReceiver()
 
             // Check if security is enabled - locked on fresh start, but preserve the
             // unlocked session across configuration-change recreations (the ViewModel
@@ -565,12 +614,13 @@ class MainActivity : FragmentActivity() {
                         if (isUnlocked) {
                             IbisWalletApp(
                                 onLockApp = { lockApp() },
+                                onAutoWipe = { performFullWipe() },
                                 appUnlockCounter = appUnlockCounter,
                             )
                         } else if (isCloakActive && !cloakBypassed) {
-                            // Show calculator disguise — entering the secret code bypasses it
+                            // Show calculator disguise — secret code unlocks; wipe PIN erases all data
                             CalculatorScreen(
-                                cloakCode = secureStorage.getCloakCode() ?: "",
+                                codeMatches = { code -> secureStorage.codeMatchesCloak(code) },
                                 onUnlock = {
                                     cloakBypassed = true
                                     walletViewModel.markCloakBypassedThisSession()
@@ -581,6 +631,18 @@ class MainActivity : FragmentActivity() {
                                     }
                                     // Otherwise fall through to LockScreen on next recompose
                                 },
+                                wipeCodeMatches =
+                                    if (secureStorage.isWipePinEnabled()) {
+                                        { code -> secureStorage.verifyWipePin(code) }
+                                    } else {
+                                        null
+                                    },
+                                onWipe =
+                                    if (secureStorage.isWipePinEnabled()) {
+                                        { performFullWipe() }
+                                    } else {
+                                        null
+                                    },
                             )
                         } else {
                             val biometricManager = BiometricManager.from(this)
@@ -617,42 +679,40 @@ class MainActivity : FragmentActivity() {
                                                 incrementFailedAttempts = !realPinWasTried,
                                             )
                                         }
+                                // Wipe PIN is checked after real/duress so a shared value
+                                // never wipes when it should unlock. Correct wipe PIN always
+                                // wipes even during lockout.
+                                val isWipePin =
+                                    !isRealPin && !isDuressPin &&
+                                        withContext(Dispatchers.Default) {
+                                            secureStorage.verifyWipePin(pin)
+                                        }
 
                                 when {
                                     isRealPin -> {
-                                        walletViewModel.exitDuressMode()
+                                        // Await wallet switch so the main UI never flashes decoy state.
+                                        withContext(Dispatchers.Main) {
+                                            walletViewModel.exitDuressMode()
+                                        }
                                         unlockApp(incrementCounter = true)
                                         true
                                     }
                                     isDuressPin -> {
-                                        walletViewModel.enterDuressMode()
-                                        unlockApp(incrementCounter = true)
-                                        true
-                                    }
-                                    else -> {
-                                        // Check if failed attempts reached auto-wipe threshold
-                                        if (secureStorage.shouldAutoWipe()) {
-                                            lifecycleScope.launch {
-                                                liquidViewModel.prepareForFullWipe()
-                                                sparkViewModel.prepareForFullWipe()
-                                                lightningNodeViewModel.prepareForFullWipe()
-                                                walletViewModel.wipeAllData { result ->
-                                                    // Always kill the process even on partial wipe — leaving
-                                                    // a half-functional wallet reachable on the unlock screen
-                                                    // is worse than terminating with logged residue. The
-                                                    // repository already logs failed steps via SecureLog.
-                                                    if (!result.success && BuildConfig.DEBUG) {
-                                                        android.util.Log.w(
-                                                            "MainActivity",
-                                                            "Auto-wipe completed with residue: ${result.failedSteps}",
-                                                        )
-                                                    }
-                                                    android.os.Process.killProcess(android.os.Process.myPid())
-                                                }
+                                        // Await decoy load before unlock — never show real balances.
+                                        val entered =
+                                            withContext(Dispatchers.Main) {
+                                                walletViewModel.enterDuressMode()
                                             }
+                                        if (entered) {
+                                            unlockApp(incrementCounter = true)
                                         }
+                                        entered
+                                    }
+                                    isWipePin || secureStorage.shouldAutoWipe() -> {
+                                        performFullWipe()
                                         false
                                     }
+                                    else -> false
                                 }
                                 },
                                 onBiometricRequest = {
@@ -698,14 +758,13 @@ class MainActivity : FragmentActivity() {
                 SecureStorage.LockTiming.DISABLED -> {
                     // Never auto-lock after initial unlock
                 }
-                SecureStorage.LockTiming.WHEN_MINIMIZED -> {
-                    // Already locked in onStop
+                SecureStorage.LockTiming.WHEN_MINIMIZED,
+                SecureStorage.LockTiming.ON_SCREEN_OFF,
+                -> {
+                    // WHEN_MINIMIZED locks in onStop; ON_SCREEN_OFF locks via receiver
                 }
                 else -> {
-                    // Check if timeout has elapsed
-                    val lastBackgroundTime = secureStorage.getLastBackgroundTime()
-                    val elapsedTime = System.currentTimeMillis() - lastBackgroundTime
-                    if (elapsedTime >= lockTiming.timeoutMs) {
+                    if (secureStorage.shouldLockAfterBackground(lockTiming.timeoutMs)) {
                         lockApp()
                     }
                 }
@@ -734,15 +793,28 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         super.onStop()
 
-        val securityMethod = secureStorage.getSecurityMethod()
+        // Only WHEN_MINIMIZED clears on leave-foreground; lock/close use their own paths.
+        if (::secureStorage.isInitialized &&
+            secureStorage.getClearClipboardMode().clearOnBackground() &&
+            !isActivityResultLockSkipActive()
+        ) {
+            SecureClipboard.clearNow(this)
+        }
+
+        val securityMethod =
+            if (::secureStorage.isInitialized) {
+                secureStorage.getSecurityMethod()
+            } else {
+                return
+            }
         if (securityMethod == SecureStorage.SecurityMethod.NONE) {
             return
         }
-        if (System.currentTimeMillis() <= skipBackgroundLockUntilMs) {
-            skipBackgroundLockUntilMs = 0L
+        if (isActivityResultLockSkipActive()) {
+            skipBackgroundLockUntilElapsedMs = 0L
             return
         }
-        skipBackgroundLockUntilMs = 0L
+        skipBackgroundLockUntilElapsedMs = 0L
 
         wasInBackground = true
         val lockTiming = secureStorage.getLockTiming()
@@ -755,11 +827,42 @@ class MainActivity : FragmentActivity() {
                 // Lock immediately according to the user's security timing.
                 lockApp()
             }
+            SecureStorage.LockTiming.ON_SCREEN_OFF -> {
+                // Minimizing alone does not lock; ACTION_SCREEN_OFF does.
+            }
             else -> {
                 // Record the time we went to background
-                secureStorage.setLastBackgroundTime(System.currentTimeMillis())
+                secureStorage.setLastBackgroundInstant()
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (::secureStorage.isInitialized &&
+            secureStorage.getClearClipboardMode().clearOnAppClose()
+        ) {
+            SecureClipboard.clearNow(this)
+        }
+        unregisterScreenOffReceiver()
+        super.onDestroy()
+    }
+
+    private fun registerScreenOffReceiver() {
+        if (screenOffReceiverRegistered) return
+        val filter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        ContextCompat.registerReceiver(
+            this,
+            screenOffReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        screenOffReceiverRegistered = true
+    }
+
+    private fun unregisterScreenOffReceiver() {
+        if (!screenOffReceiverRegistered) return
+        runCatching { unregisterReceiver(screenOffReceiver) }
+        screenOffReceiverRegistered = false
     }
 
     private fun unlockApp(incrementCounter: Boolean) {
@@ -773,13 +876,39 @@ class MainActivity : FragmentActivity() {
     private fun lockApp() {
         isUnlocked = false
         secureStorage.lockSpendSecretSession()
+        if (secureStorage.getClearClipboardMode().clearOnLock()) {
+            SecureClipboard.clearNow(this)
+        }
         NdefHostApduService.setNdefPayload(null)
         deactivateNfcReaderMode()
         deactivatePreferredHceService()
         walletViewModel.onAppLocked()
         liquidViewModel.unloadLiquidWallet()
         sparkViewModel.unloadSparkWallet()
+        arkViewModel.unloadArkWallet()
         lightningNodeViewModel.unloadLightningWallet()
+    }
+
+    /**
+     * Full wipe used by auto-wipe threshold, lock-screen Wipe PIN, and cloak calculator
+     * emergency wipe. Always kills the process when finished.
+     */
+    private fun performFullWipe() {
+        lifecycleScope.launch {
+            liquidViewModel.prepareForFullWipe()
+            sparkViewModel.prepareForFullWipe()
+            arkViewModel.prepareForFullWipe()
+            lightningNodeViewModel.prepareForFullWipe()
+            walletViewModel.wipeAllData { result ->
+                // Always kill the process even on partial wipe — leaving a half-functional
+                // wallet reachable on the unlock/calculator screen is worse than terminating
+                // with logged residue. The repository already logs failed steps via SecureLog.
+                if (!result.success && BuildConfig.DEBUG) {
+                    Log.w(TAG, "Wipe completed with residue: ${result.failedSteps}")
+                }
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -865,9 +994,11 @@ class MainActivity : FragmentActivity() {
                             ).show()
                             return
                         }
-                        // Biometric always opens the real wallet
-                        walletViewModel.exitDuressMode()
-                        unlockApp(incrementCounter = true)
+                        // Biometric always opens the real wallet — await switch first.
+                        lifecycleScope.launch {
+                            walletViewModel.exitDuressMode()
+                            unlockApp(incrementCounter = true)
+                        }
                     }
 
                     override fun onAuthenticationError(

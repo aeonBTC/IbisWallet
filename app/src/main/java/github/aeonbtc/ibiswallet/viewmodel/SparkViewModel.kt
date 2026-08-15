@@ -41,6 +41,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     val events: SharedFlow<SparkEvent> = repository.events
     val sparkTransactionLabels = repository.sparkTransactionLabels
     val sparkAddressLabels = repository.sparkAddressLabels
+    val sparkTransactionSources = repository.sparkTransactionSources
     val loadedWalletId = repository.loadedWalletId
     val isSparkConnected = repository.isConnected
     val isSparkConnecting = repository.isConnecting
@@ -195,7 +196,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
 
         val visibleWalletId = pendingWalletLoadId ?: loadedWalletId.value
         if (visibleWalletId != null && visibleWalletId != walletId) {
-            repository.clearWalletDisplayState()
+            // Don't blank Balance: loadWallet applies SecureStorage history cache next.
             resetSparkUiState()
         }
 
@@ -226,11 +227,11 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     fun unloadSparkWallet() {
         val previousLifecycleJob = walletLifecycleJob
         pendingWalletLoadId = null
-        repository.clearWalletDisplayState()
         resetSparkUiState()
         walletLifecycleJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 previousLifecycleJob?.cancelAndJoinWithinSwitchTimeout()
+                // unload/detach keeps SecureStorage snapshot on Balance (offline paint).
                 repository.unloadWallet()
             } finally {
                 if (walletLifecycleJob?.isActive != true) {
@@ -296,7 +297,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     fun syncWallet(walletId: String) {
         val visibleWalletId = pendingWalletLoadId ?: loadedWalletId.value
         if (visibleWalletId != null && visibleWalletId != walletId) {
-            repository.clearWalletDisplayState()
+            // Don't blank Balance: loadWallet applies SecureStorage history cache next.
             resetSparkUiState()
         }
 
@@ -363,6 +364,18 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.prepareSend(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds)
+        }
+    }
+
+    fun prepareSendMany(recipients: List<Pair<String, Long>>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.prepareSendMany(recipients)
+        }
+    }
+
+    fun sendPreparedMany() {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.sendPreparedMany()
         }
     }
 

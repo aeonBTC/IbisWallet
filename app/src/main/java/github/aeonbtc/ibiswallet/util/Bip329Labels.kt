@@ -7,13 +7,16 @@ enum class Bip329LabelScope {
     BITCOIN,
     LIQUID,
     SPARK,
+    ARK,
     BOTH,
 }
 
 enum class Bip329LabelNetwork(val wireValue: String) {
     BITCOIN("bitcoin"),
     LIQUID("liquid"),
-    SPARK("spark"), ;
+    SPARK("spark"),
+    ARK("ark"),
+    ;
 
     companion object {
         fun fromWireValue(value: String?): Bip329LabelNetwork? =
@@ -28,13 +31,17 @@ data class Bip329LabelCounts(
     val liquidTransactionCount: Int = 0,
     val sparkAddressCount: Int = 0,
     val sparkTransactionCount: Int = 0,
+    val arkAddressCount: Int = 0,
+    val arkTransactionCount: Int = 0,
 ) {
     fun addressCount(scope: Bip329LabelScope): Int =
         when (scope) {
             Bip329LabelScope.BITCOIN -> bitcoinAddressCount
             Bip329LabelScope.LIQUID -> liquidAddressCount
             Bip329LabelScope.SPARK -> sparkAddressCount
-            Bip329LabelScope.BOTH -> bitcoinAddressCount + liquidAddressCount + sparkAddressCount
+            Bip329LabelScope.ARK -> arkAddressCount
+            Bip329LabelScope.BOTH ->
+                bitcoinAddressCount + liquidAddressCount + sparkAddressCount + arkAddressCount
         }
 
     fun transactionCount(scope: Bip329LabelScope): Int =
@@ -42,7 +49,9 @@ data class Bip329LabelCounts(
             Bip329LabelScope.BITCOIN -> bitcoinTransactionCount
             Bip329LabelScope.LIQUID -> liquidTransactionCount
             Bip329LabelScope.SPARK -> sparkTransactionCount
-            Bip329LabelScope.BOTH -> bitcoinTransactionCount + liquidTransactionCount + sparkTransactionCount
+            Bip329LabelScope.ARK -> arkTransactionCount
+            Bip329LabelScope.BOTH ->
+                bitcoinTransactionCount + liquidTransactionCount + sparkTransactionCount + arkTransactionCount
         }
 
     fun totalCount(scope: Bip329LabelScope): Int = addressCount(scope) + transactionCount(scope)
@@ -173,6 +182,8 @@ object Bip329Labels {
         val liquidTransactionLabels = mutableMapOf<String, String>()
         val sparkAddressLabels = mutableMapOf<String, String>()
         val sparkTransactionLabels = mutableMapOf<String, String>()
+        val arkAddressLabels = mutableMapOf<String, String>()
+        val arkTransactionLabels = mutableMapOf<String, String>()
         val outputSpendable = mutableMapOf<String, Boolean>()
         var totalLines = 0
         var errorLines = 0
@@ -191,6 +202,7 @@ object Bip329Labels {
                                 Bip329LabelNetwork.BITCOIN -> bitcoinTransactionLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.LIQUID -> liquidTransactionLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.SPARK -> sparkTransactionLabels[parsed.ref] = parsed.label
+                                Bip329LabelNetwork.ARK -> arkTransactionLabels[parsed.ref] = parsed.label
                             }
                         }
                     }
@@ -201,6 +213,7 @@ object Bip329Labels {
                                 Bip329LabelNetwork.BITCOIN -> bitcoinAddressLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.LIQUID -> liquidAddressLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.SPARK -> sparkAddressLabels[parsed.ref] = parsed.label
+                                Bip329LabelNetwork.ARK -> arkAddressLabels[parsed.ref] = parsed.label
                             }
                         }
                     }
@@ -228,6 +241,7 @@ object Bip329Labels {
                     Bip329LabelNetwork.BITCOIN -> bitcoinTransactionLabels[csvResult.first] = csvResult.second
                     Bip329LabelNetwork.LIQUID -> liquidTransactionLabels[csvResult.first] = csvResult.second
                     Bip329LabelNetwork.SPARK -> sparkTransactionLabels[csvResult.first] = csvResult.second
+                    Bip329LabelNetwork.ARK -> arkTransactionLabels[csvResult.first] = csvResult.second
                 }
                 continue
             }
@@ -242,6 +256,8 @@ object Bip329Labels {
             liquidTransactionLabels = liquidTransactionLabels,
             sparkAddressLabels = sparkAddressLabels,
             sparkTransactionLabels = sparkTransactionLabels,
+            arkAddressLabels = arkAddressLabels,
+            arkTransactionLabels = arkTransactionLabels,
             outputSpendable = outputSpendable,
             totalLines = totalLines,
             errorLines = errorLines,
@@ -305,6 +321,7 @@ object Bip329Labels {
             Bip329LabelScope.BITCOIN, Bip329LabelScope.BOTH -> Bip329LabelNetwork.BITCOIN
             Bip329LabelScope.LIQUID -> Bip329LabelNetwork.LIQUID
             Bip329LabelScope.SPARK -> Bip329LabelNetwork.SPARK
+            Bip329LabelScope.ARK -> Bip329LabelNetwork.ARK
         }
 
     private fun inferAddressNetwork(ref: String): Bip329LabelNetwork? {
@@ -315,6 +332,9 @@ object Bip329Labels {
                 normalized.startsWith("liquidnetwork:") -> Bip329LabelNetwork.LIQUID
 
             normalized.startsWith("spark") || normalized.startsWith("sp1") -> Bip329LabelNetwork.SPARK
+
+            // Mainnet Ark addresses (Ibis is mainnet-only for Ark).
+            normalized.startsWith("ark1") -> Bip329LabelNetwork.ARK
 
             normalized.startsWith("bc1") || normalized.startsWith("1") ||
                 normalized.startsWith("3") ||
@@ -381,6 +401,9 @@ object Bip329Labels {
         val errorLines: Int,
         val sparkAddressLabels: Map<String, String> = emptyMap(),
         val sparkTransactionLabels: Map<String, String> = emptyMap(),
+        val arkAddressLabels: Map<String, String> = emptyMap(),
+        /** Ark movement ids as BIP 329 `tx` refs (network=ark). */
+        val arkTransactionLabels: Map<String, String> = emptyMap(),
     ) {
         val totalBitcoinLabelsImported: Int
             get() = bitcoinAddressLabels.size + bitcoinTransactionLabels.size
@@ -391,8 +414,15 @@ object Bip329Labels {
         val totalSparkLabelsImported: Int
             get() = sparkAddressLabels.size + sparkTransactionLabels.size
 
+        val totalArkLabelsImported: Int
+            get() = arkAddressLabels.size + arkTransactionLabels.size
+
         val totalLabelsImported: Int
-            get() = totalBitcoinLabelsImported + totalLiquidLabelsImported + totalSparkLabelsImported
+            get() =
+                totalBitcoinLabelsImported +
+                    totalLiquidLabelsImported +
+                    totalSparkLabelsImported +
+                    totalArkLabelsImported
 
         val isEmpty: Boolean
             get() = totalLabelsImported == 0

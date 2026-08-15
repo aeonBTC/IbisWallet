@@ -49,6 +49,7 @@ internal object SilentPayment {
         val outpoint: String,
         val privateKey: ByteArray,
         val isTaproot: Boolean = false,
+        val includeInInputHash: Boolean = true,
     ) {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -124,6 +125,7 @@ internal object SilentPayment {
     fun createOutputKeys(
         inputKeys: List<InputKey>,
         recipients: List<String>,
+        allVinOutpoints: List<String> = inputKeys.map { it.outpoint },
     ): List<OutputKey> {
         val parsedRecipients =
             recipients.mapIndexed { index, recipient ->
@@ -147,7 +149,8 @@ internal object SilentPayment {
         require(inputScalarSum != BigInteger.ZERO) { "Invalid silent payment input key sum" }
 
         val inputPubKeySum = multiplyGenerator(inputScalarSum)
-        val inputHash = inputHash(inputKeys.map { it.outpoint }, inputPubKeySum)
+        val hashOutpoints = allVinOutpoints.ifEmpty { inputKeys.map { it.outpoint } }
+        val inputHash = inputHash(hashOutpoints, inputPubKeySum)
         val sharedSecretScalar = inputScalarSum.multiply(inputHash).mod(curveOrder)
 
         val outputKeys = mutableListOf<OutputKey>()
