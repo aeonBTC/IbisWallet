@@ -2,6 +2,7 @@
     <string name="app_name">Ibis Wallet</string>
     <string name="wallet_added">Wallet added</string>
     <string name="cloak_calculator_label">Calculator</string>
+    <string name="cloak_calculator_notification_body">Running</string>
     <string name="nfc_service_description">Bitcoin payment address</string>
     <string name="startup_loading_artwork">Ibis launch artwork</string>
     <string name="version_format">Version: %1$s</string>
@@ -18,6 +19,7 @@
     <string name="app_update_opt_in_message">This option can be toggled on the About screen.</string>
     <string name="app_update_opt_in_enable">Enable</string>
     <string name="app_update_opt_in_not_now">Not now</string>
+    <string name="storage_unavailable">Secure storage is temporarily unavailable. No data was deleted — please reopen the app.</string>
     <string name="common_selected">Selected</string>
     <string name="settings_language_title">Language</string>
     <string name="settings_language_english">English</string>
@@ -32,6 +34,10 @@
     <string name="wallet_delete_irreversible_message">Are you sure you want to delete "%1$s"? This action cannot be undone. Make sure you have backed up your recovery phrase.</string>
     <string name="wallet_delete_confirm_removal_label">Confirm removal</string>
     <string name="wallet_delete_irreversible_ack_label">I understand this cannot be undone</string>
+    <string name="wallet_delete_ark_pending_exit">Ark has a pending or claimable unilateral exit. Finish the exit claim before deleting this wallet — the seed alone cannot recover in-progress exits.</string>
+    <string name="wallet_delete_ark_no_backup">This wallet has Ark VTXO activity and no Ark DB backup. BIP39 seed will recover Ark funds while the ASP is available; if the ASP goes offline an Ark DB backup is needed for recovery.</string>
+    <string name="wallet_delete_ark_has_funds">This wallet has Ark funds. Deleting removes the local Bark database. BIP39 seed will recover Ark funds while the ASP is available; if the ASP goes offline an Ark DB backup is needed for recovery.</string>
+    <string name="wallet_delete_ark_blocked_ack">Resolve Ark exits before deleting</string>
     <string name="wallet_view_sensitive_info_message">You are about to view sensitive information for "%1$s".</string>
     <string name="key_material_scan_qr_format">Scan this QR code to import the %1$s</string>
     <string name="multisig_manual_option">Manual</string>
@@ -54,6 +60,7 @@
     <string name="foreground_connectivity_status_liquid">Liquid</string>
     <string name="foreground_connectivity_status_lightning">Lightning</string>
     <string name="foreground_connectivity_status_spark">Spark</string>
+    <string name="foreground_connectivity_status_ark">Ark</string>
     <string name="foreground_connectivity_status_tor">Tor</string>
     <string name="nfc_status_ready">NFC</string>
     <string name="nfc_status_receive_ready">NFC Receive</string>
@@ -63,10 +70,9 @@
     <string name="nfc_status_sharing">NFC Sharing</string>
     <string name="welcome_logo_content_description">Ibis Wallet logo</string>
     <string name="welcome_title">Welcome to Ibis Wallet</string>
-    <string name="welcome_intro">Ibis is a self-custody wallet built for power users with a focus on privacy and customizability. All network services and external connections are disabled by default.</string>
-    <string name="welcome_menu_prompt">Open the options menu to begin configuring Ibis to your liking.</string>
+    <string name="welcome_intro">Ibis is a self-custody wallet for power users, focused on privacy and customization. All network services and external connections are disabled by default.</string>
+    <string name="welcome_menu_prompt">Open the options menu to configure Ibis to your liking.</string>
     <string name="welcome_continue">Continue</string>
-    <string name="welcome_language_hint">Choose a language</string>
     <string name="app_update_check_title">Check GitHub for app updates</string>
     <string name="liquid_enable_info_title">Layer 2 is modular</string>
     <string name="liquid_enable_info_message">Open the Wallet Management screen to enable Liquid support for your desired wallets.\n\n*Liquid can only be enabled on BIP39 wallets.</string>
@@ -75,8 +81,17 @@
     <string name="spark_enable_info_message">Open the Wallet Management screen to enable Spark support for your desired wallets.\n\n*Spark can only be enabled on BIP39 seed wallets.</string>
     <string name="spark_enable_info_confirm">Got it</string>
     <string name="ln_node_enable_info_title">Lightning Node</string>
-    <string name="ln_node_enable_info_message">Use Configure node to add a remote Lightning Node wallet (LND, CLN, or NWC). Each connection is its own wallet — switch wallets to use a different node.</string>
+    <string name="ln_node_enable_info_message">Connect to a remote node (LND, CLN, or NWC) using the Configure node screen. Each node is added as its own wallet.</string>
     <string name="ln_node_enable_info_confirm">Got it</string>
+    <string name="ark_enable_info_title">Layer 2 is modular</string>
+    <string name="ark_enable_info_message">Open the Wallet Management screen to enable Ark support for your desired wallets.\n\n*Ark can only be enabled on BIP39 seed wallets.</string>
+    <string name="ark_enable_info_confirm">Got it</string>
+    <string name="ark_backup_required_title">Ark DB backup</string>
+    <string name="ark_backup_required_status">No backup detected!</string>
+    <string name="ark_backup_required_message">BIP39 seed will recover Ark funds while the ASP is available; if the ASP goes offline an Ark DB backup is needed for recovery.</string>
+    <string name="ark_backup_required_ack">I understand an Ark DB backup is needed if the ASP goes offline</string>
+    <string name="ark_backup_required_confirm">Back up</string>
+    <string name="ark_backup_required_dismiss">Later</string>
     <string name="ln_node_title">Lightning Node</string>
     <string name="ln_node_pill_label">Lightning</string>
     <string name="ln_node_channels_title">Channels</string>
@@ -145,10 +160,10 @@
     <string name="ln_node_status_connecting">Connecting…</string>
     <string name="ln_node_connection_title">Lightning Node Connection</string>
     <string name="ln_node_connection_type">Connection type</string>
-    <string name="ln_node_lnd_rest_hint">Connect to LND REST (default port 8080). Scan an lndconnect QR or paste host, admin macaroon (hex or base64), and TLS cert PEM when required.</string>
-    <string name="ln_node_cln_rest_hint">CLN clnrest (HTTPS). Host, port, and rune — scan Connection URL QR or paste. TLS optional.</string>
+    <string name="ln_node_lnd_rest_hint">Connect via LND REST (default port 8080). Scan an lndconnect QR or paste host, admin macaroon (hex or base64), and TLS cert PEM when required.</string>
+    <string name="ln_node_cln_rest_hint">Connect via CLN clnrest (default port 3010). Scan a Connection URL QR or paste host, rune, and TLS cert when required.</string>
     <string name="ln_node_cln_tls_cert">TLS certs (PEM or Zeus base64)</string>
-    <string name="ln_node_nwc_hint">Scan or paste a nostr+walletconnect:// URI from your NWC provider.</string>
+    <string name="ln_node_nwc_hint">Connect via NWC (NIP-47). Scan a QR or paste a nostr+walletconnect:// URI from your provider.</string>
     <string name="ln_node_host">Host</string>
     <string name="ln_node_qr_scan_cd">Scan connection QR</string>
     <string name="ln_node_qr_import_success">Connection imported</string>
@@ -196,7 +211,7 @@
     <string name="ln_node_new">New</string>
     <string name="ln_node_payment_received">Lightning received</string>
     <string name="ln_node_send_lightning">Send Lightning</string>
-    <string name="ln_node_payment_sent">Payment sent</string>
+    <string name="ln_node_payment_sent">Payment completed on Lightning.</string>
     <string name="ln_node_payment_progress_title">Sending Payment</string>
     <string name="ln_node_payment_progress_message">Review confirmed. Routing the payment now.</string>
     <string name="ln_node_payment_progress_review_title">Review confirmed</string>
@@ -418,7 +433,7 @@
     <string name="loc_25d748f3" formatted="false">Watch Only</string>
     <string name="loc_24d8d452" formatted="false">Seed Phrase</string>
     <string name="loc_27bd3430" formatted="false">Lock</string>
-    <string name="loc_f08db23b" formatted="false">Sync</string>
+    <string name="loc_f08db23b" formatted="false">Full Sync</string>
     <string name="loc_2bb3e26c" formatted="false">Source Code</string>
     <string name="loc_98b3744d" formatted="false">Request features and report bugs on GitHub</string>
     <string name="loc_7a3f1c9e" formatted="false">Donate</string>
@@ -790,6 +805,15 @@
     <string name="loc_972e5de0" formatted="false">Send L-BTC</string>
     <string name="loc_002b1ce2" formatted="false">Coin Control</string>
     <string name="loc_fcc11f52" formatted="false">Multiple</string>
+    <string name="send_multi_sequential_note">Each recipient is a separate payment (not one transaction).</string>
+    <string name="send_multi_progress_format">Sending %1$d of %2$d…</string>
+    <string name="send_multi_done_format">Sent %1$d of %2$d</string>
+    <string name="send_multi_partial_format">Sent %1$d of %2$d (%3$d failed)</string>
+    <string name="send_multi_ark_only">Multiple mode supports Ark addresses only</string>
+    <string name="send_multi_spark_only">Multiple mode supports Spark addresses only</string>
+    <string name="send_multi_need_two">Add at least two recipients</string>
+    <string name="send_multi_ark_address_hint">Ark address</string>
+    <string name="send_multi_spark_address_hint">Spark address</string>
     <string name="loc_8a1057a2" formatted="false">Tap to add Liquid recipients</string>
     <string name="loc_d98e9517" formatted="false">Tap to edit recipients</string>
     <string name="loc_4622d13c" formatted="false">Liquid address</string>
@@ -869,6 +893,8 @@
     <string name="loc_85a65da2" formatted="false">View Key Material</string>
     <string name="loc_f0f54738" formatted="false">What would you like to reveal?</string>
     <string name="loc_e109877e" formatted="false">Private Key (WIF)</string>
+    <string name="key_material_extended_private_key" formatted="false">Extended Private Key</string>
+    <string name="key_material_extended_private_key_label" formatted="false">extended private key</string>
     <string name="loc_c4a5346c" formatted="false">private key</string>
     <string name="loc_0d4e6f81" formatted="false">address</string>
     <string name="loc_ad04894c" formatted="false">Back to Selection</string>
@@ -900,17 +926,20 @@
     <string name="loc_4355b799" formatted="false">PIN code</string>
     <string name="loc_599c7d5f" formatted="false">Lock Timer</string>
     <string name="security_lock_timing_when_minimized">When minimized</string>
+    <string name="security_lock_timing_on_screen_off">On screen off</string>
     <string name="security_lock_timing_after_1_min">After 1 minute</string>
     <string name="security_lock_timing_after_5_min">After 5 minutes</string>
+    <string name="wallet_notification_locked_title">Ibis Wallet</string>
+    <string name="wallet_notification_locked_body">Open app to view</string>
     <string name="loc_6e64c96f" formatted="false">Randomize PIN pad</string>
     <string name="loc_a0a0bf84" formatted="false">Enable PIN code lock first</string>
-    <string name="loc_b68140bc" formatted="false">Duress PIN</string>
+    <string name="loc_b68140bc" formatted="false">Duress Wallet</string>
     <string name="loc_a1d57483" formatted="false">Set up PIN or biometric to enable</string>
     <string name="loc_96e7526f" formatted="false">Add a wallet first</string>
-    <string name="loc_f6649c50" formatted="false">Unlock Ibis into a decoy wallet</string>
+    <string name="loc_f6649c50" formatted="false">PIN unlocks a decoy wallet</string>
     <string name="loc_10bf1589" formatted="false">Auto-Wipe</string>
-    <string name="loc_4e19a59a" formatted="false">Wipe after unlock attempts</string>
-    <string name="loc_3bbee4d1" formatted="false">Erase app data after failed unlock</string>
+    <string name="loc_4e19a59a" formatted="false">Failed Attempts</string>
+    <string name="loc_3bbee4d1" formatted="false">Erase all app data after failed unlock</string>
     <string name="loc_560ec39d" formatted="false">Set up PIN code to enable</string>
     <string name="loc_bd14b437" formatted="false">Cloak Mode</string>
     <string name="loc_127261f8" formatted="false">Disguise as calculator</string>
@@ -918,13 +947,19 @@
     <string name="loc_5d688c9a" formatted="false">Hide Ibis behind a calculator app</string>
     <string name="loc_714c3012" formatted="false">Disable Screenshots</string>
     <string name="loc_0d6a729c" formatted="false">Blocks screenshots and app previews</string>
+    <string name="security_clear_clipboard_title">Clear Clipboard</string>
+    <string name="security_clear_clipboard_subtitle_off">Preference for wiping clipboard</string>
+    <string name="security_clear_clipboard_when_on_lock">On lock</string>
+    <string name="security_clear_clipboard_when_on_app_close">On app close</string>
+    <string name="security_clear_clipboard_when_on_lock_and_close">On lock and app close</string>
+    <string name="security_clear_clipboard_when_minimized">When minimized</string>
     <string name="loc_3139ebdd" formatted="false">Disable Cloak Mode?</string>
     <string name="loc_aa09917b" formatted="false">The app icon will revert to Ibis Wallet after restart. You may need to re-add the homescreen shortcut.</string>
     <string name="loc_80f874cd" formatted="false">Disable</string>
     <string name="loc_2a9da994" formatted="false">Restart Required</string>
     <string name="loc_28441b9b" formatted="false">Restart</string>
     <string name="loc_2dc29d4d" formatted="false">Later</string>
-    <string name="loc_4b582481" formatted="false">Disable Duress PIN?</string>
+    <string name="loc_4b582481" formatted="false">Disable Duress Wallet?</string>
     <string name="loc_cd305fb8" formatted="false">The decoy wallet will be removed.</string>
     <string name="loc_5e0c0f5b" formatted="false">Enable Auto-Wipe?</string>
     <string name="loc_f40ccd04" formatted="false">Enable</string>
@@ -943,7 +978,7 @@
     <string name="loc_47bc3f78" formatted="false">Decoy Seed Phrase</string>
     <string name="loc_16bd0da2" formatted="false">BIP39 seed, Electrum seed, WIF private key, xpub/zpub, or address</string>
     <string name="loc_396e66e1" formatted="false">Set a master fingerprint for better hardware wallet PSBT compatibility.</string>
-    <string name="loc_189d09c6" formatted="false">Enable Duress PIN</string>
+    <string name="loc_189d09c6" formatted="false">Enable Duress Wallet</string>
     <string name="loc_bbc273c5" formatted="false">Set Unlock Pin</string>
     <string name="loc_b02d0f6b" formatted="false">Confirm Unlock Pin</string>
     <string name="loc_75f1a5fd" formatted="false">Enter this pin in the calculator app and press the \'=\' key to unlock</string>
@@ -967,7 +1002,13 @@
     <string name="loc_35cb0c66" formatted="false">Allow spending unconfirmed UTXOs</string>
     <string name="loc_ccb38171" formatted="false">NFC</string>
     <string name="loc_db88d4ce" formatted="false">Swipe Navigation</string>
-    <string name="loc_23c9f3ad" formatted="false">Bitcoin External Services</string>
+    <string name="loc_23c9f3ad" formatted="false">External Services</string>
+    <string name="settings_rbf_title">RBF by Default</string>
+    <string name="settings_rbf_subtitle">Signal replace-by-fee on new sends</string>
+    <string name="settings_require_coin_control_title">Require Coin Control</string>
+    <string name="settings_require_coin_control_subtitle">Forces UTXO selection before send</string>
+    <string name="settings_consolidate_change_title">Consolidate Change</string>
+    <string name="settings_consolidate_change_subtitle">Prefer spending change UTXOs first</string>
     <string name="loc_64f10f32" formatted="false">Liquid External Services</string>
     <string name="loc_31ab2a4e" formatted="false">Fee Rate Source</string>
     <string name="loc_892c0ce5" formatted="false">Tor connected</string>
@@ -982,8 +1023,8 @@
     <string name="historical_tx_fiat_yadio_limit_note">Yadio.io: 365-day history limit</string>
     <string name="tx_history_show_current_prices">Show current prices</string>
     <string name="tx_history_show_historical_prices">Show historical prices</string>
-    <string name="loc_a39dd5c6" formatted="false">Bitcoin Electrum Server</string>
-    <string name="loc_2a54f889" formatted="false">Open Bitcoin Electrum settings</string>
+    <string name="loc_a39dd5c6" formatted="false">Electrum Server</string>
+    <string name="loc_2a54f889" formatted="false">Open Electrum settings</string>
     <string name="loc_56d9acd0" formatted="false">Layer 2 Options</string>
     <string name="loc_f1af1b9c" formatted="false">Trusted federation sidechain</string>
     <string name="loc_eda2a508" formatted="false">Layer 2 amounts shown in sats</string>
@@ -1128,8 +1169,9 @@
     <string name="loc_d91923f1" formatted="false">Sending payment...</string>
     <string name="spark_send_status_title">Sending Payment</string>
     <string name="spark_send_status_submitting">Sending...</string>
-    <string name="spark_send_status_sent_title">Payment Sent</string>
-    <string name="spark_send_status_failed_title">Payment Failed</string>
+    <string name="spark_send_status_sent_title">Spark Payment Sent</string>
+    <string name="spark_send_success">Payment completed on Spark.</string>
+    <string name="spark_send_status_failed_title">Spark Payment Failed</string>
     <string name="spark_send_status_message">Review confirmed. Spark is executing the transfer now.</string>
     <string name="spark_send_status_step_review_title">Review confirmed</string>
     <string name="spark_send_status_step_review_detail">Amount, recipient, and fee were approved.</string>
@@ -1159,6 +1201,16 @@
     <string name="liquid_source_native_receive">Native L-BTC receive</string>
     <string name="liquid_source_native_send">Native L-BTC send</string>
     <string name="liquid_send_status_sending">Sending...</string>
+    <string name="liquid_send_status_sending_title">Sending Liquid</string>
+    <string name="liquid_send_status_sending_lightning_title">Sending Lightning Payment</string>
+    <string name="liquid_send_status_sent_title">Liquid Payment Sent</string>
+    <string name="liquid_send_status_failed_title">Liquid Payment Failed</string>
+    <string name="liquid_send_success">Payment completed on Liquid.</string>
+    <string name="liquid_send_success_asset_format">%1$s sent on Liquid.</string>
+    <string name="liquid_send_success_lightning">Payment completed on Lightning via Liquid.</string>
+    <string name="loc_pay_bolt12_offer">Pay BOLT12 Offer?</string>
+    <string name="loc_pay_lightning_invoice">Pay Lightning Invoice?</string>
+    <string name="loc_pay_lightning_address">Pay Lightning Address?</string>
     <string name="liquid_send_status_message">Review confirmed. Liquid is executing the transfer now.</string>
     <string name="liquid_send_status_step_review_title">Review confirmed</string>
     <string name="liquid_send_status_step_review_detail">Amount, recipient, and fee were approved.</string>
@@ -1234,5 +1286,422 @@
     <string name="speed_up_error_cpfp_build_failed">Could not build the CPFP child transaction. Sync the wallet and try again.</string>
     <string name="speed_up_error_cpfp_broadcast_rejected">The network rejected the CPFP transaction. Try a higher fee rate or sync and retry.</string>
     <string name="speed_up_error_cpfp_generic">CPFP failed: %1$s</string>
+    <string name="security_spend_pin_title">Spend PIN</string>
+    <string name="security_spend_pin_subtitle">Require unlock PIN before sending</string>
+    <string name="security_spend_pin_prompt">Enter PIN to confirm spend</string>
+    <string name="security_view_key_material_pin_prompt">Enter PIN to view key material</string>
+    <string name="security_view_key_material_biometric_subtitle">Authenticate to reveal key material</string>
+    <string name="security_duress_section_title">Duress</string>
+    <string name="security_wipe_pin_title">Wipe PIN</string>
+    <string name="security_wipe_pin_subtitle">Enter PIN to erase all app data</string>
+    <string name="security_wipe_pin_subtitle_with_cloak">Lock screen or calculator (=) erase all app data</string>
+    <string name="security_wipe_pin_enable_title">Enable Wipe PIN?</string>
+    <string name="security_wipe_pin_enable_message">A special PIN that erases all app data when entered on the lock screen. With Cloak Mode, enter it in the calculator and press =.</string>
+    <string name="security_wipe_pin_disable_title">Disable Wipe PIN?</string>
+    <string name="security_wipe_pin_disable_message">The wipe PIN will no longer erase data from the lock screen or calculator.</string>
+    <string name="security_wipe_pin_create_title">Create Wipe PIN</string>
+    <string name="security_wipe_pin_confirm_title">Confirm Wipe PIN</string>
+    <string name="security_wipe_pin_mismatch">PINs don\'t match, try again</string>
+    <string name="security_wipe_pin_must_differ_unlock">Must differ from your unlock PIN</string>
+    <string name="security_wipe_pin_must_differ_duress">Must differ from your Duress PIN</string>
+    <string name="security_wipe_pin_must_differ_wipe">Must differ from your Wipe PIN</string>
+    <string name="security_wipe_pin_must_differ_cloak">Must differ from your calculator unlock PIN</string>
+    <string name="security_wipe_pin_cloak_hint">With Cloak Mode, enter this PIN in the calculator and press = to wipe</string>
+    <string name="security_cloak_setup_title">Set Unlock PIN</string>
+    <string name="security_cloak_confirm_title">Confirm Unlock PIN</string>
+    <string name="security_cloak_setup_unlock_hint">Enter this PIN in the calculator, then press = to unlock.</string>
+    <string name="security_cloak_setup_wipe_hint">With Wipe PIN enabled, enter that PIN and press = to erase all app data.</string>
+    <string name="security_cloak_enabled_with_wipe_subtitle">Unlock with =, or use Wipe PIN to erase all data</string>
+    <string name="quick_receive_address_title">Receive Address</string>
     <!-- End generated UI localization strings. -->
+    <string name="ark_title">Ark</string>
+    <string name="ark_quick_receive_title">Ark address</string>
+    <string name="ark_pending_breakdown_format">Pending - round %1$s - deposit %2$s - exit %3$s</string>
+    <string name="ark_history_empty">No Ark history yet</string>
+    <string name="ark_send_destination_hint">Bitcoin, Ark, BOLT 11, BOLT 12, or LNURL</string>
+    <string name="ark_available_format">Available %1$s</string>
+    <string name="ark_send_success">Payment completed on Ark.</string>
+    <string name="ark_send_onchain_fee_note">On-chain sends use the ASP fee estimate shown at review.</string>
+    <string name="ark_send_status_title">Sending Payment</string>
+    <string name="ark_send_status_submitting">Sending…</string>
+    <string name="ark_send_status_sent_title">Ark Payment Sent</string>
+    <string name="ark_send_status_failed_title">Ark Payment Failed</string>
+    <string name="ark_send_status_message">Review confirmed. Ark is executing the transfer now.</string>
+    <string name="ark_send_status_step_review_title">Review confirmed</string>
+    <string name="ark_send_status_step_review_detail">Amount, recipient, and fee were approved.</string>
+    <string name="ark_send_status_step_submit_title">Sending through Ark</string>
+    <string name="ark_send_status_step_submit_detail">Signing and sending the payment request.</string>
+    <string name="ark_send_status_step_settle_title">Waiting for settlement</string>
+    <string name="ark_send_status_step_settle_detail">Ark will return the final payment result.</string>
+    <string name="ark_transfer_setup">Transfer Setup</string>
+    <string name="ark_swap_direction">Swap direction</string>
+    <string name="ark_transfer_needs_electrum">Connect Electrum for Ark to Layer 1 transfers</string>
+    <string name="ark_transfer_complete">Transfer complete</string>
+    <string name="ark_quote_action">Get Quote</string>
+    <string name="settings_ark_subtitle">Trust-minimized VTXOs</string>
+    <string name="settings_ark_external_services_title">Ark External Services</string>
+    <string name="settings_ark_auto_delegated_refresh_title">Auto refresh</string>
+    <string name="settings_ark_auto_delegated_refresh_subtitle">Schedule refreshes before outputs become due.</string>
+    <string name="ark_refresh_title">Refresh VTXOs</string>
+    <string name="ark_manage_tab_refresh">Refresh</string>
+    <string name="ark_manage_tab_backup">Backup</string>
+    <string name="ark_manage_tab_exit">Exit</string>
+    <string name="ark_exit_title">Unilateral Exit</string>
+    <string name="ark_exit_history_title">Unilateral exit</string>
+    <string name="ark_exit_claim_history_title">Exit claim</string>
+    <string name="ark_exit_steps_intro">Three steps: start exit → push on-chain txs until claimable → claim to a Bitcoin address.</string>
+    <string name="ark_exit_step1_title">1. Start</string>
+    <string name="ark_exit_step2_title">2. Push on-chain</string>
+    <string name="ark_exit_step2_body">Exit txs need confirmations. Tap to build/broadcast the next round until claimable.</string>
+    <string name="ark_exit_waiting_confirmations">Exit transactions were broadcast. Waiting for confirmations and timelock.</string>
+    <string name="ark_exit_action_required_body">One or more VTXOs need the next exit transaction broadcast.</string>
+    <string name="ark_exit_continue_action">Broadcast next exit txs</string>
+    <string name="ark_exit_starting">Preparing and broadcasting exit transactions…</string>
+    <string name="ark_exit_destination_title">Where funds go</string>
+    <string name="ark_exit_destination_body">First, funds move through wallet-controlled Bitcoin exit scripts derived from this wallet. No external destination is chosen yet. After the timelock, you choose the final Bitcoin address at Claim.</string>
+    <string name="ark_exit_timeline_start">Exit registered</string>
+    <string name="ark_exit_timeline_broadcast">Broadcast exit chain</string>
+    <string name="ark_exit_timeline_action">Action required: broadcast next txs</string>
+    <string name="ark_exit_timeline_waiting">Waiting for confirmations / timelock</string>
+    <string name="ark_exit_timeline_claim">Claim to your Bitcoin address</string>
+    <string name="ark_exit_next_select">Next: select VTXOs and start the exit.</string>
+    <string name="ark_exit_next_starting">Working now. The exit is persisted and will remain visible if you leave this screen.</string>
+    <string name="ark_exit_next_push">Next: tap Broadcast next exit txs. This can repeat for multi-transaction exit chains.</string>
+    <string name="ark_exit_next_wait">No action required now. Ibis checks progress while Ark is open.</string>
+    <string name="ark_exit_next_claim">Next: enter a Bitcoin address below, review the fee, then broadcast the claim.</string>
+    <string name="ark_exit_timeline_eta">Timing: block-dependent. Expect multiple Bitcoin blocks, usually hours; congestion or low fees can take longer.</string>
+    <string name="ark_exit_step3_title">3. Claim</string>
+    <string name="ark_exit_step3_body">When claimable, send funds to a Bitcoin address you control.</string>
+    <string name="ark_exit_started_title">Exit started · %1$d VTXO(s)</string>
+    <string name="ark_exit_push_action">Push exit txs</string>
+    <string name="ark_exit_push_again">Push next txs</string>
+    <string name="ark_exit_no_pending">No exit in progress</string>
+    <string name="ark_exit_none_claimable">Nothing claimable yet</string>
+    <string name="ark_lifecycle_title">Manage VTXOs</string>
+    <string name="ark_refresh_needed_format">%1$d VTXO(s) due for refresh</string>
+    <string name="ark_refresh_action">Refresh</string>
+    <string name="ark_refresh_quote">Manual refresh</string>
+    <string name="ark_refresh_confirm">Confirm refresh</string>
+    <string name="ark_refresh_review_title">Refresh review</string>
+    <string name="ark_refresh_review_count_format">%1$d VTXO(s) selected</string>
+    <string name="ark_refresh_scheduled_height_format">Scheduled at block %1$d</string>
+    <string name="ark_ln_receive_fee_format">Receive fee %1$s</string>
+    <string name="ark_refresh_empty">No VTXOs need a refresh</string>
+    <string name="ark_vtxo_needs_refresh">Due for refresh</string>
+    <string name="ark_refresh_all_vtxos">All VTXOs</string>
+    <string name="ark_exit_start">Exit selected</string>
+    <string name="ark_exit_start_all">Exit all</string>
+    <string name="ark_exit_confirm_title">Start unilateral exit?</string>
+    <string name="ark_exit_confirm_action">Start exit</string>
+    <string name="ark_exit_confirm_all_body">Exit every spendable VTXO on-chain. This broadcasts transactions, pays miner fees, and locks funds behind the exit timelock.</string>
+    <string name="ark_exit_confirm_selected_body">Exit %1$d selected VTXO(s) on-chain. This broadcasts transactions, pays miner fees, and locks funds behind the exit timelock.</string>
+    <string name="ark_exit_confirm_amount_format">Amount: %1$s</string>
+    <string name="ark_exit_confirm_irreversible">Irreversible once the exit tx is broadcast. Claim to a verified Bitcoin address when ready.</string>
+    <string name="ark_error_refresh_delegated_failed">Delegated refresh failed</string>
+    <string name="ark_error_refresh_round_aborted">Refresh round ended without refreshing the VTXOs</string>
+    <string name="ark_error_refresh_timeout">VTXO refresh timed out</string>
+    <string name="ark_refresh_pending_title">Refresh still pending</string>
+    <string name="ark_refresh_pending_body">Bark is waiting for an Ark round. Locked VTXOs remain unavailable until the round completes or is reconciled.</string>
+    <string name="ark_refresh_new_title">Refresh</string>
+    <string name="ark_refresh_due_short">%1$d VTXO(s) need refresh now</string>
+    <string name="ark_refresh_next_blocks_only_format">Next required refresh in %1$d blocks</string>
+    <string name="ark_refresh_next_blocks_format">Next required refresh in %1$d blocks (block %2$d)</string>
+    <string name="ark_refresh_tip_and_required_format">Chain tip %1$d | required by block %2$d</string>
+    <string name="ark_refresh_earliest_expiry_format">Earliest VTXO expires in %1$d blocks</string>
+    <string name="ark_vtxo_expiry_blocks_short_format">Expires in %1$d blocks</string>
+    <string name="ark_vtxo_expiry_now_short">Expiring now</string>
+    <string name="ark_refresh_current">No VTXOs need refresh yet</string>
+    <string name="ark_refresh_no_outputs">No spendable outputs</string>
+    <string name="ark_refresh_review_action">Review refresh</string>
+    <string name="ark_refresh_auto_short">Schedules before outputs are due.</string>
+    <string name="ark_refresh_review_outputs">Outputs</string>
+    <string name="ark_refresh_review_mode">Mode</string>
+    <string name="ark_refresh_review_block">Scheduled block</string>
+    <string name="ark_refresh_review_fee">Fee</string>
+    <string name="ark_refresh_mode_scheduled">Scheduled</string>
+    <string name="ark_refresh_mode_next_round">Next round</string>
+    <string name="ark_refresh_scheduled_fee_note">Estimated from the server fee schedule at that block.</string>
+    <string name="ark_refresh_scheduled_title">Refresh scheduled</string>
+    <string name="ark_refresh_scheduled_body">Scheduled for block %1$d. Ark will complete it automatically.</string>
+    <string name="ark_refresh_submitted_title">Refresh submitted</string>
+    <string name="ark_refresh_submitted_body">Waiting for the next Ark round.</string>
+    <string name="ark_refresh_scheduled_inline">Scheduled for block %1$d</string>
+    <string name="ark_refresh_pending_inline">Submitted to the next round</string>
+    <string name="ark_vtxo_state_locked">Pending round</string>
+    <string name="ark_error_send_preview_timeout">Send preview timed out</string>
+    <string name="ark_exit_progress">Push exit txs</string>
+    <string name="ark_exit_claim">Claim</string>
+    <string name="ark_exit_claim_quote">Review claim</string>
+    <string name="ark_exit_claim_confirm">Broadcast claim</string>
+    <string name="ark_exit_pending_format">%1$d exit(s) in progress · %2$s</string>
+    <string name="ark_exit_claimable_format">%1$d claimable · %2$s</string>
+    <string name="ark_exit_status_claimable_suffix"> · claimable</string>
+    <string name="ark_exit_destination_hint">Bitcoin claim address</string>
+    <string name="ark_exit_warning">Recover Ark funds on-chain if ASP disappears</string>
+    <string name="ark_exit_active_format">%1$d pending · %2$s</string>
+    <string name="ark_exit_ready_to_broadcast">Ready to broadcast</string>
+    <string name="ark_exit_waiting_short">Waiting for confirmations</string>
+    <string name="ark_exit_review_broadcast">Review broadcast</string>
+    <string name="ark_exit_review_title">Review exit</string>
+    <string name="ark_exit_broadcast_review_title">Review broadcast</string>
+    <string name="ark_exit_broadcast_action">Broadcast</string>
+    <string name="ark_exit_broadcasting">Broadcasting…</string>
+    <string name="ark_exit_review_funds">Funds</string>
+    <string name="ark_exit_review_count">Outputs</string>
+    <string name="ark_exit_review_fee">Estimated miner fee</string>
+    <string name="ark_exit_review_required">Confirmed funds required</string>
+    <string name="ark_exit_review_available">Confirmed fee funds</string>
+    <string name="ark_exit_review_add_funds_format">Add %1$s</string>
+    <string name="ark_exit_review_add_funds_hint">Receive on-chain funds in Ark and wait for confirmation.</string>
+    <string name="ark_exit_review_irreversible">Broadcasting begins an irreversible on-chain exit.</string>
+    <string name="ark_exit_fee_unavailable">Unavailable</string>
+    <string name="ark_exit_claim_review_title">Review claim</string>
+    <string name="ark_exit_no_outputs">No spendable outputs</string>
+    <string name="ark_open_lifecycle">VTXOs / Exit</string>
+    <string name="ark_refresh_exit_button">VTXOs</string>
+    <string name="ark_refresh_required_title">VTXO refresh</string>
+    <string name="ark_refresh_required_status">Refresh due</string>
+    <string name="ark_refresh_required_status_soon">Refresh recommended</string>
+    <string name="ark_refresh_required_message">%1$d VTXO(s) are due for refresh. You still have about 144 blocks before they expire. Refresh now while the ASP can roll them forward.</string>
+    <string name="ark_refresh_required_message_soon">%1$d VTXO(s) should be refreshed soon%2$s. This is the optional ~72-block heads-up. After they become due, you still get about 144 blocks before expiry.</string>
+    <string name="ark_refresh_required_blocks_suffix"> (~%1$d blocks until due)</string>
+    <string name="ark_refresh_required_confirm">Open refresh</string>
+    <string name="ark_refresh_required_dismiss">Later</string>
+    <string name="ark_refresh_auto_started">VTXO refresh started…</string>
+    <string name="ark_refresh_submitted_snackbar">Refresh submitted for %1$d output(s). Waiting for the next Ark round.</string>
+    <string name="ark_refresh_submitted_scheduled_snackbar">Refresh submitted for %1$d output(s), scheduled at block %2$d.</string>
+    <string name="ark_refresh_pending_banner_round">%1$d output(s) pending refresh — waiting for the next Ark round.</string>
+    <string name="ark_refresh_pending_banner_scheduled">%1$d output(s) pending refresh at block %2$d (~%3$d blocks).</string>
+    <string name="ark_refresh_pending_tip_format">Chain tip %1$d</string>
+    <string name="ark_refresh_vtxo_pending_round">Pending refresh — next round</string>
+    <string name="ark_refresh_vtxo_pending_scheduled">Pending refresh — block %1$d</string>
+    <string name="ark_refresh_pending_dialog_round">%1$d output(s) submitted. Waiting for the next Ark round.</string>
+    <string name="ark_refresh_pending_dialog_scheduled">%1$d output(s) scheduled for block %2$d (~%3$d blocks from tip).</string>
+    <string name="ark_refresh_review_tip">Chain tip</string>
+    <string name="ark_refresh_completed">VTXO refresh complete</string>
+    <string name="ark_refresh_failed_format">VTXO refresh failed: %1$s</string>
+    <string name="ark_fee_format">Fee %1$s</string>
+    <string name="ark_lifecycle_idle">Refresh VTXOs before expiry, or start a unilateral exit if needed.</string>
+    <string name="ark_lifecycle_complete">Done</string>
+    <string name="ark_lifecycle_working">Working…</string>
+    <string name="ark_refresh_working_body">Submitting to the ASP. Waiting for the next Ark round can take a minute…</string>
+    <string name="ark_mailbox_recovery_completed">Mailbox recovery complete</string>
+    <string name="ark_mailbox_recovery_no_report">Mailbox recovery did not run. Try Full Sync again.</string>
+    <string name="ark_mailbox_recovery_not_applied">Mailbox recovered VTXOs but they did not appear. Try Full Sync again.</string>
+    <string name="ark_mailbox_recovery_report_format">VTXOs: recovered %1$d · skipped %2$d (spent/superseded) · failed %3$d · foreign %4$d · exited %5$d</string>
+    <string name="ark_onchain_unavailable">Ark on-chain wallet unavailable — BTC deposits cannot be credited. Check Esplora and refresh.</string>
+    <string name="ark_mailbox_recovery_failed_format">Mailbox recovery failed: %1$s</string>
+    <string name="ark_db_backup_title">Ark Backup</string>
+    <string name="ark_db_backup_subtitle">Export or import this wallet\'s local Bark database (VTXOs). Encrypted with your wallet seed — only this wallet can restore. Same seed must already be loaded before import.</string>
+    <string name="ark_db_backup_warning">BIP39 seed will recover Ark funds while the ASP is available; if the ASP goes offline an Ark DB backup is needed for recovery. External backups survive wallet delete and auto-wipe.</string>
+    <string name="ark_db_backup_encrypted_note">Backups are encrypted with a key derived from this wallet\'s seed.</string>
+    <string name="ark_db_auto_backup_title">Auto backup</string>
+    <string name="ark_db_auto_backup_subtitle">Automatically snapshot encrypted Ark DB to an external folder after VTXO activity.</string>
+    <string name="ark_db_auto_backup_last_format">Last snapshot: %1$s</string>
+    <string name="ark_db_auto_backup_last_never">No snapshot yet</string>
+    <string name="ark_db_auto_backup_latest_title">Latest snapshot</string>
+    <string name="ark_db_auto_backup_detail_when">When</string>
+    <string name="ark_db_auto_backup_detail_file">File</string>
+    <string name="ark_db_auto_backup_detail_size">Size</string>
+    <string name="ark_db_auto_backup_detail_kept">Kept</string>
+    <string name="ark_db_auto_backup_detail_kept_format">latest + backup</string>
+    <string name="ark_db_auto_backup_detail_files">Files</string>
+    <string name="ark_db_auto_backup_detail_files_latest">ibis-ark-db-latest.zip</string>
+    <string name="ark_db_auto_backup_detail_location">Location</string>
+    <string name="ark_db_auto_backup_location_external">External folder</string>
+    <string name="ark_db_auto_backup_folder_set">Directory linked</string>
+    <string name="ark_db_auto_backup_folder_unset">No folder selected: Auto backup is idle</string>
+    <string name="ark_db_auto_backup_folder_required">Choose an external folder to enable auto backup</string>
+    <string name="ark_db_auto_backup_folder_pick">Choose folder</string>
+    <string name="ark_db_auto_backup_folder_clear">Clear folder</string>
+    <string name="ark_db_auto_backup_restore">Restore latest auto backup</string>
+    <string name="ark_db_auto_backup_none">No auto backup found</string>
+    <string name="ark_db_auto_backup_failed">Auto backup failed</string>
+    <string name="ark_db_auto_backup_failed_format">Auto backup failed: %1$s</string>
+    <string name="ark_db_export_action">Export Ark DB</string>
+    <string name="ark_db_import_action">Import Ark DB</string>
+    <string name="ark_db_export_progress">Exporting Ark DB…</string>
+    <string name="ark_db_import_progress">Importing Ark DB…</string>
+    <string name="ark_db_restore_progress">Restoring Ark DB…</string>
+    <string name="ark_db_export_done">Encrypted Ark DB exported</string>
+    <string name="ark_db_import_done">Ark DB imported</string>
+    <string name="ark_db_export_empty">No local Ark data to export</string>
+    <string name="ark_db_export_failed">Failed to export Ark DB</string>
+    <string name="ark_db_import_failed">Failed to import Ark DB</string>
+    <string name="ark_db_import_empty">Ark DB file is empty</string>
+    <string name="ark_db_import_wrong_wallet">This backup belongs to a different wallet</string>
+    <string name="ark_db_import_invalid">Invalid or corrupt Ark backup</string>
+    <string name="ark_db_import_legacy">Unencrypted legacy backup</string>
+    <string name="ark_db_transfer_failed_format">Ark DB: %1$s</string>
+    <string name="ark_select_vtxos">Select VTXOs</string>
+    <string name="ark_vtxo_expiry_blocks_format">Expires in %1$d blocks (%2$d)</string>
+    <string name="ark_vtxo_expiry_height_format">Expires at block %1$d</string>
+    <string name="ark_vtxo_expiry_now_format">Expiring (%1$d)</string>
+    <string name="ark_exit_status_claimable">Claimable</string>
+    <string name="ark_exit_status_in_progress">Exit in progress</string>
+    <string name="ark_exit_status_ready">Ready to broadcast</string>
+    <string name="ark_exit_status_action_required">Action required · next tx not broadcast</string>
+    <string name="ark_exit_status_confirming">Broadcast · waiting for confirmations</string>
+    <string name="ark_exit_status_timelock">Confirmed · waiting for timelock</string>
+    <string name="ark_exit_status_claim_pending">Claim broadcast · waiting for confirmation</string>
+    <string name="ark_no_vtxos">No VTXOs</string>
+    <string name="ark_exit_status_format">%1$s · %2$s</string>
+    <string name="ark_connection_server_label">Server</string>
+    <string name="ark_connection_esplora_label">Esplora</string>
+    <string name="ark_connection_network_label">Network</string>
+    <string name="ark_connection_network_value">Bitcoin</string>
+    <string name="ark_esplora_picker_title">Esplora</string>
+    <string name="ark_esplora_picker_subtitle">Bitcoin chain index for deposits and withdrawals.</string>
+    <string name="ark_esplora_tor_hint">Tor</string>
+    <string name="ark_esplora_apply">Apply</string>
+    <string name="spark_connection_server_name">Breez Spark SDK</string>
+    <string name="ark_connection_server_name">Ark Service Provider</string>
+    <string name="ark_esplora_dropdown_label">Esplora server</string>
+    <string name="ark_transfer_l1_to_ark_destination_hint">Deposits always fund this wallet\'s Ark balance via the ASP.</string>
+    <string name="ark_transfer_ark_to_l1_destination_hint">Withdrawal sends on-chain to this Bitcoin address.</string>
+    <string name="ark_transfer_l1_to_ark_destination_placeholder">Optional note - deposit is fixed to this wallet</string>
+    <string name="ark_transfer_custom_fee_unavailable">Cooperative withdrawal fee is set by the ASP.</string>
+    <string name="ark_transfer_custom_destination_unavailable">Deposits always fund this wallet\'s Ark balance.</string>
+    <string name="ark_transfer_deposit_destination">Destination</string>
+    <string name="ark_transfer_ark_deposit_address_label">Ark deposit address</string>
+    <string name="ark_transfer_deposit_destination_value">This wallet Ark balance</string>
+    <string name="ark_transfer_deposit_fee">Deposit fee</string>
+    <string name="ark_transfer_withdrawal_fee">Withdrawal fee</string>
+    <string name="ark_transfer_deposit_fee_note">Layer 1 funding fee for Ark deposit</string>
+    <string name="ark_transfer_withdrawal_fee_note">Cooperative withdrawal fee set by the ASP</string>
+    <string name="ark_transfer_min_board_format">Min %1$s</string>
+    <string name="ark_transfer_below_min_board_format">Below ASP minimum (%1$s)</string>
+    <string name="ark_receive_onchain_min_board_format">ASP minimum deposit %1$s</string>
+    <string name="ark_receive_onchain_min_label">ASP minimum deposit</string>
+    <string name="ark_board_below_min_format">%1$s on-chain is below the ASP minimum deposit of %2$s and cannot be credited to Ark. Recover it to Layer 1.</string>
+    <string name="ark_board_below_min_shortfall_format">%1$s on-chain is below the ASP minimum deposit of %2$s (need %3$s more) and cannot be credited to Ark. Recover it to Layer 1.</string>
+    <string name="ark_stuck_below_min_banner_format">%1$s is below the minimum deposit of %2$s and cannot be credited to Ark.</string>
+    <string name="ark_stuck_below_min_top_up">Top up</string>
+    <string name="ark_stuck_below_min_recover">Recover to L1</string>
+    <string name="ark_boarding_below_min_actions_note">Top up with more BTC until the deposit meets the minimum, or sweep all confirmed funds back to your Layer 1 wallet.</string>
+    <string name="ark_boarding_recover_dialog_title">Recover to L1</string>
+    <string name="ark_boarding_recover_dialog_body">All confirmed on-chain funds in Ark will be sent to your Layer 1 receive address. This cannot be undone.</string>
+    <string name="ark_boarding_recover_dialog_address_label">Destination</string>
+    <string name="ark_boarding_recover_dialog_confirm">Confirm recover</string>
+    <string name="ark_boarding_recover_dialog_no_address">Generate a Layer 1 address first</string>
+    <string name="ark_boarding_top_up_note">Send more BTC to this on-chain address until the deposit meets the minimum.</string>
+    <string name="ark_boarding_recover_note">Sweep all confirmed on-chain funds back to your Layer 1 wallet.</string>
+    <string name="ark_boarding_board_note">Credit this deposit to Ark as spendable balance.</string>
+    <string name="ark_manage_tab_boarding">Boarding</string>
+    <string name="ark_boarding_title">On-chain deposits</string>
+    <string name="ark_boarding_empty">No on-chain deposits</string>
+    <string name="ark_boarding_auto_title">Auto-board</string>
+    <string name="ark_boarding_auto_note">When on, confirmed deposits at or above the minimum board into Ark automatically.</string>
+    <string name="ark_boarding_auto_note_format">When on, confirmed deposits at or above the minimum board into Ark automatically.</string>
+    <string name="ark_boarding_auto_note_unknown_min">When on, confirmed deposits at or above the minimum board into Ark automatically.</string>
+    <string name="ark_boarding_disabled_exit">Boarding disabled while a unilateral exit is in progress.</string>
+    <string name="ark_board_disabled_exit">Boarding disabled while a unilateral exit is in progress.</string>
+    <string name="ark_board_failed_generic">Board failed</string>
+    <string name="ark_board_success_format">Boarded %1$s</string>
+    <string name="ark_boarding_board">Board</string>
+    <string name="ark_boarding_board_all">Board all ready</string>
+    <string name="ark_boarding_min_format">ASP min %1$s</string>
+    <string name="ark_boarding_shortfall_format">Need %1$s more for boarding</string>
+    <string name="ark_boarding_confirmations_format">%1$d confirmations</string>
+    <string name="ark_boarding_confirmations_one">1 confirmation</string>
+    <string name="ark_boarding_unconfirmed">Unconfirmed</string>
+    <string name="ark_boarding_confirmed_total_format">Confirmed %1$s</string>
+    <string name="ark_boarding_badge_ready">Ready</string>
+    <string name="ark_boarding_badge_unconfirmed">Unconfirmed</string>
+    <string name="ark_boarding_balance_banner_format">%1$s on-chain unboarded</string>
+    <string name="ark_boarding_balance_banner_below_min_format">%1$s on-chain unboarded (ASP min %2$s)</string>
+    <string name="ark_boarding_balance_banner_action">Manage boarding</string>
+    <string name="ark_boarding_amount_select_note">Bark boards by amount (not outpoint).</string>
+    <string name="ark_history_badge_below_min">Below minimum</string>
+    <string name="ark_history_status_below_min">Below minimum</string>
+    <string name="ark_history_badge_recovered_l1">Recovered</string>
+    <string name="ark_recover_onchain_nothing">No confirmed on-chain deposit to recover</string>
+    <string name="ark_recover_onchain_fee_too_high">Fee leaves nothing to recover — lower fee rate</string>
+    <string name="ark_recover_onchain_success_format">Recovered to Layer 1 · %1$s</string>
+    <string name="ark_recover_onchain_cleared">Below-min deposit cleared</string>
+    <string name="ark_recover_onchain_failed_format">Recover failed: %1$s</string>
+    <string name="ark_recover_onchain_need_l1_address">Generate a Layer 1 address first</string>
+    <string name="ark_search_history_placeholder">Search labels, status, or payment id...</string>
+    <string name="ark_loading_wallet_message">Ark is loading for this wallet</string>
+    <string name="ark_onchain_deposit_pending_format">Confirming deposit · %1$s</string>
+    <string name="ark_pending_deposit_format">Depositing · %1$s</string>
+    <string name="ark_movement_lightning">Lightning</string>
+    <string name="ark_movement_refresh">Ark refresh</string>
+    <string name="ark_movement_exit">Exit</string>
+    <string name="ark_movement_id_title">Movement ID</string>
+    <string name="ark_movement_id_copy_label">Ark Movement ID</string>
+    <string name="ark_filter_ark_content_description">Filter Ark transfers</string>
+    <string name="ark_filter_bitcoin_content_description">Filter Bitcoin deposits and withdrawals</string>
+    <string name="ark_deposit_note_title">Note</string>
+    <string name="ark_deposit_note_pending">On-chain Bitcoin deposits may need up to 6 confirmations before the ASP credits them to Ark.</string>
+    <string name="ark_deposit_note_confirmed">Deposit reached the confirmation threshold. Ark credits spendable balance after the deposit completes.</string>
+    <string name="ark_deposit_note_pending_format">On-chain Bitcoin deposits may need up to %1$d confirmations before the ASP credits them to Ark.</string>
+    <string name="ark_deposit_note_confirmed_format">Deposit reached %1$d confirmations. Ark credits spendable balance after the deposit completes.</string>
+    <string name="ark_deposit_status_awaiting_confirmations">Awaiting 3 confirmations</string>
+    <string name="ark_withdrawal_note">Cooperative withdrawals settle on Bitcoin to the destination address.</string>
+    <string name="ark_review_fee_bitcoin">Bitcoin Network Fee:</string>
+    <string name="ark_review_fee_lightning">Lightning Network Fee:</string>
+    <string name="ark_refresh_round_txid_title">Ark round transaction</string>
+    <string name="ark_refresh_round_txid_copy">Ark round txid</string>
+    <string name="ark_review_fee_refresh">Refresh Fee:</string>
+    <string name="ark_review_fee_ark">Ark Network Fee:</string>
+    <string name="ark_movement_recipient_unknown">Unknown recipient</string>
+    <string name="ark_movement_received_at_unknown">Address not recorded</string>
+    <string name="ark_movement_type_label">Type</string>
+    <string name="ark_receive_tab_onchain">On-chain</string>
+    <string name="ark_receive_lightning_qr_cd">Lightning invoice QR</string>
+    <string name="ark_enter_amount">Enter an amount</string>
+    <string name="ark_deposit_address_missing">Ark deposit address missing</string>
+    <string name="ark_error_wallet_not_loaded">Ark wallet not loaded</string>
+    <string name="ark_error_requires_bip39_wallet">Ark requires a mainnet BIP39 single-sig spend wallet</string>
+    <string name="ark_error_unsupported_destination">Unsupported destination</string>
+    <string name="ark_error_different_server">Ark address is for a different server</string>
+    <string name="ark_error_silent_payments">Silent payments are not supported</string>
+    <string name="ark_error_nothing_prepared">Nothing prepared</string>
+    <string name="ark_error_amount_required">Amount required</string>
+    <string name="ark_send_may_have_completed_format">Payment may have completed — verify before retrying. %1$s</string>
+    <string name="ark_send_lightning_timeout">Lightning payment timed out</string>
+    <string name="ark_send_lightning_settled_detail">Payment settled</string>
+    <string name="ark_send_lightning_in_progress">In progress — will settle shortly</string>
+    <string name="ark_send_lightning_unknown">Result unknown — check history</string>
+    <string name="ark_send_status_close_hint">You can close this window. Check history if the payment may still settle.</string>
+    <string name="ark_send_multi_remainder_format">%1$d recipient(s) not sent — review and retry</string>
+    <string name="ark_error_claim_preview_stale">Claim preview changed — get a new quote</string>
+    <string name="ark_error_onchain_wallet_unavailable">On-chain wallet not available</string>
+    <string name="ark_error_passphrase_board_unavailable">BTC→Ark deposit is unavailable for BIP39 passphrase wallets</string>
+    <string name="ark_esplora_fallback_format">Ark Esplora fallback: using %1$s</string>
+    <string name="ark_error_enter_amount_lightning_invoice">Enter an amount for a Lightning invoice</string>
+    <string name="ark_error_insufficient_need_fee_format">Insufficient funds (need %1$s sats incl. fee)</string>
+    <string name="ark_error_insufficient_available_format">Insufficient funds (Available: %1$s sats)</string>
+    <string name="ark_error_refresh_already_pending">Selected outputs are already waiting on a refresh round</string>
+    <string name="ark_error_no_vtxos_need_refresh">No VTXOs need a refresh</string>
+    <string name="ark_error_no_spendable_vtxos">No spendable VTXOs</string>
+    <string name="ark_error_no_claimable_exits">No claimable exits</string>
+    <string name="ark_error_exit_cpfp_funding">Confirmed on-chain funds are needed for the exit miner fee.</string>
+    <string name="ark_error_exit_cpfp_funding_format">Required: %1$s sats. Available: %2$s sats. Add %3$s sats to Ark’s On-chain receive address.</string>
+    <string name="ark_error_generic">Ark error</string>
+    <string name="ark_error_esplora_dns">Esplora DNS failed — try another network or set a reachable Esplora URL</string>
+    <string name="ark_error_chain_source">On-chain source unavailable — check Esplora URL / network</string>
+    <string name="ark_error_asp_unreachable">Ark server unreachable</string>
+    <string name="ark_error_datadir_locked">Ark wallet is busy closing a previous session — try again in a moment</string>
+    <string name="l2_error_silent_payments">Silent payments are not supported here</string>
+    <string name="l2_error_bitcoin_not_on_liquid">Bitcoin addresses are not supported on Liquid send</string>
+    <string name="l2_error_liquid_not_supported">Liquid requests are not supported here</string>
+    <string name="l2_error_spark_not_supported">Spark requests are not supported here</string>
+    <string name="l2_error_ark_not_supported">Ark addresses are not supported here</string>
+    <string name="l2_error_amountless_invoice">Amountless Lightning invoices are not supported</string>
+    <string name="l2_error_bolt12_not_on_spark">BOLT12 offers are not supported on Spark send</string>
+    <string name="l2_error_bolt12_requires_cln">BOLT12 offers require a CLN connection</string>
+    <string name="l2_hint_liquid">Enter a Liquid, BOLT 11/12, or LN Address</string>
+    <string name="l2_hint_spark">Enter a Spark, BOLT 11, LNURL, or Bitcoin address</string>
+    <string name="l2_hint_ark">Enter a Bitcoin, Ark, BOLT 11/12, or LNURL</string>
+    <string name="l2_hint_any">Enter a Liquid, Spark, Ark, BOLT 11/12, or LN Address</string>
+    <string name="l2_hint_ln_node_cln">Enter a BOLT11, BOLT12, LNURL, or LN Address</string>
+    <string name="l2_hint_ln_node_default">Enter a BOLT11, LNURL, or LN Address</string>
+    <string name="spark_deposit_address_not_ready">Spark deposit address not ready</string>
+    <string name="spark_error_connection">Spark connection failed</string>
+    <string name="spark_error_unavailable">Spark service unavailable</string>
+    <string name="spark_error_generic">Spark request failed</string>
+    <string name="layer1_address_not_ready">Layer 1 address not ready</string>
+    <string name="ark_error_testnet_address">Testnet Ark addresses are not supported</string>
 </resources>

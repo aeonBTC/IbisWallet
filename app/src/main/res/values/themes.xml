@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources xmlns:tools="http://schemas.android.com/tools">
+<resources>
     <!-- Base application theme - using NoActionBar for Compose -->
     <style name="Theme.IbisWallet" parent="android:Theme.Material.NoActionBar">
         <!-- Background and surface colors -->
@@ -8,7 +8,7 @@
         <!-- Status bar color -->
         <item name="android:statusBarColor">#0D1117</item>
         <item name="android:navigationBarColor">#161B22</item>
-        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 
     <style name="Theme.IbisWallet.Launch" parent="Theme.SplashScreen">
@@ -19,6 +19,6 @@
         <item name="android:windowBackground">@drawable/launch_window_background</item>
         <item name="android:statusBarColor">#0D1117</item>
         <item name="android:navigationBarColor">#161B22</item>
-        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

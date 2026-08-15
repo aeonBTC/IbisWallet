@@ -3,6 +3,7 @@
     <string name="app_name">Carteira Íbis</string>
     <string name="wallet_added">Carteira adicionada</string>
     <string name="cloak_calculator_label">Calculadora</string>
+    <string name="cloak_calculator_notification_body">Em execução</string>
     <string name="nfc_service_description">Endereço de pagamento Bitcoin</string>
     <string name="startup_loading_artwork">Arte inicial do Ibis</string>
     <string name="version_format">Versão: %1$s</string>
@@ -19,6 +20,7 @@
     <string name="app_update_opt_in_message">Esta opção pode ser ativada ou desativada em Sobre.</string>
     <string name="app_update_opt_in_enable">Ativar</string>
     <string name="app_update_opt_in_not_now">Agora não</string>
+    <string name="storage_unavailable">O armazenamento seguro está temporariamente indisponível. Nenhum dado foi apagado — abra o app novamente.</string>
     <string name="common_selected">Selecionado</string>
     <string name="settings_language_title">Linguagem</string>
     <string name="settings_language_english">Inglês</string>
@@ -33,6 +35,10 @@
     <string name="wallet_delete_irreversible_message">Tem certeza de que deseja remover "%1$s"? Esta ação não pode ser desfeita. Certifique-se de ter feito backup de sua frase de recuperação.</string>
     <string name="wallet_delete_confirm_removal_label">Confirmar exclusão</string>
     <string name="wallet_delete_irreversible_ack_label">Eu entendo que isso não pode ser desfeito</string>
+    <string name="wallet_delete_ark_pending_exit">Ark tem um exit unilateral pendente ou resgatável. Conclua o claim do exit antes de excluir esta carteira — a seed sozinha não recupera exits em andamento.</string>
+    <string name="wallet_delete_ark_no_backup">Esta carteira tem atividade de VTXO Ark e nenhum backup da DB Ark. BIP39 seed recuperará os fundos Ark enquanto o ASP estiver disponível; se o ASP ficar offline, um backup da DB Ark é necessário para recuperação.</string>
+    <string name="wallet_delete_ark_has_funds">Esta carteira tem fundos Ark. Excluir remove o banco Bark local. BIP39 seed recuperará os fundos Ark enquanto o ASP estiver disponível; se o ASP ficar offline, um backup da DB Ark é necessário para recuperação.</string>
+    <string name="wallet_delete_ark_blocked_ack">Resolva os exits Ark antes de excluir</string>
     <string name="wallet_view_sensitive_info_message">Você verá informações confidenciais de "%1$s".</string>
     <string name="key_material_scan_qr_format">Digitalize este QR para importar %1$s</string>
     <string name="multisig_manual_option">Escrever</string>
@@ -55,6 +61,7 @@
     <string name="foreground_connectivity_status_liquid">Líquido</string>
     <string name="foreground_connectivity_status_lightning">Lightning</string>
     <string name="foreground_connectivity_status_spark">Spark</string>
+    <string name="foreground_connectivity_status_ark">Ark</string>
     <string name="foreground_connectivity_status_tor">Tor</string>
     <string name="nfc_status_ready">NFC</string>
     <string name="nfc_status_receive_ready">Receber NFC</string>
@@ -64,11 +71,10 @@
     <string name="nfc_status_sharing">Compartilhando NFC</string>
     <string name="welcome_logo_content_description">Logotipo da carteira Ibis</string>
     <string name="welcome_title">Bem-vindo à carteira Ibis</string>
-    <string name="welcome_intro">Ibis é uma carteira de autocustódia desenvolvida para usuários avançados, com foco em privacidade e personalização. Todos os serviços de rede e conexões externas estão desabilitados por padrão.</string>
+    <string name="welcome_intro">Ibis é uma carteira de autocustódia para usuários avançados, focada em privacidade e personalização. Todos os serviços de rede e conexões externas estão desabilitados por padrão.</string>
     <string name="welcome_menu_prompt">Abra o menu de opções para configurar o Ibis ao seu gosto.</string>
     <string name="welcome_continue">Continuar</string>
-    <string name="welcome_language_hint">Escolha um idioma</string>
-    <string name="app_update_check_title">Verifique se há atualizações de aplicativos no GitHub</string>
+    <string name="app_update_check_title">Verificar atualizações do app no GitHub</string>
     <string name="liquid_enable_info_title">A camada 2 é modular</string>
     <string name="liquid_enable_info_message">Abra a tela de gerenciamento de carteira para ativar o Liquid nas carteiras desejadas.\n\n*O Liquid só pode ser ativado em carteiras BIP39.</string>
     <string name="liquid_enable_info_confirm">Entendido</string>
@@ -76,8 +82,17 @@
     <string name="spark_enable_info_message">Abra a tela de gerenciamento de carteira para ativar o Spark nas carteiras desejadas.\n\n*O Spark só pode ser ativado em carteiras seed BIP39.</string>
     <string name="spark_enable_info_confirm">Entendido</string>
     <string name="ln_node_enable_info_title">Lightning Node</string>
-    <string name="ln_node_enable_info_message">Use Configurar nó para adicionar uma carteira Lightning Node remota (LND, CLN ou NWC). Cada conexão é uma carteira própria — troque de carteira para usar outro nó.</string>
+    <string name="ln_node_enable_info_message">Conecte-se a um nó remoto (LND, CLN ou NWC) na tela Configurar nó. Cada nó é adicionado como uma carteira própria.</string>
     <string name="ln_node_enable_info_confirm">Entendi</string>
+    <string name="ark_enable_info_title">A camada 2 é modular</string>
+    <string name="ark_enable_info_message">Abra a tela de gerenciamento de carteira para ativar o Ark nas carteiras desejadas.\n\n*O Ark só pode ser ativado em carteiras seed BIP39.</string>
+    <string name="ark_enable_info_confirm">Entendido</string>
+    <string name="ark_backup_required_title">Ark DB backup</string>
+    <string name="ark_backup_required_status">Nenhum backup detectado!</string>
+    <string name="ark_backup_required_message">BIP39 seed recuperará os fundos Ark enquanto o ASP estiver disponível; se o ASP ficar offline, um backup da DB Ark é necessário para recuperação.</string>
+    <string name="ark_backup_required_ack">Entendo que um backup da DB Ark é necessário se o ASP ficar offline</string>
+    <string name="ark_backup_required_confirm">Fazer backup</string>
+    <string name="ark_backup_required_dismiss">Depois</string>
     <string name="ln_node_title">Lightning Node</string>
     <string name="ln_node_pill_label">Lightning</string>
     <string name="ln_node_channels_title">Canais</string>
@@ -146,11 +161,11 @@
     <string name="ln_node_status_connecting">Conectando…</string>
     <string name="ln_node_connection_title">Conexão Lightning Node</string>
     <string name="ln_node_connection_type">Tipo de conexão</string>
-    <string name="ln_node_lnd_rest_hint">Conecte-se ao LND REST (porta 8080 por padrão). Informe macaroon de admin (hex ou base64) e certificado TLS PEM quando necessário.</string>
-    <string name="ln_node_cln_rest_hint">CLN clnrest (HTTPS). Host, porta e rune — escaneie o QR Connection URL ou cole. TLS opcional.</string>
+    <string name="ln_node_lnd_rest_hint">Conecte-se via LND REST (porta 8080 por padrão). Escaneie um QR lndconnect ou cole host, macaroon de admin (hex ou base64) e certificado TLS PEM quando necessário.</string>
+    <string name="ln_node_cln_rest_hint">Conecte-se via CLN clnrest (porta 3010 por padrão). Escaneie um QR Connection URL ou cole host, rune e certificado TLS quando necessário.</string>
     <string name="ln_node_cln_tls_cert">Certificados TLS (PEM ou base64 Zeus)</string>
     <string name="ln_node_cln_rune">Rune</string>
-    <string name="ln_node_nwc_hint">Cole um URI nostr+walletconnect:// do seu provedor NWC.</string>
+    <string name="ln_node_nwc_hint">Conecte-se via NWC (NIP-47). Escaneie um QR ou cole um URI nostr+walletconnect:// do seu provedor.</string>
     <string name="ln_node_host">Host</string>
     <string name="ln_node_qr_scan_cd">Escanear QR de conexão</string>
     <string name="ln_node_qr_import_success">Conexão importada</string>
@@ -197,7 +212,7 @@
     <string name="ln_node_new">Nova</string>
     <string name="ln_node_payment_received">Lightning recebido</string>
     <string name="ln_node_send_lightning">Enviar Lightning</string>
-    <string name="ln_node_payment_sent">Pagamento enviado</string>
+    <string name="ln_node_payment_sent">Pagamento concluído na Lightning.</string>
     <string name="ln_node_payment_progress_title">Enviando pagamento</string>
     <string name="ln_node_payment_progress_message">Revisão confirmada. Roteando o pagamento.</string>
     <string name="ln_node_payment_progress_review_title">Revisão confirmada</string>
@@ -302,13 +317,13 @@
     <string name="loc_b1d09d26" formatted="false">Autenticar para desativar o bloqueio</string>
     <string name="loc_b543e2d2" formatted="false">Autenticar para abrir esta carteira</string>
     <string name="loc_51bac044" formatted="false">Cancelar</string>
-    <string name="transaction_history_hide_title">Apagar do historico?</string>
-    <string name="transaction_history_hide_message">Apagar esta transacao do historico local. So e restaurada reimportando a frase semente.</string>
+    <string name="transaction_history_hide_title">Apagar do histórico?</string>
+    <string name="transaction_history_hide_message">Apagar esta transação do histórico local. Só é restaurada reimportando a frase semente.</string>
     <string name="transaction_history_hide_confirm">Apagar</string>
-    <string name="transaction_history_hide_all_content_description">Apagar todo o historico de transacoes</string>
-    <string name="transaction_history_hide_all_title">Apagar todo o historico?</string>
-    <string name="transaction_history_hide_all_message">Apagar as %1$d transacoes do historico local. So sao restauradas reimportando a frase semente.</string>
-    <string name="transaction_history_hide_all_ack">Entendo que isto apaga todo o historico de transacoes</string>
+    <string name="transaction_history_hide_all_content_description">Apagar todo o histórico de transações</string>
+    <string name="transaction_history_hide_all_title">Apagar todo o histórico?</string>
+    <string name="transaction_history_hide_all_message">Apagar as %1$d transações do histórico local. Só são restauradas reimportando a frase semente.</string>
+    <string name="transaction_history_hide_all_ack">Entendo que isto apaga todo o histórico de transações</string>
     <string name="transaction_history_hide_all_confirm">Apagar tudo</string>
     <string name="loc_54947bc7" formatted="false">Transação enviada com sucesso</string>
     <string name="loc_a10f1671" formatted="false">Carteira exportada</string>
@@ -418,7 +433,7 @@
     <string name="loc_25d748f3" formatted="false">Somente leitura</string>
     <string name="loc_24d8d452" formatted="false">frase-semente</string>
     <string name="loc_27bd3430" formatted="false">Bloquear</string>
-    <string name="loc_f08db23b" formatted="false">Sincronizar</string>
+    <string name="loc_f08db23b" formatted="false">Sinc. completa</string>
     <string name="loc_2bb3e26c" formatted="false">Código fonte</string>
     <string name="loc_98b3744d" formatted="false">Solicite recursos e relate bugs no GitHub</string>
     <string name="loc_7a3f1c9e" formatted="false">Doar</string>
@@ -790,6 +805,15 @@
     <string name="loc_972e5de0" formatted="false">Enviar L-BTC</string>
     <string name="loc_002b1ce2" formatted="false">Controle de moedas</string>
     <string name="loc_fcc11f52" formatted="false">Múltiplo</string>
+    <string name="send_multi_sequential_note">Cada destinatário é um pagamento separado (não uma única transação).</string>
+    <string name="send_multi_progress_format">Enviando %1$d de %2$d…</string>
+    <string name="send_multi_done_format">Enviado %1$d de %2$d</string>
+    <string name="send_multi_partial_format">Enviado %1$d de %2$d (%3$d falharam)</string>
+    <string name="send_multi_ark_only">O modo múltiplo só aceita endereços Ark</string>
+    <string name="send_multi_spark_only">O modo múltiplo só aceita endereços Spark</string>
+    <string name="send_multi_need_two">Adicione pelo menos dois destinatários</string>
+    <string name="send_multi_ark_address_hint">Endereço Ark</string>
+    <string name="send_multi_spark_address_hint">Endereço Spark</string>
     <string name="loc_8a1057a2" formatted="false">Toque para adicionar destinatários de Liquid</string>
     <string name="loc_d98e9517" formatted="false">Toque para editar destinatários</string>
     <string name="loc_4622d13c" formatted="false">Endereço Líquido</string>
@@ -869,6 +893,8 @@
     <string name="loc_85a65da2" formatted="false">Veja o material principal</string>
     <string name="loc_f0f54738" formatted="false">O que você quer revelar?</string>
     <string name="loc_e109877e" formatted="false">Chave privada (WIF)</string>
+    <string name="key_material_extended_private_key" formatted="false">Chave privada estendida</string>
+    <string name="key_material_extended_private_key_label" formatted="false">chave privada estendida</string>
     <string name="loc_c4a5346c" formatted="false">chave privada</string>
     <string name="loc_0d4e6f81" formatted="false">endereço</string>
     <string name="loc_ad04894c" formatted="false">Voltar à seleção</string>
@@ -900,17 +926,20 @@
     <string name="loc_4355b799" formatted="false">Código PIN</string>
     <string name="loc_599c7d5f" formatted="false">Temporizador de bloqueio</string>
     <string name="security_lock_timing_when_minimized">Ao minimizar</string>
+    <string name="security_lock_timing_on_screen_off">Ao desligar a tela</string>
     <string name="security_lock_timing_after_1_min">Depois de 1 minuto</string>
     <string name="security_lock_timing_after_5_min">depois de 5 minutos</string>
+    <string name="wallet_notification_locked_title">Ibis Wallet</string>
+    <string name="wallet_notification_locked_body">Abra o app para ver</string>
     <string name="loc_6e64c96f" formatted="false">Randomizar teclado PIN</string>
     <string name="loc_a0a0bf84" formatted="false">Ative o bloqueio do PIN primeiro</string>
-    <string name="loc_b68140bc" formatted="false">PIN de coação</string>
+    <string name="loc_b68140bc" formatted="false">Carteira de coação</string>
     <string name="loc_a1d57483" formatted="false">Defina PIN ou biometria para ativá-lo</string>
     <string name="loc_96e7526f" formatted="false">Adicione uma carteira primeiro</string>
-    <string name="loc_f6649c50" formatted="false">Desbloqueie o Ibis em uma carteira isca</string>
+    <string name="loc_f6649c50" formatted="false">O PIN abre uma carteira isca</string>
     <string name="loc_10bf1589" formatted="false">Apagamento automático</string>
-    <string name="loc_4e19a59a" formatted="false">Apagar após tentativas de desbloqueio</string>
-    <string name="loc_3bbee4d1" formatted="false">Apagar dados após falhas de desbloqueio</string>
+    <string name="loc_4e19a59a" formatted="false">Tentativas falhas</string>
+    <string name="loc_3bbee4d1" formatted="false">Apagar todos os dados do app após falhas de desbloqueio</string>
     <string name="loc_560ec39d" formatted="false">Defina um PIN para ativá-lo</string>
     <string name="loc_bd14b437" formatted="false">modo camuflagem</string>
     <string name="loc_127261f8" formatted="false">Disfarce-se de calculadora</string>
@@ -918,13 +947,19 @@
     <string name="loc_5d688c9a" formatted="false">Esconda o Ibis atrás de uma calculadora</string>
     <string name="loc_714c3012" formatted="false">Desativar capturas</string>
     <string name="loc_0d6a729c" formatted="false">Bloqueie capturas de tela e visualizações</string>
+    <string name="security_clear_clipboard_title">Limpar área de transferência</string>
+    <string name="security_clear_clipboard_subtitle_off">Preferência para limpar a área de transferência</string>
+    <string name="security_clear_clipboard_when_on_lock">Ao bloquear</string>
+    <string name="security_clear_clipboard_when_on_app_close">Ao fechar o app</string>
+    <string name="security_clear_clipboard_when_on_lock_and_close">Ao bloquear e fechar</string>
+    <string name="security_clear_clipboard_when_minimized">Ao minimizar</string>
     <string name="loc_3139ebdd" formatted="false">Desativar o modo camuflagem?</string>
     <string name="loc_aa09917b" formatted="false">O ícone retornará ao Ibis Wallet após a reinicialização. Talvez seja necessário adicionar o atalho novamente.</string>
     <string name="loc_80f874cd" formatted="false">Desativar</string>
     <string name="loc_2a9da994" formatted="false">Reinicialização necessária</string>
     <string name="loc_28441b9b" formatted="false">Reinício</string>
     <string name="loc_2dc29d4d" formatted="false">Mais tarde</string>
-    <string name="loc_4b582481" formatted="false">Desativar PIN de coação?</string>
+    <string name="loc_4b582481" formatted="false">Desativar carteira de coação?</string>
     <string name="loc_cd305fb8" formatted="false">A carteira isca será removida.</string>
     <string name="loc_5e0c0f5b" formatted="false">Ativar o apagamento automático?</string>
     <string name="loc_f40ccd04" formatted="false">Ativar</string>
@@ -943,7 +978,7 @@
     <string name="loc_47bc3f78" formatted="false">Frase Semente Isca</string>
     <string name="loc_16bd0da2" formatted="false">Semente BIP39, semente Electrum, chave WIF, xpub/zpub ou endereço</string>
     <string name="loc_396e66e1" formatted="false">Define uma impressão digital mestre para melhor compatibilidade do PSBT com carteiras de hardware.</string>
-    <string name="loc_189d09c6" formatted="false">Ativar PIN de coação</string>
+    <string name="loc_189d09c6" formatted="false">Ativar carteira de coação</string>
     <string name="loc_bbc273c5" formatted="false">Definir PIN de desbloqueio</string>
     <string name="loc_b02d0f6b" formatted="false">Confirme o PIN de desbloqueio</string>
     <string name="loc_75f1a5fd" formatted="false">Insira este PIN no aplicativo de calculadora e pressione a tecla = para desbloquear.</string>
@@ -967,7 +1002,13 @@
     <string name="loc_35cb0c66" formatted="false">Permitir gastar UTXO sem confirmar</string>
     <string name="loc_ccb38171" formatted="false">NFC</string>
     <string name="loc_db88d4ce" formatted="false">Navegação por gestos</string>
-    <string name="loc_23c9f3ad" formatted="false">Serviços externos do Bitcoin</string>
+    <string name="loc_23c9f3ad" formatted="false">Serviços externos</string>
+    <string name="settings_rbf_title">RBF by Default</string>
+    <string name="settings_rbf_subtitle">Sinalizar replace-by-fee em novos envios</string>
+    <string name="settings_require_coin_control_title">Require Coin Control</string>
+    <string name="settings_require_coin_control_subtitle">Força seleção de UTXO antes de enviar</string>
+    <string name="settings_consolidate_change_title">Consolidate Change</string>
+    <string name="settings_consolidate_change_subtitle">Prefere gastar UTXOs de troco primeiro</string>
     <string name="loc_64f10f32" formatted="false">Serviços externos da Liquid</string>
     <string name="loc_31ab2a4e" formatted="false">Fonte de comissões</string>
     <string name="loc_892c0ce5" formatted="false">Tor conectado</string>
@@ -979,11 +1020,11 @@
     <string name="loc_00a426f8" formatted="false">Fonte de preço Fiat</string>
     <string name="historical_tx_fiat_title">Mostrar preços históricos</string>
     <string name="historical_tx_fiat_subtitle">Mostrar preço fiduciário no momento da transação</string>
-    <string name="historical_tx_fiat_yadio_limit_note">Yadio.io: historico limitado a 365 dias</string>
+    <string name="historical_tx_fiat_yadio_limit_note">Yadio.io: histórico limitado a 365 dias</string>
     <string name="tx_history_show_current_prices">Mostrar preços atuais</string>
     <string name="tx_history_show_historical_prices">Mostrar preços históricos</string>
-    <string name="loc_a39dd5c6" formatted="false">Servidor Bitcoin Electrum</string>
-    <string name="loc_2a54f889" formatted="false">Abra Electrum BTC</string>
+    <string name="loc_a39dd5c6" formatted="false">Servidor Electrum</string>
+    <string name="loc_2a54f889" formatted="false">Abrir Electrum</string>
     <string name="loc_56d9acd0" formatted="false">Camada 2</string>
     <string name="loc_f1af1b9c" formatted="false">Sidechain federado confiável</string>
     <string name="loc_eda2a508" formatted="false">Valores da camada 2 em sats</string>
@@ -1128,8 +1169,9 @@
     <string name="loc_d91923f1" formatted="false">Enviando pagamento...</string>
     <string name="spark_send_status_title">Enviando pagamento</string>
     <string name="spark_send_status_submitting">Enviando...</string>
-    <string name="spark_send_status_sent_title">Pagamento enviado</string>
-    <string name="spark_send_status_failed_title">Falha no pagamento</string>
+    <string name="spark_send_status_sent_title">Pagamento Spark enviado</string>
+    <string name="spark_send_success">Pagamento concluído no Spark.</string>
+    <string name="spark_send_status_failed_title">Falha no pagamento Spark</string>
     <string name="spark_send_status_message">Revisão confirmada. O Spark está executando a transferência.</string>
     <string name="spark_send_status_step_review_title">Revisão confirmada</string>
     <string name="spark_send_status_step_review_detail">Valor, destinatário e taxa aprovados.</string>
@@ -1159,6 +1201,16 @@
     <string name="liquid_source_native_receive">Recepção L-BTC nativa</string>
     <string name="liquid_source_native_send">Envio L-BTC nativo</string>
     <string name="liquid_send_status_sending">Enviando...</string>
+    <string name="liquid_send_status_sending_title">Enviando Liquid</string>
+    <string name="liquid_send_status_sending_lightning_title">Enviando pagamento Lightning</string>
+    <string name="liquid_send_status_sent_title">Pagamento Liquid enviado</string>
+    <string name="liquid_send_status_failed_title">Falha no pagamento Liquid</string>
+    <string name="liquid_send_success">Pagamento concluído no Liquid.</string>
+    <string name="liquid_send_success_asset_format">%1$s enviado no Liquid.</string>
+    <string name="liquid_send_success_lightning">Pagamento concluído na Lightning via Liquid.</string>
+    <string name="loc_pay_bolt12_offer">Pagar oferta BOLT12?</string>
+    <string name="loc_pay_lightning_invoice">Pagar fatura Lightning?</string>
+    <string name="loc_pay_lightning_address">Pagar endereço Lightning?</string>
     <string name="liquid_send_status_message">Revisão confirmada. O Liquid está executando a transferência.</string>
     <string name="liquid_send_status_step_review_title">Revisão confirmada</string>
     <string name="liquid_send_status_step_review_detail">Valor, destinatário e taxa aprovados.</string>
@@ -1182,6 +1234,10 @@
 Digite seu PIN disfarçado na calculadora e pressione a tecla = para desbloquear.</string>
     <string name="server_delete_confirmation_format">Tem certeza de que deseja remover "%1$s"?</string>
     <string name="settings_spark_subtitle">Statechain com confiança minimizada</string>
+    <string name="settings_ark_subtitle">VTXOs com confiança minimizada</string>
+    <string name="settings_ark_external_services_title">Serviços externos do Ark</string>
+    <string name="settings_ark_auto_delegated_refresh_title">Refresh automático</string>
+    <string name="settings_ark_auto_delegated_refresh_subtitle">Agenda refreshes antes de as saídas vencerem.</string>
     <string name="settings_lightning_subtitle">Canais de pagamento sem confiança</string>
     <string name="settings_custom_server_placeholder">http://192.168... ou http://...cebola</string>
     <string name="settings_balance_date_format_title">Formato de data</string>
@@ -1214,6 +1270,7 @@ Digite seu PIN disfarçado na calculadora e pressione a tecla = para desbloquear
     <string name="spark_connection_backend_label">Backend</string>
     <string name="spark_connection_backend_value">Sessão gerenciada do Spark SDK</string>
     <string name="spark_connection_identity_label">Identidade</string>
+    <string name="spark_connection_server_name">Breez Spark SDK</string>
     <string name="speed_up_error_not_connected">Sem conexão com o Electrum. Verifique o servidor e tente novamente.</string>
     <string name="speed_up_error_wallet_not_ready">A carteira não está pronta. Abra-a novamente e tente de novo.</string>
     <string name="speed_up_error_unknown_detail">Erro desconhecido</string>
@@ -1236,4 +1293,416 @@ Digite seu PIN disfarçado na calculadora e pressione a tecla = para desbloquear
     <string name="speed_up_error_cpfp_build_failed">Não foi possível criar a transação filha CPFP. Sincronize a carteira e tente novamente.</string>
     <string name="speed_up_error_cpfp_broadcast_rejected">A rede rejeitou a transação CPFP. Tente uma taxa maior ou sincronize e tente de novo.</string>
     <string name="speed_up_error_cpfp_generic">CPFP falhou: %1$s</string>
+    <string name="security_spend_pin_title">PIN de gasto</string>
+    <string name="security_spend_pin_subtitle">Exigir PIN de desbloqueio antes de enviar</string>
+    <string name="security_spend_pin_prompt">Digite o PIN para confirmar o gasto</string>
+    <string name="security_view_key_material_pin_prompt">Digite o PIN para ver o material de chaves</string>
+    <string name="security_view_key_material_biometric_subtitle">Autentique-se para revelar o material de chaves</string>
+    <string name="security_duress_section_title">Coação</string>
+    <string name="security_wipe_pin_title">PIN de apagamento</string>
+    <string name="security_wipe_pin_subtitle">Digite o PIN para apagar todos os dados do app</string>
+    <string name="security_wipe_pin_subtitle_with_cloak">Bloqueio ou calculadora (=) apaga todos os dados</string>
+    <string name="security_wipe_pin_enable_title">Ativar PIN de apagamento?</string>
+    <string name="security_wipe_pin_enable_message">Um PIN especial que apaga todos os dados do app na tela de bloqueio. Com modo camuflagem, digite-o na calculadora e pressione =.</string>
+    <string name="security_wipe_pin_disable_title">Desativar PIN de apagamento?</string>
+    <string name="security_wipe_pin_disable_message">O PIN de apagamento não apagará mais dados na tela de bloqueio nem na calculadora.</string>
+    <string name="security_wipe_pin_create_title">Criar PIN de apagamento</string>
+    <string name="security_wipe_pin_confirm_title">Confirmar PIN de apagamento</string>
+    <string name="security_wipe_pin_mismatch">Os PINs não coincidem, tente novamente</string>
+    <string name="security_wipe_pin_must_differ_unlock">Deve ser diferente do seu PIN de desbloqueio</string>
+    <string name="security_wipe_pin_must_differ_duress">Deve ser diferente do seu PIN Duress</string>
+    <string name="security_wipe_pin_must_differ_wipe">Deve ser diferente do seu PIN de apagamento</string>
+    <string name="security_wipe_pin_must_differ_cloak">Deve ser diferente do PIN de desbloqueio da calculadora</string>
+    <string name="security_wipe_pin_cloak_hint">Com modo camuflagem, digite este PIN na calculadora e pressione = para apagar</string>
+    <string name="security_cloak_setup_title">Definir PIN de desbloqueio</string>
+    <string name="security_cloak_confirm_title">Confirmar PIN de desbloqueio</string>
+    <string name="security_cloak_setup_unlock_hint">Digite este PIN na calculadora e pressione = para desbloquear.</string>
+    <string name="security_cloak_setup_wipe_hint">Com o PIN de apagamento ativado, digite-o e pressione = para apagar todos os dados do app.</string>
+    <string name="security_cloak_enabled_with_wipe_subtitle">Desbloqueie com =, ou use o PIN de apagamento para apagar tudo</string>
+    <string name="quick_receive_address_title">Endereço de recebimento</string>
+    <string name="ark_title">Ark</string>
+    <string name="ark_quick_receive_title">Endereço Ark</string>
+    <string name="ark_pending_breakdown_format">Pendente · round %1$s · depósito %2$s · exit %3$s</string>
+    <string name="ark_history_empty">Ainda sem histórico Ark</string>
+    <string name="ark_send_destination_hint">Bitcoin, Ark, BOLT 11, BOLT 12, or LNURL</string>
+    <string name="ark_available_format">Disponível %1$s</string>
+    <string name="ark_send_success">Pagamento concluído no Ark.</string>
+    <string name="ark_send_onchain_fee_note">Envios on-chain usam a taxa estimada do ASP mostrada na revisão.</string>
+    <string name="ark_send_status_title">Enviando pagamento</string>
+    <string name="ark_send_status_submitting">Enviando…</string>
+    <string name="ark_send_status_sent_title">Pagamento Ark enviado</string>
+    <string name="ark_send_status_failed_title">Falha no pagamento Ark</string>
+    <string name="ark_send_status_message">Revisão confirmada. O Ark está executando a transferência.</string>
+    <string name="ark_send_status_step_review_title">Revisão confirmada</string>
+    <string name="ark_send_status_step_review_detail">Valor, destinatário e taxa foram aprovados.</string>
+    <string name="ark_send_status_step_submit_title">Enviando pelo Ark</string>
+    <string name="ark_send_status_step_submit_detail">Assinando e enviando a solicitação de pagamento.</string>
+    <string name="ark_send_status_step_settle_title">Aguardando liquidação</string>
+    <string name="ark_send_status_step_settle_detail">O Ark retornará o resultado final do pagamento.</string>
+    <string name="ark_transfer_setup">Configuração da transferência</string>
+    <string name="ark_swap_direction">Direção do swap</string>
+    <string name="ark_transfer_needs_electrum">Conecte o Electrum para transferências Ark para Layer 1</string>
+    <string name="ark_transfer_complete">Transferência concluída</string>
+    <string name="ark_quote_action">Obter cotação</string>
+    <string name="ark_refresh_title">Refresh VTXOs</string>
+    <string name="ark_manage_tab_refresh">Refresh</string>
+    <string name="ark_manage_tab_backup">Backup</string>
+    <string name="ark_manage_tab_exit">Exit</string>
+    <string name="ark_exit_title">Unilateral Exit</string>
+    <string name="ark_exit_history_title">Exit unilateral</string>
+    <string name="ark_exit_claim_history_title">Claim de exit</string>
+    <string name="ark_exit_steps_intro">Três passos: iniciar exit → enviar txs on-chain até resgatável → resgatar para um endereço Bitcoin.</string>
+    <string name="ark_exit_step1_title">1. Iniciar</string>
+    <string name="ark_exit_step2_title">2. Enviar on-chain</string>
+    <string name="ark_exit_step2_body">As txs de exit precisam de confirmações. Toque para montar/transmitir a próxima rodada até ficar resgatável.</string>
+    <string name="ark_exit_waiting_confirmations">As transações de exit foram transmitidas. Aguardando confirmações e timelock.</string>
+    <string name="ark_exit_action_required_body">Um ou mais VTXOs precisam que a próxima transação de exit seja transmitida.</string>
+    <string name="ark_exit_continue_action">Transmitir próximas txs de exit</string>
+    <string name="ark_exit_starting">Preparando e transmitindo transações de exit…</string>
+    <string name="ark_exit_destination_title">Destino dos fundos</string>
+    <string name="ark_exit_destination_body">Primeiro, os fundos passam por scripts de exit Bitcoin controlados e derivados desta carteira. Nenhum destino externo é escolhido ainda. Após o timelock, você escolhe o endereço Bitcoin final em Claim.</string>
+    <string name="ark_exit_timeline_start">Exit registrado</string>
+    <string name="ark_exit_timeline_broadcast">Transmitir cadeia de exit</string>
+    <string name="ark_exit_timeline_action">Ação necessária: transmitir próximas txs</string>
+    <string name="ark_exit_timeline_waiting">Aguardando confirmações / timelock</string>
+    <string name="ark_exit_timeline_claim">Claim para seu endereço Bitcoin</string>
+    <string name="ark_exit_next_select">Próximo: selecione VTXOs e inicie o exit.</string>
+    <string name="ark_exit_next_starting">Em andamento. O exit está salvo e continuará visível ao sair desta tela.</string>
+    <string name="ark_exit_next_push">Próximo: toque em Transmitir próximas txs de exit. Isso pode se repetir em cadeias com várias transações.</string>
+    <string name="ark_exit_next_wait">Nenhuma ação é necessária agora. O Ibis verifica o progresso enquanto o Ark está aberto.</string>
+    <string name="ark_exit_next_claim">Próximo: informe um endereço Bitcoin abaixo, revise a taxa e transmita o claim.</string>
+    <string name="ark_exit_timeline_eta">Prazo: depende dos blocos. Espere vários blocos Bitcoin, geralmente horas; congestionamento ou taxas baixas podem demorar mais.</string>
+    <string name="ark_exit_step3_title">3. Resgatar</string>
+    <string name="ark_exit_step3_body">Quando resgatável, envie os fundos para um endereço Bitcoin que você controla.</string>
+    <string name="ark_exit_started_title">Exit iniciado · %1$d VTXO(s)</string>
+    <string name="ark_exit_push_action">Enviar txs de exit</string>
+    <string name="ark_exit_push_again">Enviar próximas txs</string>
+    <string name="ark_exit_no_pending">Nenhum exit em andamento</string>
+    <string name="ark_exit_none_claimable">Nada resgatável ainda</string>
+    <string name="ark_lifecycle_title">Manage VTXOs</string>
+    <string name="ark_refresh_needed_format">%1$d VTXO(s) na hora do refresh</string>
+    <string name="ark_refresh_action">Refresh</string>
+    <string name="ark_refresh_quote">Refresh manual</string>
+    <string name="ark_refresh_confirm">Confirmar refresh</string>
+    <string name="ark_refresh_review_title">Revisão de refresh</string>
+    <string name="ark_refresh_review_count_format">%1$d VTXO(s) selecionados</string>
+    <string name="ark_refresh_scheduled_height_format">Agendado no bloco %1$d</string>
+    <string name="ark_ln_receive_fee_format">Taxa de recebimento %1$s</string>
+    <string name="ark_refresh_empty">Nenhum VTXO precisa de refresh</string>
+    <string name="ark_vtxo_needs_refresh">Na hora do refresh</string>
+    <string name="ark_refresh_all_vtxos">Todos os VTXOs</string>
+    <string name="ark_exit_start">Sair seleção</string>
+    <string name="ark_exit_start_all">Sair todos</string>
+    <string name="ark_exit_confirm_title">Iniciar exit unilateral?</string>
+    <string name="ark_exit_confirm_action">Iniciar exit</string>
+    <string name="ark_exit_confirm_all_body">Sair on-chain todos os VTXOs gastáveis. Isso transmite transações, paga taxas de miner e trava fundos no timelock do exit.</string>
+    <string name="ark_exit_confirm_selected_body">Sair on-chain %1$d VTXO(s) selecionados. Isso transmite transações, paga taxas de miner e trava fundos no timelock do exit.</string>
+    <string name="ark_exit_confirm_amount_format">Valor: %1$s</string>
+    <string name="ark_exit_confirm_irreversible">Irreversível após o broadcast da tx de exit. Resgate para um endereço Bitcoin verificado quando estiver pronto.</string>
+    <string name="ark_error_refresh_delegated_failed">Falha no refresh delegado</string>
+    <string name="ark_error_refresh_round_aborted">O round terminou sem atualizar os VTXOs</string>
+    <string name="ark_error_refresh_timeout">Refresh de VTXO expirou</string>
+    <string name="ark_refresh_pending_title">Refresh ainda pendente</string>
+    <string name="ark_refresh_pending_body">O Bark está aguardando um round do Ark. VTXOs bloqueados ficam indisponíveis até o round terminar ou ser reconciliado.</string>
+    <string name="ark_refresh_new_title">Refresh</string>
+    <string name="ark_refresh_due_short">%1$d VTXO(s) precisam de refresh agora</string>
+    <string name="ark_refresh_next_blocks_only_format">Próximo refresh obrigatório em %1$d blocos</string>
+    <string name="ark_refresh_next_blocks_format">Próximo refresh obrigatório em %1$d blocos (bloco %2$d)</string>
+    <string name="ark_refresh_tip_and_required_format">Ponta da cadeia %1$d | obrigatório no bloco %2$d</string>
+    <string name="ark_refresh_earliest_expiry_format">VTXO mais proximo expira em %1$d blocos</string>
+    <string name="ark_vtxo_expiry_blocks_short_format">Expira em %1$d blocos</string>
+    <string name="ark_vtxo_expiry_now_short">Expirando agora</string>
+    <string name="ark_refresh_current">Nenhum VTXO precisa de refresh ainda</string>
+    <string name="ark_refresh_no_outputs">Nenhuma saída gastável</string>
+    <string name="ark_refresh_review_action">Revisar refresh</string>
+    <string name="ark_refresh_auto_short">Agenda antes de as saídas vencerem.</string>
+    <string name="ark_refresh_review_outputs">Saídas</string>
+    <string name="ark_refresh_review_mode">Modo</string>
+    <string name="ark_refresh_review_block">Bloco agendado</string>
+    <string name="ark_refresh_review_fee">Taxa</string>
+    <string name="ark_refresh_mode_scheduled">Agendado</string>
+    <string name="ark_refresh_mode_next_round">Próxima rodada</string>
+    <string name="ark_refresh_scheduled_fee_note">Estimada pela tabela de taxas do servidor nesse bloco.</string>
+    <string name="ark_refresh_scheduled_title">Refresh agendado</string>
+    <string name="ark_refresh_scheduled_body">Agendado para o bloco %1$d. O Ark concluirá automaticamente.</string>
+    <string name="ark_refresh_submitted_title">Refresh enviado</string>
+    <string name="ark_refresh_submitted_body">Aguardando a próxima rodada Ark.</string>
+    <string name="ark_refresh_scheduled_inline">Agendado para o bloco %1$d</string>
+    <string name="ark_refresh_pending_inline">Enviado para a próxima rodada</string>
+    <string name="ark_vtxo_state_locked">Round pendente</string>
+    <string name="ark_error_send_preview_timeout">Prévia de envio expirou</string>
+    <string name="ark_exit_progress">Enviar txs de exit</string>
+    <string name="ark_exit_claim">Resgatar</string>
+    <string name="ark_exit_claim_quote">Revisar claim</string>
+    <string name="ark_exit_claim_confirm">Transmitir claim</string>
+    <string name="ark_exit_pending_format">%1$d exit(s) em andamento · %2$s</string>
+    <string name="ark_exit_claimable_format">%1$d resgatável(is) · %2$s</string>
+    <string name="ark_exit_status_claimable_suffix"> · resgatável</string>
+    <string name="ark_exit_destination_hint">Endereço Bitcoin de claim</string>
+    <string name="ark_exit_warning">Recupere fundos Ark on-chain se o ASP desaparecer</string>
+    <string name="ark_exit_active_format">%1$d pendentes · %2$s</string>
+    <string name="ark_exit_ready_to_broadcast">Pronto para transmitir</string>
+    <string name="ark_exit_waiting_short">Aguardando confirmações</string>
+    <string name="ark_exit_review_broadcast">Revisar transmissão</string>
+    <string name="ark_exit_review_title">Revisar exit</string>
+    <string name="ark_exit_broadcast_review_title">Revisar transmissão</string>
+    <string name="ark_exit_broadcast_action">Transmitir</string>
+    <string name="ark_exit_broadcasting">Transmitindo…</string>
+    <string name="ark_exit_review_funds">Fundos</string>
+    <string name="ark_exit_review_count">Saídas</string>
+    <string name="ark_exit_review_fee">Taxa de mineração estimada</string>
+    <string name="ark_exit_review_required">Fundos confirmados necessários</string>
+    <string name="ark_exit_review_available">Fundos confirmados para taxa</string>
+    <string name="ark_exit_review_add_funds_format">Adicione %1$s</string>
+    <string name="ark_exit_review_add_funds_hint">Receba fundos on-chain no Ark e aguarde a confirmação.</string>
+    <string name="ark_exit_review_irreversible">A transmissão inicia um exit on-chain irreversível.</string>
+    <string name="ark_exit_fee_unavailable">Indisponível</string>
+    <string name="ark_exit_claim_review_title">Revisar claim</string>
+    <string name="ark_exit_no_outputs">Nenhuma saída gastável</string>
+    <string name="ark_open_lifecycle">VTXOs / Exit</string>
+    <string name="ark_refresh_exit_button">VTXOs</string>
+    <string name="ark_refresh_required_title">VTXO refresh</string>
+    <string name="ark_refresh_required_status">Refresh devido</string>
+    <string name="ark_refresh_required_status_soon">Refresh recomendado</string>
+    <string name="ark_refresh_required_message">%1$d VTXO(s) estão devidos para refresh. Ainda restam cerca de 144 blocos antes de expirarem. Faça o refresh agora enquanto o ASP pode renová-los.</string>
+    <string name="ark_refresh_required_message_soon">%1$d VTXO(s) devem ser atualizados em breve%2$s. Este é o aviso opcional de ~72 blocos. Depois de ficarem devidos, você ainda tem cerca de 144 blocos antes do vencimento.</string>
+    <string name="ark_refresh_required_blocks_suffix"> (~%1$d blocos até ficar devido)</string>
+    <string name="ark_refresh_required_confirm">Abrir refresh</string>
+    <string name="ark_refresh_required_dismiss">Depois</string>
+    <string name="ark_refresh_auto_started">Refresh de VTXO iniciado…</string>
+    <string name="ark_refresh_submitted_snackbar">Refresh enviado para %1$d saída(s). Aguardando a próxima rodada Ark.</string>
+    <string name="ark_refresh_submitted_scheduled_snackbar">Refresh enviado para %1$d saída(s), agendado no bloco %2$d.</string>
+    <string name="ark_refresh_pending_banner_round">%1$d saída(s) com refresh pendente — aguardando a próxima rodada Ark.</string>
+    <string name="ark_refresh_pending_banner_scheduled">%1$d saída(s) com refresh pendente no bloco %2$d (~%3$d blocos).</string>
+    <string name="ark_refresh_pending_tip_format">Ponta da cadeia %1$d</string>
+    <string name="ark_refresh_vtxo_pending_round">Refresh pendente — próxima rodada</string>
+    <string name="ark_refresh_vtxo_pending_scheduled">Refresh pendente — bloco %1$d</string>
+    <string name="ark_refresh_pending_dialog_round">%1$d saída(s) enviadas. Aguardando a próxima rodada Ark.</string>
+    <string name="ark_refresh_pending_dialog_scheduled">%1$d saída(s) agendadas para o bloco %2$d (~%3$d blocos da ponta).</string>
+    <string name="ark_refresh_review_tip">Ponta da cadeia</string>
+    <string name="ark_refresh_completed">Refresh de VTXO concluído</string>
+    <string name="ark_refresh_failed_format">Falha no refresh de VTXO: %1$s</string>
+    <string name="ark_fee_format">Taxa %1$s</string>
+    <string name="ark_lifecycle_idle">Faça refresh dos VTXOs antes do vencimento, ou inicie um unilateral exit se precisar.</string>
+    <string name="ark_lifecycle_complete">Concluído</string>
+    <string name="ark_lifecycle_working">Trabalhando…</string>
+    <string name="ark_refresh_working_body">Enviando ao ASP. Aguardar a próxima rodada Ark pode levar um minuto…</string>
+    <string name="ark_mailbox_recovery_completed">Recovery do mailbox concluída</string>
+    <string name="ark_mailbox_recovery_no_report">A recovery do mailbox não rodou. Tente Full Sync de novo.</string>
+    <string name="ark_mailbox_recovery_not_applied">O mailbox recuperou VTXOs, mas eles não apareceram. Tente Full Sync de novo.</string>
+    <string name="ark_mailbox_recovery_report_format">VTXOs: recuperados %1$d · ignorados %2$d (gastos/substituídos) · falhos %3$d · externos %4$d · retirados %5$d</string>
+    <string name="ark_onchain_unavailable">Carteira on-chain da Ark indisponível — depósitos de BTC não são creditados. Verifique o Esplora e atualize.</string>
+    <string name="ark_mailbox_recovery_failed_format">Falha na recovery do mailbox: %1$s</string>
+    <string name="ark_db_backup_title">Ark Backup</string>
+    <string name="ark_db_backup_subtitle">Exporte ou importe o banco Bark local desta carteira (VTXOs). Criptografado com a seed da carteira — só esta carteira pode restaurar. A mesma seed já deve estar carregada antes de importar.</string>
+    <string name="ark_db_backup_warning">BIP39 seed recuperará os fundos Ark enquanto o ASP estiver disponível; se o ASP ficar offline, um backup da DB Ark é necessário para recuperação. Backups externos sobrevivem à exclusão da carteira e ao auto-wipe.</string>
+    <string name="ark_db_backup_encrypted_note">Os backups são criptografados com uma chave derivada da seed desta carteira.</string>
+    <string name="ark_db_auto_backup_title">Backup automático</string>
+    <string name="ark_db_auto_backup_subtitle">Instantâneo criptografado automático da DB Ark em uma pasta externa após atividade de VTXO.</string>
+    <string name="ark_db_auto_backup_last_format">Último instantâneo: %1$s</string>
+    <string name="ark_db_auto_backup_last_never">Ainda sem instantâneo</string>
+    <string name="ark_db_auto_backup_latest_title">Último instantâneo</string>
+    <string name="ark_db_auto_backup_detail_when">Quando</string>
+    <string name="ark_db_auto_backup_detail_file">Arquivo</string>
+    <string name="ark_db_auto_backup_detail_size">Tamanho</string>
+    <string name="ark_db_auto_backup_detail_kept">Mantidos</string>
+    <string name="ark_db_auto_backup_detail_kept_format">latest + backup</string>
+    <string name="ark_db_auto_backup_detail_files">Arquivos</string>
+    <string name="ark_db_auto_backup_detail_files_latest">ibis-ark-db-latest.zip</string>
+    <string name="ark_db_auto_backup_detail_location">Local</string>
+    <string name="ark_db_auto_backup_location_external">Pasta externa</string>
+    <string name="ark_db_auto_backup_folder_set">Diretório vinculado</string>
+    <string name="ark_db_auto_backup_folder_unset">Nenhuma pasta selecionada: O backup automático está inativo</string>
+    <string name="ark_db_auto_backup_folder_required">Escolha uma pasta externa para ativar o backup automático</string>
+    <string name="ark_db_auto_backup_folder_pick">Escolher pasta</string>
+    <string name="ark_db_auto_backup_folder_clear">Remover pasta</string>
+    <string name="ark_db_auto_backup_restore">Restaurar último backup automático</string>
+    <string name="ark_db_auto_backup_none">Nenhum backup automático encontrado</string>
+    <string name="ark_db_auto_backup_failed">Falha no backup automático</string>
+    <string name="ark_db_auto_backup_failed_format">Falha no backup automático: %1$s</string>
+    <string name="ark_db_export_action">Exportar DB Ark</string>
+    <string name="ark_db_import_action">Importar DB Ark</string>
+    <string name="ark_db_export_progress">Exportando DB Ark…</string>
+    <string name="ark_db_import_progress">Importando DB Ark…</string>
+    <string name="ark_db_restore_progress">Restaurando DB Ark…</string>
+    <string name="ark_db_export_done">DB Ark criptografada exportada</string>
+    <string name="ark_db_import_done">DB Ark importada</string>
+    <string name="ark_db_export_empty">Não há dados Ark locais para exportar</string>
+    <string name="ark_db_export_failed">Falha ao exportar a DB Ark</string>
+    <string name="ark_db_import_failed">Falha ao importar a DB Ark</string>
+    <string name="ark_db_import_empty">O arquivo da DB Ark está vazio</string>
+    <string name="ark_db_import_wrong_wallet">Este backup pertence a outra carteira</string>
+    <string name="ark_db_import_invalid">Backup Ark inválido ou corrompido</string>
+    <string name="ark_db_import_legacy">Backup legado sem criptografia</string>
+    <string name="ark_db_transfer_failed_format">DB Ark: %1$s</string>
+    <string name="ark_select_vtxos">Selecionar VTXOs</string>
+    <string name="ark_vtxo_expiry_blocks_format">Expira em %1$d blocos (%2$d)</string>
+    <string name="ark_vtxo_expiry_height_format">Expira no bloco %1$d</string>
+    <string name="ark_vtxo_expiry_now_format">Expirando (%1$d)</string>
+    <string name="ark_exit_status_claimable">Resgatável</string>
+    <string name="ark_exit_status_in_progress">Exit em andamento</string>
+    <string name="ark_exit_status_ready">Pronto para transmitir</string>
+    <string name="ark_exit_status_action_required">Ação necessária · próxima tx não transmitida</string>
+    <string name="ark_exit_status_confirming">Transmitido · aguardando confirmações</string>
+    <string name="ark_exit_status_timelock">Confirmado · aguardando timelock</string>
+    <string name="ark_exit_status_claim_pending">Claim transmitido · aguardando confirmação</string>
+    <string name="ark_no_vtxos">Sem VTXOs</string>
+    <string name="ark_exit_status_format">%1$s · %2$s</string>
+    <string name="ark_connection_server_label">Server</string>
+    <string name="ark_connection_esplora_label">Esplora</string>
+    <string name="ark_connection_network_label">Network</string>
+    <string name="ark_connection_network_value">Bitcoin</string>
+    <string name="ark_esplora_picker_title">Esplora</string>
+    <string name="ark_esplora_picker_subtitle">Índice da cadeia Bitcoin para depósitos e saques.</string>
+    <string name="ark_esplora_tor_hint">Tor</string>
+    <string name="ark_esplora_apply">Aplicar</string>
+    <string name="ark_connection_server_name">Ark Service Provider</string>
+    <string name="ark_esplora_dropdown_label">Servidor Esplora</string>
+    <string name="ark_transfer_l1_to_ark_destination_hint">Depósitos sempre financiam o saldo Ark desta carteira via ASP.</string>
+    <string name="ark_transfer_ark_to_l1_destination_hint">O saque envia on-chain para este endereço Bitcoin.</string>
+    <string name="ark_transfer_l1_to_ark_destination_placeholder">Nota opcional — o depósito é fixo nesta carteira</string>
+    <string name="ark_transfer_custom_fee_unavailable">A taxa de saque cooperativo é definida pelo ASP.</string>
+    <string name="ark_transfer_custom_destination_unavailable">Depósitos sempre financiam o saldo Ark desta carteira.</string>
+    <string name="ark_transfer_deposit_destination">Destino</string>
+    <string name="ark_transfer_ark_deposit_address_label">Endereço de depósito Ark</string>
+    <string name="ark_transfer_deposit_destination_value">Saldo Ark desta carteira</string>
+    <string name="ark_transfer_deposit_fee">Taxa de depósito</string>
+    <string name="ark_transfer_withdrawal_fee">Taxa de saque</string>
+    <string name="ark_transfer_deposit_fee_note">Taxa de financiamento Layer 1 para depósito Ark</string>
+    <string name="ark_transfer_withdrawal_fee_note">Taxa de saque cooperativo definida pelo ASP</string>
+    <string name="ark_transfer_min_board_format">Mín %1$s</string>
+    <string name="ark_transfer_below_min_board_format">Abaixo do mínimo do ASP (%1$s)</string>
+    <string name="ark_receive_onchain_min_board_format">Depósito mínimo do ASP %1$s</string>
+    <string name="ark_receive_onchain_min_label">Depósito mínimo do ASP</string>
+    <string name="ark_board_below_min_format">%1$s on-chain está abaixo do depósito mínimo ASP de %2$s e não pode ser creditado no Ark. Recupere para a Layer 1.</string>
+    <string name="ark_board_below_min_shortfall_format">%1$s on-chain está abaixo do depósito mínimo ASP de %2$s (faltam %3$s) e não pode ser creditado no Ark. Recupere para a Layer 1.</string>
+    <string name="ark_stuck_below_min_banner_format">%1$s está abaixo do depósito mínimo de %2$s e não pode ser creditado no Ark.</string>
+    <string name="ark_stuck_below_min_top_up">Adicionar</string>
+    <string name="ark_stuck_below_min_recover">Recuperar para L1</string>
+    <string name="ark_boarding_below_min_actions_note">Adicione mais BTC até o depósito atingir o mínimo, ou envie todos os fundos confirmados de volta à carteira Layer 1.</string>
+    <string name="ark_boarding_recover_dialog_title">Recuperar para L1</string>
+    <string name="ark_boarding_recover_dialog_body">Todos os fundos on-chain confirmados na Ark serão enviados ao seu endereço de recebimento Layer 1. Isso não pode ser desfeito.</string>
+    <string name="ark_boarding_recover_dialog_address_label">Destino</string>
+    <string name="ark_boarding_recover_dialog_confirm">Confirmar recuperação</string>
+    <string name="ark_boarding_recover_dialog_no_address">Gere primeiro um endereço Layer 1</string>
+    <string name="ark_boarding_top_up_note">Envie mais BTC a este endereço on-chain até o depósito atingir o mínimo.</string>
+    <string name="ark_boarding_recover_note">Envia todos os fundos on-chain confirmados de volta à carteira Layer 1.</string>
+    <string name="ark_boarding_board_note">Credita este depósito no Ark como saldo gastável.</string>
+    <string name="ark_manage_tab_boarding">Boarding</string>
+    <string name="ark_boarding_title">Depósitos on-chain</string>
+    <string name="ark_boarding_empty">Nenhum depósito on-chain</string>
+    <string name="ark_boarding_auto_title">Auto-board</string>
+    <string name="ark_boarding_auto_note">Se ativo, depósitos confirmados no mínimo ou acima entram no Ark automaticamente.</string>
+    <string name="ark_boarding_auto_note_format">Se ativo, depósitos confirmados no mínimo ou acima entram no Ark automaticamente.</string>
+    <string name="ark_boarding_auto_note_unknown_min">Se ativo, depósitos confirmados no mínimo ou acima entram no Ark automaticamente.</string>
+    <string name="ark_boarding_disabled_exit">Boarding desativado enquanto um exit unilateral está em andamento.</string>
+    <string name="ark_board_disabled_exit">Boarding desativado enquanto um exit unilateral está em andamento.</string>
+    <string name="ark_board_failed_generic">Falha no boarding</string>
+    <string name="ark_board_success_format">Depositado %1$s</string>
+    <string name="ark_boarding_board">Board</string>
+    <string name="ark_boarding_board_all">Depositar tudo pronto</string>
+    <string name="ark_boarding_min_format">Mín. ASP %1$s</string>
+    <string name="ark_boarding_shortfall_format">Faltam %1$s para o boarding</string>
+    <string name="ark_boarding_confirmations_format">%1$d confirmações</string>
+    <string name="ark_boarding_confirmations_one">1 confirmação</string>
+    <string name="ark_boarding_unconfirmed">Não confirmado</string>
+    <string name="ark_boarding_confirmed_total_format">Confirmado %1$s</string>
+    <string name="ark_boarding_badge_ready">Pronto</string>
+    <string name="ark_boarding_badge_unconfirmed">Não confirmado</string>
+    <string name="ark_boarding_balance_banner_format">%1$s on-chain não depositado</string>
+    <string name="ark_boarding_balance_banner_below_min_format">%1$s on-chain não depositado (mín. ASP %2$s)</string>
+    <string name="ark_boarding_balance_banner_action">Gerenciar boarding</string>
+    <string name="ark_boarding_amount_select_note">Bark deposita por valor (não por outpoint).</string>
+    <string name="ark_history_badge_below_min">Abaixo do mínimo</string>
+    <string name="ark_history_status_below_min">Abaixo do mínimo</string>
+    <string name="ark_history_badge_recovered_l1">Recuperado</string>
+    <string name="ark_recover_onchain_nothing">Nenhum depósito on-chain confirmado para recuperar</string>
+    <string name="ark_recover_onchain_fee_too_high">Taxa não deixa saldo — reduza a taxa</string>
+    <string name="ark_recover_onchain_success_format">Recuperado para a Layer 1 · %1$s</string>
+    <string name="ark_recover_onchain_cleared">Depósito abaixo do mínimo removido</string>
+    <string name="ark_recover_onchain_failed_format">Falha na recuperação: %1$s</string>
+    <string name="ark_recover_onchain_need_l1_address">Gere um endereço Layer 1 primeiro</string>
+    <string name="ark_search_history_placeholder">Buscar rótulos, status ou id de pagamento…</string>
+    <string name="ark_loading_wallet_message">Ark está carregando para esta carteira</string>
+    <string name="ark_onchain_deposit_pending_format">Confirmando depósito · %1$s</string>
+    <string name="ark_pending_deposit_format">Depositando · %1$s</string>
+    <string name="ark_movement_lightning">Lightning</string>
+    <string name="ark_movement_refresh">Ark refresh</string>
+    <string name="ark_movement_exit">Exit</string>
+    <string name="ark_movement_id_title">ID do movimento</string>
+    <string name="ark_movement_id_copy_label">ID do movimento Ark</string>
+    <string name="ark_filter_ark_content_description">Filtrar transferências Ark</string>
+    <string name="ark_filter_bitcoin_content_description">Filtrar depósitos e saques Bitcoin</string>
+    <string name="ark_deposit_note_title">Nota</string>
+    <string name="ark_deposit_note_pending">Depósitos Bitcoin on-chain podem precisar de até 6 confirmações antes de o ASP creditá-los no Ark.</string>
+    <string name="ark_deposit_note_confirmed">O depósito atingiu o limiar de confirmações. O Ark credita o saldo gastável após o depósito.</string>
+    <string name="ark_deposit_note_pending_format">Depósitos Bitcoin on-chain podem precisar de até %1$d confirmações antes de o ASP creditá-los no Ark.</string>
+    <string name="ark_deposit_note_confirmed_format">O depósito atingiu %1$d confirmações. O Ark credita o saldo gastável após o depósito.</string>
+    <string name="ark_deposit_status_awaiting_confirmations">Aguardando 3 confirmações</string>
+    <string name="ark_withdrawal_note">Saques cooperativos liquidam em Bitcoin no endereço de destino.</string>
+    <string name="ark_review_fee_bitcoin">Taxa de rede Bitcoin:</string>
+    <string name="ark_review_fee_lightning">Taxa de rede Lightning:</string>
+    <string name="ark_refresh_round_txid_title">Transação do round Ark</string>
+    <string name="ark_refresh_round_txid_copy">txid do round Ark</string>
+    <string name="ark_review_fee_refresh">Taxa de refresh:</string>
+    <string name="ark_review_fee_ark">Taxa de rede Ark:</string>
+    <string name="ark_movement_recipient_unknown">Destinatário desconhecido</string>
+    <string name="ark_movement_received_at_unknown">Endereço não registrado</string>
+    <string name="ark_movement_type_label">Tipo</string>
+    <string name="ark_receive_tab_onchain">On-chain</string>
+    <string name="ark_receive_lightning_qr_cd">QR da fatura Lightning</string>
+    <string name="ark_enter_amount">Informe um valor</string>
+    <string name="ark_deposit_address_missing">Endereço de depósito Ark ausente</string>
+    <string name="ark_error_wallet_not_loaded">Carteira Ark não carregada</string>
+    <string name="ark_error_requires_bip39_wallet">Ark exige uma carteira mainnet BIP39 single-sig com capacidade de gasto</string>
+    <string name="ark_error_unsupported_destination">Destino não suportado</string>
+    <string name="ark_error_different_server">O endereço Ark é de outro servidor</string>
+    <string name="ark_error_silent_payments">Silent payments não são suportados</string>
+    <string name="ark_error_nothing_prepared">Nada preparado</string>
+    <string name="ark_error_amount_required">Valor obrigatório</string>
+    <string name="ark_send_may_have_completed_format">O pagamento pode ter sido concluído — verifique antes de tentar de novo. %1$s</string>
+    <string name="ark_send_lightning_timeout">Pagamento Lightning esgotou o tempo</string>
+    <string name="ark_send_lightning_settled_detail">Pagamento liquidado</string>
+    <string name="ark_send_lightning_in_progress">Em andamento — liquida em breve</string>
+    <string name="ark_send_lightning_unknown">Resultado desconhecido — confira o histórico</string>
+    <string name="ark_send_status_close_hint">Você pode fechar esta janela. Confira o histórico se o pagamento ainda puder liquidar.</string>
+    <string name="ark_send_multi_remainder_format">%1$d destinatário(s) não enviados — revise e tente de novo</string>
+    <string name="ark_error_claim_preview_stale">A prévia do claim mudou — peça uma nova cotação</string>
+    <string name="ark_error_onchain_wallet_unavailable">Carteira on-chain indisponível</string>
+    <string name="ark_error_passphrase_board_unavailable">Depósito BTC→Ark indisponível para carteiras com passphrase BIP39</string>
+    <string name="ark_esplora_fallback_format">Fallback Esplora Ark: usando %1$s</string>
+    <string name="ark_error_enter_amount_lightning_invoice">Informe um valor para uma fatura Lightning</string>
+    <string name="ark_error_insufficient_need_fee_format">Fundos insuficientes (são necessários %1$s sats incl. taxa)</string>
+    <string name="ark_error_insufficient_available_format">Fundos insuficientes (Disponível: %1$s sats)</string>
+    <string name="ark_error_refresh_already_pending">As saídas selecionadas já estão aguardando um round de refresh</string>
+    <string name="ark_error_no_vtxos_need_refresh">Nenhum VTXO precisa de refresh</string>
+    <string name="ark_error_no_spendable_vtxos">Nenhum VTXO gastável</string>
+    <string name="ark_error_no_claimable_exits">Nenhum exit resgatável</string>
+    <string name="ark_error_exit_cpfp_funding">São necessários fundos on-chain confirmados para a taxa de mineração do exit.</string>
+    <string name="ark_error_exit_cpfp_funding_format">Necessário: %1$s sats. Disponível: %2$s sats. Adicione %3$s sats ao endereço de recebimento On-chain do Ark.</string>
+    <string name="ark_error_generic">Erro do Ark</string>
+    <string name="ark_error_esplora_dns">Falha de DNS do Esplora — tente outra rede ou defina uma URL Esplora acessível</string>
+    <string name="ark_error_chain_source">Fonte on-chain indisponível — verifique URL Esplora / rede</string>
+    <string name="ark_error_asp_unreachable">Servidor Ark inacessível</string>
+    <string name="ark_error_datadir_locked">A carteira Ark está fechando uma sessão anterior — tente novamente em instantes</string>
+    <string name="l2_error_silent_payments">Silent payments não são suportados aqui</string>
+    <string name="l2_error_bitcoin_not_on_liquid">Endereços Bitcoin não são suportados no envio Liquid</string>
+    <string name="l2_error_liquid_not_supported">Solicitações Liquid não são suportadas aqui</string>
+    <string name="l2_error_spark_not_supported">Solicitações Spark não são suportadas aqui</string>
+    <string name="l2_error_ark_not_supported">Endereços Ark não são suportados aqui</string>
+    <string name="l2_error_amountless_invoice">Faturas Lightning sem valor não são suportadas</string>
+    <string name="l2_error_bolt12_not_on_spark">Ofertas BOLT12 não são suportadas no envio Spark</string>
+    <string name="l2_error_bolt12_requires_cln">Ofertas BOLT12 exigem uma conexão CLN</string>
+    <string name="l2_hint_liquid">Informe Liquid, BOLT 11/12 ou LN Address</string>
+    <string name="l2_hint_spark">Informe Spark, BOLT 11, LNURL ou endereço Bitcoin</string>
+    <string name="l2_hint_ark">Informe Bitcoin, Ark, BOLT 11/12 ou LNURL</string>
+    <string name="l2_hint_any">Informe Liquid, Spark, Ark, BOLT 11/12 ou LN Address</string>
+    <string name="l2_hint_ln_node_cln">Informe BOLT11, BOLT12, LNURL ou LN Address</string>
+    <string name="l2_hint_ln_node_default">Informe BOLT11, LNURL ou LN Address</string>
+    <string name="spark_deposit_address_not_ready">Endereço de depósito Spark não pronto</string>
+    <string name="spark_error_connection">Falha na conexão Spark</string>
+    <string name="spark_error_unavailable">Serviço Spark indisponível</string>
+    <string name="spark_error_generic">Solicitação Spark falhou</string>
+    <string name="layer1_address_not_ready">Endereço Layer 1 não pronto</string>
+    <string name="ark_error_testnet_address">Endereços Ark de testnet não são suportados</string>
 </resources>
