@@ -26,6 +26,7 @@ jna = "5.19.1"
 lightningKmp = "1.13.0"
 bitcoinj = "0.17.1"
 sparkSdk = "0.19.0"
+barkSdk = "0.16.1+bark-0.6.1"
 # Testing
 kotest = "5.9.1"
 mockk = "1.14.11"
@@ -63,6 +64,7 @@ jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 lightning-kmp-core-jvm = { group = "fr.acinq.lightning", name = "lightning-kmp-core-jvm", version.ref = "lightningKmp" }
 bitcoinj-core = { group = "org.bitcoinj", name = "bitcoinj-core", version.ref = "bitcoinj" }
 spark-sdk-android = { group = "breez_sdk_spark", name = "bindings-android", version.ref = "sparkSdk" }
+bark-sdk-android = { group = "tech.second.bark", name = "bark-android", version.ref = "barkSdk" }
 # Testing
 kotest-runner-junit5 = { group = "io.kotest", name = "kotest-runner-junit5", version.ref = "kotest" }
 kotest-assertions-core = { group = "io.kotest", name = "kotest-assertions-core", version.ref = "kotest" }
