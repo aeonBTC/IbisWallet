@@ -20,7 +20,9 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Import Private Key** - Sweep or import private keys (WIF format)
 - **Hardware Wallet Signing** - Use animated QR codes or .psbt files for air-gapped key signing
 - **Coin Control** - Select specific UTXOs, freeze/unfreeze, send from individual outputs
+- **Require Coin Control** - Option that forces UTXO selection before on-chain sends
 - **RBF & CPFP** - Bump fees on unconfirmed transactions, including multisig-safe PSBT fee bump flows
+- **RBF On by Default** - On-chain sends signal replace-by-fee by default; option to disable in settings
 - **Cancel Transactions** - Cancel unconfirmed outgoing transactions with RBF
 - **Manual Broadcast** - Broadcast any signed raw transaction directly to the Bitcoin network
 - **Batch Sending** - Send to multiple recipients in a single transaction
@@ -48,7 +50,9 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Built-in Tor** - Native Tor integration, no need for Orbot or external proxies
 - **PIN & Biometrics** - With configurable lock timing
 - **Duress PIN** - Configure a duress PIN that opens a decoy wallet
+- **Wipe PIN** - Optional secondary PIN that, when entered on the lock screen, silently erases all wallet data on the device
 - **Auto-Wipe** - Set a threshold for failed unlocks that automatically and irreversibly wipes all app data
+- **Clear Clipboard** - Option to automatically wipe the clipboard when the app locks or is closed
 - **Cloak Mode** - Disguise Ibis as a calculator app
 - **Privacy Toggle** - Hide all wallet amounts and balances
 - **Wipe History** - Locally wipe specific wallet transactions or entire history

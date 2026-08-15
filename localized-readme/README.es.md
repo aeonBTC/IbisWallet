@@ -20,7 +20,9 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 - **Import Private Key** - Barrer o importar claves privadas (formato WIF)
 - **Hardware Wallet Signing** - Usar códigos QR animados o archivos .psbt para firmas air-gapped
 - **Coin Control** - Seleccionar UTXOs concretos, congelar/descongelar, enviar desde salidas individuales
+- **Require Coin Control** - Opción que obliga a seleccionar UTXOs antes de envíos on-chain
 - **RBF & CPFP** - Aumentar comisiones en transacciones no confirmadas, incluidos flujos PSBT seguros para multisig
+- **RBF On by Default** - Los envíos on-chain marcan replace-by-fee por defecto; opción para desactivarlo en ajustes
 - **Cancel Transactions** - Cancelar transacciones salientes no confirmadas con RBF
 - **Manual Broadcast** - Transmitir cualquier transacción firmada en bruto a la red Bitcoin
 - **Batch Sending** - Enviar a varios destinatarios en una sola transacción
@@ -48,7 +50,9 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 - **Built-in Tor** - Tor nativo, sin Orbot ni proxies externos
 - **PIN & Biometrics** - Con tiempo de bloqueo configurable
 - **Duress PIN** - PIN de coacción que abre una billetera señuelo
+- **Wipe PIN** - PIN secundario opcional que, al introducirlo en la pantalla de bloqueo, borra en silencio todos los datos de billetera del dispositivo
 - **Auto-Wipe** - Umbral de desbloqueos fallidos que borra de forma automática e irreversible todos los datos de la app
+- **Clear Clipboard** - Opción para vaciar automáticamente el portapapeles al bloquear o cerrar la app
 - **Cloak Mode** - Disfrazar Ibis como una app de calculadora
 - **Privacy Toggle** - Ocultar todos los importes y saldos
 - **Wipe History** - Borrar localmente transacciones concretas o todo el historial
