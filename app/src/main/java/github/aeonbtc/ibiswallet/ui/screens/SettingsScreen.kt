@@ -5,7 +5,19 @@ package github.aeonbtc.ibiswallet.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -13,10 +25,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.CallMerge
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Api
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CurrencyBitcoin
+import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.HourglassTop
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
@@ -25,29 +41,63 @@ import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.BtcPriceService
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.ArkEsploraPreset
+import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.tor.TorStatus
+import github.aeonbtc.ibiswallet.ui.components.BalanceDateFormatDropdown
 import github.aeonbtc.ibiswallet.ui.components.CompactDropdownField
 import github.aeonbtc.ibiswallet.ui.components.DropdownOptionText
 import github.aeonbtc.ibiswallet.ui.components.LanguageDropdown
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
-import github.aeonbtc.ibiswallet.ui.theme.*
+import github.aeonbtc.ibiswallet.ui.components.TypefaceDropdown
+import github.aeonbtc.ibiswallet.ui.theme.ArkRust
+import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
+import github.aeonbtc.ibiswallet.ui.theme.BorderColor
+import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
+import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
+import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
+import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
+import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
+import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
+import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
+import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.ui.theme.TorPurple
 import github.aeonbtc.ibiswallet.util.ServerUrlValidator
 import github.aeonbtc.ibiswallet.util.WalletNotificationDeliveryState
+import github.aeonbtc.ibiswallet.viewmodel.ArkViewModel
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -59,6 +109,12 @@ fun SettingsScreen(
     onAppLocaleChange: (AppLocale) -> Unit = {},
     spendUnconfirmed: Boolean = true,
     onSpendUnconfirmedChange: (Boolean) -> Unit = {},
+    rbfEnabled: Boolean = true,
+    onRbfEnabledChange: (Boolean) -> Unit = {},
+    requireCoinControl: Boolean = false,
+    onRequireCoinControlChange: (Boolean) -> Unit = {},
+    consolidateChange: Boolean = false,
+    onConsolidateChangeChange: (Boolean) -> Unit = {},
     walletNotificationsEnabled: Boolean = false,
     walletNotificationDeliveryState: WalletNotificationDeliveryState =
         WalletNotificationDeliveryState.APP_DISABLED,
@@ -129,435 +185,418 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // ── Card 1: General ──
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkCard),
-        ) {
-            Column(
+        val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
+        val walletNotificationsSubtitle =
+            when (walletNotificationDeliveryState) {
+                WalletNotificationDeliveryState.PERMISSION_REQUIRED ->
+                    stringResource(R.string.wallet_notifications_subtitle_permission_required)
+                WalletNotificationDeliveryState.SYSTEM_DISABLED ->
+                    stringResource(R.string.wallet_notifications_subtitle_android_blocked)
+                else ->
+                    stringResource(R.string.wallet_notifications_subtitle_default)
+            }
+        val walletNotificationsSubtitleColor =
+            when (walletNotificationDeliveryState) {
+                WalletNotificationDeliveryState.PERMISSION_REQUIRED,
+                WalletNotificationDeliveryState.SYSTEM_DISABLED,
+                -> ErrorRed
+                else -> TextSecondary
+            }
+        val nfcSubtitle =
+            when {
+                !hasNfcHardware -> stringResource(R.string.loc_3e2ca137)
+                !isSystemNfcEnabled -> stringResource(R.string.loc_e762ab0b)
+                !supportsNfcBroadcast -> stringResource(R.string.loc_03cc7c45)
+                else -> stringResource(R.string.loc_7e8f0b30)
+            }
+
+        // ── Display ──
+        SettingsSectionCard(title = stringResource(R.string.settings_general_section_display)) {
+            Row(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.loc_01940fd6),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = BitcoinOrange,
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                SettingsSubsectionHeader(title = stringResource(R.string.settings_general_section_display))
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                onDenominationChange(
-                                    if (!isSats) {
-                                        SecureStorage.DENOMINATION_SATS
-                                    } else {
-                                        SecureStorage.DENOMINATION_BTC
-                                    },
-                                )
-                            },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CurrencyBitcoin,
-                            contentDescription = null,
-                            tint = BitcoinOrange,
-                            modifier = Modifier.size(24.dp),
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        ToggleOptionText(
-                            title = if (isSats) stringResource(R.string.loc_33b64233) else "BTC",
-                            subtitle = if (isSats) {
-                                stringResource(R.string.loc_d654b827)
-                            } else {
-                                stringResource(R.string.loc_781eebac)
-                            },
-                        )
-                    }
-                    SquareToggle(
-                        checked = isSats,
-                        onCheckedChange = { useSats ->
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
                             onDenominationChange(
-                                if (useSats) {
+                                if (!isSats) {
                                     SecureStorage.DENOMINATION_SATS
                                 } else {
                                     SecureStorage.DENOMINATION_BTC
                                 },
                             )
                         },
-                        checkedColor = BitcoinOrange,
-                        uncheckedColor = BitcoinOrange.copy(alpha = 0.18f),
-                        uncheckedBorderColor = BitcoinOrange,
-                        uncheckedThumbColor = BitcoinOrange,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
                     Icon(
-                        imageVector = Icons.Default.Language,
+                        imageVector = Icons.Default.CurrencyBitcoin,
                         contentDescription = null,
                         tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(24.dp),
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.settings_language_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextSecondary,
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = if (isSats) stringResource(R.string.loc_33b64233) else "BTC",
+                        subtitle = if (isSats) {
+                            stringResource(R.string.loc_d654b827)
+                        } else {
+                            stringResource(R.string.loc_781eebac)
+                        },
                     )
                 }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                LanguageDropdown(
-                    currentLocale = currentAppLocale,
-                    onLocaleSelected = onAppLocaleChange,
+                SquareToggle(
+                    checked = isSats,
+                    onCheckedChange = { useSats ->
+                        onDenominationChange(
+                            if (useSats) {
+                                SecureStorage.DENOMINATION_SATS
+                            } else {
+                                SecureStorage.DENOMINATION_BTC
+                            },
+                        )
+                    },
+                    checkedColor = BitcoinOrange,
+                    uncheckedColor = BitcoinOrange.copy(alpha = 0.18f),
+                    uncheckedBorderColor = BitcoinOrange,
+                    uncheckedThumbColor = BitcoinOrange,
                 )
+            }
 
-                Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Schedule,
-                        contentDescription = null,
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.settings_balance_date_format_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextSecondary,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                BalanceDateFormatDropdown(
-                    currentFormat = currentBalanceDateFormat,
-                    onFormatSelected = onBalanceDateFormatChange,
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Palette,
-                        contentDescription = null,
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.settings_theme_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextSecondary,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                ThemeModeDropdown(
-                    currentThemeMode = currentThemeMode,
-                    onThemeModeSelected = onThemeModeChange,
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.TextFields,
-                        contentDescription = null,
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.settings_typeface_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextSecondary,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                TypefaceDropdown(
-                    currentTypeface = currentTypeface,
-                    onTypefaceSelected = onTypefaceChange,
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.SwapHoriz,
-                        contentDescription = null,
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.loc_db88d4ce),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = TextSecondary,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(4.dp))
-
+            SettingsLabeledControl(
+                icon = Icons.Default.SwapHoriz,
+                label = stringResource(R.string.loc_db88d4ce),
+            ) {
                 SwipeModeDropdown(
                     currentMode = currentSwipeMode,
                     onModeSelected = onSwipeModeChange,
                     isLiquidAvailable = isLiquidAvailable,
                 )
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-                SettingsSubsectionHeader(title = stringResource(R.string.settings_general_section_transactions))
+            SettingsLabeledControl(
+                icon = Icons.Default.Palette,
+                label = stringResource(R.string.settings_theme_title),
+            ) {
+                ThemeModeDropdown(
+                    currentThemeMode = currentThemeMode,
+                    onThemeModeSelected = onThemeModeChange,
+                )
+            }
 
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onSpendUnconfirmedChange(!spendUnconfirmed) },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.SwapHoriz,
-                            contentDescription = null,
-                            tint = BitcoinOrange,
-                            modifier = Modifier.size(24.dp),
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        ToggleOptionText(
-                            title = stringResource(R.string.loc_0708218f),
-                            subtitle = stringResource(R.string.loc_35cb0c66),
-                        )
-                    }
-                    SquareToggle(
-                        checked = spendUnconfirmed,
-                        onCheckedChange = onSpendUnconfirmedChange,
-                    )
-                }
+            SettingsLabeledControl(
+                icon = Icons.Default.Schedule,
+                label = stringResource(R.string.settings_balance_date_format_title),
+            ) {
+                BalanceDateFormatDropdown(
+                    currentFormat = currentBalanceDateFormat,
+                    onFormatSelected = onBalanceDateFormatChange,
+                )
+            }
 
-                Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-                SettingsSubsectionHeader(title = stringResource(R.string.settings_general_section_connectivity))
+            SettingsLabeledControl(
+                icon = Icons.Default.TextFields,
+                label = stringResource(R.string.settings_typeface_title),
+            ) {
+                TypefaceDropdown(
+                    currentTypeface = currentTypeface,
+                    onTypefaceSelected = onTypefaceChange,
+                )
+            }
 
-                Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-                val walletNotificationsSubtitle =
-                    when (walletNotificationDeliveryState) {
-                        WalletNotificationDeliveryState.PERMISSION_REQUIRED ->
-                            stringResource(R.string.wallet_notifications_subtitle_permission_required)
-                        WalletNotificationDeliveryState.SYSTEM_DISABLED ->
-                            stringResource(R.string.wallet_notifications_subtitle_android_blocked)
-                        else ->
-                            stringResource(R.string.wallet_notifications_subtitle_default)
-                    }
-                val walletNotificationsSubtitleColor =
-                    when (walletNotificationDeliveryState) {
-                        WalletNotificationDeliveryState.PERMISSION_REQUIRED,
-                        WalletNotificationDeliveryState.SYSTEM_DISABLED,
-                        -> ErrorRed
-                        else -> TextSecondary
-                    }
-                val nfcSubtitle =
-                    when {
-                        !hasNfcHardware -> stringResource(R.string.loc_3e2ca137)
-                        !isSystemNfcEnabled -> stringResource(R.string.loc_e762ab0b)
-                        !supportsNfcBroadcast -> stringResource(R.string.loc_03cc7c45)
-                        else -> stringResource(R.string.loc_7e8f0b30)
-                    }
-
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onWalletNotificationsEnabledChange(!walletNotificationsEnabled) },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Notifications,
-                            contentDescription = null,
-                            tint = BitcoinOrange,
-                            modifier = Modifier.size(24.dp),
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        ToggleOptionText(
-                            title = stringResource(R.string.wallet_notifications_title),
-                            subtitle = walletNotificationsSubtitle,
-                            subtitleColor = walletNotificationsSubtitleColor,
-                        )
-                    }
-                    SquareToggle(
-                        checked = walletNotificationsEnabled,
-                        onCheckedChange = onWalletNotificationsEnabledChange,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onForegroundConnectivityEnabledChange(!foregroundConnectivityEnabled) },
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Language,
-                            contentDescription = null,
-                            tint = BitcoinOrange,
-                            modifier = Modifier.size(24.dp),
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        ToggleOptionText(
-                            title = stringResource(R.string.foreground_connectivity_title),
-                            subtitle = stringResource(R.string.foreground_connectivity_subtitle),
-                        )
-                    }
-                    SquareToggle(
-                        checked = foregroundConnectivityEnabled,
-                        onCheckedChange = onForegroundConnectivityEnabledChange,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .then(
-                                if (hasNfcHardware) {
-                                    Modifier.clickable { onNfcEnabledChange(!nfcEnabled) }
-                                } else {
-                                    Modifier
-                                },
-                            ),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Sensors,
-                            contentDescription = null,
-                            tint = if (hasNfcHardware) BitcoinOrange else TextSecondary.copy(alpha = 0.4f),
-                            modifier = Modifier.size(24.dp),
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        ToggleOptionText(
-                            title = stringResource(R.string.loc_ccb38171),
-                            subtitle = nfcSubtitle,
-                            titleColor = if (hasNfcHardware) {
-                                MaterialTheme.colorScheme.onBackground
-                            } else {
-                                TextSecondary.copy(alpha = 0.4f)
-                            },
-                            subtitleColor = if (hasNfcHardware) TextSecondary else TextSecondary.copy(alpha = 0.4f),
-                        )
-                    }
-                    SquareToggle(
-                        checked = if (hasNfcHardware) nfcEnabled else false,
-                        onCheckedChange = if (hasNfcHardware) onNfcEnabledChange else { _ -> },
-                    )
-                }
+            SettingsLabeledControl(
+                icon = Icons.Default.Language,
+                label = stringResource(R.string.settings_language_title),
+            ) {
+                LanguageDropdown(
+                    currentLocale = currentAppLocale,
+                    onLocaleSelected = onAppLocaleChange,
+                )
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // ── Card 3: External Services ──
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkCard),
-        ) {
-            Column(
+        // ── Transactions ──
+        SettingsSectionCard(title = stringResource(R.string.settings_general_section_transactions)) {
+            Row(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(16.dp),
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSpendUnconfirmedChange(!spendUnconfirmed) },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = stringResource(R.string.loc_23c9f3ad),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = BitcoinOrange,
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-            // Fee Rate Source
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Speed,
-                    contentDescription = null,
-                    tint = BitcoinOrange,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.loc_31ab2a4e),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.HourglassTop,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = stringResource(R.string.loc_0708218f),
+                        subtitle = stringResource(R.string.loc_35cb0c66),
+                    )
+                }
+                SquareToggle(
+                    checked = spendUnconfirmed,
+                    onCheckedChange = onSpendUnconfirmedChange,
                 )
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            FeeSourceDropdown(
-                currentSource = currentFeeSource,
-                onSourceSelected = onFeeSourceChange,
-            )
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onRbfEnabledChange(!rbfEnabled) },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Speed,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = stringResource(R.string.settings_rbf_title),
+                        subtitle = stringResource(R.string.settings_rbf_subtitle),
+                    )
+                }
+                SquareToggle(
+                    checked = rbfEnabled,
+                    onCheckedChange = onRbfEnabledChange,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onRequireCoinControlChange(!requireCoinControl) },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FilterList,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = stringResource(R.string.settings_require_coin_control_title),
+                        subtitle = stringResource(R.string.settings_require_coin_control_subtitle),
+                    )
+                }
+                SquareToggle(
+                    checked = requireCoinControl,
+                    onCheckedChange = onRequireCoinControlChange,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onConsolidateChangeChange(!consolidateChange) },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.CallMerge,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = stringResource(R.string.settings_consolidate_change_title),
+                        subtitle = stringResource(R.string.settings_consolidate_change_subtitle),
+                    )
+                }
+                SquareToggle(
+                    checked = consolidateChange,
+                    onCheckedChange = onConsolidateChangeChange,
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // ── Connectivity ──
+        SettingsSectionCard(title = stringResource(R.string.settings_general_section_connectivity)) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onWalletNotificationsEnabledChange(!walletNotificationsEnabled) },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = stringResource(R.string.wallet_notifications_title),
+                        subtitle = walletNotificationsSubtitle,
+                        subtitleColor = walletNotificationsSubtitleColor,
+                    )
+                }
+                SquareToggle(
+                    checked = walletNotificationsEnabled,
+                    onCheckedChange = onWalletNotificationsEnabledChange,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onForegroundConnectivityEnabledChange(!foregroundConnectivityEnabled) },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Language,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = stringResource(R.string.foreground_connectivity_title),
+                        subtitle = stringResource(R.string.foreground_connectivity_subtitle),
+                    )
+                }
+                SquareToggle(
+                    checked = foregroundConnectivityEnabled,
+                    onCheckedChange = onForegroundConnectivityEnabledChange,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .then(
+                            if (hasNfcHardware) {
+                                Modifier.clickable { onNfcEnabledChange(!nfcEnabled) }
+                            } else {
+                                Modifier
+                            },
+                        ),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Sensors,
+                        contentDescription = null,
+                        tint = if (hasNfcHardware) BitcoinOrange else TextSecondary.copy(alpha = 0.4f),
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = stringResource(R.string.loc_ccb38171),
+                        subtitle = nfcSubtitle,
+                        titleColor = if (hasNfcHardware) {
+                            MaterialTheme.colorScheme.onBackground
+                        } else {
+                            TextSecondary.copy(alpha = 0.4f)
+                        },
+                        subtitleColor = if (hasNfcHardware) TextSecondary else TextSecondary.copy(alpha = 0.4f),
+                    )
+                }
+                SquareToggle(
+                    checked = if (hasNfcHardware) nfcEnabled else false,
+                    onCheckedChange = if (hasNfcHardware) onNfcEnabledChange else { _ -> },
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // ── External Services ──
+        SettingsSectionCard(title = stringResource(R.string.loc_23c9f3ad)) {
+            SettingsLabeledControl(
+                icon = Icons.Default.Speed,
+                label = stringResource(R.string.loc_31ab2a4e),
+            ) {
+                FeeSourceDropdown(
+                    currentSource = currentFeeSource,
+                    onSourceSelected = onFeeSourceChange,
+                )
+            }
 
             if (currentFeeSource == SecureStorage.FEE_SOURCE_MEMPOOL_ONION) {
                 TorStatusIndicator(
                     torStatus = torStatus,
-                    modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+                    modifier = Modifier.padding(start = 28.dp, top = 4.dp),
                 )
             }
 
@@ -624,34 +663,34 @@ fun SettingsScreen(
                     successMessage = feeUrlSaved,
                     torStatusText = if (isOnionUrl) torStatusText else null,
                     torStatusColor = if (isOnionUrl) torStatusColor else null,
-                    modifier = Modifier.padding(start = 24.dp),
+                    modifier = Modifier.padding(start = 28.dp),
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // Block Explorer
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Language,
-                    contentDescription = null,
-                    tint = BitcoinOrange,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.loc_a688468b),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary,
+            SettingsLabeledControl(
+                icon = Icons.Default.Language,
+                label = stringResource(R.string.loc_a688468b),
+            ) {
+                MempoolServerDropdown(
+                    currentServer = currentMempoolServer,
+                    onServerSelected = onMempoolServerChange,
                 )
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
-
-            MempoolServerDropdown(
-                currentServer = currentMempoolServer,
-                onServerSelected = onMempoolServerChange,
-            )
+            val mempoolNeedsTor =
+                currentMempoolServer == SecureStorage.MEMPOOL_ONION ||
+                    (
+                        currentMempoolServer == SecureStorage.MEMPOOL_CUSTOM &&
+                            settingsIsOnionUrl(customMempoolUrl)
+                    )
+            if (mempoolNeedsTor) {
+                TorStatusIndicator(
+                    torStatus = torStatus,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
 
             if (currentMempoolServer == SecureStorage.MEMPOOL_CUSTOM) {
                 Spacer(modifier = Modifier.height(6.dp))
@@ -661,6 +700,22 @@ fun SettingsScreen(
                 }
                 var mempoolUrlError by remember { mutableStateOf<String?>(null) }
                 var mempoolUrlSaved by remember { mutableStateOf<String?>(null) }
+                val isCustomMempoolOnion = settingsIsOnionUrl(mempoolUrlDraft)
+                val mempoolTorStatusColor =
+                    when (torStatus) {
+                        TorStatus.CONNECTED -> TorPurple
+                        TorStatus.CONNECTING, TorStatus.STARTING -> TorPurple.copy(alpha = 0.6f)
+                        TorStatus.ERROR -> ErrorRed
+                        TorStatus.DISCONNECTED, TorStatus.STOPPING -> TextSecondary
+                    }
+                val mempoolTorStatusText =
+                    when (torStatus) {
+                        TorStatus.CONNECTED -> stringResource(R.string.loc_892c0ce5)
+                        TorStatus.CONNECTING -> stringResource(R.string.loc_1a2bbf31)
+                        TorStatus.STARTING -> stringResource(R.string.loc_a4c47a71)
+                        TorStatus.ERROR -> stringResource(R.string.loc_27d8399b)
+                        TorStatus.DISCONNECTED, TorStatus.STOPPING -> stringResource(R.string.loc_d6353c61)
+                    }
 
                 CompactTextFieldWithSave(
                     value = mempoolUrlDraft,
@@ -685,34 +740,22 @@ fun SettingsScreen(
                     placeholder = stringResource(R.string.settings_custom_server_placeholder),
                     errorMessage = mempoolUrlError,
                     successMessage = mempoolUrlSaved,
-                    modifier = Modifier.padding(start = 24.dp),
+                    torStatusText = if (isCustomMempoolOnion) mempoolTorStatusText else null,
+                    torStatusColor = if (isCustomMempoolOnion) mempoolTorStatusColor else null,
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // BTC/fiat Price Source
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.AttachMoney,
-                    contentDescription = null,
-                    tint = BitcoinOrange,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.loc_00a426f8),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary,
+            SettingsLabeledControl(
+                icon = Icons.Default.AttachMoney,
+                label = stringResource(R.string.loc_00a426f8),
+            ) {
+                PriceSourceDropdown(
+                    currentSource = currentPriceSource,
+                    onSourceSelected = onPriceSourceChange,
                 )
             }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            PriceSourceDropdown(
-                currentSource = currentPriceSource,
-                onSourceSelected = onPriceSourceChange,
-            )
 
             val historicalTxFiatSupported = SecureStorage.supportsHistoricalTxFiatPricing(currentPriceSource)
 
@@ -766,46 +809,43 @@ fun SettingsScreen(
             if (currentPriceSource == SecureStorage.PRICE_SOURCE_MEMPOOL_ONION) {
                 TorStatusIndicator(
                     torStatus = torStatus,
-                    modifier = Modifier.padding(start = 24.dp, top = 4.dp),
+                    modifier = Modifier.padding(start = 28.dp, top = 4.dp),
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            HorizontalDivider(color = BorderColor.copy(alpha = 0.7f))
+            HorizontalDivider(color = BorderColor.copy(alpha = 0.45f))
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 40.dp),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 40.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onOpenBitcoinElectrum),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = stringResource(R.string.loc_a39dd5c6),
                     style = TextStyle(fontSize = 15.sp),
                     color = TextPrimary,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(start = 8.dp),
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .padding(start = 8.dp),
                 )
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(onClick = onOpenBitcoinElectrum),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = stringResource(R.string.loc_2a54f889),
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                    contentDescription = stringResource(R.string.loc_2a54f889),
+                    tint = BitcoinOrange,
+                    modifier =
+                        Modifier
+                            .padding(end = 8.dp)
+                            .size(20.dp),
+                )
             }
         }
 
@@ -820,6 +860,8 @@ fun Layer2OptionsScreen(
     onLiquidEnabledChange: (Boolean) -> Unit = {},
     sparkEnabled: Boolean = false,
     onSparkEnabledChange: (Boolean) -> Unit = {},
+    arkEnabled: Boolean = false,
+    onArkEnabledChange: (Boolean) -> Unit = {},
     lightningNodeEnabled: Boolean = false,
     onLightningNodeEnabledChange: (Boolean) -> Unit = {},
     onOpenLightningNodeConnection: () -> Unit = {},
@@ -833,11 +875,13 @@ fun Layer2OptionsScreen(
     onLiquidExplorerChange: (String) -> Unit = {},
     customLiquidExplorerUrl: String = "",
     onCustomLiquidExplorerUrlSave: (String) -> Unit = {},
+    currentArkEsploraUrl: String = "",
+    onArkEsploraUrlChange: (String) -> Unit = {},
     layer2TorStatus: TorStatus = TorStatus.DISCONNECTED,
     onOpenLiquidElectrum: () -> Unit = {},
     onBack: () -> Unit = {},
 ) {
-    val layer2Enabled = liquidEnabled || sparkEnabled || lightningNodeEnabled
+    val layer2Enabled = liquidEnabled || sparkEnabled || arkEnabled || lightningNodeEnabled
     Column(
         modifier =
             Modifier
@@ -874,6 +918,8 @@ fun Layer2OptionsScreen(
             onLiquidEnabledChange = onLiquidEnabledChange,
             sparkEnabled = sparkEnabled,
             onSparkEnabledChange = onSparkEnabledChange,
+            arkEnabled = arkEnabled,
+            onArkEnabledChange = onArkEnabledChange,
             lightningNodeEnabled = lightningNodeEnabled,
             onLightningNodeEnabledChange = onLightningNodeEnabledChange,
         )
@@ -882,6 +928,15 @@ fun Layer2OptionsScreen(
 
         if (lightningNodeEnabled) {
             LightningNodeConnectionCard(onOpenLightningNodeConnection)
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        if (arkEnabled) {
+            ArkExternalServicesCard(
+                currentArkEsploraUrl = currentArkEsploraUrl,
+                onArkEsploraUrlChange = onArkEsploraUrlChange,
+                layer2TorStatus = layer2TorStatus,
+            )
             Spacer(modifier = Modifier.height(8.dp))
         }
 
@@ -913,34 +968,17 @@ fun Layer2OptionsScreen(
 
 @Composable
 private fun LightningNodeConnectionCard(onOpenConnection: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkCard),
-    ) {
-        Column(
+    SettingsSectionCard(title = stringResource(R.string.ln_node_connection_title)) {
+        Button(
+            onClick = onOpenConnection,
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .height(48.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
         ) {
-            Text(
-                text = stringResource(R.string.ln_node_connection_title),
-                style = MaterialTheme.typography.titleMedium,
-                color = BitcoinOrange,
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Button(
-                onClick = onOpenConnection,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
-            ) {
-                Text(stringResource(R.string.ln_node_setup_connection))
-            }
+            Text(stringResource(R.string.ln_node_setup_connection))
         }
     }
 }
@@ -951,26 +989,32 @@ private fun Layer2OptionsCard(
     onLiquidEnabledChange: (Boolean) -> Unit,
     sparkEnabled: Boolean,
     onSparkEnabledChange: (Boolean) -> Unit,
+    arkEnabled: Boolean,
+    onArkEnabledChange: (Boolean) -> Unit,
     lightningNodeEnabled: Boolean,
     onLightningNodeEnabledChange: (Boolean) -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkCard),
-    ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+    SettingsSectionCard(title = stringResource(R.string.protocols_title)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = stringResource(R.string.protocols_title),
-                style = MaterialTheme.typography.titleMedium,
-                color = BitcoinOrange,
+            ToggleOptionText(
+                title = stringResource(R.string.ln_node_pill_label),
+                subtitle = stringResource(R.string.settings_lightning_subtitle),
+                titleColor = TextPrimary,
+                subtitleColor = TextSecondary,
+                modifier = Modifier.weight(1f),
             )
+            SquareToggle(
+                checked = lightningNodeEnabled,
+                onCheckedChange = onLightningNodeEnabledChange,
+                checkedColor = LightningYellow,
+            )
+        }
 
+        if (ArkViewModel.ARK_LAYER2_TOGGLE_ENABLED) {
             Spacer(modifier = Modifier.height(12.dp))
 
             Row(
@@ -979,59 +1023,59 @@ private fun Layer2OptionsCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 ToggleOptionText(
-                    title = stringResource(R.string.ln_node_pill_label),
-                    subtitle = stringResource(R.string.settings_lightning_subtitle),
+                    title = stringResource(R.string.ark_title),
+                    subtitle = stringResource(R.string.settings_ark_subtitle),
                     titleColor = TextPrimary,
                     subtitleColor = TextSecondary,
                     modifier = Modifier.weight(1f),
                 )
                 SquareToggle(
-                    checked = lightningNodeEnabled,
-                    onCheckedChange = onLightningNodeEnabledChange,
-                    checkedColor = LightningYellow,
+                    checked = arkEnabled,
+                    onCheckedChange = onArkEnabledChange,
+                    checkedColor = ArkRust,
                 )
             }
+        }
 
-            Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ToggleOptionText(
-                    title = stringResource(R.string.loc_22236665),
-                    subtitle = stringResource(R.string.loc_f1af1b9c),
-                    titleColor = TextPrimary,
-                    modifier = Modifier.weight(1f),
-                )
-                SquareToggle(
-                    checked = liquidEnabled,
-                    onCheckedChange = onLiquidEnabledChange,
-                    checkedColor = LiquidTeal,
-                )
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ToggleOptionText(
+                title = stringResource(R.string.loc_85f5955f),
+                subtitle = stringResource(R.string.settings_spark_subtitle),
+                titleColor = TextPrimary,
+                subtitleColor = TextSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            SquareToggle(
+                checked = sparkEnabled,
+                onCheckedChange = onSparkEnabledChange,
+                checkedColor = SparkPurple,
+            )
+        }
 
-            Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ToggleOptionText(
-                    title = stringResource(R.string.loc_85f5955f),
-                    subtitle = stringResource(R.string.settings_spark_subtitle),
-                    titleColor = TextPrimary,
-                    subtitleColor = TextSecondary,
-                    modifier = Modifier.weight(1f),
-                )
-                SquareToggle(
-                    checked = sparkEnabled,
-                    onCheckedChange = onSparkEnabledChange,
-                    checkedColor = SparkPurple,
-                )
-            }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ToggleOptionText(
+                title = stringResource(R.string.loc_22236665),
+                subtitle = stringResource(R.string.loc_f1af1b9c),
+                titleColor = TextPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            SquareToggle(
+                checked = liquidEnabled,
+                onCheckedChange = onLiquidEnabledChange,
+                checkedColor = LiquidTeal,
+            )
         }
     }
 }
@@ -1044,87 +1088,101 @@ private fun Layer2DisplayCard(
 ) {
     val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkCard),
-    ) {
-        Column(
+    SettingsSectionCard(title = stringResource(R.string.settings_general_section_display)) {
+        Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.loc_01940fd6),
-                style = MaterialTheme.typography.titleMedium,
-                color = BitcoinOrange,
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .then(
-                            if (layer2Enabled) {
-                                Modifier.clickable {
-                                    onDenominationChange(
-                                        if (!isSats) {
-                                            SecureStorage.DENOMINATION_SATS
-                                        } else {
-                                            SecureStorage.DENOMINATION_BTC
-                                        },
-                                    )
-                                }
-                            } else {
-                                Modifier
-                            },
-                        ),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.CurrencyBitcoin,
-                        contentDescription = null,
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(24.dp),
-                    )
-                    Spacer(modifier = Modifier.width(12.dp))
-                    ToggleOptionText(
-                        title = if (isSats) stringResource(R.string.loc_33b64233) else "BTC",
-                        subtitle = if (isSats) {
-                            stringResource(R.string.loc_eda2a508)
+                    .clip(RoundedCornerShape(8.dp))
+                    .then(
+                        if (layer2Enabled) {
+                            Modifier.clickable {
+                                onDenominationChange(
+                                    if (!isSats) {
+                                        SecureStorage.DENOMINATION_SATS
+                                    } else {
+                                        SecureStorage.DENOMINATION_BTC
+                                    },
+                                )
+                            }
                         } else {
-                            stringResource(R.string.loc_e0230c8c)
+                            Modifier
                         },
-                    )
-                }
-                SquareToggle(
-                    checked = isSats,
-                    onCheckedChange = { useSats ->
-                        onDenominationChange(
-                            if (useSats) {
-                                SecureStorage.DENOMINATION_SATS
-                            } else {
-                                SecureStorage.DENOMINATION_BTC
-                            },
-                        )
+                    ),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.weight(1f),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.CurrencyBitcoin,
+                    contentDescription = null,
+                    tint = BitcoinOrange,
+                    modifier = Modifier.size(24.dp),
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                ToggleOptionText(
+                    title = if (isSats) stringResource(R.string.loc_33b64233) else "BTC",
+                    subtitle = if (isSats) {
+                        stringResource(R.string.loc_eda2a508)
+                    } else {
+                        stringResource(R.string.loc_e0230c8c)
                     },
-                    enabled = layer2Enabled,
-                    checkedColor = BitcoinOrange,
-                    uncheckedColor = BitcoinOrange.copy(alpha = 0.18f),
-                    uncheckedBorderColor = BitcoinOrange,
-                    uncheckedThumbColor = BitcoinOrange,
                 )
             }
+            SquareToggle(
+                checked = isSats,
+                onCheckedChange = { useSats ->
+                    onDenominationChange(
+                        if (useSats) {
+                            SecureStorage.DENOMINATION_SATS
+                        } else {
+                            SecureStorage.DENOMINATION_BTC
+                        },
+                    )
+                },
+                enabled = layer2Enabled,
+                checkedColor = BitcoinOrange,
+                uncheckedColor = BitcoinOrange.copy(alpha = 0.18f),
+                uncheckedBorderColor = BitcoinOrange,
+                uncheckedThumbColor = BitcoinOrange,
+            )
         }
+    }
+}
+
+@Composable
+private fun ArkExternalServicesCard(
+    currentArkEsploraUrl: String,
+    onArkEsploraUrlChange: (String) -> Unit,
+    layer2TorStatus: TorStatus,
+) {
+    val selectedPreset =
+        ArkEsploraPreset.match(currentArkEsploraUrl) ?: ArkEsploraPreset.MEMPOOL_SPACE
+    SettingsSectionCard(title = stringResource(R.string.settings_ark_external_services_title)) {
+        SettingsLabeledControl(
+            icon = Icons.Default.Language,
+            label = stringResource(R.string.ark_connection_esplora_label),
+        ) {
+            ArkEsploraDropdown(
+                currentUrl = currentArkEsploraUrl,
+                onUrlSelected = onArkEsploraUrlChange,
+            )
+        }
+        if (selectedPreset.requiresTor) {
+            TorStatusIndicator(
+                torStatus = layer2TorStatus,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.ark_esplora_picker_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+        )
     }
 }
 
@@ -1141,180 +1199,124 @@ private fun Layer2ExternalServicesCard(
     layer2TorStatus: TorStatus,
     onOpenLiquidElectrum: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = DarkCard),
-    ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+    SettingsSectionCard(title = stringResource(R.string.loc_64f10f32)) {
+        SettingsLabeledControl(
+            icon = Icons.Default.Api,
+            label = stringResource(R.string.loc_14b0f0b9),
         ) {
-            Text(
-                text = stringResource(R.string.loc_64f10f32),
-                style = MaterialTheme.typography.titleMedium,
-                color = BitcoinOrange,
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.SwapHoriz,
-                    contentDescription = null,
-                    tint = BitcoinOrange,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.loc_14b0f0b9),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
             BoltzApiSourceDropdown(
                 currentSource = currentBoltzApiSource,
                 onSourceSelected = onBoltzApiSourceChange,
             )
+        }
 
-            if (currentBoltzApiSource == SecureStorage.BOLTZ_API_TOR) {
-                TorStatusIndicator(
-                    torStatus = layer2TorStatus,
-                    modifier = Modifier.padding(start = 24.dp, top = 4.dp),
-                )
-            }
+        if (currentBoltzApiSource == SecureStorage.BOLTZ_API_TOR) {
+            TorStatusIndicator(
+                torStatus = layer2TorStatus,
+                modifier = Modifier.padding(start = 28.dp, top = 4.dp),
+            )
+        }
 
-            Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.SwapHoriz,
-                    contentDescription = null,
-                    tint = BitcoinOrange,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.loc_799c4cd6),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
+        SettingsLabeledControl(
+            icon = Icons.Default.Api,
+            label = stringResource(R.string.loc_799c4cd6),
+        ) {
             SideSwapApiSourceDropdown(
                 currentSource = currentSideSwapApiSource,
                 onSourceSelected = onSideSwapApiSourceChange,
             )
+        }
 
-            if (currentSideSwapApiSource == SecureStorage.SIDESWAP_API_TOR) {
-                TorStatusIndicator(
-                    torStatus = layer2TorStatus,
-                    modifier = Modifier.padding(start = 24.dp, top = 4.dp),
-                )
-            }
+        if (currentSideSwapApiSource == SecureStorage.SIDESWAP_API_TOR) {
+            TorStatusIndicator(
+                torStatus = layer2TorStatus,
+                modifier = Modifier.padding(start = 28.dp, top = 4.dp),
+            )
+        }
 
-            Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Language,
-                    contentDescription = null,
-                    tint = BitcoinOrange,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.loc_a688468b),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TextSecondary,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
+        SettingsLabeledControl(
+            icon = Icons.Default.Language,
+            label = stringResource(R.string.loc_a688468b),
+        ) {
             LiquidExplorerDropdown(
                 currentExplorer = currentLiquidExplorer,
                 onExplorerSelected = onLiquidExplorerChange,
             )
+        }
 
-            if (currentLiquidExplorer == SecureStorage.LIQUID_EXPLORER_CUSTOM) {
-                Spacer(modifier = Modifier.height(6.dp))
-
-                var liquidExplorerUrlDraft by remember(customLiquidExplorerUrl) {
-                    mutableStateOf(customLiquidExplorerUrl)
-                }
-                var liquidExplorerUrlError by remember { mutableStateOf<String?>(null) }
-                var liquidExplorerUrlSaved by remember { mutableStateOf<String?>(null) }
-
-                CompactTextFieldWithSave(
-                    value = liquidExplorerUrlDraft,
-                    onValueChange = {
-                        liquidExplorerUrlDraft = it
-                        liquidExplorerUrlError = null
-                        liquidExplorerUrlSaved = null
-                    },
-                    onSave = {
-                        val error = ServerUrlValidator.validate(liquidExplorerUrlDraft)
-                        if (error != null) {
-                            liquidExplorerUrlError = error
-                            liquidExplorerUrlSaved = null
-                        } else {
-                            val normalizedUrl = ServerUrlValidator.normalize(liquidExplorerUrlDraft)
-                            liquidExplorerUrlError = null
-                            liquidExplorerUrlDraft = normalizedUrl
-                            onCustomLiquidExplorerUrlSave(normalizedUrl)
-                            liquidExplorerUrlSaved = "saved"
-                        }
-                    },
-                    placeholder = stringResource(R.string.settings_custom_server_placeholder),
-                    errorMessage = liquidExplorerUrlError,
-                    successMessage = liquidExplorerUrlSaved,
-                    modifier = Modifier.padding(start = 24.dp),
-                )
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            HorizontalDivider(color = BorderColor.copy(alpha = 0.7f))
-
+        if (currentLiquidExplorer == SecureStorage.LIQUID_EXPLORER_CUSTOM) {
             Spacer(modifier = Modifier.height(6.dp))
 
-            Row(
-                modifier = Modifier
+            var liquidExplorerUrlDraft by remember(customLiquidExplorerUrl) {
+                mutableStateOf(customLiquidExplorerUrl)
+            }
+            var liquidExplorerUrlError by remember { mutableStateOf<String?>(null) }
+            var liquidExplorerUrlSaved by remember { mutableStateOf<String?>(null) }
+
+            CompactTextFieldWithSave(
+                value = liquidExplorerUrlDraft,
+                onValueChange = {
+                    liquidExplorerUrlDraft = it
+                    liquidExplorerUrlError = null
+                    liquidExplorerUrlSaved = null
+                },
+                onSave = {
+                    val error = ServerUrlValidator.validate(liquidExplorerUrlDraft)
+                    if (error != null) {
+                        liquidExplorerUrlError = error
+                        liquidExplorerUrlSaved = null
+                    } else {
+                        val normalizedUrl = ServerUrlValidator.normalize(liquidExplorerUrlDraft)
+                        liquidExplorerUrlError = null
+                        liquidExplorerUrlDraft = normalizedUrl
+                        onCustomLiquidExplorerUrlSave(normalizedUrl)
+                        liquidExplorerUrlSaved = "saved"
+                    }
+                },
+                placeholder = stringResource(R.string.settings_custom_server_placeholder),
+                errorMessage = liquidExplorerUrlError,
+                successMessage = liquidExplorerUrlSaved,
+                modifier = Modifier.padding(start = 28.dp),
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        HorizontalDivider(color = BorderColor.copy(alpha = 0.45f))
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Row(
+            modifier =
+                Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 40.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = stringResource(R.string.loc_c7185189),
-                    style = TextStyle(fontSize = 15.sp),
-                    color = TextPrimary,
-                    modifier = Modifier
+                    .heightIn(min = 40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onOpenLiquidElectrum),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.loc_c7185189),
+                style = TextStyle(fontSize = 15.sp),
+                color = TextPrimary,
+                modifier =
+                    Modifier
                         .weight(1f)
                         .padding(start = 8.dp),
-                )
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(onClick = onOpenLiquidElectrum),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                        contentDescription = stringResource(R.string.loc_1c1151e0),
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
+            )
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                contentDescription = stringResource(R.string.loc_1c1151e0),
+                tint = BitcoinOrange,
+                modifier =
+                    Modifier
+                        .padding(end = 8.dp)
+                        .size(20.dp),
+            )
         }
     }
 }
@@ -1414,18 +1416,7 @@ private data class SwipeModeOption(
     val description: String,
 )
 
-private data class BalanceDateFormatOption(
-    val id: String,
-    val name: String,
-)
-
 private data class ThemeModeOption(
-    val id: String,
-    val name: String,
-    val description: String,
-)
-
-private data class TypefaceOption(
     val id: String,
     val name: String,
     val description: String,
@@ -1523,82 +1514,6 @@ private fun SwipeModeDropdown(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun BalanceDateFormatDropdown(
-    currentFormat: String,
-    onFormatSelected: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val options =
-        listOf(
-            BalanceDateFormatOption(
-                id = SecureStorage.DATE_FORMAT_MM_DD_YY,
-                name = stringResource(R.string.settings_balance_date_format_mm_dd_yy),
-            ),
-            BalanceDateFormatOption(
-                id = SecureStorage.DATE_FORMAT_DD_MM_YY,
-                name = stringResource(R.string.settings_balance_date_format_dd_mm_yy),
-            ),
-            BalanceDateFormatOption(
-                id = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
-                name = stringResource(R.string.settings_balance_date_format_month_dd_yyyy),
-            ),
-            BalanceDateFormatOption(
-                id = SecureStorage.DATE_FORMAT_YYYY_MM_DD,
-                name = stringResource(R.string.settings_balance_date_format_yyyy_mm_dd),
-            ),
-        )
-    val selectedOption =
-        options.find { it.id == currentFormat }
-            ?: options.first { it.id == SecureStorage.DATE_FORMAT_MONTH_DD_YYYY }
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-    ) {
-        CompactDropdownField(
-            value = selectedOption.name,
-            expanded = expanded,
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-        )
-
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier =
-                Modifier
-                    .exposedDropdownSize(true)
-                    .background(DarkSurface),
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        DropdownOptionText(
-                            title = option.name,
-                            subtitle = "",
-                            selected = option.id == currentFormat,
-                        )
-                    },
-                    onClick = {
-                        onFormatSelected(option.id)
-                        expanded = false
-                    },
-                    leadingIcon = {
-                        if (option.id == currentFormat) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = stringResource(R.string.common_selected),
-                                tint = BitcoinOrange,
-                            )
-                        }
-                    },
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
 private fun ThemeModeDropdown(
     currentThemeMode: String,
     onThemeModeSelected: (String) -> Unit,
@@ -1652,79 +1567,6 @@ private fun ThemeModeDropdown(
                     },
                     leadingIcon = {
                         if (option.id == currentThemeMode) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = stringResource(R.string.common_selected),
-                                tint = BitcoinOrange,
-                            )
-                        }
-                    },
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TypefaceDropdown(
-    currentTypeface: String,
-    onTypefaceSelected: (String) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val options =
-        listOf(
-            TypefaceOption(
-                id = SecureStorage.TYPEFACE_SYSTEM,
-                name = stringResource(R.string.settings_typeface_system),
-                description = stringResource(R.string.settings_typeface_system_description),
-            ),
-            TypefaceOption(
-                id = SecureStorage.TYPEFACE_ATKINSON_HYPERLEGIBLE,
-                name = stringResource(R.string.settings_typeface_atkinson_hyperlegible),
-                description = stringResource(R.string.settings_typeface_atkinson_hyperlegible_description),
-            ),
-            TypefaceOption(
-                id = SecureStorage.TYPEFACE_OPEN_RUNDE,
-                name = stringResource(R.string.settings_typeface_open_runde),
-                description = stringResource(R.string.settings_typeface_open_runde_description),
-            ),
-        )
-    val selectedOption = options.find { it.id == currentTypeface } ?: options.first()
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-    ) {
-        CompactDropdownField(
-            value = selectedOption.name,
-            expanded = expanded,
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-        )
-
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier =
-                Modifier
-                    .exposedDropdownSize(true)
-                    .background(DarkSurface),
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        DropdownOptionText(
-                            title = option.name,
-                            subtitle = option.description,
-                            selected = option.id == currentTypeface,
-                        )
-                    },
-                    onClick = {
-                        onTypefaceSelected(option.id)
-                        expanded = false
-                    },
-                    leadingIcon = {
-                        if (option.id == currentTypeface) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = stringResource(R.string.common_selected),
@@ -2150,6 +1992,87 @@ private data class LiquidExplorerOption(
     val description: String,
 )
 
+private fun truncateOnionEsploraUrl(url: String): String {
+    val marker = ".onion"
+    val lower = url.lowercase()
+    val onionAt = lower.indexOf(marker)
+    if (onionAt < 0) return url
+    val schemeEnd = url.indexOf("://").let { if (it >= 0) it + 3 else 0 }
+    val host = url.substring(schemeEnd, onionAt + marker.length)
+    if (host.length <= 22) return url
+    val prefix = host.take(12)
+    val suffix = host.takeLast(10)
+    val path = url.substring(onionAt + marker.length)
+    val scheme = url.take(schemeEnd)
+    return "$scheme$prefix…$suffix$path"
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ArkEsploraDropdown(
+    currentUrl: String,
+    onUrlSelected: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selected =
+        ArkEsploraPreset.match(currentUrl) ?: ArkEsploraPreset.MEMPOOL_SPACE
+    val selectedLabel =
+        if (selected.requiresTor) {
+            "${selected.label} · Tor"
+        } else {
+            selected.label
+        }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+    ) {
+        CompactDropdownField(
+            value = selectedLabel,
+            expanded = expanded,
+            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.exposedDropdownSize(true).background(DarkSurface),
+        ) {
+            ArkEsploraPreset.entries.forEach { preset ->
+                val isSelected =
+                    selected.url.trimEnd('/').equals(preset.url.trimEnd('/'), ignoreCase = true)
+                val displayUrl =
+                    if (preset.requiresTor) {
+                        truncateOnionEsploraUrl(preset.url)
+                    } else {
+                        preset.url
+                    }
+                DropdownMenuItem(
+                    text = {
+                        DropdownOptionText(
+                            title = preset.label,
+                            subtitle = displayUrl,
+                            selected = isSelected,
+                        )
+                    },
+                    onClick = {
+                        onUrlSelected(preset.url)
+                        expanded = false
+                    },
+                    leadingIcon = {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(R.string.common_selected),
+                                tint = ArkRust,
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun LiquidExplorerDropdown(
@@ -2231,6 +2154,59 @@ private fun LiquidExplorerDropdown(
 }
 
 @Composable
+private fun SettingsSectionCard(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = BitcoinOrange,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SettingsLabeledControl(
+    icon: ImageVector,
+    label: String,
+    content: @Composable () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = BitcoinOrange,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+            )
+        }
+        Spacer(modifier = Modifier.height(6.dp))
+        content()
+    }
+}
+
+@Composable
 private fun ToggleOptionText(
     title: String,
     subtitle: String,
@@ -2252,37 +2228,16 @@ private fun ToggleOptionText(
     }
 }
 
-@Composable
-private fun SettingsSubsectionHeader(title: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        HorizontalDivider(
-            modifier =
-                Modifier
-                    .weight(1f)
-                    .padding(end = 8.dp),
-            color = BorderColor.copy(alpha = 0.7f),
-        )
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelMedium,
-            color = TextSecondary,
-        )
-        HorizontalDivider(
-            modifier =
-                Modifier
-                    .weight(1f)
-                    .padding(start = 8.dp),
-            color = BorderColor.copy(alpha = 0.7f),
-        )
-    }
-}
-
 /**
  * Compact editable text field with a right-aligned Save button and optional error message.
  */
+private fun settingsIsOnionUrl(url: String): Boolean =
+    try {
+        java.net.URI(url.trim()).host?.endsWith(".onion", ignoreCase = true) == true
+    } catch (_: Exception) {
+        url.contains(".onion", ignoreCase = true)
+    }
+
 /**
  * Tor connection status indicator — colored dot + status text.
  * Reused for any onion-based source (fee, price, custom URL).

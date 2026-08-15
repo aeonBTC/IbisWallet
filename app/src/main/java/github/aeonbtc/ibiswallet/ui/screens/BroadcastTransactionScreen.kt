@@ -20,6 +20,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -32,12 +34,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,12 +47,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.MainActivity
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -61,15 +65,11 @@ import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
-import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.InputLimits
+import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
 import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import github.aeonbtc.ibiswallet.viewmodel.ManualBroadcastState
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
-import androidx.compose.material3.Text
-import androidx.compose.runtime.LaunchedEffect
 
 /**
  * Screen for manually broadcasting a signed transaction.
@@ -300,10 +300,9 @@ fun BroadcastTransactionScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             // --- Decoded outputs review ---
-            val preview = broadcastState.preview
-            val previewMatchesInput =
-                preview != null && broadcastState.previewInput == trimmedInput
-            if (previewMatchesInput && preview != null) {
+            val preview =
+                broadcastState.preview?.takeIf { broadcastState.previewInput == trimmedInput }
+            if (preview != null) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
@@ -398,8 +397,7 @@ fun BroadcastTransactionScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             } else if (trimmedInput.isNotEmpty() &&
                 detectedFormat != InputFormat.INVALID &&
-                broadcastState.previewInput == trimmedInput &&
-                preview == null
+                broadcastState.previewInput == trimmedInput
             ) {
                 // The repo could not decode the payload at all even though the
                 // surface-level format check passed (e.g. PSBT body bytes are
@@ -449,7 +447,6 @@ fun BroadcastTransactionScreen(
                     detectedFormat != InputFormat.INVALID &&
                     isConnected &&
                     !broadcastState.isBroadcasting &&
-                    previewMatchesInput &&
                     preview != null &&
                     reviewed
 

@@ -21,6 +21,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,11 +32,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -43,9 +46,6 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import kotlinx.coroutines.delay
-import androidx.compose.material3.Text
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
 
 private const val BOLTZ_RESCUE_URL = "https://boltz.exchange/rescue/external"
 

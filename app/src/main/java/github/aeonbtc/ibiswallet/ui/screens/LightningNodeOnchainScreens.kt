@@ -1,39 +1,5 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Surface
-import androidx.compose.ui.window.DialogProperties
-import github.aeonbtc.ibiswallet.ui.components.StatusBadge
-import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
-import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
-import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.automirrored.filled.CallReceived
-import androidx.compose.material.icons.automirrored.filled.CallMade
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitEachGesture
 import android.content.Intent
 import android.graphics.Bitmap
 import android.widget.Toast
@@ -43,6 +9,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,36 +22,57 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.CallMade
+import androidx.compose.material.icons.automirrored.filled.CallReceived
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -92,23 +82,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainSendState
 import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainState
+import github.aeonbtc.ibiswallet.data.model.LightningNodeOnchainTransaction
 import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
@@ -117,25 +113,29 @@ import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
+import github.aeonbtc.ibiswallet.ui.components.BalanceAmountText
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
+import github.aeonbtc.ibiswallet.ui.components.StatusBadge
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
+import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
-import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
+import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
-import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
@@ -144,7 +144,6 @@ import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.roundToLong
@@ -205,6 +204,7 @@ fun LightningNodeOnchainBalanceScreen(
     var searchQuery by remember { mutableStateOf("") }
     var displayLimit by remember { mutableIntStateOf(25) }
     var showQrScanner by remember { mutableStateOf(false) }
+    var showQuickReceive by remember { mutableStateOf(false) }
     var selectedTx by remember { mutableStateOf<LightningNodeOnchainTransaction?>(null) }
 
     val filteredTransactions =
@@ -242,6 +242,15 @@ fun LightningNodeOnchainBalanceScreen(
                 showQrScanner = false
             },
             onDismiss = { showQrScanner = false },
+        )
+    }
+
+    val quickReceiveAddress = state.currentAddress
+    if (showQuickReceive && quickReceiveAddress != null) {
+        QuickReceiveDialog(
+            payload = quickReceiveAddress,
+            onDismiss = { showQuickReceive = false },
+            accentColor = BitcoinOrange,
         )
     }
 
@@ -421,30 +430,24 @@ fun LightningNodeOnchainBalanceScreen(
                                     .align(Alignment.Center),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Text(
-                                text =
+                            BalanceAmountText(
+                                amountText =
                                     if (privacyMode) {
                                         "****"
                                     } else if (useSats) {
-                                        "${formatAmount(state.balanceSats.toULong(), true)} sats"
+                                        formatAmount(state.balanceSats.toULong(), true)
                                     } else {
-                                        "\u20BF ${formatAmount(state.balanceSats.toULong(), false)}"
+                                        formatAmount(state.balanceSats.toULong(), false)
                                     },
-                                style = MaterialTheme.typography.displaySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                modifier =
-                                    Modifier.clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                        onClick = onToggleDenomination,
-                                    ),
+                                showBtcSymbol = !privacyMode && !useSats,
+                                showSatsUnit = !privacyMode && useSats,
+                                onClick = onToggleDenomination,
                             )
                             if (btcPrice != null && btcPrice > 0) {
                                 val usdValue = (state.balanceSats.toDouble() / 100_000_000.0) * btcPrice
                                 Text(
                                     text = if (privacyMode) "****" else formatFiat(usdValue, fiatCurrency),
-                                    style = MaterialTheme.typography.titleMedium,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
                                     color = TextSecondary,
                                 )
                             }
@@ -499,7 +502,10 @@ fun LightningNodeOnchainBalanceScreen(
                                     .align(Alignment.BottomStart)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurfaceVariant)
-                                    .clickable(enabled = state.isAvailable) { onQuickReceive() },
+                                    .clickable(enabled = state.isAvailable) {
+                                        showQuickReceive = true
+                                        onQuickReceive()
+                                    },
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCode,
@@ -2177,15 +2183,8 @@ fun LightningNodeOnchainReceiveScreen(
     }
 }
 
-private fun formatOnchainReceiveAddress(address: String?): String {
-    if (address == null) return "No wallet"
-    val chunks = address.chunked(7)
-    val numLines = if (address.length > 50) 3 else 2
-    val perLine = (chunks.size + numLines - 1) / numLines
-    return chunks
-        .chunked(perLine)
-        .joinToString("\n") { it.joinToString(" ") }
-}
+private fun formatOnchainReceiveAddress(address: String?): String =
+    formatChunkedAddress(address).ifBlank { "No wallet" }
 
 @Composable
 fun LightningNodeOnchainSendScreen(
@@ -2199,6 +2198,8 @@ fun LightningNodeOnchainSendScreen(
     privacyMode: Boolean = false,
     preSelectedUtxo: UtxoInfo? = null,
     spendUnconfirmed: Boolean = true,
+    requireCoinControl: Boolean = false,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     isNodeConnected: Boolean = false,
     isNodeConnecting: Boolean = false,
     connectionTarget: String? = null,
@@ -2505,6 +2506,7 @@ fun LightningNodeOnchainSendScreen(
             fiatCurrency = fiatCurrency,
             privacyMode = privacyMode,
             spendUnconfirmed = spendUnconfirmed,
+            dateFormat = dateFormat,
             onUtxoToggle = { utxo -> toggleCoinControlSelection(selectedUtxos, utxo) },
             onSelectAll = {
                 selectedUtxos.clear()
@@ -3230,6 +3232,10 @@ fun LightningNodeOnchainSendScreen(
 
         Button(
             onClick = {
+                if (requireCoinControl && selectedUtxos.isEmpty()) {
+                    showCoinControl = true
+                    return@Button
+                }
                 onResetSend()
                 showConfirmDialog = true
             },

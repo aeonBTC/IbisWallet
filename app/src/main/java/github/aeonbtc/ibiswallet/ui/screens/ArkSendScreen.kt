@@ -1,4 +1,4 @@
-package github.aeonbtc.ibiswallet.ui.screens
+﻿package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -32,9 +32,12 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -53,18 +56,21 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.ArkSendState
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
-import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeQuote
-import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeSpeed
-import github.aeonbtc.ibiswallet.data.model.SparkSendState
+import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
+import github.aeonbtc.ibiswallet.ui.theme.ArkRust
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
@@ -72,38 +78,41 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
-import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
+import github.aeonbtc.ibiswallet.util.LightningKind
 import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
+import github.aeonbtc.ibiswallet.util.SilentPayment
+import github.aeonbtc.ibiswallet.util.getNfcAvailability
+import github.aeonbtc.ibiswallet.util.isLightningAddressPayment
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
-import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.roundToLong
 
 @Composable
-fun SparkSendScreen(
+fun ArkSendScreen(
     draft: SendScreenDraft,
-    sendState: SparkSendState,
+    sendState: ArkSendState,
     denomination: String,
     btcPrice: Double?,
     fiatCurrency: String,
     privacyMode: Boolean,
     availableSats: Long,
     onUpdateDraft: (SendScreenDraft) -> Unit,
-    onLoadOnchainFeeQuotes: suspend (String, Long, Boolean) -> List<SparkOnchainFeeQuote>,
-    onPrepareSend: (String, Long?, SparkOnchainFeeSpeed, Boolean) -> Unit,
-    onPrepareSendMany: (List<Pair<String, Long>>) -> Unit = {},
+    onPrepareSend: (String, Long?, Boolean, String?) -> Unit,
+    onPrepareSendMany: (List<Pair<String, Long>>, String?) -> Unit = { _, _ -> },
     onSendPrepared: () -> Unit,
     onSendPreparedMany: () -> Unit = {},
     onResetSend: () -> Unit,
     onToggleDenomination: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val mainActivity = context as? MainActivity
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     var paymentRequest by remember { mutableStateOf(draft.recipientAddress) }
     var amountInput by remember { mutableStateOf(draft.amountInput) }
@@ -114,13 +123,23 @@ fun SparkSendScreen(
     var labelText by remember { mutableStateOf(draft.label) }
     var showConfirmDialog by remember { mutableStateOf(false) }
     var prepareError by remember { mutableStateOf<String?>(null) }
-    var onchainFeeSpeed by remember { mutableStateOf(SparkOnchainFeeSpeed.FAST) }
     var isMaxMode by remember { mutableStateOf(draft.isMaxSend) }
-    var onchainFeeQuotes by remember { mutableStateOf<List<SparkOnchainFeeQuote>>(emptyList()) }
-    var onchainFeeQuotesLoading by remember { mutableStateOf(false) }
     var isMultiMode by remember { mutableStateOf(false) }
     var showMultiDialog by remember { mutableStateOf(false) }
     val multiRecipients = remember { mutableStateListOf<Pair<String, String>>() }
+
+    val nfcReaderOwner = remember { Any() }
+    val nfcAvailable = context.getNfcAvailability().canRead
+    DisposableEffect(mainActivity) {
+        if (mainActivity != null && nfcAvailable) {
+            mainActivity.requestNfcReaderMode(nfcReaderOwner)
+        }
+        onDispose {
+            mainActivity?.releaseNfcReaderMode(nfcReaderOwner)
+        }
+    }
+    val isNfcReaderActive = nfcAvailable && mainActivity?.isNfcReaderModeActive == true
+    val nfcReaderState by NfcRuntimeStatus.readerState.collectAsState()
 
     LaunchedEffect(draft) {
         if (showConfirmDialog) return@LaunchedEffect
@@ -134,34 +153,42 @@ fun SparkSendScreen(
     }
 
     LaunchedEffect(paymentRequest, amountInput, labelText, isMaxMode) {
-        val updatedDraft = SendScreenDraft(
-            recipientAddress = paymentRequest,
-            amountInput = amountInput,
-            label = labelText,
-            isMaxSend = isMaxMode,
-        )
+        val updatedDraft =
+            SendScreenDraft(
+                recipientAddress = paymentRequest,
+                amountInput = amountInput,
+                label = labelText,
+                isMaxSend = isMaxMode,
+            )
         if (updatedDraft != draft) {
             onUpdateDraft(updatedDraft)
         }
     }
 
-    val amountSats = remember(amountInput, denomination, isUsdMode, btcPrice) {
-        parseSparkSendAmount(amountInput, useSats, isUsdMode, btcPrice)
-    }
-    val context = LocalContext.current
-    val parsedRecipient = parseSendRecipient(paymentRequest.trim(), context)
-    val recipientValidationError = remember(parsedRecipient, paymentRequest, context) {
-        if (paymentRequest.isBlank()) {
-            null
-        } else {
-            layer2RecipientValidationError(parsedRecipient, Layer2Provider.SPARK, context = context)
+    val amountSats =
+        remember(amountInput, denomination, isUsdMode, btcPrice) {
+            parseArkSendAmount(amountInput, useSats, isUsdMode, btcPrice)
         }
-    }
-    val recipientBadges = remember(parsedRecipient) { sparkRecipientModeBadges(parsedRecipient) }
+    val parsedRecipient = parseSendRecipient(paymentRequest.trim(), context)
+    val recipientValidationError =
+        remember(parsedRecipient, paymentRequest, context) {
+            if (paymentRequest.isBlank()) {
+                null
+            } else {
+                layer2RecipientValidationError(parsedRecipient, Layer2Provider.ARK, context = context)
+            }
+        }
+    val recipientBadges = remember(parsedRecipient) { arkRecipientModeBadges(parsedRecipient) }
     val busy =
-        sendState is SparkSendState.Preparing ||
-            sendState is SparkSendState.Sending ||
-            sendState is SparkSendState.MultiSending
+        sendState is ArkSendState.Preparing ||
+            sendState is ArkSendState.Sending ||
+            sendState is ArkSendState.MultiSending
+    val amountLockedByInvoice =
+        when (val p = parsedRecipient) {
+            is ParsedSendRecipient.Lightning ->
+                p.kind == LightningKind.BOLT11 && p.amountSats != null && p.amountSats > 0L
+            else -> false
+        }
 
     fun parseMultiAmountToSats(raw: String): Long? {
         val t = raw.trim()
@@ -185,7 +212,7 @@ fun SparkSendScreen(
             multiRecipients.mapNotNull { (addr, amt) ->
                 val a = addr.trim()
                 val sats = parseMultiAmountToSats(amt) ?: return@mapNotNull null
-                if (a.isEmpty() || parseSendRecipient(a, context) !is ParsedSendRecipient.Spark) {
+                if (a.isEmpty() || parseSendRecipient(a, context) !is ParsedSendRecipient.Ark) {
                     return@mapNotNull null
                 }
                 a to sats
@@ -199,24 +226,50 @@ fun SparkSendScreen(
 
     LaunchedEffect(sendState) {
         when (sendState) {
-            is SparkSendState.Preparing -> prepareError = null
-            is SparkSendState.Error -> {
-                // Keep confirm dialog open so failure is visible.
+            is ArkSendState.Preparing -> prepareError = null
+            is ArkSendState.Error -> {
+                // Keep confirm dialog open so failure is visible (Liquid-style).
+                // Also mirror onto the form if the user already closed the dialog.
                 if (!showConfirmDialog) {
                     prepareError = sendState.message
                 }
             }
-            is SparkSendState.Preview,
-            is SparkSendState.MultiPreview,
+            is ArkSendState.Preview,
+            is ArkSendState.MultiPreview,
             -> prepareError = null
             else -> Unit
+        }
+    }
+
+    // Autofill fixed amounts from recipient (invoice/BIP21) when field empty.
+    LaunchedEffect(parsedRecipient) {
+        val fixed =
+            when (parsedRecipient) {
+                is ParsedSendRecipient.Bitcoin -> parsedRecipient.amountSats
+                is ParsedSendRecipient.Ark -> parsedRecipient.amountSats
+                is ParsedSendRecipient.Lightning -> parsedRecipient.amountSats
+                else -> null
+            }
+        if (fixed != null && fixed > 0L && amountInput.isBlank() && !isMaxMode) {
+            amountInput = formatArkSendAmountInput(fixed, useSats)
+            isUsdMode = false
+        }
+        val draftLabel =
+            when (parsedRecipient) {
+                is ParsedSendRecipient.Bitcoin -> parsedRecipient.label
+                is ParsedSendRecipient.Ark -> parsedRecipient.label
+                else -> null
+            }
+        if (!draftLabel.isNullOrBlank() && labelText.isBlank()) {
+            labelText = draftLabel
+            showLabelField = true
         }
     }
 
     val recipientFixedAmountSats: Long? =
         when (parsedRecipient) {
             is ParsedSendRecipient.Bitcoin -> parsedRecipient.amountSats
-            is ParsedSendRecipient.Spark -> parsedRecipient.amountSats
+            is ParsedSendRecipient.Ark -> parsedRecipient.amountSats
             is ParsedSendRecipient.Lightning -> parsedRecipient.amountSats
             else -> null
         }
@@ -231,27 +284,14 @@ fun SparkSendScreen(
             recipientFixedAmountSats != null && recipientFixedAmountSats > 0L -> recipientFixedAmountSats
             else -> null
         }
-    val selectedOnchainFeeSats =
-        if (parsedRecipient is ParsedSendRecipient.Bitcoin) {
-            onchainFeeQuotes.firstOrNull { it.speed == onchainFeeSpeed }?.feeSats ?: 0L
-        } else {
-            0L
-        }
-    val totalOutSats =
-        when {
-            isMaxMode -> availableSats
-            amountForSpendCheck == null -> 0L
-            parsedRecipient is ParsedSendRecipient.Bitcoin -> amountForSpendCheck + selectedOnchainFeeSats
-            else -> amountForSpendCheck
-        }
-    val sparkClientOverBalance =
+    val arkClientOverBalance =
         !isMaxMode &&
             amountForSpendCheck != null &&
             amountForSpendCheck > 0L &&
-            totalOutSats > availableSats
-    val sparkAmountFieldError =
+            amountForSpendCheck > availableSats
+    val arkAmountFieldError =
         prepareError?.takeIf { it.isNotBlank() }
-            ?: if (sparkClientOverBalance) {
+            ?: if (arkClientOverBalance) {
                 stringResource(
                     R.string.balance_insufficient_funds_available_format,
                     formatAmount(availableSats.toULong(), useSats, includeUnit = false),
@@ -260,7 +300,7 @@ fun SparkSendScreen(
             } else {
                 null
             }
-    val canSparkReview =
+    val canArkReview =
         if (isMultiMode) {
             multiRecipientPairs.size >= 2 &&
                 multiTotalSats > 0L &&
@@ -272,48 +312,47 @@ fun SparkSendScreen(
                 recipientValidationError == null &&
                 !busy &&
                 prepareError == null &&
-                !sparkClientOverBalance &&
+                !arkClientOverBalance &&
                 hasUsableSendAmount
         }
 
-    LaunchedEffect(
-        parsedRecipient,
-        paymentRequest,
-        amountSats,
-        availableSats,
-        isMaxMode,
-        isMultiMode,
-        recipientValidationError,
-    ) {
-        if (isMultiMode) {
-            onchainFeeQuotesLoading = false
-            onchainFeeQuotes = emptyList()
-            return@LaunchedEffect
-        }
-        val quoteAmount =
-            when {
-                isMaxMode -> availableSats.takeIf { it > 0L }
-                amountSats != null && amountSats > 0L -> amountSats
-                else -> availableSats.takeIf { it > 0L }
+    fun applyParsedRecipient(parsed: ParsedSendRecipient) {
+        when (parsed) {
+            is ParsedSendRecipient.Bitcoin -> {
+                paymentRequest = parsed.address
+                // Only fill amount when URI supplies one and the field is blank — never wipe user input.
+                if (parsed.amountSats != null && amountInput.isBlank()) {
+                    amountInput = formatArkSendAmountInput(parsed.amountSats, useSats)
+                    isUsdMode = false
+                }
+                parsed.label?.takeIf { it.isNotBlank() }?.let {
+                    labelText = it
+                    showLabelField = true
+                }
+                isMaxMode = false
             }
-        if (parsedRecipient is ParsedSendRecipient.Bitcoin &&
-            quoteAmount != null &&
-            recipientValidationError == null
-        ) {
-            // Debounce while typing; keep previous quotes visible until refresh completes.
-            delay(350)
-            onchainFeeQuotesLoading = true
-            val quotes =
-                runCatching {
-                    onLoadOnchainFeeQuotes(paymentRequest.trim(), quoteAmount, isMaxMode)
-                }.getOrNull()
-            if (quotes != null) {
-                onchainFeeQuotes = quotes
+            is ParsedSendRecipient.Ark -> {
+                paymentRequest = parsed.address
+                if (parsed.amountSats != null && amountInput.isBlank()) {
+                    amountInput = formatArkSendAmountInput(parsed.amountSats, useSats)
+                    isUsdMode = false
+                }
+                parsed.label?.takeIf { it.isNotBlank() }?.let {
+                    labelText = it
+                    showLabelField = true
+                }
+                isMaxMode = false
             }
-            onchainFeeQuotesLoading = false
-        } else {
-            onchainFeeQuotesLoading = false
-            onchainFeeQuotes = emptyList()
+            is ParsedSendRecipient.Lightning -> {
+                paymentRequest = parsed.paymentInput
+                if (parsed.amountSats != null) {
+                    // Invoice-locked amount always wins over a user draft.
+                    amountInput = formatArkSendAmountInput(parsed.amountSats, useSats)
+                    isUsdMode = false
+                }
+                isMaxMode = false
+            }
+            else -> Unit
         }
     }
 
@@ -323,6 +362,7 @@ fun SparkSendScreen(
         labelText = ""
         showLabelField = false
         isMaxMode = false
+        isUsdMode = false
         isMultiMode = false
         multiRecipients.clear()
         onUpdateDraft(SendScreenDraft())
@@ -330,7 +370,7 @@ fun SparkSendScreen(
     }
 
     if (showMultiDialog) {
-        val sparkOnlyError = stringResource(R.string.send_multi_spark_only)
+        val arkOnlyError = stringResource(R.string.send_multi_ark_only)
         MultiRecipientDialog(
             recipients = multiRecipients,
             useSats = useSats,
@@ -343,30 +383,30 @@ fun SparkSendScreen(
             dryRunError = prepareError,
             validRecipientCount = multiRecipientPairs.size,
             totalSendingSats = multiTotalSats,
-            accentColor = SparkPurple,
+            accentColor = ArkRust,
             addressValidator = { addr ->
                 val p = parseSendRecipient(addr.trim(), context)
                 when {
                     addr.isBlank() -> null
-                    p is ParsedSendRecipient.Spark -> null
-                    else -> sparkOnlyError
+                    p is ParsedSendRecipient.Ark -> null
+                    else -> arkOnlyError
                 }
             },
             parseScannedCode = { code ->
                 when (val p = parseSendRecipient(code, context)) {
-                    is ParsedSendRecipient.Spark -> p.paymentRequest to p.amountSats
+                    is ParsedSendRecipient.Ark -> p.address to p.amountSats
                     else -> code to null
                 }
             },
             sequentialNote = stringResource(R.string.send_multi_sequential_note),
-            addressPlaceholder = stringResource(R.string.send_multi_spark_address_hint),
+            addressPlaceholder = stringResource(R.string.send_multi_ark_address_hint),
             onDone = { showMultiDialog = false },
             onDismiss = { showMultiDialog = false },
         )
     }
 
     if (showConfirmDialog) {
-        SparkSendConfirmationDialog(
+        ArkSendConfirmationDialog(
             sendState = sendState,
             useSats = useSats,
             btcPrice = btcPrice,
@@ -374,23 +414,25 @@ fun SparkSendScreen(
             privacyMode = privacyMode,
             onConfirm = {
                 when (sendState) {
-                    is SparkSendState.MultiPreview -> onSendPreparedMany()
+                    is ArkSendState.MultiPreview -> onSendPreparedMany()
                     else -> onSendPrepared()
                 }
             },
             onDismiss = {
                 showConfirmDialog = false
                 when (sendState) {
-                    is SparkSendState.Sent,
-                    is SparkSendState.MultiSent,
+                    is ArkSendState.Sent,
+                    is ArkSendState.MultiSent,
                     -> clearSuccessfulSendDraft()
-                    is SparkSendState.Error -> {
+                    is ArkSendState.Error -> {
                         prepareError = sendState.message
                         onResetSend()
                     }
-                    is SparkSendState.Sending,
-                    is SparkSendState.MultiSending,
-                    -> Unit
+                    is ArkSendState.Sending,
+                    is ArkSendState.MultiSending,
+                    -> {
+                        // Allow closing while pay is in flight; result lands in history.
+                    }
                     else -> onResetSend()
                 }
             },
@@ -406,29 +448,14 @@ fun SparkSendScreen(
             onCodeScanned = { code ->
                 showQrScanner = false
                 val parsed = parseSendRecipient(code.trim(), context)
-                val error = layer2RecipientValidationError(parsed, Layer2Provider.SPARK, context = context)
+                val error = layer2RecipientValidationError(parsed, Layer2Provider.ARK, context = context)
                 if (error != null) {
                     scanError = error
                 } else {
                     scanError = null
-                    when (parsed) {
-                        is ParsedSendRecipient.Bitcoin -> {
-                            paymentRequest = parsed.address
-                            amountInput = parsed.amountSats?.let { formatSparkSendAmountInput(it, useSats) }.orEmpty()
-                            isMaxMode = false
-                        }
-                        is ParsedSendRecipient.Spark -> {
-                            paymentRequest = parsed.paymentRequest
-                            amountInput = parsed.amountSats?.let { formatSparkSendAmountInput(it, useSats) }.orEmpty()
-                            isMaxMode = false
-                        }
-                        is ParsedSendRecipient.Lightning -> {
-                            paymentRequest = parsed.paymentInput
-                            amountInput = parsed.amountSats?.let { formatSparkSendAmountInput(it, useSats) }.orEmpty()
-                            isMaxMode = false
-                        }
-                        else -> Unit
-                    }
+                    onResetSend()
+                    prepareError = null
+                    applyParsedRecipient(parsed)
                 }
             },
             onDismiss = { showQrScanner = false },
@@ -436,10 +463,11 @@ fun SparkSendScreen(
     }
 
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Card(
@@ -464,9 +492,31 @@ fun SparkSendScreen(
                             style = MaterialTheme.typography.titleLarge,
                             color = TextPrimary,
                         )
+                        if (isNfcReaderActive) {
+                            val nfcStatusLabel =
+                                when (nfcReaderState) {
+                                    NfcReaderUiState.Inactive,
+                                    NfcReaderUiState.Ready,
+                                        -> stringResource(R.string.nfc_status_receive_ready)
+                                    NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                                    NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                                }
+                            val nfcStatusColor =
+                                if (nfcReaderState == NfcReaderUiState.Detecting) {
+                                    ArkRust
+                                } else {
+                                    SuccessGreen
+                                }
+                            NfcStatusIndicator(
+                                label = nfcStatusLabel,
+                                contentDescription = nfcStatusLabel,
+                                modifier = Modifier.padding(top = 2.dp),
+                                color = nfcStatusColor,
+                            )
+                        }
                     }
-                    SparkChipButton(
-                        text = "Coin Control",
+                    ArkChipButton(
+                        text = stringResource(R.string.loc_002b1ce2),
                         selected = false,
                         enabled = false,
                         onClick = {},
@@ -480,8 +530,12 @@ fun SparkSendScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(stringResource(R.string.loc_eaf579ea), style = MaterialTheme.typography.labelLarge, color = TextSecondary)
-                    SparkChipButton(
+                    Text(
+                        stringResource(R.string.loc_eaf579ea),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = TextSecondary,
+                    )
+                    ArkChipButton(
                         text =
                             if (isMultiMode) {
                                 "${stringResource(R.string.loc_fcc11f52)} (${multiRecipientPairs.size})"
@@ -517,7 +571,7 @@ fun SparkSendScreen(
                                 .clickable(enabled = !busy) { showMultiDialog = true },
                         shape = RoundedCornerShape(8.dp),
                         colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        border = BorderStroke(1.dp, SparkPurple),
+                        border = BorderStroke(1.dp, ArkRust),
                     ) {
                         Column(modifier = Modifier.padding(12.dp)) {
                             Text(
@@ -537,98 +591,92 @@ fun SparkSendScreen(
                                 Text(
                                     text =
                                         if (privacyMode) {
-                                            "****"
+                                            ARK_HIDDEN_AMOUNT
                                         } else {
                                             formatAmount(multiTotalSats.toULong(), useSats, includeUnit = true)
                                         },
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = SparkPurple,
+                                    color = ArkRust,
                                 )
                             }
                         }
                     }
                 } else {
-                OutlinedTextField(
-                    value = paymentRequest,
-                    onValueChange = { input ->
-                        val normalized = input.trim()
-                        when (val parsed = parseSendRecipient(normalized, context)) {
-                            is ParsedSendRecipient.Bitcoin -> {
-                                paymentRequest = parsed.address
-                                amountInput = parsed.amountSats?.let { formatSparkSendAmountInput(it, useSats) }.orEmpty()
-                                isMaxMode = false
+                    OutlinedTextField(
+                        value = paymentRequest,
+                        onValueChange = { input ->
+                            val normalized = input.trim()
+                            when (val parsed = parseSendRecipient(normalized, context)) {
+                                is ParsedSendRecipient.Bitcoin,
+                                is ParsedSendRecipient.Ark,
+                                is ParsedSendRecipient.Lightning,
+                                -> {
+                                    scanError = null
+                                    applyParsedRecipient(parsed)
+                                }
+                                else -> {
+                                    paymentRequest = normalized
+                                    if (normalized.isEmpty()) amountInput = ""
+                                    isMaxMode = false
+                                }
                             }
-                            is ParsedSendRecipient.Spark -> {
-                                paymentRequest = parsed.paymentRequest
-                                amountInput = parsed.amountSats?.let { formatSparkSendAmountInput(it, useSats) }.orEmpty()
-                                isMaxMode = false
-                            }
-                            is ParsedSendRecipient.Lightning -> {
-                                paymentRequest = parsed.paymentInput
-                                amountInput = parsed.amountSats?.let { formatSparkSendAmountInput(it, useSats) }.orEmpty()
-                                isMaxMode = false
-                            }
-                            else -> {
-                                paymentRequest = normalized
-                                if (normalized.isEmpty()) amountInput = ""
-                                isMaxMode = false
-                            }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = {
-                        Text(
-                            text = stringResource(R.string.loc_ea3c0acf),
-                            color = TextSecondary.copy(alpha = 0.5f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = { showQrScanner = true }) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR Code",
-                                tint = SparkPurple,
-                                modifier = Modifier.size(22.dp),
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = {
+                            Text(
+                                text = stringResource(R.string.ark_send_destination_hint),
+                                color = TextSecondary.copy(alpha = 0.5f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                        }
-                    },
-                    supportingText =
-                        recipientValidationError?.let {
-                            {
-                                Text(
-                                    text = it,
-                                    color = ErrorRed,
-                                    style = MaterialTheme.typography.bodySmall,
+                        },
+                        trailingIcon = {
+                            IconButton(onClick = { showQrScanner = true }) {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = stringResource(R.string.loc_59b2cdc5),
+                                    tint = ArkRust,
+                                    modifier = Modifier.size(22.dp),
                                 )
                             }
                         },
-                    isError = recipientValidationError != null,
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = sparkTextFieldColors(),
-                )
-                if (recipientBadges.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        recipientBadges.forEach { badge ->
-                            SparkRecipientModeBadgeChip(label = badge.first, color = badge.second)
+                        supportingText =
+                            recipientValidationError?.let {
+                                {
+                                    Text(
+                                        text = it,
+                                        color = ErrorRed,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            },
+                        isError = recipientValidationError != null,
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = arkSendTextFieldColors(),
+                    )
+                    if (recipientBadges.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            recipientBadges.forEach { badge ->
+                                ArkRecipientModeBadgeChip(label = badge.first, color = badge.second)
+                            }
                         }
                     }
-                }
-                scanError?.let {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ErrorRed,
-                    )
+                    scanError?.let {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = ErrorRed,
+                        )
+                    }
                 }
 
+                if (!isMultiMode) {
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Row(
@@ -644,23 +692,27 @@ fun SparkSendScreen(
                     )
                     if (btcPrice != null && btcPrice > 0) {
                         Card(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    amountInput = convertSparkAmountInput(amountSats, useSats, !isUsdMode, btcPrice)
-                                    isUsdMode = !isUsdMode
-                                    isMaxMode = false
-                                },
+                            modifier =
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(enabled = !amountLockedByInvoice) {
+                                        amountInput =
+                                            convertArkAmountInput(amountSats, useSats, !isUsdMode, btcPrice)
+                                        isUsdMode = !isUsdMode
+                                        isMaxMode = false
+                                    },
                             shape = RoundedCornerShape(8.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (isUsdMode) SparkPurple.copy(alpha = 0.15f) else DarkSurface,
-                            ),
-                            border = BorderStroke(1.dp, if (isUsdMode) SparkPurple else BorderColor),
+                            colors =
+                                CardDefaults.cardColors(
+                                    containerColor =
+                                        if (isUsdMode) ArkRust.copy(alpha = 0.15f) else DarkSurface,
+                                ),
+                            border = BorderStroke(1.dp, if (isUsdMode) ArkRust else BorderColor),
                         ) {
                             Text(
                                 text = fiatCurrency,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = if (isUsdMode) SparkPurple else TextSecondary,
+                                color = if (isUsdMode) ArkRust else TextSecondary,
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                             )
                         }
@@ -671,7 +723,7 @@ fun SparkSendScreen(
                 val conversionText =
                     if (amountInput.isNotBlank() && amountSats != null && amountSats > 0 && btcPrice != null && btcPrice > 0) {
                         if (privacyMode) {
-                            "≈ $SPARK_SEND_HIDDEN"
+                            "≈ $ARK_HIDDEN_AMOUNT"
                         } else if (isUsdMode) {
                             "≈ ${formatAmount(amountSats.toULong(), useSats, includeUnit = true)}"
                         } else {
@@ -682,12 +734,21 @@ fun SparkSendScreen(
                     }
 
                 OutlinedTextField(
-                    value = amountInput,
+                    value =
+                        if (isMaxMode && !privacyMode && amountSats == null) {
+                            formatArkSendAmountInput(availableSats, useSats)
+                        } else if (isMaxMode && privacyMode) {
+                            ARK_HIDDEN_AMOUNT
+                        } else {
+                            amountInput
+                        },
                     onValueChange = { value ->
-                        amountInput = filterSparkAmountInput(value, useSats, isUsdMode)
+                        if (amountLockedByInvoice) return@OutlinedTextField
+                        amountInput = filterArkAmountInput(value, useSats, isUsdMode)
                         isMaxMode = false
                     },
                     modifier = Modifier.fillMaxWidth(),
+                    enabled = !amountLockedByInvoice && !(isMaxMode && privacyMode),
                     placeholder = {
                         Text(
                             text = if (isUsdMode) "0.00" else "0",
@@ -705,7 +766,7 @@ fun SparkSendScreen(
                             {
                                 Text(
                                     text = it,
-                                    color = SparkPurple,
+                                    color = ArkRust,
                                     style = MaterialTheme.typography.bodyLarge,
                                 )
                             }
@@ -713,14 +774,14 @@ fun SparkSendScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
-                    colors = sparkTextFieldColors(),
-                    isError = sparkAmountFieldError != null,
+                    colors = arkSendTextFieldColors(),
+                    isError = arkAmountFieldError != null,
                 )
 
-                if (sparkAmountFieldError != null && amountInput.isNotBlank()) {
+                if (arkAmountFieldError != null && (amountInput.isNotBlank() || isMaxMode || prepareError != null)) {
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = sparkAmountFieldError,
+                        text = arkAmountFieldError,
                         style = MaterialTheme.typography.bodySmall,
                         color = WarningYellow,
                     )
@@ -731,7 +792,7 @@ fun SparkSendScreen(
                 AvailableBalanceMaxRow(
                     amountText =
                         if (privacyMode) {
-                            SPARK_SEND_HIDDEN
+                            ARK_HIDDEN_AMOUNT
                         } else {
                             formatAmount(availableSats.toULong(), useSats, includeUnit = true)
                         },
@@ -742,12 +803,12 @@ fun SparkSendScreen(
                         } else {
                             null
                         },
-                    accentColor = SparkPurple,
+                    accentColor = ArkRust,
                     isMaxMode = isMaxMode,
-                    maxEnabled = availableSats > 0 && !busy,
+                    maxEnabled = availableSats > 0 && !busy && !amountLockedByInvoice,
                     fadeWhenDisabled = true,
                     onMaxClick = {
-                        amountInput = formatSparkSendAmountInput(availableSats, useSats)
+                        amountInput = formatArkSendAmountInput(availableSats, useSats)
                         isUsdMode = false
                         isMaxMode = true
                     },
@@ -761,7 +822,7 @@ fun SparkSendScreen(
                             .padding(top = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    SparkChipButton(
+                    ArkChipButton(
                         text = stringResource(R.string.loc_cf667fec),
                         selected = showLabelField || labelText.isNotBlank(),
                         enabled = !busy,
@@ -784,21 +845,21 @@ fun SparkSendScreen(
                             },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            colors = sparkTextFieldColors(),
+                            colors = arkSendTextFieldColors(),
                             textStyle = MaterialTheme.typography.bodyMedium,
                         )
                     }
                 }
 
-                if (!isMultiMode && parsedRecipient is ParsedSendRecipient.Bitcoin) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    SparkOnchainFeeSpeedSection(
-                        selectedSpeed = onchainFeeSpeed,
-                        feeQuotes = onchainFeeQuotes,
-                        isLoading = onchainFeeQuotesLoading,
-                        privacyMode = privacyMode,
-                        onSpeedSelected = { onchainFeeSpeed = it },
-                        enabled = !busy,
+                if (!isMultiMode &&
+                    parsedRecipient is ParsedSendRecipient.Bitcoin &&
+                    !SilentPayment.isSilentPaymentAddress(parsedRecipient.address)
+                ) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.ark_send_onchain_fee_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextTertiary,
                     )
                 }
             }
@@ -807,9 +868,10 @@ fun SparkSendScreen(
         Spacer(modifier = Modifier.height(12.dp))
         Button(
             onClick = {
+                val label = labelText.trim().takeIf { it.isNotBlank() }
                 showConfirmDialog = true
                 if (isMultiMode) {
-                    onPrepareSendMany(multiRecipientPairs)
+                    onPrepareSendMany(multiRecipientPairs, label)
                 } else {
                     val amountForPrepare: Long? =
                         when {
@@ -817,18 +879,24 @@ fun SparkSendScreen(
                             amountSats != null && amountSats > 0L -> amountSats
                             else -> recipientFixedAmountSats?.takeIf { it > 0L }
                         }
-                    onPrepareSend(paymentRequest.trim(), amountForPrepare, onchainFeeSpeed, isMaxMode)
+                    onPrepareSend(
+                        paymentRequest.trim(),
+                        amountForPrepare,
+                        isMaxMode,
+                        label,
+                    )
                 }
             },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
             shape = RoundedCornerShape(8.dp),
-            enabled = canSparkReview,
+            enabled = canArkReview,
             colors =
                 ButtonDefaults.buttonColors(
-                    containerColor = SparkPurple,
-                    disabledContainerColor = SparkPurple.copy(alpha = 0.3f),
+                    containerColor = ArkRust,
+                    disabledContainerColor = ArkRust.copy(alpha = 0.3f),
                 ),
         ) {
             Text(
@@ -841,7 +909,19 @@ fun SparkSendScreen(
 }
 
 @Composable
-private fun SparkChipButton(
+private fun arkSendTextFieldColors() =
+    OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = ArkRust,
+        unfocusedBorderColor = BorderColor,
+        focusedTextColor = TextPrimary,
+        unfocusedTextColor = TextPrimary,
+        cursorColor = ArkRust,
+        disabledBorderColor = BorderColor,
+        disabledTextColor = TextPrimary,
+    )
+
+@Composable
+private fun ArkChipButton(
     text: String,
     selected: Boolean,
     enabled: Boolean,
@@ -857,19 +937,19 @@ private fun SparkChipButton(
             CardDefaults.cardColors(
                 containerColor =
                     when {
-                        selected -> SparkPurple.copy(alpha = 0.15f)
+                        selected -> ArkRust.copy(alpha = 0.15f)
                         enabled -> DarkSurface
                         else -> DarkSurface.copy(alpha = 0.6f)
                     },
             ),
-        border = BorderStroke(1.dp, if (selected) SparkPurple else BorderColor.copy(alpha = if (enabled) 1f else 0.5f)),
+        border = BorderStroke(1.dp, if (selected) ArkRust else BorderColor.copy(alpha = if (enabled) 1f else 0.5f)),
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelMedium,
             color =
                 when {
-                    selected -> SparkPurple
+                    selected -> ArkRust
                     enabled -> TextSecondary
                     else -> TextSecondary.copy(alpha = 0.5f)
                 },
@@ -879,7 +959,7 @@ private fun SparkChipButton(
 }
 
 @Composable
-private fun SparkRecipientModeBadgeChip(
+private fun ArkRecipientModeBadgeChip(
     label: String,
     color: Color,
 ) {
@@ -898,146 +978,23 @@ private fun SparkRecipientModeBadgeChip(
     }
 }
 
-@Composable
-private fun SparkOnchainFeeSpeedSection(
-    selectedSpeed: SparkOnchainFeeSpeed,
-    feeQuotes: List<SparkOnchainFeeQuote>,
-    isLoading: Boolean,
-    privacyMode: Boolean,
-    onSpeedSelected: (SparkOnchainFeeSpeed) -> Unit,
-    enabled: Boolean,
-) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = stringResource(R.string.loc_943c89b7),
-                style = MaterialTheme.typography.labelLarge,
-                color = TextSecondary,
-            )
-        }
-
-        Spacer(modifier = Modifier.height(6.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(1.dp),
-        ) {
-            SparkFeeTargetButton(
-                label = "~1 block",
-                feeSats = feeQuotes.firstOrNull { it.speed == SparkOnchainFeeSpeed.FAST }?.feeSats,
-                isSelected = selectedSpeed == SparkOnchainFeeSpeed.FAST,
-                onClick = { onSpeedSelected(SparkOnchainFeeSpeed.FAST) },
-                enabled = enabled,
-                isLoading = isLoading,
-                privacyMode = privacyMode,
-                modifier = Modifier.weight(1f),
-            )
-            SparkFeeTargetButton(
-                label = "~3 blocks",
-                feeSats = feeQuotes.firstOrNull { it.speed == SparkOnchainFeeSpeed.MEDIUM }?.feeSats,
-                isSelected = selectedSpeed == SparkOnchainFeeSpeed.MEDIUM,
-                onClick = { onSpeedSelected(SparkOnchainFeeSpeed.MEDIUM) },
-                enabled = enabled,
-                isLoading = isLoading,
-                privacyMode = privacyMode,
-                modifier = Modifier.weight(1f),
-            )
-            SparkFeeTargetButton(
-                label = "~6 blocks",
-                feeSats = feeQuotes.firstOrNull { it.speed == SparkOnchainFeeSpeed.SLOW }?.feeSats,
-                isSelected = selectedSpeed == SparkOnchainFeeSpeed.SLOW,
-                onClick = { onSpeedSelected(SparkOnchainFeeSpeed.SLOW) },
-                enabled = enabled,
-                isLoading = isLoading,
-                privacyMode = privacyMode,
-                modifier = Modifier.weight(1f),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SparkFeeTargetButton(
-    label: String,
-    feeSats: Long?,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-    enabled: Boolean,
-    isLoading: Boolean,
-    privacyMode: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val backgroundColor = if (isSelected) SparkPurple.copy(alpha = 0.15f) else DarkSurface
-    val borderColor = if (isSelected) SparkPurple else BorderColor
-    val textColor = if (isSelected) SparkPurple else TextSecondary
-
-    Card(
-        modifier =
-            modifier
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(enabled = enabled, onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = backgroundColor),
-        border = BorderStroke(1.dp, borderColor),
-    ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp, horizontal = 0.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isSelected) MaterialTheme.colorScheme.onBackground else TextSecondary,
-                textAlign = TextAlign.Center,
-            )
-            if (isLoading && feeSats == null) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(20.dp),
-                    color = SparkPurple,
-                    strokeWidth = 2.dp,
-                )
-            } else {
-                Text(
-                    text = feeSats?.let {
-                        if (privacyMode) SPARK_SEND_HIDDEN else String.format(Locale.US, "%,d", it)
-                    } ?: "—",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = textColor,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = stringResource(R.string.loc_9384ed0d),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TextSecondary,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-    }
-}
-
-private fun sparkRecipientModeBadges(parsed: ParsedSendRecipient): List<Pair<String, Color>> =
+private fun arkRecipientModeBadges(parsed: ParsedSendRecipient): List<Pair<String, Color>> =
     when (parsed) {
         is ParsedSendRecipient.Bitcoin -> listOf("Bitcoin" to BitcoinOrange)
-        is ParsedSendRecipient.Lightning -> listOf("Lightning" to LightningYellow)
-        is ParsedSendRecipient.Spark -> listOf("Spark" to SparkPurple)
+        is ParsedSendRecipient.Ark -> listOf("Ark" to ArkRust)
+        is ParsedSendRecipient.Lightning ->
+            when {
+                isLightningAddressPayment(parsed) -> listOf("LN Address" to LightningYellow)
+                parsed.kind == LightningKind.LNURL -> listOf("LNURL" to LightningYellow)
+                parsed.kind == LightningKind.BOLT12 -> listOf("BOLT12" to LightningYellow)
+                else -> listOf("Lightning" to LightningYellow)
+            }
         else -> emptyList()
     }
 
 @Composable
-private fun SparkSendConfirmationDialog(
-    sendState: SparkSendState,
+private fun ArkSendConfirmationDialog(
+    sendState: ArkSendState,
     useSats: Boolean,
     btcPrice: Double?,
     fiatCurrency: String,
@@ -1052,9 +1009,9 @@ private fun SparkSendConfirmationDialog(
         containerColor = DarkSurface,
         actions = {
             when (sendState) {
-                SparkSendState.Idle,
-                SparkSendState.Preparing,
-                -> {
+                ArkSendState.Idle,
+                ArkSendState.Preparing,
+                    -> {
                     Button(
                         onClick = { },
                         modifier =
@@ -1063,7 +1020,11 @@ private fun SparkSendConfirmationDialog(
                                 .height(48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = false,
-                        colors = ButtonDefaults.buttonColors(containerColor = SparkPurple, contentColor = DarkBackground),
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = ArkRust,
+                                contentColor = DarkBackground,
+                            ),
                     ) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
@@ -1086,9 +1047,9 @@ private fun SparkSendConfirmationDialog(
                         Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
                 }
-                is SparkSendState.Preview,
-                is SparkSendState.MultiPreview,
-                -> {
+                is ArkSendState.Preview,
+                is ArkSendState.MultiPreview,
+                    -> {
                     Button(
                         onClick = onConfirm,
                         modifier =
@@ -1096,7 +1057,11 @@ private fun SparkSendConfirmationDialog(
                                 .fillMaxWidth()
                                 .height(48.dp),
                         shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = SparkPurple, contentColor = DarkBackground),
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = ArkRust,
+                                contentColor = DarkBackground,
+                            ),
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.Send,
@@ -1119,9 +1084,9 @@ private fun SparkSendConfirmationDialog(
                         Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
                 }
-                SparkSendState.Sending,
-                is SparkSendState.MultiSending,
-                -> {
+                ArkSendState.Sending,
+                is ArkSendState.MultiSending,
+                    -> {
                     Button(
                         onClick = { },
                         modifier =
@@ -1130,7 +1095,11 @@ private fun SparkSendConfirmationDialog(
                                 .height(48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = false,
-                        colors = ButtonDefaults.buttonColors(containerColor = SparkPurple, contentColor = DarkBackground),
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = ArkRust,
+                                contentColor = DarkBackground,
+                            ),
                     ) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
@@ -1140,14 +1109,14 @@ private fun SparkSendConfirmationDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text =
-                                if (sendState is SparkSendState.MultiSending) {
+                                if (sendState is ArkSendState.MultiSending) {
                                     stringResource(
                                         R.string.send_multi_progress_format,
                                         sendState.completed + 1,
                                         sendState.total,
                                     )
                                 } else {
-                                    stringResource(R.string.spark_send_status_submitting)
+                                    stringResource(R.string.ark_send_status_submitting)
                                 },
                             style = MaterialTheme.typography.titleMedium,
                         )
@@ -1165,16 +1134,16 @@ private fun SparkSendConfirmationDialog(
                         Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                     }
                 }
-                is SparkSendState.Error,
-                is SparkSendState.Sent,
-                is SparkSendState.MultiSent,
-                -> {
+                is ArkSendState.Error,
+                is ArkSendState.Sent,
+                is ArkSendState.MultiSent,
+                    -> {
                     Spacer(modifier = Modifier.height(10.dp))
                     HorizontalDivider(color = BorderColor)
                     Spacer(modifier = Modifier.height(8.dp))
                     IbisButton(
                         onClick =
-                            if (sendState is SparkSendState.Sent || sendState is SparkSendState.MultiSent) {
+                            if (sendState is ArkSendState.Sent || sendState is ArkSendState.MultiSent) {
                                 onDone
                             } else {
                                 onDismiss
@@ -1191,40 +1160,41 @@ private fun SparkSendConfirmationDialog(
         },
     ) {
         Text(
-            text = stringResource(sparkSendDialogTitle(sendState)),
+            text = stringResource(arkSendDialogTitle(sendState)),
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = TextPrimary,
         )
         Spacer(modifier = Modifier.height(16.dp))
         when (sendState) {
-            SparkSendState.Idle,
-            SparkSendState.Preparing,
-            -> Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(28.dp),
-                    color = SparkPurple,
-                    strokeWidth = 2.dp,
+            ArkSendState.Idle,
+            ArkSendState.Preparing,
+                ->
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        color = ArkRust,
+                        strokeWidth = 2.dp,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.loc_b86dbd12),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextPrimary,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            is ArkSendState.Preview ->
+                ArkSendReviewContent(
+                    preview = sendState,
+                    useSats = useSats,
+                    btcPrice = btcPrice,
+                    fiatCurrency = fiatCurrency,
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = stringResource(R.string.loc_b86dbd12),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextPrimary,
-                    textAlign = TextAlign.Center,
-                )
-            }
-            is SparkSendState.Preview -> SparkSendReviewContent(
-                preview = sendState,
-                useSats = useSats,
-                btcPrice = btcPrice,
-                fiatCurrency = fiatCurrency,
-                privacyMode = privacyMode,
-            )
-            is SparkSendState.MultiPreview -> {
+            is ArkSendState.MultiPreview -> {
                 Text(
                     text = stringResource(R.string.send_multi_sequential_note),
                     style = MaterialTheme.typography.bodySmall,
@@ -1238,40 +1208,35 @@ private fun SparkSendConfirmationDialog(
                         color = TextSecondary,
                     )
                     Text(
-                        text = if (privacyMode) "****" else item.paymentRequest,
+                        text = abbreviateArkReviewDestination(item.destination, method = "Ark"),
                         style = MaterialTheme.typography.bodySmall,
+                        fontFamily = FontFamily.Monospace,
                         color = TextPrimary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text =
-                            if (privacyMode) {
-                                "****"
-                            } else {
-                                formatAmount(item.amountSats.toULong(), useSats, includeUnit = true)
-                            },
+                        text = formatAmount(item.amountSats.toULong(), useSats, includeUnit = true),
                         style = MaterialTheme.typography.bodyMedium,
-                        color = SparkPurple,
+                        color = ArkRust,
                     )
-                    if (index < sendState.items.lastIndex) Spacer(modifier = Modifier.height(8.dp))
+                    if (index < sendState.items.lastIndex) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text =
-                        if (privacyMode) {
-                            "****"
-                        } else {
-                            stringResource(R.string.send_sending_recipients_format, sendState.items.size) +
-                                " · " +
-                                formatAmount(sendState.totalAmountSats.toULong(), useSats, includeUnit = true)
-                        },
+                        stringResource(
+                            R.string.send_sending_recipients_format,
+                            sendState.items.size,
+                        ) +
+                            " · " +
+                            formatAmount(sendState.totalAmountSats.toULong(), useSats, includeUnit = true),
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextPrimary,
                 )
             }
-            SparkSendState.Sending -> SparkSendProgressContent()
-            is SparkSendState.MultiSending -> {
+            ArkSendState.Sending -> ArkSendProgressContent()
+            is ArkSendState.MultiSending -> {
                 Text(
                     text =
                         stringResource(
@@ -1285,32 +1250,37 @@ private fun SparkSendConfirmationDialog(
                 Spacer(modifier = Modifier.height(12.dp))
                 CircularProgressIndicator(
                     modifier = Modifier.size(28.dp),
-                    color = SparkPurple,
+                    color = ArkRust,
                     strokeWidth = 2.dp,
                 )
             }
-            is SparkSendState.Sent -> {
+            is ArkSendState.Sent -> {
                 Text(
-                    text = stringResource(R.string.spark_send_success),
+                    text = stringResource(R.string.ark_send_success),
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextSecondary,
                 )
-                sendState.paymentId?.let {
+                sendState.detail?.takeIf { it.isNotBlank() }?.let {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = it,
                         color = TextSecondary,
                         style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            is SparkSendState.MultiSent -> {
+            is ArkSendState.MultiSent -> {
                 Text(
                     text =
                         if (sendState.failed == 0) {
-                            stringResource(R.string.send_multi_done_format, sendState.succeeded, sendState.succeeded)
+                            stringResource(
+                                R.string.send_multi_done_format,
+                                sendState.succeeded,
+                                sendState.succeeded,
+                            )
                         } else {
                             stringResource(
                                 R.string.send_multi_partial_format,
@@ -1324,10 +1294,14 @@ private fun SparkSendConfirmationDialog(
                 )
                 sendState.detail?.takeIf { it.isNotBlank() }?.let {
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = it, color = ErrorRed, style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        text = it,
+                        color = ErrorRed,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
-            is SparkSendState.Error -> {
+            is ArkSendState.Error -> {
                 Text(
                     text = stringResource(R.string.ln_node_status_failed),
                     style = MaterialTheme.typography.titleMedium,
@@ -1354,45 +1328,45 @@ private fun SparkSendConfirmationDialog(
     }
 }
 
-private fun sparkSendDialogTitle(sendState: SparkSendState): Int =
+private fun arkSendDialogTitle(sendState: ArkSendState): Int =
     when (sendState) {
-        SparkSendState.Sending,
-        is SparkSendState.MultiSending,
-        -> R.string.spark_send_status_title
-        is SparkSendState.Sent,
-        is SparkSendState.MultiSent,
-        -> R.string.spark_send_status_sent_title
-        is SparkSendState.Error -> R.string.spark_send_status_failed_title
+        ArkSendState.Sending,
+        is ArkSendState.MultiSending,
+        -> R.string.ark_send_status_title
+        is ArkSendState.Sent,
+        is ArkSendState.MultiSent,
+        -> R.string.ark_send_status_sent_title
+        is ArkSendState.Error -> R.string.ark_send_status_failed_title
         else -> R.string.loc_81f5c0cf
     }
 
 @Composable
-private fun SparkSendProgressContent() {
+private fun ArkSendProgressContent() {
     Text(
-        text = stringResource(R.string.spark_send_status_message),
+        text = stringResource(R.string.ark_send_status_message),
         style = MaterialTheme.typography.bodyMedium,
         color = TextPrimary,
         modifier = Modifier.fillMaxWidth(),
     )
     Spacer(modifier = Modifier.height(16.dp))
-    SparkSendProgressStep(
-        title = stringResource(R.string.spark_send_status_step_review_title),
-        detail = stringResource(R.string.spark_send_status_step_review_detail),
+    ArkSendProgressStep(
+        title = stringResource(R.string.ark_send_status_step_review_title),
+        detail = stringResource(R.string.ark_send_status_step_review_detail),
         complete = true,
     )
-    SparkSendProgressStep(
-        title = stringResource(R.string.spark_send_status_step_submit_title),
-        detail = stringResource(R.string.spark_send_status_step_submit_detail),
+    ArkSendProgressStep(
+        title = stringResource(R.string.ark_send_status_step_submit_title),
+        detail = stringResource(R.string.ark_send_status_step_submit_detail),
         active = true,
     )
-    SparkSendProgressStep(
-        title = stringResource(R.string.spark_send_status_step_settle_title),
-        detail = stringResource(R.string.spark_send_status_step_settle_detail),
+    ArkSendProgressStep(
+        title = stringResource(R.string.ark_send_status_step_settle_title),
+        detail = stringResource(R.string.ark_send_status_step_settle_detail),
     )
 }
 
 @Composable
-private fun SparkSendProgressStep(
+private fun ArkSendProgressStep(
     title: String,
     detail: String,
     complete: Boolean = false,
@@ -1413,23 +1387,26 @@ private fun SparkSendProgressStep(
             contentAlignment = Alignment.Center,
         ) {
             when {
-                active -> CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    color = SparkPurple,
-                    strokeWidth = 2.dp,
-                )
-                complete -> Box(
-                    modifier =
-                        Modifier
-                            .size(10.dp)
-                            .background(SparkPurple, RoundedCornerShape(2.dp)),
-                )
-                else -> Box(
-                    modifier =
-                        Modifier
-                            .size(10.dp)
-                            .background(BorderColor, RoundedCornerShape(2.dp)),
-                )
+                active ->
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = ArkRust,
+                        strokeWidth = 2.dp,
+                    )
+                complete ->
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(10.dp)
+                                .background(ArkRust, RoundedCornerShape(2.dp)),
+                    )
+                else ->
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(10.dp)
+                                .background(BorderColor, RoundedCornerShape(2.dp)),
+                    )
             }
         }
         Spacer(modifier = Modifier.width(12.dp))
@@ -1451,24 +1428,13 @@ private fun SparkSendProgressStep(
 }
 
 @Composable
-private fun SparkSendReviewContent(
-    preview: SparkSendState.Preview?,
+private fun ArkSendReviewContent(
+    preview: ArkSendState.Preview,
     useSats: Boolean,
     btcPrice: Double?,
     fiatCurrency: String,
-    privacyMode: Boolean,
 ) {
-    if (preview == null) {
-        Text(
-            text = stringResource(R.string.loc_d91923f1),
-            style = MaterialTheme.typography.bodyMedium,
-            color = TextPrimary,
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Center,
-        )
-        return
-    }
-
+    // Confirmation dialogs always show real amounts/destination (privacy mode is ambient-only).
     Text(
         text = stringResource(R.string.loc_895ab1d4),
         style = MaterialTheme.typography.bodyLarge,
@@ -1476,49 +1442,64 @@ private fun SparkSendReviewContent(
     )
     Spacer(modifier = Modifier.height(4.dp))
     Text(
-        text = abbreviateSparkReviewText(preview.paymentRequest),
+        text = abbreviateArkReviewDestination(preview.destination, preview.method),
         style = MaterialTheme.typography.bodyLarge,
         fontFamily = FontFamily.Monospace,
         color = TextPrimary,
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
+    )
+    preview.label?.takeIf { it.isNotBlank() }?.let { label ->
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextSecondary,
+        )
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+    Text(
+        text = preview.method,
+        style = MaterialTheme.typography.labelLarge,
+        color = arkReviewMethodColor(preview.method),
+        fontWeight = FontWeight.SemiBold,
     )
 
     Spacer(modifier = Modifier.height(16.dp))
-    SparkReviewDivider()
+    ArkReviewDivider()
     Spacer(modifier = Modifier.height(16.dp))
 
     val amountSats = preview.amountSats ?: 0L
     val feeSats = preview.feeSats ?: 0L
     if (preview.amountSats != null) {
-        SparkReviewAmountRow(
-            label = "Sending:",
-            subtitle = abbreviateSparkReviewText(preview.paymentRequest, prefix = 8, suffix = 8),
-            valueText = sparkReviewAmountText(amountSats, useSats, privacyMode),
-            valueSubtext = sparkReviewUsdSubtext(amountSats, btcPrice, fiatCurrency, privacyMode),
+        ArkReviewAmountRow(
+            label = stringResource(R.string.loc_d19e8dd8),
+            valueText = arkReviewAmountText(amountSats, useSats),
+            valueSubtext = arkReviewUsdSubtext(amountSats, btcPrice, fiatCurrency),
             color = AccentRed,
         )
         Spacer(modifier = Modifier.height(12.dp))
     }
 
     if (preview.feeSats != null) {
-        SparkReviewAmountRow(
-            label = sparkReviewFeeLabel(preview.method),
-            subtitle = preview.onchainFeeSpeed?.displayName(),
-            valueText = sparkReviewAmountText(feeSats, useSats, privacyMode),
-            valueSubtext = sparkReviewUsdSubtext(feeSats, btcPrice, fiatCurrency, privacyMode),
-            color = sparkReviewFeeColor(preview.method),
+        ArkReviewAmountRow(
+            label = arkReviewFeeLabel(preview.method),
+            valueText = arkReviewAmountText(feeSats, useSats),
+            valueSubtext = arkReviewUsdSubtext(feeSats, btcPrice, fiatCurrency),
+            color = arkReviewMethodColor(preview.method),
         )
         Spacer(modifier = Modifier.height(12.dp))
     }
 
     if (preview.amountSats != null || preview.feeSats != null) {
-        SparkReviewDivider()
+        ArkReviewDivider()
         Spacer(modifier = Modifier.height(16.dp))
-        SparkReviewAmountRow(
-            label = "Total",
-            valueText = sparkReviewAmountText(amountSats + feeSats, useSats, privacyMode),
-            valueSubtext = sparkReviewUsdSubtext(amountSats + feeSats, btcPrice, fiatCurrency, privacyMode),
+        // For rails where fee is separate from recipient amount, total = amount + fee.
+        // Bark estimates already expose net/gross; when fee exists treat like Spark annex.
+        val total = amountSats + feeSats
+        ArkReviewAmountRow(
+            label = stringResource(R.string.loc_03eece5a),
+            valueText = arkReviewAmountText(total, useSats),
+            valueSubtext = arkReviewUsdSubtext(total, btcPrice, fiatCurrency),
             color = AccentRed,
             bold = true,
         )
@@ -1526,7 +1507,7 @@ private fun SparkSendReviewContent(
 }
 
 @Composable
-private fun SparkReviewAmountRow(
+private fun ArkReviewAmountRow(
     label: String,
     valueText: String,
     color: Color,
@@ -1584,7 +1565,7 @@ private fun SparkReviewAmountRow(
 }
 
 @Composable
-private fun SparkReviewDivider() {
+private fun ArkReviewDivider() {
     Box(
         modifier =
             Modifier
@@ -1594,62 +1575,69 @@ private fun SparkReviewDivider() {
     )
 }
 
-private fun sparkReviewAmountText(
+private fun arkReviewAmountText(
     value: Long,
     useSats: Boolean,
-    privacyMode: Boolean,
-): String =
-    if (privacyMode) {
-        SPARK_SEND_HIDDEN
-    } else {
-        "-${formatAmount(value.toULong(), useSats, includeUnit = true)}"
-    }
+): String = "-${formatAmount(value.toULong(), useSats, includeUnit = true)}"
 
-private fun sparkReviewUsdSubtext(
+private fun arkReviewUsdSubtext(
     value: Long,
     btcPrice: Double?,
     fiatCurrency: String,
-    privacyMode: Boolean,
 ): String? {
-    if (privacyMode || btcPrice == null || btcPrice <= 0.0) return null
+    if (btcPrice == null || btcPrice <= 0.0) return null
     return formatFiat((value.toDouble() / 100_000_000.0) * btcPrice, fiatCurrency)
 }
 
-private fun sparkReviewFeeLabel(method: String): String =
+@Composable
+private fun arkReviewFeeLabel(method: String): String =
     when {
-        method.contains("Bitcoin", ignoreCase = true) -> "Bitcoin Network Fee:"
-        method.contains("Bolt", ignoreCase = true) || method.contains("Lightning", ignoreCase = true) -> "Lightning Network Fee:"
-        else -> "Spark Network Fee:"
+        method.contains("chain", ignoreCase = true) || method.contains("Bitcoin", ignoreCase = true) ->
+            stringResource(R.string.ark_review_fee_bitcoin)
+        method.contains("Lightning", ignoreCase = true) ||
+            method.contains("BOLT", ignoreCase = true) ||
+            method.contains("LNURL", ignoreCase = true) ||
+            method.contains("LN Address", ignoreCase = true) ->
+            stringResource(R.string.ark_review_fee_lightning)
+        else -> stringResource(R.string.ark_review_fee_ark)
     }
 
-private fun sparkReviewFeeColor(method: String): Color =
-    when {
-        method.contains("Bitcoin", ignoreCase = true) -> BitcoinOrange
-        method.contains("Bolt", ignoreCase = true) || method.contains("Lightning", ignoreCase = true) -> LightningYellow
-        else -> SparkPurple
-    }
-
-private fun SparkOnchainFeeSpeed.displayName(): String =
-    name.lowercase(Locale.US).replaceFirstChar { it.titlecase(Locale.US) }
-
-private fun abbreviateSparkReviewText(
-    value: String,
+/** Head…tail truncation for long destinations (Ark, on-chain, LN) on review. */
+private fun abbreviateArkReviewDestination(
+    destination: String,
+    method: String,
     prefix: Int = 12,
     suffix: Int = 8,
-): String =
-    if (value.length <= prefix + suffix + 3) {
-        value
-    } else {
-        value.take(prefix) + "..." + value.takeLast(suffix)
+): String {
+    val value = destination.trim()
+    // Short LN addresses (user@domain) stay fully visible.
+    val isShortLnAddress =
+        method.contains("LN Address", ignoreCase = true) ||
+            (value.contains('@') && value.length <= 48 && !value.startsWith("ln", ignoreCase = true))
+    if (isShortLnAddress) return value
+    if (value.length <= prefix + suffix + 3) return value
+    return value.take(prefix) + "..." + value.takeLast(suffix)
+}
+
+private fun arkReviewMethodColor(method: String): Color =
+    when {
+        method.contains("chain", ignoreCase = true) || method.contains("Bitcoin", ignoreCase = true) ->
+            BitcoinOrange
+        method.contains("Lightning", ignoreCase = true) ||
+            method.contains("BOLT", ignoreCase = true) ||
+            method.contains("LNURL", ignoreCase = true) ||
+            method.contains("LN Address", ignoreCase = true) ->
+            LightningYellow
+        else -> ArkRust
     }
 
-private fun filterSparkAmountInput(
+
+
+private fun filterArkAmountInput(
     value: String,
     useSats: Boolean,
     isUsdMode: Boolean,
 ): String {
-    // Do NOT strip commas: "0,5" would become "05" and parse as 5 BTC.
-    // Commas simply fail the pattern, matching the Layer 1 / Liquid filters.
     var v = value
     val pattern =
         when {
@@ -1663,13 +1651,12 @@ private fun filterSparkAmountInput(
     return v
 }
 
-private fun parseSparkSendAmount(
+private fun parseArkSendAmount(
     input: String,
     useSats: Boolean,
     isUsdMode: Boolean,
     btcPrice: Double?,
 ): Long? {
-    // No comma stripping — "0,5" must fail parsing, not become 5 BTC.
     val trimmed = input.trim()
     if (trimmed.isBlank()) return null
     return when {
@@ -1680,7 +1667,7 @@ private fun parseSparkSendAmount(
     }?.takeIf { it > 0 }
 }
 
-private fun convertSparkAmountInput(
+private fun convertArkAmountInput(
     amountSats: Long?,
     useSats: Boolean,
     toUsdMode: Boolean,
@@ -1698,7 +1685,7 @@ private fun convertSparkAmountInput(
     }
 }
 
-private fun formatSparkSendAmountInput(
+private fun formatArkSendAmountInput(
     amountSats: Long,
     useSats: Boolean,
 ): String =
@@ -1709,5 +1696,3 @@ private fun formatSparkSendAmountInput(
             .trimEnd('0')
             .trimEnd('.')
     }
-
-private const val SPARK_SEND_HIDDEN = "****"

@@ -2,7 +2,6 @@ package github.aeonbtc.ibiswallet.ui.screens
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -76,6 +75,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.DocumentPickerContracts
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -300,7 +300,7 @@ private fun BackupDialog(
     val suggestedFileName = stringResource(R.string.loc_4218f43b, dateStr)
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("application/json"),
+        contract = DocumentPickerContracts.CreateJsonInDownloads(),
     ) { uri: Uri? ->
         if (uri != null) {
             exportUri = uri
@@ -332,8 +332,10 @@ private fun BackupDialog(
     val passwordsMatch = password == confirmPassword
     val passwordLongEnough = password.length >= 8
     val encryptionValid = !encryptBackup || (passwordLongEnough && passwordsMatch)
-    val canExport = exportUri != null && selectedIds.isNotEmpty() && encryptionValid && !isLoading
-    val canChooseLocation = selectedIds.isNotEmpty() && encryptionValid && !isLoading
+    // Servers/app settings alone are enough — no wallet required (empty app or none checked).
+    val hasExportableContent = selectedIds.isNotEmpty() || includeServers || includeAppSettings
+    val canExport = exportUri != null && hasExportableContent && encryptionValid && !isLoading
+    val canChooseLocation = hasExportableContent && encryptionValid && !isLoading
 
     if (showExportConfirmation && exportUri != null) {
         FullBackupExportConfirmationDialog(
@@ -811,7 +813,7 @@ private fun RestoreDialog(
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
+        contract = DocumentPickerContracts.OpenJsonFromDownloads(),
     ) { uri: Uri? ->
         if (uri != null) {
             restoreUri = uri

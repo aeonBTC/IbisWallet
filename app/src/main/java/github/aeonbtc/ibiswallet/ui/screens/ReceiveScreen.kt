@@ -35,6 +35,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -83,7 +84,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToLong
-import androidx.compose.material3.Text
 
 @Composable
 fun ReceiveScreen(
@@ -353,7 +353,8 @@ fun ReceiveScreen(
 
                 // Address display — chunked every 6 chars, split across 2 lines
                 Text(
-                    text = formatAddress(walletState.currentAddress),
+                    text = formatChunkedAddress(walletState.currentAddress)
+                        .ifBlank { stringResource(R.string.loc_fb85740c) },
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = FontFamily.Monospace,
                     ),
@@ -699,16 +700,4 @@ fun ReceiveScreen(
     }
 }
 
-/**
- * Formats a Bitcoin address for display: chunks every 7 characters.
- * Segwit (42 chars) → 2 lines, Taproot (62 chars) → 3 lines.
- */
-private fun formatAddress(address: String?): String {
-    if (address == null) return "No wallet"
-    val chunks = address.chunked(7)
-    val numLines = if (address.length > 50) 3 else 2
-    val perLine = (chunks.size + numLines - 1) / numLines
-    return chunks
-        .chunked(perLine)
-        .joinToString("\n") { it.joinToString(" ") }
-}
+

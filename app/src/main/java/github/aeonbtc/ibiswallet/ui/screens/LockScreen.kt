@@ -1,29 +1,58 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Fingerprint
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
-import github.aeonbtc.ibiswallet.ui.theme.*
+import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
+import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
+import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
+import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import kotlinx.coroutines.delay
 import java.security.SecureRandom
-import androidx.compose.material3.Text
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
 
 private const val MIN_PIN_LENGTH = 4
 private const val MAX_PIN_LENGTH = 12
@@ -36,6 +65,8 @@ fun LockScreen(
     isBiometricAvailable: Boolean = false,
     randomizePinPad: Boolean = false,
     isDuressWithBiometric: Boolean = false,
+    promptMessage: String? = null,
+    onCancel: (() -> Unit)? = null,
 ) {
     var pin by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
@@ -89,18 +120,33 @@ fun LockScreen(
                     .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(modifier = Modifier.height(24.dp))
+            if (onCancel != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Start,
+                ) {
+                    TextButton(onClick = onCancel) {
+                        Text(
+                            text = stringResource(R.string.loc_51bac044),
+                            color = TextSecondary,
+                        )
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(24.dp))
+            }
 
             Text(
                 text =
-                    when {
-                        isDuressWithBiometric -> stringResource(R.string.loc_bf4a5bdb)
-                        securityMethod == SecureStorage.SecurityMethod.BIOMETRIC ->
-                            stringResource(R.string.loc_cabf9832)
-                        securityMethod == SecureStorage.SecurityMethod.PIN ->
-                            stringResource(R.string.loc_bf4a5bdb)
-                        else -> ""
-                    },
+                    promptMessage
+                        ?: when {
+                            isDuressWithBiometric -> stringResource(R.string.loc_bf4a5bdb)
+                            securityMethod == SecureStorage.SecurityMethod.BIOMETRIC ->
+                                stringResource(R.string.loc_cabf9832)
+                            securityMethod == SecureStorage.SecurityMethod.PIN ->
+                                stringResource(R.string.loc_bf4a5bdb)
+                            else -> ""
+                        },
                 style = MaterialTheme.typography.bodyLarge,
                 color = TextSecondary,
             )

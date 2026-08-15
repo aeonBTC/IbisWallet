@@ -24,6 +24,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,13 +37,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.R
-import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
+import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DrawerIconColor
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.viewmodel.AppUpdateStatus
-import androidx.compose.material3.Text
 
 sealed class DrawerItem(
     val titleRes: Int,
@@ -84,22 +84,17 @@ sealed class DrawerItem(
     )
 }
 
-/** Base drawer items (always shown) */
-private val baseDrawerItems =
+/** Drawer items shown in the main menu */
+fun getDrawerItems(): List<DrawerItem> =
     listOf(
         DrawerItem.ManageWallets,
+        DrawerItem.Settings,
+        DrawerItem.Security,
+        DrawerItem.Layer2Options,
         DrawerItem.ElectrumServer,
+        DrawerItem.BackupRestore,
+        DrawerItem.About,
     )
-
-/** Drawer items shown in the main menu */
-fun getDrawerItems(): List<DrawerItem> = buildList {
-    addAll(baseDrawerItems)
-    add(DrawerItem.Layer2Options)
-    add(DrawerItem.Security)
-    add(DrawerItem.Settings)
-    add(DrawerItem.BackupRestore)
-    add(DrawerItem.About)
-}
 
 @Composable
 fun DrawerContent(

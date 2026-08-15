@@ -3,13 +3,11 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -35,6 +33,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CurrencyBitcoin
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -42,7 +41,6 @@ import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -75,11 +73,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -94,10 +90,10 @@ import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidAssetBalance
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
-import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
@@ -110,6 +106,7 @@ import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
 import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.ui.components.BalanceAmountText
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
@@ -119,6 +116,7 @@ import github.aeonbtc.ibiswallet.ui.components.LiquidConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.LiquidTransactionItem
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.TransactionHistoryHideAllDialog
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
@@ -138,7 +136,6 @@ import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
-import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.startActivityWithTaskFallback
 import kotlin.math.pow
@@ -530,29 +527,24 @@ fun LiquidBalanceScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             val lbtcSats = liquidState.balanceSats
-                            Text(
-                                text =
+                            BalanceAmountText(
+                                amountText =
                                     if (privacyMode) {
                                         HIDDEN_AMOUNT
                                     } else if (useSats) {
-                                        "${formatAmount(lbtcSats.toULong(), true)} sats"
+                                        formatAmount(lbtcSats.toULong(), true)
                                     } else {
-                                        "\u20BF ${formatAmount(lbtcSats.toULong(), false)}"
+                                        formatAmount(lbtcSats.toULong(), false)
                                     },
-                                style = MaterialTheme.typography.displaySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onToggleDenomination,
-                                ),
+                                showBtcSymbol = !privacyMode && !useSats,
+                                showSatsUnit = !privacyMode && useSats,
+                                onClick = onToggleDenomination,
                             )
                             if (btcPrice != null && btcPrice > 0) {
                                 val usdValue = (lbtcSats.toDouble() / 100_000_000.0) * btcPrice
                                 Text(
                                     text = if (privacyMode) HIDDEN_AMOUNT else formatFiat(usdValue, fiatCurrency),
-                                    style = MaterialTheme.typography.titleMedium,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
                                     color = TextSecondary,
                                 )
                             }
@@ -697,7 +689,7 @@ fun LiquidBalanceScreen(
                             onClick = { showLightningTransactions = !showLightningTransactions },
                         )
                         LiquidTransactionFilterButton(
-                            icon = Icons.Default.SwapHoriz,
+                            icon = Icons.Default.CurrencyBitcoin,
                             contentDescription = stringResource(R.string.loc_ea6a9a53),
                             tint = BitcoinOrange,
                             isSelected = showSwapTransactions,
@@ -893,133 +885,11 @@ fun LiquidBalanceScreen(
 
     val quickReceiveAddress = liquidState.currentAddress
     if (showQuickReceive && quickReceiveAddress != null) {
-        var qrBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-        var showEnlargedQr by remember { mutableStateOf(false) }
-        LaunchedEffect(quickReceiveAddress) {
-            qrBitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                generateQrBitmap(quickReceiveAddress)
-            }
-        }
-        var showCopied by remember { mutableStateOf(false) }
-
-        LaunchedEffect(showCopied) {
-            if (showCopied) {
-                kotlinx.coroutines.delay(3000)
-                showCopied = false
-            }
-        }
-
-        if (showEnlargedQr && qrBitmap != null) {
-            Dialog(
-                onDismissRequest = { showEnlargedQr = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.9f))
-                        .clickable { showEnlargedQr = false },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(320.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color.White)
-                            .padding(16.dp),
-                    ) {
-                        Image(
-                            bitmap = qrBitmap!!.asImageBitmap(),
-                            contentDescription = stringResource(R.string.loc_8fd877da),
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit,
-                        )
-                    }
-                }
-            }
-        }
-
-        Dialog(
-            onDismissRequest = { showQuickReceive = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-        ) {
-            ProvideLocalizedResources {
-                Card(
-                    modifier =
-                        Modifier
-                            .padding(horizontal = 32.dp)
-                            .fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = DarkCard),
-                ) {
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    qrBitmap?.let { bitmap ->
-                        Box(
-                            modifier =
-                                Modifier
-                                    .size(200.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White)
-                                    .clickable { showEnlargedQr = true }
-                                    .padding(8.dp),
-                        ) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = stringResource(R.string.loc_8fd877da),
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Fit,
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            text = "${quickReceiveAddress.take(9)}...${quickReceiveAddress.takeLast(9)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = TextSecondary,
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = stringResource(R.string.loc_3c19e32e),
-                            tint = if (showCopied) LiquidTeal else TextSecondary,
-                            modifier =
-                                Modifier
-                                    .size(16.dp)
-                                    .clickable {
-                                        SecureClipboard.copyAndScheduleClear(
-                                            context,
-                                            quickReceiveAddress,
-                                        )
-                                        showCopied = true
-                                    },
-                        )
-                    }
-
-                    if (showCopied) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = stringResource(R.string.loc_e287255d),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = LiquidTeal,
-                        )
-                    }
-                }
-            }
-            }
-        }
+        QuickReceiveDialog(
+            payload = quickReceiveAddress,
+            onDismiss = { showQuickReceive = false },
+            accentColor = LiquidTeal,
+        )
     }
 }
 
@@ -1427,10 +1297,10 @@ private fun LiquidTransactionDetailDialog(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector =
-                                when (transaction.type) {
-                                    github.aeonbtc.ibiswallet.data.model.LiquidTxType.SWAP -> Icons.Default.SwapHoriz
-                                    github.aeonbtc.ibiswallet.data.model.LiquidTxType.RECEIVE -> Icons.AutoMirrored.Filled.CallReceived
-                                    github.aeonbtc.ibiswallet.data.model.LiquidTxType.SEND -> Icons.AutoMirrored.Filled.CallMade
+                                if (isReceive) {
+                                    Icons.AutoMirrored.Filled.CallReceived
+                                } else {
+                                    Icons.AutoMirrored.Filled.CallMade
                                 },
                             contentDescription = null,
                             tint = accentColor,
@@ -2905,18 +2775,32 @@ private fun liquidBalanceUnitLabel(useSats: Boolean): String =
     }
 
 @Composable
-private fun liquidTransactionKindLabel(transaction: LiquidTransaction): String =
-    when (transaction.source) {
+private fun liquidTransactionKindLabel(transaction: LiquidTransaction): String {
+    val chainRole = transaction.swapDetails?.role?.takeIf { transaction.source == LiquidTxSource.CHAIN_SWAP }
+    val isReceive =
+        when (chainRole) {
+            LiquidSwapTxRole.FUNDING -> false
+            LiquidSwapTxRole.SETTLEMENT -> true
+            null -> transaction.balanceSatoshi >= 0
+        }
+    return when (transaction.source) {
         LiquidTxSource.CHAIN_SWAP -> stringResource(R.string.loc_85a12a5f)
-        LiquidTxSource.LIGHTNING_RECEIVE_SWAP -> stringResource(R.string.loc_ce4ef127)
-        LiquidTxSource.LIGHTNING_SEND_SWAP -> stringResource(R.string.loc_15e084c6)
+        LiquidTxSource.LIGHTNING_RECEIVE_SWAP,
+        LiquidTxSource.LIGHTNING_SEND_SWAP,
+        ->
+            if (isReceive) {
+                stringResource(R.string.loc_301a5b91)
+            } else {
+                stringResource(R.string.loc_1af68597)
+            }
         LiquidTxSource.NATIVE ->
-            if (transaction.balanceSatoshi >= 0) {
+            if (isReceive) {
                 stringResource(R.string.loc_301a5b91)
             } else {
                 stringResource(R.string.loc_1af68597)
             }
     }
+}
 
 @Composable
 private fun LiquidTransactionFilterButton(

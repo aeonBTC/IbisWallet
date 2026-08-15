@@ -42,11 +42,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,11 +59,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.DryRunResult
 import github.aeonbtc.ibiswallet.data.model.FeeEstimates
@@ -72,6 +76,7 @@ import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveState
 import github.aeonbtc.ibiswallet.data.model.SparkSendState
 import github.aeonbtc.ibiswallet.data.model.SparkWalletState
+import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.ElectrumConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.FeeRateOption
@@ -94,9 +99,6 @@ import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
-import androidx.compose.material3.Text
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
 
 private val Layer1Accent = Color(0xFFCD7F32)
 private const val HIDDEN = "****"
@@ -111,6 +113,7 @@ private sealed interface SparkTransferReview {
         val dryRun: DryRunResult,
         val isMaxSend: Boolean,
         val fundingFeeRate: Double,
+        val selectedUtxos: List<UtxoInfo> = emptyList(),
     ) : SparkTransferReview
 
     data class Withdrawal(
@@ -130,14 +133,17 @@ fun SparkTransferScreen(
     fiatCurrency: String,
     privacyMode: Boolean,
     layer1BalanceSats: Long,
+    layer1Utxos: List<UtxoInfo> = emptyList(),
+    spendUnconfirmed: Boolean = true,
+    requireCoinControl: Boolean = false,
     feeEstimationState: FeeEstimationResult,
     minFeeRate: Double,
     onRefreshBitcoinFees: () -> Unit,
     onLoadSparkRecommendedFeeEstimates: suspend () -> FeeEstimates?,
     onGenerateSparkDeposit: () -> Unit,
     onGenerateLayer1Address: () -> Unit,
-    onPreviewLayer1ToSpark: suspend (String, Long, Double, Boolean) -> DryRunResult?,
-    onExecuteLayer1ToSpark: suspend (String, Long, Double, Boolean) -> Unit,
+    onPreviewLayer1ToSpark: suspend (String, Long, Double, Boolean, List<UtxoInfo>?) -> DryRunResult?,
+    onExecuteLayer1ToSpark: suspend (String, Long, Double, Boolean, List<UtxoInfo>?, Long?) -> Unit,
     onPreviewSparkToLayer1: suspend (String, Long, SparkOnchainFeeSpeed, Boolean) -> SparkSendState.Preview,
     onLoadSparkWithdrawalFeeQuotes: suspend (String, Long, Boolean) -> List<SparkOnchainFeeQuote>,
     onExecuteSparkToLayer1: suspend () -> Unit,
@@ -152,6 +158,7 @@ fun SparkTransferScreen(
     onDismissElectrumBanner: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     var selectedDirection by remember { mutableIntStateOf(0) }
     var amountInput by remember { mutableStateOf("") }
@@ -174,23 +181,35 @@ fun SparkTransferScreen(
     var withdrawalFeeSpeed by rememberSaveable { mutableStateOf(SparkOnchainFeeSpeed.FAST) }
     var withdrawalFeeQuotes by remember { mutableStateOf<List<SparkOnchainFeeQuote>>(emptyList()) }
     var withdrawalFeeQuotesLoading by remember { mutableStateOf(false) }
+    var showCoinControl by rememberSaveable { mutableStateOf(false) }
+    val selectedFundingUtxos = remember { mutableStateListOf<UtxoInfo>() }
     val advancedOptionsBringIntoViewRequester = remember { BringIntoViewRequester() }
     val customDestinationBringIntoViewRequester = remember { BringIntoViewRequester() }
     val customFeeBringIntoViewRequester = remember { BringIntoViewRequester() }
 
-    val amountSats = remember(amountInput, useSats, isUsdMode, btcPrice) {
-        when {
-            amountInput.isBlank() -> null
-            isUsdMode && btcPrice != null && btcPrice > 0 ->
-                amountInput.toDoubleOrNull()?.takeIf { it > 0 }?.let {
-                    ((it / btcPrice) * 100_000_000).toLong()
-                }
-            useSats -> amountInput.replace(",", "").toLongOrNull()?.takeIf { it > 0 }
-            else -> amountInput.toDoubleOrNull()?.takeIf { it > 0 }?.let { (it * 100_000_000).toLong() }
+    val isLayer1ToSpark = selectedDirection == 0
+    val spendableBitcoinUtxos =
+        remember(layer1Utxos, spendUnconfirmed) {
+            layer1Utxos.filter { !it.isFrozen && (spendUnconfirmed || it.isConfirmed) }
+        }
+    LaunchedEffect(spendableBitcoinUtxos) {
+        reconcileCoinControlSelection(selectedFundingUtxos, spendableBitcoinUtxos)
+    }
+    LaunchedEffect(isLayer1ToSpark) {
+        if (!isLayer1ToSpark) {
+            showCoinControl = false
+            selectedFundingUtxos.clear()
         }
     }
+    val selectedFundingSnapshot = selectedFundingUtxos.toList()
+    val layer1AvailableBalance =
+        if (selectedFundingSnapshot.isNotEmpty()) {
+            selectedFundingSnapshot.sumOf { it.amountSats.toLong() }
+        } else {
+            spendableBitcoinUtxos.sumOf { it.amountSats.toLong() }.takeIf { it > 0L }
+                ?: layer1BalanceSats
+        }
 
-    val isLayer1ToSpark = selectedDirection == 0
     val layer1Label = stringResource(R.string.loc_b67a01a5)
     val layer2Label = stringResource(R.string.loc_2f73501f)
     val fromLayerLabel = if (isLayer1ToSpark) layer1Label else layer2Label
@@ -209,11 +228,29 @@ fun SparkTransferScreen(
     val enterValidFeeRateLabel = stringResource(R.string.loc_857c8623)
     val enterFeeRateAboveZeroLabel = stringResource(R.string.loc_f2b5f4d4)
     val unableToPrepareSwapLabel = stringResource(R.string.swap_unable_to_prepare)
+    val sparkDepositAddressNotReadyLabel = stringResource(R.string.spark_deposit_address_not_ready)
+    val layer1AddressNotReadyLabel = stringResource(R.string.layer1_address_not_ready)
     val fromLabel = if (isLayer1ToSpark) "BTC" else "Spark"
     val toLabel = if (isLayer1ToSpark) "Spark" else "BTC"
     val fromColor = if (isLayer1ToSpark) Layer1Accent else SparkPurple
     val toColor = if (isLayer1ToSpark) SparkPurple else Layer1Accent
-    val availableBalance = if (isLayer1ToSpark) layer1BalanceSats else sparkState.balanceSats
+    val availableBalance = if (isLayer1ToSpark) layer1AvailableBalance else sparkState.balanceSats
+    val amountSats =
+        remember(amountInput, useSats, isUsdMode, btcPrice, isMaxMode, availableBalance) {
+            when {
+                isMaxMode -> availableBalance.takeIf { it > 0 }
+                amountInput.isBlank() -> null
+                isUsdMode && btcPrice != null && btcPrice > 0 ->
+                    amountInput.toDoubleOrNull()?.takeIf { it > 0 }?.let {
+                        kotlin.math.round((it / btcPrice) * 100_000_000.0).toLong()
+                    }
+                useSats -> amountInput.replace(",", "").toLongOrNull()?.takeIf { it > 0 }
+                else ->
+                    amountInput.toDoubleOrNull()?.takeIf { it > 0 }?.let {
+                        kotlin.math.round(it * 100_000_000.0).toLong()
+                    }
+            }
+        }
     val sparkDepositAddress =
         (receiveState as? SparkReceiveState.Ready)
             ?.takeIf { it.kind == SparkReceiveKind.BITCOIN_ADDRESS }
@@ -276,6 +313,23 @@ fun SparkTransferScreen(
             destinationValidationError == null &&
             fundingFeeRateValidationError == null
 
+    // Keep displayed max amount in sync with selection / fee rate (exact max comes from dry-run).
+    LaunchedEffect(isMaxMode, availableBalance, fundingFeeRate, isLayer1ToSpark, useSats) {
+        if (!isMaxMode) return@LaunchedEffect
+        val roughMaxSats =
+            if (isLayer1ToSpark) {
+                maxOf(0L, availableBalance - kotlin.math.ceil(fundingFeeRate * 150.0).toLong())
+            } else {
+                availableBalance
+            }
+        amountInput =
+            if (useSats) {
+                roughMaxSats.toString()
+            } else {
+                formatBtcInput(roughMaxSats)
+            }
+    }
+
     LaunchedEffect(showAdvancedOptions) {
         if (showAdvancedOptions) {
             delay(100)
@@ -305,11 +359,16 @@ fun SparkTransferScreen(
             amountSats != null &&
             amountSats > 0L
         ) {
+            // Debounce amount edits; keep last quotes until the fresh SDK response arrives.
+            delay(350)
             withdrawalFeeQuotesLoading = true
-            withdrawalFeeQuotes =
+            val quotes =
                 runCatching {
                     onLoadSparkWithdrawalFeeQuotes(destinationAddress, amountSats, isMaxMode)
-                }.getOrDefault(emptyList())
+                }.getOrNull()
+            if (quotes != null) {
+                withdrawalFeeQuotes = quotes
+            }
             withdrawalFeeQuotesLoading = false
         } else if (isLayer1ToSpark || !useCustomWithdrawalFeeSpeed) {
             withdrawalFeeQuotesLoading = false
@@ -349,13 +408,37 @@ fun SparkTransferScreen(
             onCodeScanned = { code ->
                 showCustomDestinationQrScanner = false
                 customDestination =
-                    when (val parsed = parseSendRecipient(code.trim())) {
+                    when (val parsed = parseSendRecipient(code.trim(), context)) {
                         is ParsedSendRecipient.Bitcoin -> parsed.address
                         else -> code.trim()
                     }
                 reviewError = null
             },
             onDismiss = { showCustomDestinationQrScanner = false },
+        )
+    }
+
+    if (showCoinControl && isLayer1ToSpark) {
+        CoinControlDialog(
+            utxos = spendableBitcoinUtxos,
+            selectedUtxos = selectedFundingSnapshot,
+            useSats = useSats,
+            btcPrice = btcPrice,
+            fiatCurrency = fiatCurrency,
+            privacyMode = privacyMode,
+            spendUnconfirmed = spendUnconfirmed,
+            onUtxoToggle = { utxo ->
+                toggleCoinControlSelection(selectedFundingUtxos, utxo)
+                // Keep max mode; amount refreshes from the new selection via LaunchedEffect.
+            },
+            onSelectAll = {
+                selectedFundingUtxos.clear()
+                selectedFundingUtxos.addAll(spendableBitcoinUtxos)
+            },
+            onClearAll = {
+                selectedFundingUtxos.clear()
+            },
+            onDismiss = { showCoinControl = false },
         )
     }
 
@@ -378,7 +461,10 @@ fun SparkTransferScreen(
                                     review.destinationAddress,
                                     review.amountSats,
                                     review.fundingFeeRate,
-                                    review.isMaxSend,
+                                    // Lock the reviewed dry-run amount/fee (Liquid swap policy).
+                                    false,
+                                    review.selectedUtxos.takeIf { it.isNotEmpty() },
+                                    review.dryRun.feeSats.takeIf { it > 0L },
                                 )
                             is SparkTransferReview.Withdrawal ->
                                 onExecuteSparkToLayer1()
@@ -433,11 +519,70 @@ fun SparkTransferScreen(
                     .fillMaxWidth()
                     .padding(16.dp),
             ) {
-                Text(
-                    text = stringResource(R.string.loc_f0100030),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = TextPrimary,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        modifier = Modifier.weight(1f),
+                        text = stringResource(R.string.loc_f0100030),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (isLayer1ToSpark) {
+                        Spacer(modifier = Modifier.width(12.dp))
+                        val coinControlActive = selectedFundingSnapshot.isNotEmpty()
+                        val hasFundingUtxos = spendableBitcoinUtxos.isNotEmpty()
+                        Card(
+                            modifier =
+                                Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable(
+                                        enabled =
+                                            hasFundingUtxos &&
+                                                !isPreparingReview &&
+                                                !isExecutingReview,
+                                    ) {
+                                        showCoinControl = true
+                                    },
+                            shape = RoundedCornerShape(8.dp),
+                            colors =
+                                CardDefaults.cardColors(
+                                    containerColor =
+                                        if (coinControlActive) {
+                                            fromColor.copy(alpha = 0.15f)
+                                        } else {
+                                            DarkSurface
+                                        },
+                                ),
+                            border = BorderStroke(1.dp, if (coinControlActive) fromColor else BorderColor),
+                        ) {
+                            Text(
+                                text =
+                                    if (coinControlActive) {
+                                        stringResource(
+                                            R.string.swap_coin_control_utxo_badge_format,
+                                            selectedFundingSnapshot.size,
+                                        )
+                                    } else {
+                                        stringResource(R.string.loc_abb2f6d2)
+                                    },
+                                style = MaterialTheme.typography.labelMedium,
+                                color =
+                                    when {
+                                        coinControlActive -> fromColor
+                                        hasFundingUtxos -> TextSecondary
+                                        else -> TextSecondary.copy(alpha = 0.5f)
+                                    },
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
@@ -629,13 +774,30 @@ fun SparkTransferScreen(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .clickable(enabled = availableBalance > 0 && !isPreparingReview && !isExecutingReview) {
-                                isMaxMode = !isMaxMode
-                                amountInput =
-                                    if (isMaxMode) {
-                                        if (useSats) availableBalance.toString() else formatBtcInput(availableBalance)
-                                    } else {
-                                        ""
-                                    }
+                                if (isMaxMode) {
+                                    isMaxMode = false
+                                    amountInput = ""
+                                } else {
+                                    isMaxMode = true
+                                    isUsdMode = false
+                                    // Rough fee reserve for display; dry-run resolves exact max.
+                                    val roughMaxSats =
+                                        if (isLayer1ToSpark) {
+                                            maxOf(
+                                                0L,
+                                                availableBalance -
+                                                    kotlin.math.ceil(fundingFeeRate * 150.0).toLong(),
+                                            )
+                                        } else {
+                                            availableBalance
+                                        }
+                                    amountInput =
+                                        if (useSats) {
+                                            roughMaxSats.toString()
+                                        } else {
+                                            formatBtcInput(roughMaxSats)
+                                        }
+                                }
                             },
                         shape = RoundedCornerShape(8.dp),
                         colors = CardDefaults.cardColors(
@@ -889,21 +1051,37 @@ fun SparkTransferScreen(
                             reviewError = fundingFeeRateValidationError
                             return@Button
                         }
+                        if (isLayer1ToSpark && requireCoinControl && selectedFundingSnapshot.isEmpty()) {
+                            showCoinControl = true
+                            return@Button
+                        }
                         scope.launch {
                             isPreparingReview = true
                             reviewError = null
                             try {
                                 if (isLayer1ToSpark) {
-                                    val address = destinationAddress ?: throw IllegalStateException("Spark deposit address not ready")
+                                    val address =
+                                        destinationAddress
+                                            ?: throw IllegalStateException(sparkDepositAddressNotReadyLabel)
+                                    val fundingUtxos = selectedFundingSnapshot.takeIf { it.isNotEmpty() }
                                     val dryRun =
                                         onPreviewLayer1ToSpark(
                                             address,
                                             amountSats,
                                             fundingFeeRate,
                                             isMaxMode,
+                                            fundingUtxos,
                                         ) ?: throw IllegalStateException("Unable to prepare Layer 1 funding")
                                     if (dryRun.isError) {
                                         throw IllegalStateException(dryRun.error ?: "Unable to prepare Layer 1 funding")
+                                    }
+                                    if (isMaxMode && dryRun.recipientAmountSats > 0L) {
+                                        amountInput =
+                                            if (useSats) {
+                                                dryRun.recipientAmountSats.toString()
+                                            } else {
+                                                formatBtcInput(dryRun.recipientAmountSats)
+                                            }
                                     }
                                     reviewState = SparkTransferReview.Deposit(
                                         amountSats = dryRun.recipientAmountSats,
@@ -911,9 +1089,12 @@ fun SparkTransferScreen(
                                         dryRun = dryRun,
                                         isMaxSend = isMaxMode,
                                         fundingFeeRate = fundingFeeRate,
+                                        selectedUtxos = fundingUtxos.orEmpty(),
                                     )
                                 } else {
-                                    val address = destinationAddress ?: throw IllegalStateException("Layer 1 address not ready")
+                                    val address =
+                                        destinationAddress
+                                            ?: throw IllegalStateException(layer1AddressNotReadyLabel)
                                     val preview = onPreviewSparkToLayer1(address, amountSats, withdrawalFeeSpeed, isMaxMode)
                                     reviewState = SparkTransferReview.Withdrawal(
                                         amountSats = preview.amountSats ?: amountSats,
@@ -1082,7 +1263,7 @@ private fun SparkTransferFeeTargetButton(
                 color = if (isSelected) MaterialTheme.colorScheme.onBackground else TextSecondary,
                 textAlign = TextAlign.Center,
             )
-            if (isLoading) {
+            if (isLoading && feeSats == null) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(20.dp),
                     color = SparkPurple,

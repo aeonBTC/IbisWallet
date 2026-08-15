@@ -6,9 +6,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -29,8 +29,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lock
@@ -42,6 +42,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -61,11 +62,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
 import github.aeonbtc.ibiswallet.data.model.LightningNodeListCopy
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.WalletKind
+import github.aeonbtc.ibiswallet.ui.screens.formatBalanceDate
+import github.aeonbtc.ibiswallet.ui.theme.ArkRust
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
@@ -74,10 +78,6 @@ import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import androidx.compose.material3.Text
 
 @Composable
 private fun rememberLightningNodeListCopy(): LightningNodeListCopy {
@@ -149,7 +149,10 @@ fun WalletSelectorDropdown(
     ) {
         Text(
             text = activeWallet?.name ?: "Ibis Wallet",
-            style = MaterialTheme.typography.titleLarge,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontSize = 26.sp,
+                fontWeight = FontWeight.SemiBold,
+            ),
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -161,7 +164,7 @@ fun WalletSelectorDropdown(
             tint = TextSecondary,
             modifier =
                 Modifier
-                    .size(18.dp)
+                    .size(26.dp)
                     .rotate(chevronRotation),
         )
     }
@@ -186,16 +189,20 @@ fun WalletSelectorPanel(
     layer2Enabled: Boolean = false,
     liquidLayer2Enabled: Boolean = layer2Enabled,
     sparkLayer2Enabled: Boolean = layer2Enabled,
+    arkLayer2Enabled: Boolean = false,
     isLiquidEnabledForWallet: (String) -> Boolean = { false },
     isSparkEnabledForWallet: (String) -> Boolean = { false },
+    isArkEnabledForWallet: (String) -> Boolean = { false },
     isLiquidWatchOnlyForWallet: (String) -> Boolean = { false },
     onSetLiquidEnabledForWallet: (String, Boolean) -> Unit = { _, _ -> },
     onSetSparkEnabledForWallet: (String, Boolean) -> Unit = { _, _ -> },
+    onSetArkEnabledForWallet: (String, Boolean) -> Unit = { _, _ -> },
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (String, Boolean) -> Unit = { _, _ -> },
     lightningConfigForWallet: (String) -> LightningNodeConfig? = { null },
     /** Bump when a node connection config is saved so Server/Port/Mode lines refresh. */
     lightningConfigRevision: Int = 0,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
 ) {
     val dismissThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
     var accumulatedSwipeUpPx by remember(expanded) { mutableFloatStateOf(0f) }
@@ -303,11 +310,14 @@ fun WalletSelectorPanel(
                                 isActive = isActive,
                                 isSyncing = syncingWalletId == wallet.id,
                                 lastFullSyncTime = lastFullSyncTimes[wallet.id],
+                                dateFormat = dateFormat,
                                 layer2Enabled = layer2Enabled,
                                 liquidLayer2Enabled = liquidLayer2Enabled,
                                 sparkLayer2Enabled = sparkLayer2Enabled,
+                                arkLayer2Enabled = arkLayer2Enabled,
                                 isLiquidEnabled = isLiquidEnabledForWallet(wallet.id),
                                 isSparkEnabled = isSparkEnabledForWallet(wallet.id),
+                                isArkEnabled = isArkEnabledForWallet(wallet.id),
                                 isLiquidWatchOnly = isLiquidWatchOnlyForWallet(wallet.id),
                                 isWalletLockAvailable = isWalletLockAvailable,
                                 lightningTypeLabel = lnConfig?.listTypeLabel(lightningNodeTitle),
@@ -326,6 +336,9 @@ fun WalletSelectorPanel(
                                 },
                                 onSetSparkEnabled = { enabled ->
                                     onSetSparkEnabledForWallet(wallet.id, enabled)
+                                },
+                                onSetArkEnabled = { enabled ->
+                                    onSetArkEnabledForWallet(wallet.id, enabled)
                                 },
                                 onSetWalletLocked = { locked ->
                                     onSetWalletLocked(wallet.id, locked)
@@ -382,11 +395,14 @@ private fun WalletPanelItem(
     isActive: Boolean,
     isSyncing: Boolean = false,
     lastFullSyncTime: Long? = null,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     layer2Enabled: Boolean = false,
     liquidLayer2Enabled: Boolean = layer2Enabled,
     sparkLayer2Enabled: Boolean = layer2Enabled,
+    arkLayer2Enabled: Boolean = false,
     isLiquidEnabled: Boolean = false,
     isSparkEnabled: Boolean = false,
+    isArkEnabled: Boolean = false,
     lightningTypeLabel: String? = null,
     lightningDetail: String? = null,
     lightningPort: String? = null,
@@ -397,238 +413,352 @@ private fun WalletPanelItem(
     onSync: () -> Unit = {},
     onSetLiquidEnabled: (Boolean) -> Unit = {},
     onSetSparkEnabled: (Boolean) -> Unit = {},
+    onSetArkEnabled: (Boolean) -> Unit = {},
     onSetWalletLocked: (Boolean) -> Unit = {},
 ) {
     val liquidToggleEnabled = !wallet.isLocked && !isLiquidWatchOnly
     val liquidChecked = isLiquidWatchOnly || isLiquidEnabled
     val sparkToggleEnabled = !wallet.isLocked
+    val arkToggleEnabled = !wallet.isLocked
     val showWalletLockButton = isWalletLockAvailable || wallet.isLocked
     val lockedPrimaryTextColor = ErrorRed.copy(alpha = 0.85f)
     val lockedSecondaryTextColor = ErrorRed.copy(alpha = 0.6f)
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    val showLiquidToggle =
+        isLiquidWatchOnly ||
+            (
+                liquidLayer2Enabled &&
+                    !wallet.isWatchOnly &&
+                    wallet.derivationPath != "single" &&
+                    wallet.seedFormat == SeedFormat.BIP39
+            )
+    val showSparkToggle =
+        sparkLayer2Enabled &&
+            !wallet.isWatchOnly &&
+            wallet.derivationPath != "single" &&
+            wallet.seedFormat == SeedFormat.BIP39
+    val showArkToggle =
+        arkLayer2Enabled &&
+            !wallet.isWatchOnly &&
+            wallet.derivationPath != "single" &&
+            wallet.seedFormat == SeedFormat.BIP39
+    Column(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
                 .padding(horizontal = 20.dp, vertical = 14.dp),
     ) {
-        // Check indicator for active wallet
-        Icon(
-            imageVector = Icons.Default.Check,
-            contentDescription = null,
-            tint = if (isActive) BitcoinOrange else Color.Transparent,
-            modifier = Modifier.size(18.dp),
-        )
-        Spacer(modifier = Modifier.width(12.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            // Check indicator for active wallet
+            Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = null,
+                tint = if (isActive) BitcoinOrange else Color.Transparent,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(modifier = Modifier.width(12.dp))
 
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (showWalletLockButton) {
-                    Box(
-                        modifier = Modifier.size(28.dp),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        Icon(
-                            imageVector = if (wallet.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription =
-                                if (wallet.isLocked) {
-                                    stringResource(R.string.loc_6d48b5d9)
-                                } else {
-                                    stringResource(R.string.loc_27bd3430)
-                                },
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (showWalletLockButton) {
+                        Box(
+                            modifier = Modifier.size(28.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            Icon(
+                                imageVector = if (wallet.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                contentDescription =
+                                    if (wallet.isLocked) {
+                                        stringResource(R.string.loc_6d48b5d9)
+                                    } else {
+                                        stringResource(R.string.loc_27bd3430)
+                                    },
+                                tint =
+                                    if (wallet.isLocked) {
+                                        lockedPrimaryTextColor
+                                    } else {
+                                        TextSecondary.copy(alpha = if (isWalletLockAvailable) 0.8f else 0.45f)
+                                    },
+                                modifier =
+                                    Modifier
+                                        .size(24.dp)
+                                        .clickable(enabled = isWalletLockAvailable) {
+                                            onSetWalletLocked(!wallet.isLocked)
+                                        },
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(2.dp))
+                    }
+                    Text(
+                        text = wallet.name,
+                        style =
+                            MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                            ),
+                        color =
+                            if (wallet.isLocked) {
+                                lockedPrimaryTextColor
+                            } else if (isActive) {
+                                BitcoinOrange
+                            } else {
+                                MaterialTheme.colorScheme.onBackground
+                            },
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    val isWatchAddress = wallet.derivationPath == "single" && wallet.isWatchOnly
+                    val isPrivateKey = wallet.derivationPath == "single" && !wallet.isWatchOnly
+                    when {
+                        wallet.walletKind == WalletKind.LIGHTNING_NODE -> Icon(
+                            imageVector = Icons.Default.Bolt,
+                            contentDescription = stringResource(R.string.ln_node_title),
+                            tint = TextSecondary,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        isWatchAddress || wallet.isWatchOnly -> Icon(
+                            imageVector = Icons.Default.Visibility,
+                            contentDescription = if (isWatchAddress) "Watch Address" else "Watch Only",
                             tint =
                                 if (wallet.isLocked) {
                                     lockedPrimaryTextColor
+                                } else if (isActive) {
+                                    BitcoinOrange
                                 } else {
-                                    TextSecondary.copy(alpha = if (isWalletLockAvailable) 0.8f else 0.45f)
+                                    TextSecondary
                                 },
-                            modifier =
-                                Modifier
-                                    .size(24.dp)
-                                    .clickable(enabled = isWalletLockAvailable) {
-                                        onSetWalletLocked(!wallet.isLocked)
-                                    },
+                            modifier = Modifier.size(14.dp),
+                        )
+                        else -> Icon(
+                            imageVector = Icons.Default.Key,
+                            contentDescription = if (isPrivateKey) "Private Key" else "Seed Phrase",
+                            tint =
+                                if (wallet.isLocked) {
+                                    lockedPrimaryTextColor
+                                } else if (isActive) {
+                                    BitcoinOrange
+                                } else {
+                                    TextSecondary
+                                },
+                            modifier = Modifier.size(14.dp),
                         )
                     }
-                    Spacer(modifier = Modifier.width(2.dp))
                 }
+
+                val walletKind = when {
+                    wallet.walletKind == WalletKind.LIGHTNING_NODE -> stringResource(R.string.ln_node_title)
+                    wallet.derivationPath == "single" && wallet.isWatchOnly -> "Watch Address"
+                    wallet.derivationPath == "single" && !wallet.isWatchOnly -> "Private Key"
+                    wallet.isWatchOnly -> "Watch Only"
+                    else -> "Seed Phrase"
+                }
+                val detailColor =
+                    if (wallet.isLocked) {
+                        lockedSecondaryTextColor
+                    } else if (isActive) {
+                        BitcoinOrange
+                    } else {
+                        TextSecondary
+                    }
+                val metaColor =
+                    if (wallet.isLocked) {
+                        lockedSecondaryTextColor
+                    } else if (isActive) {
+                        BitcoinOrange.copy(alpha = 0.9f)
+                    } else {
+                        TextTertiary
+                    }
                 Text(
-                    text = wallet.name,
-                    style =
-                        MaterialTheme.typography.titleMedium.copy(
-                            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                        ),
-                    color =
-                        if (wallet.isLocked) {
-                            lockedPrimaryTextColor
-                        } else if (isActive) {
-                            BitcoinOrange
+                    text =
+                        if (wallet.walletKind == WalletKind.LIGHTNING_NODE) {
+                            val typeLabel = lightningTypeLabel ?: "Lightning"
+                            "$typeLabel - $walletKind"
                         } else {
-                            MaterialTheme.colorScheme.onBackground
+                            "${wallet.addressType.displayName} - $walletKind"
                         },
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+                    color = detailColor,
                 )
-                Spacer(modifier = Modifier.width(6.dp))
-                val isWatchAddress = wallet.derivationPath == "single" && wallet.isWatchOnly
-                val isPrivateKey = wallet.derivationPath == "single" && !wallet.isWatchOnly
-                when {
-                    wallet.walletKind == WalletKind.LIGHTNING_NODE -> Icon(
-                        imageVector = Icons.Default.Bolt,
-                        contentDescription = stringResource(R.string.ln_node_title),
-                        tint = TextSecondary,
-                        modifier = Modifier.size(14.dp),
+                if (wallet.walletKind == WalletKind.LIGHTNING_NODE) {
+                    lightningDetail?.takeIf { it.isNotBlank() }?.let { detail ->
+                        Text(
+                            text = detail,
+                            style =
+                                MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 14.sp,
+                                    lineHeight = 18.sp,
+                                ),
+                            color = metaColor,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    lightningPort?.takeIf { it.isNotBlank() }?.let { portLine ->
+                        Text(
+                            text = portLine,
+                            style =
+                                MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 14.sp,
+                                    lineHeight = 18.sp,
+                                ),
+                            color = metaColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    lightningMeta?.takeIf { it.isNotBlank() }?.let { meta ->
+                        Text(
+                            text = meta,
+                            style =
+                                MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 14.sp,
+                                    lineHeight = 18.sp,
+                                ),
+                            color = metaColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                } else if (
+                    wallet.derivationPath != "single" &&
+                    wallet.masterFingerprint != null
+                ) {
+                    Text(
+                        text = "Fingerprint: ${wallet.masterFingerprint}",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                        color = metaColor,
                     )
-                    isWatchAddress || wallet.isWatchOnly -> Icon(
-                        imageVector = Icons.Default.Visibility,
-                        contentDescription = if (isWatchAddress) "Watch Address" else "Watch Only",
-                        tint =
-                            if (wallet.isLocked) {
-                                lockedPrimaryTextColor
-                            } else if (isActive) {
-                                BitcoinOrange
-                            } else {
-                                TextSecondary
-                            },
-                        modifier = Modifier.size(14.dp),
-                    )
-                    else -> Icon(
-                        imageVector = Icons.Default.Key,
-                        contentDescription = if (isPrivateKey) "Private Key" else "Seed Phrase",
-                        tint =
-                            if (wallet.isLocked) {
-                                lockedPrimaryTextColor
-                            } else if (isActive) {
-                                BitcoinOrange
-                            } else {
-                                TextSecondary
-                            },
-                        modifier = Modifier.size(14.dp),
+                }
+                val syncText =
+                    if (lastFullSyncTime != null) {
+                        stringResource(
+                            R.string.wallet_last_full_sync_format,
+                            formatBalanceDate(lastFullSyncTime, dateFormat),
+                        )
+                    } else {
+                        "Never fully synced"
+                    }
+                if (wallet.walletKind != WalletKind.LIGHTNING_NODE) {
+                    Text(
+                        text = syncText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                        color = metaColor,
                     )
                 }
             }
 
-            val walletKind = when {
-                wallet.walletKind == WalletKind.LIGHTNING_NODE -> stringResource(R.string.ln_node_title)
-                wallet.derivationPath == "single" && wallet.isWatchOnly -> "Watch Address"
-                wallet.derivationPath == "single" && !wallet.isWatchOnly -> "Private Key"
-                wallet.isWatchOnly -> "Watch Only"
-                else -> "Seed Phrase"
-            }
-            val detailColor =
-                if (wallet.isLocked) {
-                    lockedSecondaryTextColor
-                } else if (isActive) {
-                    BitcoinOrange
-                } else {
-                    TextSecondary
-                }
-            val metaColor =
-                if (wallet.isLocked) {
-                    lockedSecondaryTextColor
-                } else if (isActive) {
-                    BitcoinOrange.copy(alpha = 0.9f)
-                } else {
-                    TextTertiary
-                }
-            Text(
-                text =
-                    if (wallet.walletKind == WalletKind.LIGHTNING_NODE) {
-                        val typeLabel = lightningTypeLabel ?: "Lightning"
-                        "$typeLabel - $walletKind"
-                    } else {
-                        "${wallet.addressType.displayName} - $walletKind"
-                    },
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
-                color = detailColor,
-            )
-            if (wallet.walletKind == WalletKind.LIGHTNING_NODE) {
-                lightningDetail?.takeIf { it.isNotBlank() }?.let { detail ->
-                    Text(
-                        text = detail,
-                        style =
-                            MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 14.sp,
-                                lineHeight = 18.sp,
-                            ),
-                        color = metaColor,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                lightningPort?.takeIf { it.isNotBlank() }?.let { portLine ->
-                    Text(
-                        text = portLine,
-                        style =
-                            MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 14.sp,
-                                lineHeight = 18.sp,
-                            ),
-                        color = metaColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                lightningMeta?.takeIf { it.isNotBlank() }?.let { meta ->
-                    Text(
-                        text = meta,
-                        style =
-                            MaterialTheme.typography.bodySmall.copy(
-                                fontSize = 14.sp,
-                                lineHeight = 18.sp,
-                            ),
-                        color = metaColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            } else if (
-                wallet.derivationPath != "single" &&
-                wallet.masterFingerprint != null
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Full sync button
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier =
+                    Modifier
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkBackground.copy(alpha = 0.6f))
+                        .clickable(enabled = !isSyncing) { onSync() }
+                        .padding(horizontal = 10.dp),
             ) {
                 Text(
-                    text = "Fingerprint: ${wallet.masterFingerprint}",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                    color = metaColor,
+                    text = stringResource(R.string.loc_f08db23b),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isSyncing) TextSecondary.copy(alpha = 0.7f) else TextSecondary,
                 )
-            }
-            val syncDateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
-            val syncText =
-                if (lastFullSyncTime != null) {
-                    stringResource(
-                        R.string.wallet_last_full_sync_format,
-                        syncDateFormatter.format(Date(lastFullSyncTime)),
+                Spacer(modifier = Modifier.width(6.dp))
+                if (isSyncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        color = BitcoinOrange,
+                        strokeWidth = 1.5.dp,
                     )
                 } else {
-                    "Never fully synced"
-                }
-            val showLiquidToggle =
-                isLiquidWatchOnly ||
-                    (
-                        liquidLayer2Enabled &&
-                            !wallet.isWatchOnly &&
-                            wallet.derivationPath != "single" &&
-                            wallet.seedFormat == SeedFormat.BIP39
+                    Icon(
+                        imageVector = Icons.Default.Sync,
+                        contentDescription = stringResource(R.string.loc_f08db23b),
+                        tint = TextSecondary,
+                        modifier = Modifier.size(18.dp),
                     )
-            val showSparkToggle =
-                sparkLayer2Enabled &&
-                    !wallet.isWatchOnly &&
-                    wallet.derivationPath != "single" &&
-                    wallet.seedFormat == SeedFormat.BIP39
-            if (wallet.walletKind != WalletKind.LIGHTNING_NODE) {
-                Text(
-                    text = syncText,
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                    color = metaColor,
-                )
+                }
             }
-            if (showWalletLockButton || showLiquidToggle || showSparkToggle) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (showLiquidToggle) {
+        }
+
+        if (showLiquidToggle || showSparkToggle || showArkToggle) {
+            Spacer(modifier = Modifier.height(8.dp))
+            // Full-width row so all L2 toggles stay on one line.
+            // Order matches Layer 2 settings: Ark → Spark → Liquid
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                if (showArkToggle) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = stringResource(R.string.ark_title),
+                            modifier =
+                                Modifier.clickable(enabled = arkToggleEnabled) {
+                                    onSetArkEnabled(!isArkEnabled)
+                                },
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                            color =
+                                if (wallet.isLocked) {
+                                    lockedSecondaryTextColor
+                                } else if (isArkEnabled) {
+                                    ArkRust
+                                } else {
+                                    TextSecondary.copy(alpha = 0.8f)
+                                },
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        SquareToggle(
+                            checked = isArkEnabled,
+                            onCheckedChange = onSetArkEnabled,
+                            enabled = arkToggleEnabled,
+                            checkedColor = ArkRust,
+                            trackWidth = 36.dp,
+                            trackHeight = 20.dp,
+                            thumbSize = 14.dp,
+                            thumbPadding = 3.dp,
+                        )
+                    }
+                }
+                if (showSparkToggle) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = stringResource(R.string.loc_85f5955f),
+                            modifier =
+                                Modifier.clickable(enabled = sparkToggleEnabled) {
+                                    onSetSparkEnabled(!isSparkEnabled)
+                                },
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
+                            color =
+                                if (wallet.isLocked) {
+                                    lockedSecondaryTextColor
+                                } else if (isSparkEnabled) {
+                                    SparkPurple
+                                } else {
+                                    TextSecondary.copy(alpha = 0.8f)
+                                },
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        SquareToggle(
+                            checked = isSparkEnabled,
+                            onCheckedChange = onSetSparkEnabled,
+                            enabled = sparkToggleEnabled,
+                            checkedColor = SparkPurple,
+                            trackWidth = 36.dp,
+                            trackHeight = 20.dp,
+                            thumbSize = 14.dp,
+                            thumbPadding = 3.dp,
+                        )
+                    }
+                }
+                if (showLiquidToggle) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = stringResource(R.string.loc_22236665),
                             modifier =
@@ -664,74 +794,7 @@ private fun WalletPanelItem(
                             thumbPadding = 3.dp,
                         )
                     }
-                    if (showLiquidToggle && showSparkToggle) {
-                        Spacer(modifier = Modifier.width(16.dp))
-                    }
-                    if (showSparkToggle) {
-                        Text(
-                            text = stringResource(R.string.loc_85f5955f),
-                            modifier =
-                                Modifier.clickable(enabled = sparkToggleEnabled) {
-                                    onSetSparkEnabled(!isSparkEnabled)
-                                },
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
-                            color =
-                                if (wallet.isLocked) {
-                                    lockedSecondaryTextColor
-                                } else if (isSparkEnabled) {
-                                    SparkPurple
-                                } else {
-                                    TextSecondary.copy(alpha = 0.8f)
-                                },
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        SquareToggle(
-                            checked = isSparkEnabled,
-                            onCheckedChange = onSetSparkEnabled,
-                            enabled = sparkToggleEnabled,
-                            checkedColor = SparkPurple,
-                            trackWidth = 36.dp,
-                            trackHeight = 20.dp,
-                            thumbSize = 14.dp,
-                            thumbPadding = 3.dp,
-                        )
-                    }
                 }
-            }
-        }
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        // Full sync button
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier =
-                Modifier
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(DarkBackground.copy(alpha = 0.6f))
-                    .clickable(enabled = !isSyncing) { onSync() }
-                    .padding(horizontal = 10.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.loc_f08db23b),
-                style = MaterialTheme.typography.labelMedium,
-                color = if (isSyncing) TextSecondary.copy(alpha = 0.7f) else TextSecondary,
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            if (isSyncing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    color = BitcoinOrange,
-                    strokeWidth = 1.5.dp,
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Default.Sync,
-                    contentDescription = stringResource(R.string.loc_f08db23b),
-                    tint = TextSecondary,
-                    modifier = Modifier.size(18.dp),
-                )
             }
         }
     }

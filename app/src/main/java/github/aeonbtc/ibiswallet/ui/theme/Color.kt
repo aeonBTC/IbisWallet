@@ -82,9 +82,11 @@ val TorPurple = Color(0xFF9B59B6)
 // Dedicated Lightning accent
 val LightningYellow = Color(0xFFEEB311)
 
-// Layer 2 - Liquid Network branding
-val LiquidTeal = Color(0xFF1F9E8F)
-val SparkPurple = Color(0xFF583DA1)
+// Layer 2 accents — muted palette matching ArkRust weight
+val LiquidTeal = Color(0xFF4A8F86)
+val SparkPurple = Color(0xFF6B5A8F)
+// Ark — muted red, distinct from ErrorRed and BitcoinOrange
+val ArkRust = Color(0xFFB05A52)
 
 // Drawer menu icon accent - muted orange
 val DrawerIconColor = Color(0xFFCD7F32)

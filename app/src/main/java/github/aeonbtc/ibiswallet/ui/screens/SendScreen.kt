@@ -113,6 +113,8 @@ fun SendScreen(
     minFeeRate: Double = 1.0,
     preSelectedUtxo: UtxoInfo? = null,
     spendUnconfirmed: Boolean = true,
+    requireCoinControl: Boolean = false,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
@@ -262,8 +264,11 @@ fun SendScreen(
         reconcileCoinControlSelection(selectedUtxos, spendableUtxos)
     }
 
+    var showConfirmDialog by remember { mutableStateOf(false) }
+
     // Sync local state when draft changes (QR scan from balance screen, or reset after send)
     LaunchedEffect(draft) {
+        if (showConfirmDialog) return@LaunchedEffect
         if (draft.recipientAddress.isEmpty() && draft.amountInput.isEmpty() &&
             recipientAddress.isNotEmpty()
         ) {
@@ -296,9 +301,6 @@ fun SendScreen(
             onUpdateDraft(SendScreenDraft())
         }
     }
-
-    // Confirmation dialog state
-    var showConfirmDialog by remember { mutableStateOf(false) }
 
     // Address validation
     val addressValidationError = remember(recipientAddress) { validateBitcoinAddress(recipientAddress) }
@@ -498,6 +500,7 @@ fun SendScreen(
             fiatCurrency = fiatCurrency,
             privacyMode = privacyMode,
             spendUnconfirmed = spendUnconfirmed,
+            dateFormat = dateFormat,
             onUtxoToggle = { utxo ->
                 toggleCoinControlSelection(selectedUtxos, utxo)
             },
@@ -597,13 +600,18 @@ fun SendScreen(
     }
 
     if (showConfirmDialog) {
+        val confirmAddress = recipientAddress
+        val confirmAmountSats = amountSats.roundToLong().toULong()
+        val confirmFeeRate = feeRate
+        val confirmIsMaxMode = isMaxMode
+        val confirmRecipients = multiRecipientList.toList()
         val utxoSelection = if (selectedUtxos.isNotEmpty()) selectedUtxos.toList() else null
         val txLabel = if (showLabelField && labelText.isNotBlank()) labelText else null
 
         if (isMultiMode) {
             // Multi-recipient confirmation
             MultiRecipientConfirmationDialog(
-                recipients = multiRecipientList,
+                recipients = confirmRecipients,
                 useSats = useSats,
                 btcPrice = btcPrice,
                 fiatCurrency = fiatCurrency,
@@ -619,9 +627,9 @@ fun SendScreen(
                     val fee = dryRunResult?.feeSats
                     if (isWatchOnly) {
                         showConfirmDialog = false
-                        onCreatePsbtMulti(multiRecipientList, feeRate, utxoSelection, txLabel, fee)
+                        onCreatePsbtMulti(confirmRecipients, confirmFeeRate, utxoSelection, txLabel, fee)
                     } else {
-                        onSendMulti(multiRecipientList, feeRate, utxoSelection, txLabel, fee)
+                        onSendMulti(confirmRecipients, confirmFeeRate, utxoSelection, txLabel, fee)
                     }
                 },
                 onDismiss = { if (!uiState.isSending) showConfirmDialog = false },
@@ -629,8 +637,8 @@ fun SendScreen(
         } else {
             // Single-recipient confirmation
             SendConfirmationDialog(
-                recipientAddress = recipientAddress,
-                amountSats = amountSats.roundToLong().toULong(),
+                recipientAddress = confirmAddress,
+                amountSats = confirmAmountSats,
                 selectedUtxos = utxoSelection,
                 useSats = useSats,
                 btcPrice = btcPrice,
@@ -644,14 +652,28 @@ fun SendScreen(
                 isSending = uiState.isSending,
                 sendStatus = uiState.sendStatus,
                 onConfirm = {
-                    val address = recipientAddress
-                    val amount = amountSats.roundToLong().toULong()
                     val fee = dryRunResult?.feeSats
                     if (isWatchOnly) {
                         showConfirmDialog = false
-                        onCreatePsbt(address, amount, feeRate, utxoSelection, txLabel, isMaxMode, fee)
+                        onCreatePsbt(
+                            confirmAddress,
+                            confirmAmountSats,
+                            confirmFeeRate,
+                            utxoSelection,
+                            txLabel,
+                            confirmIsMaxMode,
+                            fee,
+                        )
                     } else {
-                        onSend(address, amount, feeRate, utxoSelection, txLabel, isMaxMode, fee)
+                        onSend(
+                            confirmAddress,
+                            confirmAmountSats,
+                            confirmFeeRate,
+                            utxoSelection,
+                            txLabel,
+                            confirmIsMaxMode,
+                            fee,
+                        )
                     }
                 },
                 onDismiss = { if (!uiState.isSending) showConfirmDialog = false },
@@ -1436,7 +1458,13 @@ fun SendScreen(
         val isButtonEnabled = canOpenReview
 
         Button(
-            onClick = { showConfirmDialog = true },
+            onClick = {
+                if (requireCoinControl && selectedUtxos.isEmpty()) {
+                    showCoinControl = true
+                } else {
+                    showConfirmDialog = true
+                }
+            },
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -1608,6 +1636,7 @@ internal fun CoinControlDialog(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     spendUnconfirmed: Boolean = true,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     onUtxoToggle: (UtxoInfo) -> Unit,
     onSelectAll: () -> Unit,
     onClearAll: () -> Unit,
@@ -1627,7 +1656,7 @@ internal fun CoinControlDialog(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 8.dp, vertical = 16.dp),
             shape = RoundedCornerShape(12.dp),
             color = DarkSurface,
         ) {
@@ -1712,164 +1741,17 @@ internal fun CoinControlDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(utxos, key = { it.outpoint }) { utxo ->
-                        val isSelected = selectedOutpoints.contains(utxo.outpoint)
-                        val isDisabled = !utxo.isConfirmed && !spendUnconfirmed
-
-                        Card(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (isDisabled) {
-                                            Modifier
-                                        } else {
-                                            Modifier.clickable { onUtxoToggle(utxo) }
-                                        },
-                                    ),
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                CardDefaults.cardColors(
-                                    containerColor =
-                                        when {
-                                            isDisabled -> DarkCard.copy(alpha = 0.4f)
-                                            isSelected -> BitcoinOrange.copy(alpha = 0.15f)
-                                            else -> DarkCard
-                                        },
-                                ),
-                            border =
-                                if (isSelected && !isDisabled) {
-                                    BorderStroke(1.dp, BitcoinOrange.copy(alpha = 0.5f))
-                                } else {
-                                    null
-                                },
-                        ) {
-                            Row(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    imageVector =
-                                        if (isSelected && !isDisabled) {
-                                            Icons.Default.CheckCircle
-                                        } else {
-                                            Icons.Default.RadioButtonUnchecked
-                                        },
-                                    contentDescription =
-                                        if (isSelected) {
-                                            stringResource(R.string.common_selected)
-                                        } else {
-                                            stringResource(R.string.loc_e17307d1)
-                                        },
-                                    tint =
-                                        when {
-                                            isDisabled -> TextSecondary.copy(alpha = 0.3f)
-                                            isSelected -> BitcoinOrange
-                                            else -> TextSecondary
-                                        },
-                                    modifier = Modifier.size(24.dp),
-                                )
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text =
-                                                if (privacyMode) {
-                                                    HIDDEN_AMOUNT
-                                                } else {
-                                                    formatAmount(utxo.amountSats, useSats, includeUnit = true)
-                                                },
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.Medium,
-                                            color =
-                                                if (isDisabled) {
-                                                    MaterialTheme.colorScheme.onBackground.copy(
-                                                        alpha = 0.4f,
-                                                    )
-                                                } else {
-                                                    MaterialTheme.colorScheme.onBackground
-                                                },
-                                        )
-                                        if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                                            val usdValue = (utxo.amountSats.toDouble() / 100_000_000.0) * btcPrice
-                                            Text(
-                                                text = " · ${formatFiat(usdValue, fiatCurrency)}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color =
-                                                    if (isDisabled) {
-                                                        TextSecondary.copy(
-                                                            alpha = 0.4f,
-                                                        )
-                                                    } else {
-                                                        TextSecondary
-                                                    },
-                                            )
-                                        }
-                                    }
-
-                                    Text(
-                                        text = abbreviateReviewAddress(utxo.address),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-
-                                    if (!utxo.label.isNullOrEmpty()) {
-                                        Text(
-                                            text = utxo.label,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (isDisabled) AccentTeal.copy(alpha = 0.4f) else AccentTeal,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-
-                                    if (isDisabled) {
-                                        Text(
-                                            text = stringResource(R.string.loc_bdedd2ce),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = WarningYellow,
-                                        )
-                                    }
-                                }
-
-                                Box(
-                                    modifier =
-                                        Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(
-                                                if (utxo.isConfirmed) {
-                                                    SuccessGreen.copy(alpha = if (isDisabled) 0.1f else 0.2f)
-                                                } else {
-                                                    BitcoinOrange.copy(alpha = if (isDisabled) 0.1f else 0.2f)
-                                                },
-                                            )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                                ) {
-                                    Text(
-                                        text =
-                                            if (utxo.isConfirmed) {
-                                                stringResource(R.string.loc_4ab75d7f)
-                                            } else {
-                                                stringResource(R.string.loc_1b684325)
-                                            },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color =
-                                            if (utxo.isConfirmed) {
-                                                SuccessGreen.copy(alpha = if (isDisabled) 0.4f else 1f)
-                                            } else {
-                                                BitcoinOrange.copy(alpha = if (isDisabled) 0.4f else 1f)
-                                            },
-                                    )
-                                }
-                            }
-                        }
+                        CoinControlUtxoCard(
+                            utxo = utxo,
+                            isSelected = selectedOutpoints.contains(utxo.outpoint),
+                            isDisabled = !utxo.isConfirmed && !spendUnconfirmed,
+                            useSats = useSats,
+                            accentColor = BitcoinOrange,
+                            onToggle = { onUtxoToggle(utxo) },
+                            btcPrice = btcPrice,
+                            fiatCurrency = fiatCurrency,
+                            privacyMode = privacyMode,
+                        )
                     }
                 }
 
@@ -2574,16 +2456,50 @@ internal fun MultiRecipientDialog(
     dryRunError: String? = null,
     validRecipientCount: Int = 0,
     totalSendingSats: Long = 0L,
+    accentColor: Color = BitcoinOrange,
+    addressValidator: (String) -> String? = { addr -> validateBitcoinAddress(addr) },
+    /** Optional QR parser for non-BIP21 rails (Ark/Spark). Defaults to BIP21 Bitcoin. */
+    parseScannedCode: ((String) -> Pair<String, Long?>)? = null,
+    sequentialNote: String? = null,
+    addressPlaceholder: String? = null,
     onDone: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     // QR scanner state: index of recipient being scanned, -1 = none
     var qrScanRecipientIndex by remember { mutableIntStateOf(-1) }
+    val resolvedAddressPlaceholder =
+        addressPlaceholder ?: stringResource(R.string.loc_a18fd453)
 
     if (qrScanRecipientIndex >= 0) {
         QrScannerDialog(
             onCodeScanned = { code ->
                 val index = qrScanRecipientIndex
+                if (index !in recipients.indices) {
+                    qrScanRecipientIndex = -1
+                    return@QrScannerDialog
+                }
+                val currentAmt = recipients[index].second
+                val custom = parseScannedCode?.invoke(code.trim())
+                if (custom != null) {
+                    val (address, amountSats) = custom
+                    val amountStr =
+                        amountSats?.let { sats ->
+                            when {
+                                isUsdMode && btcPrice != null && btcPrice > 0 -> {
+                                    val usdAmount = (sats / 100_000_000.0) * btcPrice
+                                    String.format(Locale.US, "%.2f", usdAmount)
+                                }
+                                useSats -> sats.toString()
+                                else ->
+                                    String.format(Locale.US, "%.8f", sats / 100_000_000.0)
+                                        .trimEnd('0')
+                                        .trimEnd('.')
+                            }
+                        } ?: currentAmt
+                    recipients[index] = Pair(address, amountStr)
+                    qrScanRecipientIndex = -1
+                    return@QrScannerDialog
+                }
                 val bip21 =
                     try {
                         parseBip21Uri(code)
@@ -2591,28 +2507,23 @@ internal fun MultiRecipientDialog(
                         // Tampered URI with duplicate params — stuff the raw
                         // string into the address field and let validation
                         // surface the failure.
-                        if (index in recipients.indices) {
-                            recipients[index] = Pair(code, recipients[index].second)
-                        }
+                        recipients[index] = Pair(code, currentAmt)
                         qrScanRecipientIndex = -1
                         return@QrScannerDialog
                     }
-                if (index in recipients.indices) {
-                    val currentAmt = recipients[index].second
-                    recipients[index] = Pair(bip21.address, currentAmt)
+                recipients[index] = Pair(bip21.address, currentAmt)
 
-                    // Set amount if present in URI
-                    bip21.amount?.let { btcAmount ->
-                        val amountStr = when {
-                            isUsdMode && btcPrice != null && btcPrice > 0 -> {
-                                val usdAmount = btcAmount * btcPrice
-                                String.format(Locale.US, "%.2f", usdAmount)
-                            }
-                            useSats -> (btcAmount * 100_000_000).roundToLong().toString()
-                            else -> String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
+                // Set amount if present in URI
+                bip21.amount?.let { btcAmount ->
+                    val amountStr = when {
+                        isUsdMode && btcPrice != null && btcPrice > 0 -> {
+                            val usdAmount = btcAmount * btcPrice
+                            String.format(Locale.US, "%.2f", usdAmount)
                         }
-                        recipients[index] = Pair(bip21.address, amountStr)
+                        useSats -> (btcAmount * 100_000_000).roundToLong().toString()
+                        else -> String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
                     }
+                    recipients[index] = Pair(bip21.address, amountStr)
                 }
                 qrScanRecipientIndex = -1
             },
@@ -2650,8 +2561,17 @@ internal fun MultiRecipientDialog(
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                     TextButton(onClick = onDone) {
-                        Text(stringResource(R.string.loc_b01f4f95), color = BitcoinOrange)
+                        Text(stringResource(R.string.loc_b01f4f95), color = accentColor)
                     }
+                }
+
+                if (!sequentialNote.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = sequentialNote,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -2707,13 +2627,18 @@ internal fun MultiRecipientDialog(
                                     value = addr,
                                     onValueChange = { recipients[index] = Pair(it, amt) },
                                     modifier = Modifier.fillMaxWidth(),
-                                    placeholder = { Text(stringResource(R.string.loc_a18fd453), color = TextSecondary.copy(alpha = 0.5f)) },
+                                    placeholder = {
+                                        Text(
+                                            resolvedAddressPlaceholder,
+                                            color = TextSecondary.copy(alpha = 0.5f),
+                                        )
+                                    },
                                     trailingIcon = {
                                         IconButton(onClick = { qrScanRecipientIndex = index }) {
                                             Icon(
                                                 imageVector = Icons.Default.QrCodeScanner,
                                                 contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                                tint = BitcoinOrange,
+                                                tint = accentColor,
                                                 modifier = Modifier.size(20.dp),
                                             )
                                         }
@@ -2723,11 +2648,11 @@ internal fun MultiRecipientDialog(
                                     textStyle = MaterialTheme.typography.bodySmall,
                                     colors =
                                         OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = BitcoinOrange,
+                                            focusedBorderColor = accentColor,
                                             unfocusedBorderColor = BorderColor,
                                             focusedTextColor = MaterialTheme.colorScheme.onBackground,
                                             unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                                            cursorColor = BitcoinOrange,
+                                            cursorColor = accentColor,
                                         ),
                                 )
 
@@ -2767,16 +2692,16 @@ internal fun MultiRecipientDialog(
                                     textStyle = MaterialTheme.typography.bodySmall,
                                     colors =
                                         OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = BitcoinOrange,
+                                            focusedBorderColor = accentColor,
                                             unfocusedBorderColor = BorderColor,
                                             focusedTextColor = MaterialTheme.colorScheme.onBackground,
                                             unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                                            cursorColor = BitcoinOrange,
+                                            cursorColor = accentColor,
                                         ),
                                 )
 
                                 // Show validation error for address
-                                val addrErr = if (addr.isNotBlank()) validateBitcoinAddress(addr) else null
+                                val addrErr = if (addr.isNotBlank()) addressValidator(addr) else null
                                 if (addrErr != null) {
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
@@ -2872,7 +2797,7 @@ internal fun MultiRecipientDialog(
                         Text(
                             text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(estimatedFeeSats.toULong(), useSats) + if (useSats) " sats" else " BTC",
                             style = MaterialTheme.typography.bodySmall,
-                            color = BitcoinOrange,
+                            color = accentColor,
                         )
                     }
                     Spacer(modifier = Modifier.height(2.dp))

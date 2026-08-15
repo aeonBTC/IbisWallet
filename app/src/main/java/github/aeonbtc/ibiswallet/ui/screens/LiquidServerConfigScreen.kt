@@ -12,11 +12,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,6 +50,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -66,19 +67,19 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import kotlin.math.roundToInt
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.LiquidElectrumConfig
 import github.aeonbtc.ibiswallet.tor.TorState
-import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
-import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.tor.TorStatus
+import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -92,8 +93,7 @@ import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
-import androidx.compose.ui.res.stringResource
-import androidx.compose.material3.Text
+import kotlin.math.roundToInt
 
 /**
  * Liquid Electrum server configuration screen.
@@ -560,11 +560,21 @@ fun LiquidServerConfigScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            // Clearance so the FAB never covers the last row (e.g. auto-switch)
+            Spacer(modifier = Modifier.height(88.dp))
         }
 
         FloatingActionButton(
-            onClick = { if (!showAddServerForm) showAddServerForm = true },
+            onClick = {
+                if (!showAddServerForm) {
+                    serverToEdit = null
+                    serverUrl = ""
+                    serverPort = "995"
+                    serverName = ""
+                    useSsl = true
+                    showAddServerForm = true
+                }
+            },
             modifier =
                 Modifier
                     .align(Alignment.BottomEnd)

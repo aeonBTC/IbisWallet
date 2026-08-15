@@ -42,8 +42,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.Observer
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.BinaryBitmap
 import com.google.zxing.DecodeHintType
@@ -72,6 +72,7 @@ fun QrScannerDialog(
             QrCameraPreview(
                 lifecycleOwner = lifecycleOwner,
                 onFrameScanned = onCodeScanned,
+                modifier = Modifier.fillMaxSize(),
                 singleShot = true,
             )
         }
@@ -195,7 +196,7 @@ internal fun QrScannerDialogShell(
 internal fun QrCameraPreview(
     lifecycleOwner: LifecycleOwner,
     onFrameScanned: (String) -> Unit,
-    modifier: Modifier = Modifier.fillMaxSize(),
+    modifier: Modifier = Modifier,
     pauseScanning: Boolean = false,
     singleShot: Boolean = false,
 ) {

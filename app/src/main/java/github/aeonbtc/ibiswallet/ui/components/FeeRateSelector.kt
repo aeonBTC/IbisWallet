@@ -23,6 +23,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -34,12 +35,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.res.pluralStringResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.FeeEstimateSource
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
+import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
@@ -47,14 +52,10 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import java.util.Locale
-import androidx.compose.material3.Text
-import androidx.compose.ui.res.pluralStringResource
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
 
 /** Safety cap for manual fee rate entry (sat/vB). Users can still type higher values
  *  but a warning is shown and the value is clamped when applied. */
-const val MAX_FEE_RATE_SAT_VB = 10_000.0
+const val MAX_FEE_RATE_SAT_VB = BitcoinUtils.MAX_FEE_RATE_SAT_VB
 
 /** Absolute minimum custom input — below typical minrelay; protects against free/zero dust spam. */
 const val ABSOLUTE_MIN_FEE_RATE_SAT_VB = 0.01
@@ -147,7 +148,7 @@ fun FeeRateSection(
                     FeeRateOption.HOUR -> estimates.hourFee
                     FeeRateOption.CUSTOM -> return@LaunchedEffect
                 }
-            onFeeRateChange(newRate.coerceAtLeast(effectiveMinFeeRate))
+            onFeeRateChange(newRate.coerceIn(effectiveMinFeeRate, MAX_FEE_RATE_SAT_VB))
         }
     }
 
@@ -286,7 +287,7 @@ fun FeeRateSection(
                             updateSelectedOption(FeeRateOption.FASTEST)
                             updateCustomFeeInput(null)
                             onRawCustomFeeRateChange?.invoke(null)
-                            onFeeRateChange(it.fastestFee.coerceAtLeast(effectiveMinFeeRate))
+                            onFeeRateChange(it.fastestFee.coerceIn(effectiveMinFeeRate, MAX_FEE_RATE_SAT_VB))
                         }
                     },
                     enabled = enabled,
@@ -303,7 +304,7 @@ fun FeeRateSection(
                             updateSelectedOption(FeeRateOption.HALF_HOUR)
                             updateCustomFeeInput(null)
                             onRawCustomFeeRateChange?.invoke(null)
-                            onFeeRateChange(it.halfHourFee.coerceAtLeast(effectiveMinFeeRate))
+                            onFeeRateChange(it.halfHourFee.coerceIn(effectiveMinFeeRate, MAX_FEE_RATE_SAT_VB))
                         }
                     },
                     enabled = enabled,
@@ -320,7 +321,7 @@ fun FeeRateSection(
                             updateSelectedOption(FeeRateOption.HOUR)
                             updateCustomFeeInput(null)
                             onRawCustomFeeRateChange?.invoke(null)
-                            onFeeRateChange(it.hourFee.coerceAtLeast(effectiveMinFeeRate))
+                            onFeeRateChange(it.hourFee.coerceIn(effectiveMinFeeRate, MAX_FEE_RATE_SAT_VB))
                         }
                     },
                     enabled = enabled,

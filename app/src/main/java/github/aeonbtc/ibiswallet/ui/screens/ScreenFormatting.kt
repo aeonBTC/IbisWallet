@@ -82,6 +82,17 @@ fun formatBalanceTimestamp(
     )
 }
 
+/** Date only (no time), using the user's balance date-format setting. */
+fun formatBalanceDate(
+    timestamp: Long,
+    dateFormatStorageValue: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+): String {
+    if (timestamp <= 0L) return ""
+    val date = Date(normalizeTimestampMillis(timestamp))
+    val balanceDateFormat = BalanceDateFormat.fromStorageValue(dateFormatStorageValue)
+    return SimpleDateFormat(balanceDateFormat.datePattern, Locale.getDefault()).format(date)
+}
+
 fun formatFullTimestamp(
     timestamp: Long,
     dateFormatStorageValue: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
@@ -114,4 +125,24 @@ private fun normalizeTimestampMillis(timestamp: Long): Long {
 fun formatVBytes(vBytes: Double): String {
     val formatted = String.format(Locale.US, "%.2f", vBytes)
     return formatted.trimEnd('0').trimEnd('.')
+}
+
+/**
+ * Display formatting for addresses/invoices: groups of 7 chars.
+ * Short (SegWit) → 2 lines; Taproot → 3 lines.
+ * Long (Liquid confidential / invoices) → single-line head...tail.
+ */
+fun formatChunkedAddress(address: String?): String {
+    if (address.isNullOrBlank()) return ""
+    // Confidential Liquid (~90+) and long APIs overwhelm the popup; one-line edges only.
+    if (address.length > 62) {
+        val edge = 12
+        return "${address.take(edge)}...${address.takeLast(edge)}"
+    }
+    val chunks = address.chunked(7)
+    val numLines = if (address.length > 50) 3 else 2
+    val perLine = (chunks.size + numLines - 1) / numLines
+    return chunks
+        .chunked(perLine)
+        .joinToString("\n") { it.joinToString(" ") }
 }

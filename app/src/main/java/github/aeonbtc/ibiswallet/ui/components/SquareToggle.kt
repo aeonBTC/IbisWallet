@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -116,7 +117,7 @@ fun SquareToggle(
             modifier =
                 Modifier
                     .padding(thumbPadding)
-                    .offset(x = thumbOffset)
+                    .offset { IntOffset(thumbOffset.roundToPx(), 0) }
                     .size(thumbSize)
                     .clip(RoundedCornerShape(thumbCornerRadius))
                     .background(thumbColor),

@@ -16,8 +16,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.CurrencyBitcoin
 import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -41,8 +41,8 @@ import androidx.compose.ui.unit.sp
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
-import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
+import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidTxType
 import github.aeonbtc.ibiswallet.ui.screens.formatBalanceTimestamp
@@ -55,8 +55,6 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.pow
@@ -70,14 +68,14 @@ import kotlin.math.pow
 fun LiquidTransactionItem(
     tx: LiquidTransaction,
     denomination: String,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     btcPrice: Double?,
     fiatCurrency: String,
     historicalBtcPrice: Double?,
     privacyMode: Boolean,
     onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    onLongClick: (() -> Unit)? = null,
     label: String? = null,
 ) {
     val swapDetails = tx.swapDetails?.takeIf { tx.source == LiquidTxSource.CHAIN_SWAP }
@@ -334,7 +332,8 @@ private fun defaultTransactionTitleRes(
     isReceive: Boolean,
 ): Int =
     when {
-        tx.source == LiquidTxSource.CHAIN_SWAP -> if (isReceive) R.string.loc_301a5b91 else R.string.loc_1af68597
+        // Chain swap (Swap screen): direction via in/out arrow only.
+        tx.source == LiquidTxSource.CHAIN_SWAP -> R.string.loc_85a12a5f
         tx.balanceSatoshi >= 0 -> R.string.loc_301a5b91
         tx.type == LiquidTxType.SEND -> R.string.loc_1af68597
         else -> if (isReceive) R.string.loc_301a5b91 else R.string.loc_1af68597
@@ -350,9 +349,9 @@ private data class TransactionNetworkBadge(
 private fun networkBadge(source: LiquidTxSource): TransactionNetworkBadge =
     when (source) {
         LiquidTxSource.CHAIN_SWAP -> TransactionNetworkBadge(
-            labelRes = R.string.loc_85a12a5f,
+            labelRes = R.string.loc_197cebf2,
             color = BitcoinOrange,
-            icon = Icons.Default.SwapHoriz,
+            icon = Icons.Default.CurrencyBitcoin,
             iconSize = 21.dp,
         )
         LiquidTxSource.LIGHTNING_RECEIVE_SWAP,

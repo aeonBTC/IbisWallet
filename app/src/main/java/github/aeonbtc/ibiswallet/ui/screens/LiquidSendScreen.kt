@@ -23,9 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -52,11 +52,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -88,9 +89,9 @@ import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundKeySource
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
+import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentBackend
 import github.aeonbtc.ibiswallet.data.model.LightningPaymentExecutionPlan
-import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.LiquidSendKind
 import github.aeonbtc.ibiswallet.data.model.LiquidSendPreview
@@ -98,10 +99,12 @@ import github.aeonbtc.ibiswallet.data.model.LiquidSendState
 import github.aeonbtc.ibiswallet.data.model.LiquidTransaction
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
-import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentSession
 import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentPhase
+import github.aeonbtc.ibiswallet.data.model.PendingLightningPaymentSession
 import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
+import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
@@ -131,14 +134,11 @@ import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
-import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
-import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.roundToLong
-import androidx.compose.material3.Text
 
 @Composable
 fun LiquidSendScreen(
@@ -151,6 +151,8 @@ fun LiquidSendScreen(
     liquidState: LiquidWalletState = LiquidWalletState(),
     liquidUtxos: List<UtxoInfo> = emptyList(),
     spendUnconfirmed: Boolean = true,
+    requireCoinControl: Boolean = false,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     draft: SendScreenDraft = SendScreenDraft(),
     liquidSendState: LiquidSendState = LiquidSendState.Idle,
     onUpdateDraft: (SendScreenDraft) -> Unit = {},
@@ -243,6 +245,7 @@ fun LiquidSendScreen(
     onResetSend: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     var recipientAddress by remember { mutableStateOf(draft.recipientAddress) }
     var amountInput by remember { mutableStateOf(draft.amountInput) }
     var feeRate by remember { mutableDoubleStateOf(resolveLiquidDraftFeeRate(draft)) }
@@ -307,7 +310,7 @@ fun LiquidSendScreen(
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     val sendAsset: LiquidAsset? = selectedSendAsset
     val isAssetMode = sendAsset != null
-    val parsedRecipient = remember(recipientAddress) { parseSendRecipient(recipientAddress) }
+    val parsedRecipient = remember(recipientAddress, context) { parseSendRecipient(recipientAddress, context) }
     val liquidRecipient = parsedRecipient as? ParsedSendRecipient.Liquid
     val lightningRecipient = parsedRecipient as? ParsedSendRecipient.Lightning
     val isLightningPayment = lightningRecipient != null
@@ -328,7 +331,7 @@ fun LiquidSendScreen(
         } else if (isAssetMode && parsedRecipient is ParsedSendRecipient.Lightning) {
             "Lightning is not available for ${sendAsset.ticker} sends"
         } else {
-            layer2RecipientValidationError(parsedRecipient, Layer2Provider.LIQUID)
+            layer2RecipientValidationError(parsedRecipient, Layer2Provider.LIQUID, context = context)
         }
     }
     val isAddressValid = recipientAddress.isNotBlank() && addressValidationError == null
@@ -375,7 +378,7 @@ fun LiquidSendScreen(
     val multiRecipientList =
         remember(multiRecipients.toList(), useSats, isUsdMode, btcPrice) {
             multiRecipients.mapNotNull { (addressInput, amountInputValue) ->
-                val parsed = parseSendRecipient(addressInput.trim())
+                val parsed = parseSendRecipient(addressInput.trim(), context)
                 if (parsed !is ParsedSendRecipient.Liquid) {
                     return@mapNotNull null
                 }
@@ -465,6 +468,7 @@ fun LiquidSendScreen(
     }
 
     LaunchedEffect(draft) {
+        if (showConfirmDialog) return@LaunchedEffect
         val draftWasCleared =
             draft.recipientAddress.isEmpty() &&
                 draft.amountInput.isEmpty() &&
@@ -659,7 +663,6 @@ fun LiquidSendScreen(
         }
     }
 
-    val context = LocalContext.current
     val mainActivity = context as? MainActivity
     val nfcReaderOwner = remember { Any() }
     val isPreview = LocalInspectionMode.current
@@ -684,6 +687,7 @@ fun LiquidSendScreen(
             fiatCurrency = fiatCurrency,
             privacyMode = privacyMode,
             spendUnconfirmed = spendUnconfirmed,
+            dateFormat = dateFormat,
             onUtxoToggle = { utxo ->
                 toggleCoinControlSelection(selectedUtxos, utxo)
             },
@@ -725,8 +729,8 @@ fun LiquidSendScreen(
     if (showQrScanner) {
         QrScannerDialog(
             onCodeScanned = { code ->
-                val parsedScan = parseSendRecipient(code.trim())
-                val scanError = layer2RecipientValidationError(parsedScan, Layer2Provider.LIQUID)
+                val parsedScan = parseSendRecipient(code.trim(), context)
+                val scanError = layer2RecipientValidationError(parsedScan, Layer2Provider.LIQUID, context = context)
                 if (scanError != null) {
                     dismissedSendError = scanError
                 } else {
@@ -774,6 +778,13 @@ fun LiquidSendScreen(
             }
 
     if (shouldShowSendDialog) {
+        val confirmAddress = liquidRecipient?.address ?: recipientAddress.trim()
+        val confirmAmountSats = amountSats
+        val confirmFeeRate = feeRate
+        val confirmIsMaxMode = isMaxMode
+        val confirmRecipients = multiRecipientList.toList()
+        val confirmAssetId = (parsedRecipient as? ParsedSendRecipient.Liquid)?.assetId ?: draft.assetId
+        val confirmIsAssetSend = confirmAssetId != null && !LiquidAsset.isPolicyAsset(confirmAssetId)
         LiquidSendConfirmationDialog(
             sendState = liquidSendState,
             isLiquidWatchOnly = isLiquidWatchOnly,
@@ -782,12 +793,10 @@ fun LiquidSendScreen(
             fiatCurrency = fiatCurrency,
             privacyMode = privacyMode,
             onConfirm = {
-                val confirmAssetId = (parsedRecipient as? ParsedSendRecipient.Liquid)?.assetId ?: draft.assetId
-                val confirmIsAssetSend = confirmAssetId != null && !LiquidAsset.isPolicyAsset(confirmAssetId)
                 if (isMultiMode) {
                     onSendLBTCMulti(
-                        multiRecipientList,
-                        feeRate,
+                        confirmRecipients,
+                        confirmFeeRate,
                         selectedUtxoSnapshot.ifEmpty { null },
                         txLabel,
                     )
@@ -800,19 +809,19 @@ fun LiquidSendScreen(
                     if (isLiquidWatchOnly) {
                         showConfirmDialog = false
                         onCreateAssetPset(
-                            liquidRecipient?.address ?: recipientAddress.trim(),
-                            amountSats,
+                            confirmAddress,
+                            confirmAmountSats,
                             confirmAssetId,
-                            feeRate,
+                            confirmFeeRate,
                             selectedUtxoSnapshot.ifEmpty { null },
                             txLabel,
                         )
                     } else {
                         onSendAsset(
-                            liquidRecipient?.address ?: recipientAddress.trim(),
-                            amountSats,
+                            confirmAddress,
+                            confirmAmountSats,
                             confirmAssetId,
-                            feeRate,
+                            confirmFeeRate,
                             selectedUtxoSnapshot.ifEmpty { null },
                             txLabel,
                         )
@@ -820,20 +829,20 @@ fun LiquidSendScreen(
                 } else if (isLiquidWatchOnly) {
                     showConfirmDialog = false
                     onCreatePset(
-                        liquidRecipient?.address ?: recipientAddress.trim(),
-                        amountSats,
-                        feeRate,
+                        confirmAddress,
+                        confirmAmountSats,
+                        confirmFeeRate,
                         selectedUtxoSnapshot.ifEmpty { null },
-                        isMaxMode,
+                        confirmIsMaxMode,
                         txLabel,
                     )
                 } else {
                     onSendLBTC(
-                        liquidRecipient?.address ?: recipientAddress.trim(),
-                        amountSats,
-                        feeRate,
+                        confirmAddress,
+                        confirmAmountSats,
+                        confirmFeeRate,
                         selectedUtxoSnapshot.ifEmpty { null },
-                        isMaxMode,
+                        confirmIsMaxMode,
                         txLabel,
                     )
                 }
@@ -1161,7 +1170,7 @@ fun LiquidSendScreen(
                         value = recipientAddress,
                         onValueChange = { input ->
                             val normalized = input.trim()
-                            when (val parsed = parseSendRecipient(normalized)) {
+                            when (val parsed = parseSendRecipient(normalized, context)) {
                                 is ParsedSendRecipient.Liquid -> {
                                     recipientAddress = parsed.address
                                     amountInput = parsed.amountSats?.let { formatLiquidInputAmount(it, useSats, isUsdMode, btcPrice) }.orEmpty()
@@ -1566,6 +1575,10 @@ fun LiquidSendScreen(
 
         Button(
             onClick = {
+                if (requireCoinControl && selectedUtxos.isEmpty()) {
+                    showCoinControl = true
+                    return@Button
+                }
                 if (lightningRecipient != null) {
                     showConfirmDialog = true
                     onResolveLightningPayment(
@@ -1898,7 +1911,9 @@ private fun LiquidSendConfirmationDialog(
         },
     ) {
                 Text(
-                    text = dialogKind?.let { liquidSendDialogTitle(sendState, it, isLiquidWatchOnly) } ?: "Review Transaction",
+                    text =
+                        dialogKind?.let { liquidSendDialogTitle(sendState, it, isLiquidWatchOnly) }
+                            ?: stringResource(R.string.loc_81f5c0cf),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary,
@@ -2701,6 +2716,7 @@ private fun LiquidCoinControlDialog(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean,
     spendUnconfirmed: Boolean,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     onUtxoToggle: (UtxoInfo) -> Unit,
     onSelectAll: () -> Unit,
     onClearAll: () -> Unit,
@@ -2720,7 +2736,7 @@ private fun LiquidCoinControlDialog(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 8.dp, vertical = 16.dp),
             shape = RoundedCornerShape(12.dp),
             color = DarkSurface,
         ) {
@@ -2803,186 +2819,17 @@ private fun LiquidCoinControlDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(utxos, key = { it.outpoint }) { utxo ->
-                        val isSelected = selectedOutpoints.contains(utxo.outpoint)
-                        val isDisabled = !utxo.isConfirmed && !spendUnconfirmed
-
-                        Card(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (isDisabled) {
-                                            Modifier
-                                        } else {
-                                            Modifier.clickable { onUtxoToggle(utxo) }
-                                        },
-                                    ),
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                CardDefaults.cardColors(
-                                    containerColor =
-                                        when {
-                                            isDisabled -> DarkCard.copy(alpha = 0.4f)
-                                            isSelected -> LiquidTeal.copy(alpha = 0.15f)
-                                            else -> DarkCard
-                                        },
-                                ),
-                            border =
-                                if (isSelected && !isDisabled) {
-                                    BorderStroke(1.dp, LiquidTeal.copy(alpha = 0.5f))
-                                } else {
-                                    null
-                                },
-                        ) {
-                            Row(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    imageVector =
-                                        if (isSelected && !isDisabled) {
-                                            Icons.Default.CheckCircle
-                                        } else {
-                                            Icons.Default.RadioButtonUnchecked
-                                        },
-                                    contentDescription =
-                                        if (isSelected) {
-                                            stringResource(R.string.common_selected)
-                                        } else {
-                                            stringResource(R.string.loc_e17307d1)
-                                        },
-                                    tint =
-                                        when {
-                                            isDisabled -> TextSecondary.copy(alpha = 0.3f)
-                                            isSelected -> LiquidTeal
-                                            else -> TextSecondary
-                                        },
-                                    modifier = Modifier.size(24.dp),
-                                )
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                val utxoAssetId = utxo.assetId
-                                val isNonLbtcUtxo = utxoAssetId != null && !LiquidAsset.isPolicyAsset(utxoAssetId)
-                                val resolvedUtxoAsset = utxoAssetId?.takeUnless { LiquidAsset.isPolicyAsset(it) }?.let { LiquidAsset.resolve(it) }
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        if (isNonLbtcUtxo && resolvedUtxoAsset != null) {
-                                            Text(
-                                                text =
-                                                    if (privacyMode) {
-                                                        LIQUID_HIDDEN_AMOUNT
-                                                    } else {
-                                                        formatCoinControlAssetAmount(resolvedUtxoAsset, utxo.amountSats.toLong())
-                                                    },
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                fontWeight = FontWeight.Medium,
-                                                color = if (isDisabled) TextPrimary.copy(alpha = 0.4f) else TextPrimary,
-                                            )
-                                        } else {
-                                            Text(
-                                                text =
-                                                    if (privacyMode) {
-                                                        LIQUID_HIDDEN_AMOUNT
-                                                    } else {
-                                                        formatLiquidAmount(utxo.amountSats.toLong(), useSats)
-                                                    },
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                fontWeight = FontWeight.Medium,
-                                                color = if (isDisabled) TextPrimary.copy(alpha = 0.4f) else TextPrimary,
-                                            )
-                                            if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                                                Text(
-                                                    text = " · ${formatLiquidUsd(utxo.amountSats.toLong(), btcPrice, fiatCurrency)}",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Text(
-                                        text = abbreviateMiddle(utxo.address),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-
-                                    if (!utxo.label.isNullOrEmpty()) {
-                                        Text(
-                                            text = utxo.label,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (isDisabled) LiquidTeal.copy(alpha = 0.4f) else LiquidTeal,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-
-                                    if (isDisabled) {
-                                        Text(
-                                            text = stringResource(R.string.loc_bdedd2ce),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = WarningYellow,
-                                        )
-                                    }
-                                }
-
-                                Column(
-                                    horizontalAlignment = Alignment.End,
-                                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    if (isNonLbtcUtxo && resolvedUtxoAsset != null) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(AccentTeal.copy(alpha = 0.16f))
-                                                .padding(horizontal = 6.dp, vertical = 2.dp),
-                                        ) {
-                                            Text(
-                                                text = resolvedUtxoAsset.ticker,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = AccentTeal,
-                                            )
-                                        }
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(
-                                                if (utxo.isConfirmed) {
-                                                    SuccessGreen.copy(alpha = if (isDisabled) 0.1f else 0.2f)
-                                                } else {
-                                                    LiquidTeal.copy(alpha = if (isDisabled) 0.1f else 0.2f)
-                                                },
-                                            )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                                    ) {
-                                        Text(
-                                            text =
-                                                if (utxo.isConfirmed) {
-                                                    stringResource(R.string.loc_4ab75d7f)
-                                                } else {
-                                                    stringResource(R.string.loc_1b684325)
-                                                },
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color =
-                                                if (utxo.isConfirmed) {
-                                                    SuccessGreen.copy(alpha = if (isDisabled) 0.4f else 1f)
-                                                } else {
-                                                    LiquidTeal.copy(alpha = if (isDisabled) 0.4f else 1f)
-                                                },
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                        CoinControlUtxoCard(
+                            utxo = utxo,
+                            isSelected = selectedOutpoints.contains(utxo.outpoint),
+                            isDisabled = !utxo.isConfirmed && !spendUnconfirmed,
+                            useSats = useSats,
+                            accentColor = LiquidTeal,
+                            onToggle = { onUtxoToggle(utxo) },
+                            btcPrice = btcPrice,
+                            fiatCurrency = fiatCurrency,
+                            privacyMode = privacyMode,
+                        )
                     }
                 }
 
@@ -3029,12 +2876,13 @@ private fun LiquidMultiRecipientDialog(
     onDone: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
     var qrScanRecipientIndex by remember { mutableIntStateOf(-1) }
 
     if (qrScanRecipientIndex >= 0) {
         QrScannerDialog(
             onCodeScanned = { code ->
-                val parsed = parseSendRecipient(code.trim())
+                val parsed = parseSendRecipient(code.trim(), context)
                 val index = qrScanRecipientIndex
                 if (index in recipients.indices && parsed is ParsedSendRecipient.Liquid) {
                     val amount =
@@ -3376,6 +3224,7 @@ private fun currentLiquidSendPreview(sendState: LiquidSendState): LiquidSendPrev
     }
 }
 
+@Composable
 private fun liquidSendDialogTitle(
     sendState: LiquidSendState,
     kind: LiquidSendKind,
@@ -3386,32 +3235,38 @@ private fun liquidSendDialogTitle(
         is LiquidSendState.Estimating,
         is LiquidSendState.ReviewReady,
         -> when (kind) {
-            LiquidSendKind.LBTC -> if (isLiquidWatchOnly) "Review PSET" else "Review Transaction"
-            LiquidSendKind.LIQUID_ASSET -> if (isLiquidWatchOnly) "Review PSET" else "Review Transaction"
-            LiquidSendKind.LIGHTNING_BOLT12 -> "Pay BOLT12 Offer?"
-            LiquidSendKind.LIGHTNING_BOLT11 -> "Pay Lightning Invoice?"
-            LiquidSendKind.LIGHTNING_LNURL -> "Pay Lightning Address?"
+            LiquidSendKind.LBTC,
+            LiquidSendKind.LIQUID_ASSET,
+            ->
+                if (isLiquidWatchOnly) {
+                    stringResource(R.string.loc_pset_review)
+                } else {
+                    stringResource(R.string.loc_81f5c0cf)
+                }
+            LiquidSendKind.LIGHTNING_BOLT12 -> stringResource(R.string.loc_pay_bolt12_offer)
+            LiquidSendKind.LIGHTNING_BOLT11 -> stringResource(R.string.loc_pay_lightning_invoice)
+            LiquidSendKind.LIGHTNING_LNURL -> stringResource(R.string.loc_pay_lightning_address)
         }
 
         is LiquidSendState.Sending ->
             if (kind == LiquidSendKind.LBTC || kind == LiquidSendKind.LIQUID_ASSET) {
-                "Sending Liquid"
+                stringResource(R.string.liquid_send_status_sending_title)
             } else {
-                "Sending Lightning Payment"
+                stringResource(R.string.liquid_send_status_sending_lightning_title)
             }
 
         is LiquidSendState.Success ->
             if (kind == LiquidSendKind.LBTC || kind == LiquidSendKind.LIQUID_ASSET) {
-                "Sent"
+                stringResource(R.string.liquid_send_status_sent_title)
             } else {
-                "Lightning Payment Sent"
+                stringResource(R.string.loc_30e230be)
             }
 
         is LiquidSendState.Failed ->
             if (kind == LiquidSendKind.LBTC || kind == LiquidSendKind.LIQUID_ASSET) {
-                "Send Failed"
+                stringResource(R.string.liquid_send_status_failed_title)
             } else {
-                "Lightning Payment Failed"
+                stringResource(R.string.loc_666a54bd)
             }
     }
 }
@@ -3638,18 +3493,6 @@ private fun formatLiquidInputAmount(
         useSats -> amountSats.toString()
         else -> String.format(Locale.US, "%.8f", amountSats / 100_000_000.0).trimEnd('0').trimEnd('.')
     }
-}
-
-private fun formatCoinControlAssetAmount(asset: LiquidAsset, rawAmount: Long): String {
-    val divisor = 10.0.pow(asset.precision.toDouble())
-    val full = String.format(Locale.US, "%.${asset.precision}f", rawAmount.toDouble() / divisor)
-    val trimmed = full.trimEnd('0').let { if (it.endsWith('.')) "${it}00" else it }
-    val minDecimals = if (trimmed.contains('.') && trimmed.substringAfter('.').length < 2) {
-        trimmed + "0".repeat(2 - trimmed.substringAfter('.').length)
-    } else {
-        trimmed
-    }
-    return "$minDecimals ${asset.ticker}"
 }
 
 private fun formatLiquidAmount(amountSats: Long, useSats: Boolean): String {
@@ -4048,8 +3891,8 @@ private fun PendingLiquidTxDetails(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        PendingDetailRow(label = "Txid", value = tx.txid)
-        tx.recipientAddress?.let { PendingDetailRow(label = "Recipient", value = it) }
+        PendingDetailRow(label = stringResource(R.string.loc_13e398d0), value = tx.txid)
+        tx.recipientAddress?.let { PendingDetailRow(label = stringResource(R.string.loc_eaf579ea), value = it) }
     }
 }
 

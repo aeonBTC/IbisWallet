@@ -1,4 +1,4 @@
-package github.aeonbtc.ibiswallet.ui.screens
+﻿package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
 import android.graphics.Bitmap
@@ -65,12 +65,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
-import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
-import github.aeonbtc.ibiswallet.data.model.SparkReceiveState
+import github.aeonbtc.ibiswallet.data.model.ArkReceiveKind
+import github.aeonbtc.ibiswallet.data.model.ArkReceiveState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
+import github.aeonbtc.ibiswallet.ui.theme.ArkRust
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
@@ -78,7 +79,6 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
-import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
@@ -94,14 +94,24 @@ import java.util.Locale
 import kotlin.math.roundToLong
 
 @Composable
-fun SparkReceiveScreen(
-    receiveState: SparkReceiveState,
-    sparkAddressLabels: Map<String, String> = emptyMap(),
+fun ArkReceiveScreen(
+    receiveState: ArkReceiveState,
+    arkAddressLabels: Map<String, String> = emptyMap(),
     denomination: String,
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean,
-    onReceive: (SparkReceiveKind, Long?, String, Boolean) -> Unit,
+    /** ASP min board amount (sats); shown on on-chain receive when known. */
+    minBoardAmountSats: Long? = null,
+    /** True once Bark wallet handle is open (not merely paint-from-cache). */
+    walletReady: Boolean = true,
+    /** Initial tab (e.g. on-chain when opened from Boarding top-up). */
+    initialKind: ArkReceiveKind = ArkReceiveKind.ARK_ADDRESS,
+    /** Paint last known Ark/BTC address from prefs before Bark opens. */
+    onPrimeCachedReceive: () -> Unit = {},
+    /** Paint cached address for the active tab (avoids BTC waiting on mutex). */
+    onPrimeCachedReceiveKind: (ArkReceiveKind) -> Unit = {},
+    onReceive: (ArkReceiveKind, Long?, String, Boolean) -> Unit,
     onSaveAddressLabel: (String, String) -> Unit = { _, _ -> },
     onResetReceive: () -> Unit,
     onToggleDenomination: () -> Unit,
@@ -109,7 +119,15 @@ fun SparkReceiveScreen(
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
-    var receiveTab by remember { mutableIntStateOf(0) }
+    var receiveTab by remember(initialKind) {
+        mutableIntStateOf(
+            when (initialKind) {
+                ArkReceiveKind.BOLT11_INVOICE -> 1
+                ArkReceiveKind.BITCOIN_ADDRESS -> 2
+                ArkReceiveKind.ARK_ADDRESS -> 0
+            },
+        )
+    }
     var amountText by remember { mutableStateOf("") }
     var descriptionText by remember { mutableStateOf("") }
     var showAmountField by remember { mutableStateOf(false) }
@@ -118,15 +136,17 @@ fun SparkReceiveScreen(
     var isUsdMode by remember { mutableStateOf(false) }
     var showEnlargedQr by remember { mutableStateOf(false) }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    val amountBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showAmountField, "spark_receive_amount")
-    val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "spark_receive_label")
+    val amountBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showAmountField, "ark_receive_amount")
+    val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "ark_receive_label")
 
     val activeKind =
         when (receiveTab) {
-            1 -> SparkReceiveKind.BOLT11_INVOICE
-            2 -> SparkReceiveKind.BITCOIN_ADDRESS
-            else -> SparkReceiveKind.SPARK_ADDRESS
+            1 -> ArkReceiveKind.BOLT11_INVOICE
+            2 -> ArkReceiveKind.BITCOIN_ADDRESS
+            else -> ArkReceiveKind.ARK_ADDRESS
         }
+    val minBoardSats = minBoardAmountSats?.takeIf { it > 0L }
+    val isOnchainReceive = activeKind == ArkReceiveKind.BITCOIN_ADDRESS
     val amountSats =
         remember(amountText, useSats, isUsdMode, btcPrice) {
             if (amountText.isEmpty()) {
@@ -145,20 +165,14 @@ fun SparkReceiveScreen(
         }
     val requestedAmountSats = amountSats?.takeIf { showAmountField && it > 0 }
     val embeddedLabel = descriptionText.trim().takeIf { showLabelField && embedLabelInQr && it.isNotBlank() }
-    val isLightningMode = activeKind == SparkReceiveKind.BOLT11_INVOICE
-    val requestKind =
-        when {
-            activeKind == SparkReceiveKind.SPARK_ADDRESS &&
-                (requestedAmountSats != null || embeddedLabel != null) -> SparkReceiveKind.SPARK_INVOICE
-            else -> activeKind
-        }
-    val paid = receiveState as? SparkReceiveState.Paid
-    val ready = receiveState as? SparkReceiveState.Ready
+    val isLightningMode = activeKind == ArkReceiveKind.BOLT11_INVOICE
+    val requestKind = activeKind
+    val ready = receiveState as? ArkReceiveState.Ready
     val baseRequestText = ready?.takeIf { it.kind == requestKind }?.paymentRequest
     val requestText =
         when (activeKind) {
-            SparkReceiveKind.BITCOIN_ADDRESS ->
-                buildSparkBitcoinRequest(
+            ArkReceiveKind.BITCOIN_ADDRESS ->
+                buildArkBitcoinRequest(
                     address = baseRequestText,
                     amountSats = requestedAmountSats,
                     label = embeddedLabel,
@@ -168,39 +182,38 @@ fun SparkReceiveScreen(
     val currentQrBitmap = qrBitmap
     val displayText =
         when (activeKind) {
-            SparkReceiveKind.BITCOIN_ADDRESS ->
+            ArkReceiveKind.BITCOIN_ADDRESS ->
                 if (privacyMode && requestText != null) {
                     "****"
                 } else {
-                    formatSparkReceiveText(baseRequestText)
+                    formatArkReceiveText(baseRequestText)
                 }
             else ->
                 when {
                     privacyMode && requestText != null -> "****"
-                    requestText != null -> formatSparkReceiveText(requestText)
+                    requestText != null -> formatArkReceiveText(requestText)
                     else -> "No request generated"
                 }
         }
     val screenTitle =
         when (activeKind) {
-            SparkReceiveKind.SPARK_ADDRESS -> "Receive Spark"
-            SparkReceiveKind.BOLT11_INVOICE -> "Receive Lightning"
-            SparkReceiveKind.BITCOIN_ADDRESS -> "Receive Bitcoin"
-            SparkReceiveKind.SPARK_INVOICE -> "Receive Spark"
+            ArkReceiveKind.ARK_ADDRESS -> "Receive Ark"
+            ArkReceiveKind.BOLT11_INVOICE -> stringResource(R.string.loc_869ffe29)
+            ArkReceiveKind.BITCOIN_ADDRESS -> stringResource(R.string.loc_4126d5db)
         }
     val lightningRequestDescription = descriptionText.trim().takeIf { showLabelField && embedLabelInQr && it.isNotBlank() }.orEmpty()
     val lightningAmountSats = amountSats?.takeIf { isLightningMode && it > 0 }
+    val paid = receiveState as? ArkReceiveState.Paid
     val isLightningPaid =
         isLightningMode &&
             paid != null &&
-            paid.kind == SparkReceiveKind.BOLT11_INVOICE
+            paid.kind == ArkReceiveKind.BOLT11_INVOICE
     val isLightningReady = isLightningMode && requestText != null && !isLightningPaid
-    val isLightningLoading = isLightningMode && receiveState is SparkReceiveState.Loading
-    val lightningError = if (isLightningMode && receiveState is SparkReceiveState.Error) receiveState.message else null
+    val isLightningLoading = isLightningMode && receiveState is ArkReceiveState.Loading
+    val lightningError = if (isLightningMode && receiveState is ArkReceiveState.Error) receiveState.message else null
     val canGenerateNewRequest =
-        receiveState !is SparkReceiveState.Loading &&
-            requestKind != SparkReceiveKind.SPARK_ADDRESS
-    val copySparkRequest: () -> Unit = {
+        receiveState !is ArkReceiveState.Loading && walletReady
+    val copyArkRequest: () -> Unit = {
         requestText?.let {
             SecureClipboard.copyAndScheduleClear(context, it)
             Toast.makeText(context, "Request copied", Toast.LENGTH_SHORT).show()
@@ -211,42 +224,62 @@ fun SparkReceiveScreen(
         baseRequestText?.let(::normalizeSparkAddressLabelRef)
             ?: requestText?.let(::normalizeSparkAddressLabelRef)
     val savedOnchainAddressLabel =
-        remember(baseRequestText, sparkAddressLabels) {
+        remember(baseRequestText, arkAddressLabels) {
             baseRequestText
                 ?.let(::normalizeSparkAddressLabelRef)
-                ?.let { sparkAddressLabels[it] }
+                ?.let { arkAddressLabels[it] }
                 .orEmpty()
         }
-    // Match the other receive screens by showing a default request immediately, and
-    // switch Spark QR generation to invoice mode when amount/label must be embedded.
-    LaunchedEffect(requestKind, requestedAmountSats, embeddedLabel) {
+    // Instant paint from prefs; confirm with Bark once ready.
+    LaunchedEffect(Unit) {
+        onPrimeCachedReceive()
+    }
+    // Tab switch: paint that kind from cache immediately (don't wait on mutex/refresh).
+    LaunchedEffect(requestKind) {
         when (requestKind) {
-            SparkReceiveKind.BOLT11_INVOICE -> Unit
-            SparkReceiveKind.BITCOIN_ADDRESS,
-            SparkReceiveKind.SPARK_ADDRESS,
-            -> onReceive(requestKind, null, "", false)
-            SparkReceiveKind.SPARK_INVOICE -> onReceive(requestKind, requestedAmountSats, embeddedLabel.orEmpty(), false)
+            ArkReceiveKind.BOLT11_INVOICE -> Unit
+            ArkReceiveKind.BITCOIN_ADDRESS,
+            ArkReceiveKind.ARK_ADDRESS,
+            -> onPrimeCachedReceiveKind(requestKind)
+        }
+    }
+    LaunchedEffect(requestKind, walletReady) {
+        when (requestKind) {
+            ArkReceiveKind.BOLT11_INVOICE -> Unit
+            ArkReceiveKind.BITCOIN_ADDRESS,
+            ArkReceiveKind.ARK_ADDRESS,
+            -> {
+                val readyForKind =
+                    (receiveState as? ArkReceiveState.Ready)?.takeIf { it.kind == requestKind }
+                if (readyForKind != null) return@LaunchedEffect
+                if (!walletReady) {
+                    onPrimeCachedReceiveKind(requestKind)
+                    return@LaunchedEffect
+                }
+                onReceive(requestKind, null, "", false)
+            }
         }
     }
 
     LaunchedEffect(activeKind, baseRequestText, savedOnchainAddressLabel) {
-        if (activeKind == SparkReceiveKind.BITCOIN_ADDRESS && savedOnchainAddressLabel.isNotBlank()) {
+        if (activeKind == ArkReceiveKind.BITCOIN_ADDRESS && savedOnchainAddressLabel.isNotBlank()) {
             descriptionText = savedOnchainAddressLabel
             showLabelField = true
         }
     }
 
     LaunchedEffect(requestText, privacyMode) {
+        if (requestText == null || privacyMode) {
+            qrBitmap = null
+            return@LaunchedEffect
+        }
         qrBitmap =
-            requestText
-                ?.takeUnless { privacyMode }
-                ?.let { content ->
-                    withContext(Dispatchers.Default) {
-                        generateQrBitmap(content)
-                    }
-                }
+            withContext(Dispatchers.Default) {
+                generateQrBitmap(requestText)
+            }
     }
 
+    // Clear the paid invoice so the next Lightning receive starts from a blank form.
     LaunchedEffect(isLightningPaid) {
         if (isLightningPaid) {
             amountText = ""
@@ -329,17 +362,54 @@ fun SparkReceiveScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    SparkReceiveTab("Spark", receiveTab == 0, SparkPurple, Modifier.weight(1f)) {
+                    ArkReceiveTab(stringResource(R.string.ark_title), receiveTab == 0, ArkRust, Modifier.weight(1f)) {
                         receiveTab = 0
-                        onResetReceive()
                     }
-                    SparkReceiveTab("Lightning", receiveTab == 1, LightningYellow, Modifier.weight(1f)) {
+                    ArkReceiveTab(stringResource(R.string.ark_movement_lightning), receiveTab == 1, LightningYellow, Modifier.weight(1f)) {
                         receiveTab = 1
-                        onResetReceive()
                     }
-                    SparkReceiveTab("On-chain", receiveTab == 2, BitcoinOrange, Modifier.weight(1f)) {
+                    ArkReceiveTab(stringResource(R.string.ark_receive_tab_onchain), receiveTab == 2, BitcoinOrange, Modifier.weight(1f)) {
                         receiveTab = 2
-                        onResetReceive()
+                    }
+                }
+
+                if (isOnchainReceive && minBoardSats != null) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor = BitcoinOrange.copy(alpha = 0.12f),
+                            ),
+                        border = BorderStroke(1.dp, BitcoinOrange.copy(alpha = 0.55f)),
+                    ) {
+                        Column(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.ark_receive_onchain_min_label),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = BitcoinOrange,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text =
+                                    if (privacyMode) {
+                                        "****"
+                                    } else {
+                                        "${formatArkAmountForReceive(minBoardSats, useSats)} ${arkDisplayUnit(useSats)}"
+                                    },
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                fontWeight = FontWeight.Bold,
+                            )
+                        }
                     }
                 }
 
@@ -372,7 +442,7 @@ fun SparkReceiveScreen(
                                         if (privacyMode) {
                                             "****"
                                         } else {
-                                            "${formatSparkAmountForReceive(amount, useSats)} ${sparkDisplayUnit(useSats)}"
+                                            "${formatArkAmountForReceive(amount, useSats)} ${arkDisplayUnit(useSats)}"
                                         },
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
@@ -405,7 +475,7 @@ fun SparkReceiveScreen(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                             }
-                            SparkLightningInvoiceForm(
+                            ArkLightningInvoiceForm(
                                 amountText = amountText,
                                 amountInSats = amountSats,
                                 useSats = useSats,
@@ -419,7 +489,7 @@ fun SparkReceiveScreen(
                                 onAmountTextChange = { amountText = it },
                                 onUsdModeChange = {
                                     amountText =
-                                        convertSparkAmountForUsdToggle(
+                                        convertArkAmountForUsdToggle(
                                             currentText = amountText,
                                             currentAmountSats = amountSats,
                                             currentlyUsdMode = isUsdMode,
@@ -466,14 +536,14 @@ fun SparkReceiveScreen(
                                     .combinedClickable(
                                         enabled = true,
                                         onClick = { showEnlargedQr = true },
-                                        onLongClick = copySparkRequest,
+                                        onLongClick = copyArkRequest,
                                     ),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 if (currentQrBitmap != null) {
                                     Image(
                                         bitmap = currentQrBitmap.asImageBitmap(),
-                                        contentDescription = "Lightning Invoice QR",
+                                        contentDescription = stringResource(R.string.ark_receive_lightning_qr_cd),
                                         modifier = Modifier.fillMaxSize(),
                                         contentScale = ContentScale.Fit,
                                     )
@@ -497,7 +567,7 @@ fun SparkReceiveScreen(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Text(
-                                    text = formatSparkInvoicePreview(requestText),
+                                    text = formatArkInvoicePreview(requestText),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontFamily = FontFamily.Monospace,
                                     color = TextSecondary,
@@ -507,7 +577,7 @@ fun SparkReceiveScreen(
                                     modifier =
                                         Modifier
                                             .weight(1f, fill = false)
-                                            .clickable(onClick = copySparkRequest),
+                                            .clickable(onClick = copyArkRequest),
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 androidx.compose.material3.Icon(
@@ -517,7 +587,7 @@ fun SparkReceiveScreen(
                                     modifier =
                                         Modifier
                                             .size(18.dp)
-                                            .clickable(onClick = copySparkRequest),
+                                            .clickable(onClick = copyArkRequest),
                                 )
                             }
 
@@ -537,11 +607,24 @@ fun SparkReceiveScreen(
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "${formatSparkAmountForReceive(amount, useSats)} ${sparkDisplayUnit(useSats)}",
+                                        text = "${formatArkAmountForReceive(amount, useSats)} ${arkDisplayUnit(useSats)}",
                                         style = MaterialTheme.typography.titleMedium,
-                                        color = SparkPurple,
+                                        color = ArkRust,
                                         fontWeight = FontWeight.SemiBold,
                                     )
+                                    ready?.feeSats?.takeIf { it > 0L }?.let { fee ->
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text(
+                                            text =
+                                                stringResource(
+                                                    R.string.ark_ln_receive_fee_format,
+                                                    formatArkAmountForReceive(fee, useSats) +
+                                                        " ${arkDisplayUnit(useSats)}",
+                                                ),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = TextSecondary,
+                                        )
+                                    }
 
                                     descriptionText.trim().takeIf { it.isNotBlank() }?.let { label ->
                                         Spacer(modifier = Modifier.height(10.dp))
@@ -563,25 +646,39 @@ fun SparkReceiveScreen(
                             }
                         }
                     }
-                } else if (qrBitmap != null && requestText != null) {
+                } else if (requestText != null) {
                     Box(
                         modifier = Modifier
                             .size(220.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .background(Color.White)
+                            .background(if (qrBitmap != null) Color.White else DarkSurface)
                             .combinedClickable(
-                                enabled = true,
+                                enabled = qrBitmap != null,
                                 onClick = { showEnlargedQr = true },
-                                onLongClick = copySparkRequest,
+                                onLongClick = copyArkRequest,
                             ),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Image(
-                            bitmap = qrBitmap!!.asImageBitmap(),
-                            contentDescription = "Receive QR",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit,
-                        )
+                        if (qrBitmap != null) {
+                            Image(
+                                bitmap = qrBitmap!!.asImageBitmap(),
+                                contentDescription = "Receive QR",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Fit,
+                            )
+                        } else if (!privacyMode) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                color = ArkRust,
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(
+                                text = "Hidden",
+                                color = TextSecondary,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
                     }
                 } else {
                     Box(
@@ -591,14 +688,14 @@ fun SparkReceiveScreen(
                             .background(DarkSurface),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (receiveState is SparkReceiveState.Loading) {
-                            CircularProgressIndicator(color = SparkPurple)
+                        if (receiveState is ArkReceiveState.Loading) {
+                            CircularProgressIndicator(color = ArkRust)
                         } else {
                             Text(
                                 text =
                                     when {
                                         privacyMode -> "Hidden"
-                                        activeKind == SparkReceiveKind.BOLT11_INVOICE -> "Generate request"
+                                        activeKind == ArkReceiveKind.BOLT11_INVOICE -> "Generate request"
                                         else -> "Generating..."
                                     },
                                 color = TextSecondary,
@@ -616,11 +713,11 @@ fun SparkReceiveScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         fontFamily = FontFamily.Monospace,
                         color = if (displayText != "No request generated") MaterialTheme.colorScheme.onBackground else TextSecondary,
-                        maxLines = if (activeKind == SparkReceiveKind.BOLT11_INVOICE) 1 else 2,
-                        overflow = if (activeKind == SparkReceiveKind.BOLT11_INVOICE) TextOverflow.Ellipsis else TextOverflow.Clip,
+                        maxLines = if (activeKind == ArkReceiveKind.BOLT11_INVOICE) 1 else 2,
+                        overflow = if (activeKind == ArkReceiveKind.BOLT11_INVOICE) TextOverflow.Ellipsis else TextOverflow.Clip,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(enabled = requestText != null, onClick = copySparkRequest),
+                            .clickable(enabled = requestText != null, onClick = copyArkRequest),
                         textAlign = TextAlign.Center,
                     )
 
@@ -640,23 +737,25 @@ fun SparkReceiveScreen(
                         ReceiveActionButton(
                             text = stringResource(R.string.loc_ed8814bc),
                             icon = Icons.Default.ContentCopy,
-                            tint = SparkPurple,
+                            tint = ArkRust,
                             enabled = requestText != null,
-                            onClick = copySparkRequest,
+                            onClick = copyArkRequest,
                             iconSize = 17.dp,
                         )
                         ReceiveActionButton(
                             text = stringResource(R.string.loc_53ae02a5),
                             icon = Icons.Default.Refresh,
-                            tint = SparkPurple,
+                            tint = ArkRust,
                             enabled = canGenerateNewRequest,
-                            onClick = { onReceive(requestKind, requestedAmountSats, embeddedLabel.orEmpty(), true) },
+                            onClick = {
+                                onReceive(requestKind, requestedAmountSats, embeddedLabel.orEmpty(), true)
+                            },
                             iconSize = 20.dp,
                         )
                         ReceiveActionButton(
                             text = stringResource(R.string.loc_2ec7b25e),
                             icon = Icons.Default.Share,
-                            tint = SparkPurple,
+                            tint = ArkRust,
                             enabled = requestText != null,
                             onClick = {
                                 requestText?.let {
@@ -695,7 +794,7 @@ fun SparkReceiveScreen(
                         SquareToggle(
                             checked = showAmountField,
                             onCheckedChange = { showAmountField = it },
-                            checkedColor = SparkPurple,
+                            checkedColor = ArkRust,
                         )
                     }
 
@@ -727,7 +826,7 @@ fun SparkReceiveScreen(
                                                 .clip(RoundedCornerShape(8.dp))
                                                 .clickable {
                                                     amountText =
-                                                        convertSparkAmountForUsdToggle(
+                                                        convertArkAmountForUsdToggle(
                                                             currentText = amountText,
                                                             currentAmountSats = amountSats,
                                                             currentlyUsdMode = isUsdMode,
@@ -741,17 +840,17 @@ fun SparkReceiveScreen(
                                             CardDefaults.cardColors(
                                                 containerColor =
                                                     if (isUsdMode) {
-                                                        SparkPurple.copy(alpha = 0.15f)
+                                                        ArkRust.copy(alpha = 0.15f)
                                                     } else {
                                                         DarkSurface
                                                     },
                                             ),
-                                        border = BorderStroke(1.dp, if (isUsdMode) SparkPurple else BorderColor),
+                                        border = BorderStroke(1.dp, if (isUsdMode) ArkRust else BorderColor),
                                     ) {
                                         Text(
                                             text = fiatCurrency,
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = if (isUsdMode) SparkPurple else TextSecondary,
+                                            color = if (isUsdMode) ArkRust else TextSecondary,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                                         )
                                     }
@@ -759,14 +858,20 @@ fun SparkReceiveScreen(
                             }
 
                             val conversionText =
-                                if (amountText.isNotEmpty() && amountSats != null && amountSats > 0 && btcPrice != null && btcPrice > 0) {
+                                if (
+                                    amountText.isNotEmpty() &&
+                                    amountSats != null &&
+                                    amountSats > 0 &&
+                                    btcPrice != null &&
+                                    btcPrice > 0
+                                ) {
                                     if (privacyMode) {
                                         "≈ ****"
                                     } else if (isUsdMode) {
-                                        "≈ ${formatSparkAmountForReceive(amountSats, useSats)} ${sparkDisplayUnit(useSats)}"
+                                        "≈ ${formatArkAmountForReceive(amountSats, useSats)} ${arkDisplayUnit(useSats)}"
                                     } else {
                                         val usdValue = (amountSats / 100_000_000.0) * btcPrice
-                                        "≈ ${formatSparkFiat(usdValue, fiatCurrency)}"
+                                        "≈ ${formatArkFiat(usdValue, fiatCurrency)}"
                                     }
                                 } else {
                                     null
@@ -781,11 +886,9 @@ fun SparkReceiveScreen(
                                                 amountText = input
                                             }
                                         }
-
                                         useSats -> {
                                             amountText = input.filter { c -> c.isDigit() }
                                         }
-
                                         else -> {
                                             if (input.isEmpty() || input.matches(Regex("^\\d*\\.?\\d{0,8}$"))) {
                                                 amountText = input
@@ -815,7 +918,7 @@ fun SparkReceiveScreen(
                                             Text(
                                                 text = conversionText,
                                                 style = MaterialTheme.typography.bodyLarge,
-                                                color = SparkPurple,
+                                                color = ArkRust,
                                             )
                                         }
                                     } else {
@@ -827,7 +930,7 @@ fun SparkReceiveScreen(
                                     keyboardType = if (useSats && !isUsdMode) KeyboardType.Number else KeyboardType.Decimal,
                                 ),
                                 shape = RoundedCornerShape(8.dp),
-                                colors = sparkTextFieldColors(),
+                                colors = arkTextFieldColors(),
                             )
                         }
                     }
@@ -850,7 +953,7 @@ fun SparkReceiveScreen(
                         SquareToggle(
                             checked = showLabelField,
                             onCheckedChange = { showLabelField = it },
-                            checkedColor = SparkPurple,
+                            checkedColor = ArkRust,
                         )
                     }
 
@@ -863,7 +966,7 @@ fun SparkReceiveScreen(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(8.dp),
-                                colors = sparkTextFieldColors(),
+                                colors = arkTextFieldColors(),
                                 trailingIcon = {
                                     if (descriptionText.isNotBlank() && labelTargetRequest != null) {
                                         TextButton(
@@ -872,7 +975,7 @@ fun SparkReceiveScreen(
                                                 Toast.makeText(context, "Label saved", Toast.LENGTH_SHORT).show()
                                             },
                                         ) {
-                                            Text(stringResource(R.string.loc_f55495e0), color = SparkPurple)
+                                            Text(stringResource(R.string.loc_f55495e0), color = ArkRust)
                                         }
                                     }
                                 },
@@ -894,7 +997,7 @@ fun SparkReceiveScreen(
                                 SquareToggle(
                                     checked = embedLabelInQr,
                                     onCheckedChange = { embedLabelInQr = it },
-                                    checkedColor = SparkPurple,
+                                    checkedColor = ArkRust,
                                     trackWidth = 36.dp,
                                     trackHeight = 20.dp,
                                     thumbSize = 14.dp,
@@ -946,7 +1049,12 @@ fun SparkReceiveScreen(
                 onClick = {
                     focusManager.clearFocus(force = true)
                     amountSats?.let { amount ->
-                        onReceive(SparkReceiveKind.BOLT11_INVOICE, amount, lightningRequestDescription, true)
+                        onReceive(
+                            ArkReceiveKind.BOLT11_INVOICE,
+                            amount,
+                            lightningRequestDescription,
+                            true,
+                        )
                     }
                 },
                 modifier =
@@ -973,7 +1081,7 @@ fun SparkReceiveScreen(
 }
 
 @Composable
-private fun SparkReceiveTab(
+private fun ArkReceiveTab(
     label: String,
     selected: Boolean,
     selectedColor: Color,
@@ -998,17 +1106,17 @@ private fun SparkReceiveTab(
 }
 
 @Composable
-internal fun sparkTextFieldColors() =
+internal fun arkTextFieldColors() =
     OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = SparkPurple,
+        focusedBorderColor = ArkRust,
         unfocusedBorderColor = BorderColor,
         focusedTextColor = TextPrimary,
         unfocusedTextColor = TextPrimary,
-        cursorColor = SparkPurple,
+        cursorColor = ArkRust,
     )
 
 @Composable
-private fun SparkLightningInvoiceForm(
+private fun ArkLightningInvoiceForm(
     amountText: String,
     amountInSats: Long?,
     useSats: Boolean,
@@ -1027,7 +1135,7 @@ private fun SparkLightningInvoiceForm(
     onToggleDenomination: () -> Unit,
 ) {
     val context = LocalContext.current
-    val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "spark_lightning_invoice_label")
+    val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "ark_lightning_invoice_label")
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1071,14 +1179,14 @@ private fun SparkLightningInvoiceForm(
                                 .clickable { onUsdModeChange(!isUsdMode) },
                         shape = RoundedCornerShape(8.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isUsdMode) SparkPurple.copy(alpha = 0.15f) else DarkCard,
+                            containerColor = if (isUsdMode) ArkRust.copy(alpha = 0.15f) else DarkCard,
                         ),
-                        border = BorderStroke(1.dp, if (isUsdMode) SparkPurple else BorderColor),
+                        border = BorderStroke(1.dp, if (isUsdMode) ArkRust else BorderColor),
                     ) {
                         Text(
                             text = fiatCurrency,
                             style = MaterialTheme.typography.labelMedium,
-                            color = if (isUsdMode) SparkPurple else TextSecondary,
+                            color = if (isUsdMode) ArkRust else TextSecondary,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                         )
                     }
@@ -1090,10 +1198,10 @@ private fun SparkLightningInvoiceForm(
                     if (privacyMode) {
                         "≈ ****"
                     } else if (isUsdMode) {
-                        "≈ ${formatSparkAmountForReceive(amountInSats, useSats)} ${sparkDisplayUnit(useSats)}"
+                        "≈ ${formatArkAmountForReceive(amountInSats, useSats)} ${arkDisplayUnit(useSats)}"
                     } else {
                         val usdValue = (amountInSats / 100_000_000.0) * btcPrice
-                        "≈ ${formatSparkFiat(usdValue, fiatCurrency)}"
+                        "≈ ${formatArkFiat(usdValue, fiatCurrency)}"
                     }
                 } else {
                     null
@@ -1140,7 +1248,7 @@ private fun SparkLightningInvoiceForm(
                             Text(
                                 text = conversionText,
                                 style = MaterialTheme.typography.bodyLarge,
-                                color = SparkPurple,
+                                color = ArkRust,
                             )
                         }
                     } else {
@@ -1152,9 +1260,9 @@ private fun SparkLightningInvoiceForm(
                 singleLine = true,
                 shape = RoundedCornerShape(8.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = SparkPurple,
+                    focusedBorderColor = ArkRust,
                     unfocusedBorderColor = BorderColor,
-                    cursorColor = SparkPurple,
+                    cursorColor = ArkRust,
                 ),
             )
 
@@ -1239,7 +1347,7 @@ private fun SparkLightningInvoiceForm(
     }
 }
 
-private fun convertSparkAmountForUsdToggle(
+private fun convertArkAmountForUsdToggle(
     currentText: String,
     currentAmountSats: Long?,
     currentlyUsdMode: Boolean,
@@ -1258,7 +1366,7 @@ private fun convertSparkAmountForUsdToggle(
     }
 }
 
-private fun formatSparkAmountForReceive(
+private fun formatArkAmountForReceive(
     sats: Long,
     useSats: Boolean,
 ): String {
@@ -1269,14 +1377,14 @@ private fun formatSparkAmountForReceive(
     }
 }
 
-private fun sparkDisplayUnit(useSats: Boolean): String = if (useSats) "sats" else "BTC"
+private fun arkDisplayUnit(useSats: Boolean): String = if (useSats) "sats" else "BTC"
 
-private fun formatSparkFiat(
+private fun formatArkFiat(
     amount: Double,
     fiatCurrency: String,
 ): String = "${fiatCurrency.uppercase(Locale.US)} ${String.format(Locale.US, "%.2f", amount)}"
 
-private fun formatSparkReceiveText(requestText: String?): String {
+private fun formatArkReceiveText(requestText: String?): String {
     if (requestText == null) return "No request generated"
     val edgeCharacters = 10
     val minimumLengthToShorten = edgeCharacters * 2
@@ -1284,7 +1392,7 @@ private fun formatSparkReceiveText(requestText: String?): String {
     return "${requestText.take(edgeCharacters)}...${requestText.takeLast(edgeCharacters)}"
 }
 
-private fun formatSparkInvoicePreview(invoice: String?): String {
+private fun formatArkInvoicePreview(invoice: String?): String {
     if (invoice == null) return "No request generated"
     val edgeCharacters = 8
     val minimumLengthToShorten = edgeCharacters * 2
@@ -1292,7 +1400,7 @@ private fun formatSparkInvoicePreview(invoice: String?): String {
     return "${invoice.take(edgeCharacters)}...${invoice.takeLast(edgeCharacters)}"
 }
 
-private fun buildSparkBitcoinRequest(
+private fun buildArkBitcoinRequest(
     address: String?,
     amountSats: Long?,
     label: String?,
@@ -1311,5 +1419,5 @@ private fun buildSparkBitcoinRequest(
     return "bitcoin:$baseAddress?${params.joinToString("&")}"
 }
 
-private fun SparkReceiveState.errorMessage(): String? =
-    (this as? SparkReceiveState.Error)?.message
+private fun ArkReceiveState.errorMessage(): String? =
+    (this as? ArkReceiveState.Error)?.message

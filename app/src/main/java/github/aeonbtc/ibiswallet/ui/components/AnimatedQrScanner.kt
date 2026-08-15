@@ -1,11 +1,13 @@
 package github.aeonbtc.ibiswallet.ui.components
 
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import com.sparrowwallet.hummingbird.ResultType
 import com.sparrowwallet.hummingbird.URDecoder
 import github.aeonbtc.ibiswallet.data.model.AddressType
@@ -36,6 +38,7 @@ fun AnimatedQrScannerDialog(
             QrCameraPreview(
                 lifecycleOwner = lifecycleOwner,
                 pauseScanning = isComplete,
+                modifier = Modifier.fillMaxSize(),
                 onFrameScanned = { scannedText ->
                     handleScannedQrData(
                         scannedText = scannedText,
@@ -80,6 +83,7 @@ fun ImportQrScannerDialog(
             QrCameraPreview(
                 lifecycleOwner = lifecycleOwner,
                 pauseScanning = isComplete && !sequentialScan,
+                modifier = Modifier.fillMaxSize(),
                 onFrameScanned = { scannedText ->
                     handleImportQrData(
                         scannedText = scannedText,
@@ -124,6 +128,7 @@ fun LabelsQrScannerDialog(
             QrCameraPreview(
                 lifecycleOwner = lifecycleOwner,
                 pauseScanning = isComplete,
+                modifier = Modifier.fillMaxSize(),
                 onFrameScanned = { scannedText ->
                     handleLabelsQrData(
                         scannedText = scannedText,

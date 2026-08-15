@@ -3,19 +3,16 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
-import android.graphics.Bitmap
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -49,7 +46,6 @@ import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -88,11 +84,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -108,7 +102,6 @@ import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
-import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
@@ -117,8 +110,10 @@ import github.aeonbtc.ibiswallet.data.model.SwapService
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
 import github.aeonbtc.ibiswallet.data.model.WalletState
+import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
 import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.ui.components.BalanceAmountText
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueKeyButton
 import github.aeonbtc.ibiswallet.ui.components.BoltzRescueMnemonicDialog
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
@@ -129,6 +124,7 @@ import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.MAX_FEE_RATE_SAT_VB
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.StatusBadge
 import github.aeonbtc.ibiswallet.ui.components.TransactionHistoryHideAllDialog
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
@@ -148,13 +144,10 @@ import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.SecureClipboard
-import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.util.startActivityWithTaskFallback
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+
 /**
  * Method for speeding up a transaction
  */
@@ -192,8 +185,8 @@ fun BalanceScreen(
     onDeleteAllTransactionsFromHistory: () -> Unit = {},
     onSaveAddressLabelFromTransaction: (String, String) -> Unit = { _, _ -> },
     onDeleteAddressLabelFromTransaction: (String) -> Unit = {},
-    searchTransactions: suspend (String, Boolean, Int) -> TransactionSearchResult =
-        { _, _, _ -> TransactionSearchResult(emptyList(), 0) },
+    searchTransactions: suspend (String, Int) -> TransactionSearchResult =
+        { _, _ -> TransactionSearchResult(emptyList(), 0) },
     onFetchTxVsize: suspend (String) -> Double? = { null },
     onRefreshFees: () -> Unit = {},
     onSync: () -> Unit = {},
@@ -233,13 +226,11 @@ fun BalanceScreen(
     // Search state
     var isSearchActive by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var showSwapTransactions by remember { mutableStateOf(false) }
 
     // Transaction display limit (progressive loading)
     var displayLimit by remember { mutableIntStateOf(25) }
 
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
-    val hasSwapTransactions = walletState.transactions.any { it.swapDetails != null }
 
     // NFC reader mode: tapping an NFC tag with a bitcoin address or URI
     // routes through pendingSendInput -> Send screen.
@@ -370,26 +361,12 @@ fun BalanceScreen(
         }
     }
 
-    LaunchedEffect(hasSwapTransactions) {
-        if (!hasSwapTransactions) {
-            showSwapTransactions = false
-        }
-    }
-
-    val sourceFilteredTransactions =
-        remember(walletState.transactions, showSwapTransactions) {
-            if (showSwapTransactions) {
-                walletState.transactions.filter { it.swapDetails != null }
-            } else {
-                walletState.transactions
-            }
-        }
     val transactionsById = remember(walletState.transactions) { walletState.transactions.associateBy { it.txid } }
     var searchResultTxids by remember { mutableStateOf<List<String>>(emptyList()) }
     var searchTotalCount by remember { mutableIntStateOf(0) }
     var isSearchFiltering by remember { mutableStateOf(false) }
 
-    LaunchedEffect(isSearchActive, searchQuery.trim(), showSwapTransactions) {
+    LaunchedEffect(isSearchActive, searchQuery.trim()) {
         displayLimit = 25
     }
 
@@ -398,13 +375,12 @@ fun BalanceScreen(
         transactionLabels,
         addressLabels,
         searchQuery,
-        showSwapTransactions,
         displayLimit,
     ) {
         val trimmedQuery = searchQuery.trim()
         if (trimmedQuery.isBlank()) {
             searchResultTxids = emptyList()
-            searchTotalCount = sourceFilteredTransactions.size
+            searchTotalCount = walletState.transactions.size
             isSearchFiltering = false
             return@LaunchedEffect
         }
@@ -413,7 +389,7 @@ fun BalanceScreen(
         searchResultTxids = emptyList()
         searchTotalCount = 0
         kotlinx.coroutines.delay(150)
-        val result = searchTransactions(trimmedQuery, showSwapTransactions, displayLimit)
+        val result = searchTransactions(trimmedQuery, displayLimit)
         searchResultTxids = result.txids
         searchTotalCount = result.totalCount
         isSearchFiltering = false
@@ -424,20 +400,20 @@ fun BalanceScreen(
         isSearching,
         searchResultTxids,
         transactionsById,
-        sourceFilteredTransactions,
+        walletState.transactions,
         displayLimit,
     ) {
         derivedStateOf {
             if (isSearching) {
                 searchResultTxids.mapNotNull(transactionsById::get)
             } else {
-                sourceFilteredTransactions.take(displayLimit)
+                walletState.transactions.take(displayLimit)
             }
         }
     }
-    val totalCount by remember(isSearching, searchTotalCount, sourceFilteredTransactions) {
+    val totalCount by remember(isSearching, searchTotalCount, walletState.transactions) {
         derivedStateOf {
-            if (isSearching) searchTotalCount else sourceFilteredTransactions.size
+            if (isSearching) searchTotalCount else walletState.transactions.size
         }
     }
 
@@ -591,23 +567,18 @@ fun BalanceScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             // Main balance with inline denomination — tap to toggle BTC/sats
-                            Text(
-                                text =
+                            BalanceAmountText(
+                                amountText =
                                     if (privacyMode) {
                                         HIDDEN_AMOUNT
                                     } else if (useSats) {
-                                        "${formatAmount(walletState.balanceSats, true)} sats"
+                                        formatAmount(walletState.balanceSats, true)
                                     } else {
-                                        "\u20BF ${formatAmount(walletState.balanceSats, false)}"
+                                        formatAmount(walletState.balanceSats, false)
                                     },
-                                style = MaterialTheme.typography.displaySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                modifier = Modifier.clickable(
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    indication = null,
-                                    onClick = onToggleDenomination,
-                                ),
+                                showBtcSymbol = !privacyMode && !useSats,
+                                showSatsUnit = !privacyMode && useSats,
+                                onClick = onToggleDenomination,
                             )
 
                             // USD value
@@ -615,7 +586,7 @@ fun BalanceScreen(
                                 val usdValue = (walletState.balanceSats.toDouble() / 100_000_000.0) * btcPrice
                                 Text(
                                     text = if (privacyMode) HIDDEN_AMOUNT else formatFiat(usdValue, fiatCurrency),
-                                    style = MaterialTheme.typography.titleMedium,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
                                     color = TextSecondary,
                                 )
                             }
@@ -787,47 +758,33 @@ fun BalanceScreen(
                             )
                         }
                     }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        if (hasSwapTransactions) {
-                            TransactionFilterButton(
-                                icon = Icons.Default.SwapHoriz,
-                                contentDescription = stringResource(R.string.loc_ea6a9a53),
-                                tint = BitcoinOrange,
-                                isSelected = showSwapTransactions,
-                                onClick = { showSwapTransactions = !showSwapTransactions },
-                            )
-                        }
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier =
-                                Modifier
-                                    .size(30.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(DarkSurfaceVariant)
-                                    .clickable {
-                                        isSearchActive = !isSearchActive
-                                        if (!isSearchActive) searchQuery = ""
-                                    },
-                        ) {
-                            Icon(
-                                imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
-                                contentDescription =
-                                    if (isSearchActive) {
-                                        stringResource(R.string.loc_dda0ea3a)
-                                    } else {
-                                        stringResource(R.string.loc_b35cde91)
-                                    },
-                                tint = if (isSearchActive) {
-                                    BitcoinOrange
-                                } else {
-                                    TextSecondary
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier =
+                            Modifier
+                                .size(30.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(DarkSurfaceVariant)
+                                .clickable {
+                                    isSearchActive = !isSearchActive
+                                    if (!isSearchActive) searchQuery = ""
                                 },
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+                    ) {
+                        Icon(
+                            imageVector = if (isSearchActive) Icons.Default.Close else Icons.Default.Search,
+                            contentDescription =
+                                if (isSearchActive) {
+                                    stringResource(R.string.loc_dda0ea3a)
+                                } else {
+                                    stringResource(R.string.loc_b35cde91)
+                                },
+                            tint = if (isSearchActive) {
+                                BitcoinOrange
+                            } else {
+                                TextSecondary
+                            },
+                            modifier = Modifier.size(20.dp),
+                        )
                     }
                 }
 
@@ -1095,136 +1052,11 @@ fun BalanceScreen(
     // Quick Receive Dialog — must be outside LazyColumn
     val quickReceiveAddress = walletState.currentAddress
     if (showQuickReceive && quickReceiveAddress != null) {
-        var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
-        var showEnlargedQr by remember { mutableStateOf(false) }
-        LaunchedEffect(quickReceiveAddress) {
-            qrBitmap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                generateQrBitmap(quickReceiveAddress)
-            }
-        }
-        val context = LocalContext.current
-        var showCopied by remember { mutableStateOf(false) }
-
-        LaunchedEffect(showCopied) {
-            if (showCopied) {
-                kotlinx.coroutines.delay(3000)
-                showCopied = false
-            }
-        }
-
-        if (showEnlargedQr && qrBitmap != null) {
-            Dialog(
-                onDismissRequest = { showEnlargedQr = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false),
-            ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.9f))
-                        .clickable { showEnlargedQr = false },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(320.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(Color.White)
-                            .padding(16.dp),
-                    ) {
-                        Image(
-                            bitmap = qrBitmap!!.asImageBitmap(),
-                            contentDescription = stringResource(R.string.loc_8fd877da),
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit,
-                        )
-                    }
-                }
-            }
-        }
-
-        Dialog(
-            onDismissRequest = { showQuickReceive = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
-        ) {
-            ProvideLocalizedResources {
-                Card(
-                modifier =
-                    Modifier
-                        .padding(horizontal = 32.dp)
-                        .fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
-            ) {
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    // QR Code
-                    qrBitmap?.let { bitmap ->
-                        Box(
-                            modifier =
-                                Modifier
-                                    .size(200.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White)
-                                    .clickable { showEnlargedQr = true }
-                                    .padding(8.dp),
-                        ) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = stringResource(R.string.loc_8fd877da),
-                                modifier = Modifier.fillMaxSize(),
-                                contentScale = ContentScale.Fit,
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Address + copy icon
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center,
-                    ) {
-                        Text(
-                            text = "${quickReceiveAddress.take(9)}...${quickReceiveAddress.takeLast(9)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = TextSecondary,
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Icon(
-                            imageVector = Icons.Default.ContentCopy,
-                            contentDescription = stringResource(R.string.loc_3c19e32e),
-                            tint = if (showCopied) BitcoinOrange else TextSecondary,
-                            modifier =
-                                Modifier
-                                    .size(16.dp)
-                                    .clickable {
-                                        SecureClipboard.copyAndScheduleClear(
-                                            context,
-                                            quickReceiveAddress,
-                                        )
-                                        showCopied = true
-                                    },
-                        )
-                    }
-
-                    if (showCopied) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = stringResource(R.string.loc_e287255d),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = BitcoinOrange,
-                        )
-                    }
-                }
-            }
-            }
-        }
+        QuickReceiveDialog(
+            payload = quickReceiveAddress,
+            onDismiss = { showQuickReceive = false },
+            accentColor = BitcoinOrange,
+        )
     }
 }
 
@@ -1374,32 +1206,15 @@ private fun TransactionItem(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text =
-                            if (isReceived) {
-                                stringResource(R.string.loc_301a5b91)
-                            } else {
-                                stringResource(R.string.loc_1af68597)
+                            when {
+                                transaction.isSwapHistory || swapDetails != null ->
+                                    stringResource(R.string.loc_85a12a5f)
+                                isReceived -> stringResource(R.string.loc_301a5b91)
+                                else -> stringResource(R.string.loc_1af68597)
                             },
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                         color = MaterialTheme.colorScheme.onBackground,
                     )
-                    if (swapDetails != null) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier =
-                                Modifier
-                                    .size(22.dp)
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(BitcoinOrange.copy(alpha = 0.16f)),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SwapHoriz,
-                                contentDescription = stringResource(R.string.loc_85a12a5f),
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(21.dp),
-                            )
-                        }
-                    }
                 }
                 if (label != null) {
                     Text(
@@ -2118,7 +1933,6 @@ fun TransactionDetailDialog(
                         Icon(
                             imageVector =
                                 when {
-                                    swapDetails != null -> Icons.Default.SwapHoriz
                                     transaction.isSelfTransfer -> Icons.AutoMirrored.Filled.CallMade
                                     isReceived -> Icons.AutoMirrored.Filled.CallReceived
                                     else -> Icons.AutoMirrored.Filled.CallMade
@@ -2139,7 +1953,8 @@ fun TransactionDetailDialog(
                         Text(
                             text =
                                 when {
-                                    swapDetails != null -> stringResource(R.string.loc_85a12a5f)
+                                    transaction.isSwapHistory || swapDetails != null ->
+                                        stringResource(R.string.loc_85a12a5f)
                                     transaction.isSelfTransfer -> stringResource(R.string.loc_222c0de6)
                                     isReceived -> stringResource(R.string.loc_301a5b91)
                                     else -> stringResource(R.string.loc_1af68597)

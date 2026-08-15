@@ -9,68 +9,65 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import github.aeonbtc.ibiswallet.R
-import github.aeonbtc.ibiswallet.localization.AppLocale
+import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 
-private data class LanguageOption(
-    val locale: AppLocale,
+private data class TypefaceOption(
+    val id: String,
     val name: String,
     val description: String,
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LanguageDropdown(
-    currentLocale: AppLocale,
-    onLocaleSelected: (AppLocale) -> Unit,
+fun TypefaceDropdown(
+    currentTypeface: String,
+    onTypefaceSelected: (String) -> Unit,
     dense: Boolean = false,
 ) {
-    val expandedState = remember { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(false) }
     val options =
         listOf(
-            LanguageOption(
-                locale = AppLocale.ENGLISH,
-                name = stringResource(R.string.settings_language_english),
-                description = stringResource(R.string.settings_language_english_description),
+            TypefaceOption(
+                id = SecureStorage.TYPEFACE_SYSTEM,
+                name = stringResource(R.string.settings_typeface_system),
+                description = stringResource(R.string.settings_typeface_system_description),
             ),
-            LanguageOption(
-                locale = AppLocale.SPANISH,
-                name = stringResource(R.string.settings_language_spanish),
-                description = stringResource(R.string.settings_language_spanish_description),
+            TypefaceOption(
+                id = SecureStorage.TYPEFACE_ATKINSON_HYPERLEGIBLE,
+                name = stringResource(R.string.settings_typeface_atkinson_hyperlegible),
+                description = stringResource(R.string.settings_typeface_atkinson_hyperlegible_description),
             ),
-            LanguageOption(
-                locale = AppLocale.BRAZILIAN_PORTUGUESE,
-                name = stringResource(R.string.settings_language_brazilian_portuguese),
-                description = stringResource(R.string.settings_language_brazilian_portuguese_description),
-            ),
-            LanguageOption(
-                locale = AppLocale.RUSSIAN,
-                name = stringResource(R.string.settings_language_russian),
-                description = stringResource(R.string.settings_language_russian_description),
+            TypefaceOption(
+                id = SecureStorage.TYPEFACE_OPEN_RUNDE,
+                name = stringResource(R.string.settings_typeface_open_runde),
+                description = stringResource(R.string.settings_typeface_open_runde_description),
             ),
         )
-    val selectedOption = options.find { it.locale == currentLocale } ?: options.first()
+    val selectedOption = options.find { it.id == currentTypeface } ?: options.first()
 
     ExposedDropdownMenuBox(
-        expanded = expandedState.value,
-        onExpandedChange = { expandedState.value = it },
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
     ) {
         CompactDropdownField(
             value = selectedOption.name,
-            expanded = expandedState.value,
+            expanded = expanded,
             dense = dense,
             modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
         )
 
         ExposedDropdownMenu(
-            expanded = expandedState.value,
-            onDismissRequest = { expandedState.value = false },
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
             modifier =
                 Modifier
                     .exposedDropdownSize(true)
@@ -82,15 +79,15 @@ fun LanguageDropdown(
                         DropdownOptionText(
                             title = option.name,
                             subtitle = option.description,
-                            selected = option.locale == currentLocale,
+                            selected = option.id == currentTypeface,
                         )
                     },
                     onClick = {
-                        onLocaleSelected(option.locale)
-                        expandedState.value = false
+                        onTypefaceSelected(option.id)
+                        expanded = false
                     },
                     leadingIcon = {
-                        if (option.locale == currentLocale) {
+                        if (option.id == currentTypeface) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = stringResource(R.string.common_selected),

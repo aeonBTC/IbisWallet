@@ -50,6 +50,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -69,6 +70,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -78,6 +80,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
@@ -121,9 +124,6 @@ import kotlinx.coroutines.delay
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.roundToLong
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
-import androidx.compose.material3.Text
 
 private const val MIN_LIQUID_SWAP_FEE_RATE = 0.1
 private const val ESTIMATED_LIQUID_SWAP_TX_VSIZE = 200
@@ -150,6 +150,7 @@ fun SwapScreen(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     denomination: String = SecureStorage.DENOMINATION_BTC,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     feeEstimationState: FeeEstimationResult = FeeEstimationResult.Disabled,
     minFeeRate: Double = 1.0,
     preferredService: SwapService = SwapService.BOLTZ,
@@ -682,6 +683,7 @@ fun SwapScreen(
             privacyMode = privacyMode,
             btcPrice = btcPrice,
             isLiquid = !isPegIn,
+            dateFormat = dateFormat,
             onDismiss = { showCoinControlState.value = false },
             onUtxoToggle = { utxo ->
                 toggleCoinControlSelection(selectedFundingUtxos, utxo)
@@ -2553,6 +2555,7 @@ private fun SwapCoinControlDialog(
     privacyMode: Boolean,
     btcPrice: Double?,
     isLiquid: Boolean,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     onDismiss: () -> Unit,
     onUtxoToggle: (UtxoInfo) -> Unit,
     onSelectAll: () -> Unit,
@@ -2573,7 +2576,7 @@ private fun SwapCoinControlDialog(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(horizontal = 8.dp, vertical = 16.dp),
             shape = RoundedCornerShape(12.dp),
             color = DarkSurface,
         ) {
@@ -2647,150 +2650,16 @@ private fun SwapCoinControlDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     items(utxos, key = { it.outpoint }) { utxo ->
-                        val isSelected = selectedOutpoints.contains(utxo.outpoint)
-                        val isDisabled = !utxo.isConfirmed && !spendUnconfirmed
-
-                        Card(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (isDisabled) {
-                                            Modifier
-                                        } else {
-                                            Modifier.clickable { onUtxoToggle(utxo) }
-                                        },
-                                    ),
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                CardDefaults.cardColors(
-                                    containerColor =
-                                        when {
-                                            isDisabled -> DarkCard.copy(alpha = 0.4f)
-                                            isSelected -> accentColor.copy(alpha = 0.15f)
-                                            else -> DarkCard
-                                        },
-                                ),
-                            border =
-                                if (isSelected && !isDisabled) {
-                                    BorderStroke(1.dp, accentColor.copy(alpha = 0.5f))
-                                } else {
-                                    null
-                                },
-                        ) {
-                            Row(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Icon(
-                                    imageVector =
-                                        if (isSelected && !isDisabled) {
-                                            Icons.Default.CheckCircle
-                                        } else {
-                                            Icons.Default.RadioButtonUnchecked
-                                        },
-                                    contentDescription =
-                                        if (isSelected) {
-                                            stringResource(R.string.common_selected)
-                                        } else {
-                                            stringResource(R.string.loc_e17307d1)
-                                        },
-                                    tint =
-                                        when {
-                                            isDisabled -> TextSecondary.copy(alpha = 0.3f)
-                                            isSelected -> accentColor
-                                            else -> TextSecondary
-                                        },
-                                    modifier = Modifier.size(24.dp),
-                                )
-
-                                Spacer(modifier = Modifier.width(12.dp))
-
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text =
-                                                if (privacyMode) {
-                                                    hiddenAmount
-                                                } else {
-                                                    formatAmount(utxo.amountSats, useSats, includeUnit = true)
-                                                },
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.Medium,
-                                            color = if (isDisabled) TextPrimary.copy(alpha = 0.4f) else TextPrimary,
-                                        )
-                                        if (btcPrice != null && btcPrice > 0 && !privacyMode) {
-                                            val usdValue = utxo.amountSats.toLong() * btcPrice / 100_000_000.0
-                                            Text(
-                                                text = " · $${String.format(Locale.US, "%,.2f", usdValue)}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
-                                            )
-                                        }
-                                    }
-
-                                    Text(
-                                        text = utxo.address,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        color = if (isDisabled) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-
-                                    if (!utxo.label.isNullOrEmpty()) {
-                                        Text(
-                                            text = utxo.label,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = if (isDisabled) accentColor.copy(alpha = 0.4f) else accentColor,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-
-                                    if (isDisabled) {
-                                        Text(
-                                            text = stringResource(R.string.loc_bdedd2ce),
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = WarningYellow,
-                                        )
-                                    }
-                                }
-
-                                Box(
-                                    modifier =
-                                        Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(
-                                                if (utxo.isConfirmed) {
-                                                    SuccessGreen.copy(alpha = if (isDisabled) 0.1f else 0.2f)
-                                                } else {
-                                                    accentColor.copy(alpha = if (isDisabled) 0.1f else 0.2f)
-                                                },
-                                            )
-                                            .padding(horizontal = 6.dp, vertical = 2.dp),
-                                ) {
-                                    Text(
-                                        text =
-                                            if (utxo.isConfirmed) {
-                                                stringResource(R.string.loc_4ab75d7f)
-                                            } else {
-                                                stringResource(R.string.loc_1b684325)
-                                            },
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color =
-                                            if (utxo.isConfirmed) {
-                                                SuccessGreen.copy(alpha = if (isDisabled) 0.4f else 1f)
-                                            } else {
-                                                accentColor.copy(alpha = if (isDisabled) 0.4f else 1f)
-                                            },
-                                    )
-                                }
-                            }
-                        }
+                        CoinControlUtxoCard(
+                            utxo = utxo,
+                            isSelected = selectedOutpoints.contains(utxo.outpoint),
+                            isDisabled = !utxo.isConfirmed && !spendUnconfirmed,
+                            useSats = useSats,
+                            accentColor = accentColor,
+                            onToggle = { onUtxoToggle(utxo) },
+                            btcPrice = btcPrice,
+                            privacyMode = privacyMode,
+                        )
                     }
                 }
 

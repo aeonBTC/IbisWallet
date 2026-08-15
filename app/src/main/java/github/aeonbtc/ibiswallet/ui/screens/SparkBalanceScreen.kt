@@ -2,16 +2,13 @@ package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -72,10 +69,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -89,16 +84,19 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.BitcoinTxSource
 import github.aeonbtc.ibiswallet.data.model.SparkPayment
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveState
 import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
 import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
 import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
+import github.aeonbtc.ibiswallet.ui.components.BalanceAmountText
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.TransactionHistoryHideAllDialog
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
@@ -110,16 +108,10 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
-import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
-import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
 import github.aeonbtc.ibiswallet.util.startActivityWithTaskFallback
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 private const val SPARK_HIDDEN_AMOUNT = "****"
@@ -143,6 +135,7 @@ fun SparkBalanceScreen(
     privacyMode: Boolean,
     sparkAddressLabels: Map<String, String> = emptyMap(),
     sparkTransactionLabels: Map<String, String> = emptyMap(),
+    sparkTransactionSources: Map<String, String> = emptyMap(),
     onTogglePrivacy: () -> Unit,
     onRefresh: () -> Unit,
     onToggleDenomination: () -> Unit,
@@ -349,6 +342,14 @@ fun SparkBalanceScreen(
         val explicitPaymentLabel = sparkPaymentTransactionLabel(payment, sparkTransactionLabels)
         val paymentLabel = sparkPaymentLabel(payment, sparkAddressLabels, sparkTransactionLabels)
         val linkedLayer1Transaction = remember(payment, layer1Transactions) { sparkResolveLayer1Transaction(payment, layer1Transactions) }
+        val isCenterSwap =
+            remember(payment, sparkTransactionSources, layer1Transactions) {
+                sparkPaymentIsCenterSwap(
+                    payment = payment,
+                    sparkTransactionSources = sparkTransactionSources,
+                    layer1Transactions = layer1Transactions,
+                )
+            }
         SparkPaymentDetailDialog(
             payment = payment,
             layer1Transaction = linkedLayer1Transaction,
@@ -361,6 +362,7 @@ fun SparkBalanceScreen(
             historicalBtcPrice = historicalBtcPrices[payment.id],
             privacyMode = privacyMode,
             label = paymentLabel,
+            isCenterSwap = isCenterSwap,
             onSaveLabel = { label ->
                 if (linkedPaymentRef != null) {
                     onSaveSparkAddressLabel(linkedPaymentRef, label)
@@ -646,6 +648,12 @@ fun SparkBalanceScreen(
                                     },
                                 privacyMode = privacyMode,
                                 label = paymentLabel,
+                                isCenterSwap =
+                                    sparkPaymentIsCenterSwap(
+                                        payment = item.payment,
+                                        sparkTransactionSources = sparkTransactionSources,
+                                        layer1Transactions = layer1Transactions,
+                                    ),
                                 onClick = { selectedSparkPayment.value = item.payment },
                             )
                         }
@@ -809,29 +817,24 @@ private fun SparkBalanceCard(
                     .align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
-                    text =
+                BalanceAmountText(
+                    amountText =
                         if (privacyMode) {
                             SPARK_HIDDEN_AMOUNT
                         } else if (useSats) {
-                            "${formatAmount(sparkState.balanceSats.toULong(), true)} sats"
+                            formatAmount(sparkState.balanceSats.toULong(), true)
                         } else {
-                            "\u20BF ${formatAmount(sparkState.balanceSats.toULong(), false)}"
+                            formatAmount(sparkState.balanceSats.toULong(), false)
                         },
-                    style = MaterialTheme.typography.displaySmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = onToggleDenomination,
-                    ),
+                    showBtcSymbol = !privacyMode && !useSats,
+                    showSatsUnit = !privacyMode && useSats,
+                    onClick = onToggleDenomination,
                 )
                 if (btcPrice != null && btcPrice > 0) {
                     val fiatValue = (sparkState.balanceSats.toDouble() / 100_000_000.0) * btcPrice
                     Text(
                         text = if (privacyMode) SPARK_HIDDEN_AMOUNT else formatFiat(fiatValue, fiatCurrency),
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
                         color = TextSecondary,
                     )
                 }
@@ -946,7 +949,12 @@ private fun SparkPendingDepositRow(
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = stringResource(R.string.loc_301a5b91),
+                        text =
+                            if (layer1Transaction?.isSwapHistory == true) {
+                                stringResource(R.string.loc_85a12a5f)
+                            } else {
+                                stringResource(R.string.loc_301a5b91)
+                            },
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
@@ -1281,6 +1289,7 @@ private fun SparkPendingDepositDetailDialog(
                             copyLabel = depositTxidCopyLabel,
                             copied = showCopiedTxid,
                             accentColor = SparkPurple,
+                            showFullValue = true,
                             onCopy = {
                                 SecureClipboard.copyAndScheduleClear(
                                     context,
@@ -1467,6 +1476,7 @@ private fun SparkTransactionRow(
     historicalBtcPrice: Double?,
     privacyMode: Boolean,
     label: String?,
+    isCenterSwap: Boolean = false,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
 ) {
@@ -1527,11 +1537,10 @@ private fun SparkTransactionRow(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text =
-                            if (isReceive) {
-                                stringResource(R.string.loc_301a5b91)
-                            } else {
-                                stringResource(R.string.loc_1af68597)
-                            },
+                            sparkPaymentDisplayTitle(
+                                isReceive = isReceive,
+                                isCenterSwap = isCenterSwap,
+                            ),
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
@@ -1667,6 +1676,7 @@ private fun SparkPaymentDetailDialog(
     historicalBtcPrice: Double?,
     privacyMode: Boolean,
     label: String?,
+    isCenterSwap: Boolean = false,
     onSaveLabel: (String) -> Unit,
     onDeleteLabel: (() -> Unit)?,
     onHideFromHistory: () -> Unit = {},
@@ -1843,11 +1853,10 @@ private fun SparkPaymentDetailDialog(
                             text =
                                 stringResource(
                                     R.string.spark_payment_direction_with_rail_format,
-                                    if (isReceive) {
-                                        stringResource(R.string.loc_301a5b91)
-                                    } else {
-                                        stringResource(R.string.loc_1af68597)
-                                    },
+                                    sparkPaymentDisplayTitle(
+                                        isReceive = isReceive,
+                                        isCenterSwap = isCenterSwap,
+                                    ),
                                     stringResource(sparkRailLabelRes(railBadge.rail)),
                                 ),
                             style = MaterialTheme.typography.titleSmall,
@@ -2038,6 +2047,7 @@ private fun SparkPaymentDetailDialog(
                                 copyLabel = bitcoinTxidCopyLabel,
                                 copied = showCopiedBitcoinTxid,
                                 accentColor = BitcoinOrange,
+                                showFullValue = true,
                                 onCopy = {
                                     SecureClipboard.copyAndScheduleClear(
                                         context,
@@ -2207,6 +2217,7 @@ private fun SparkCopyRow(
     onCopy: () -> Unit,
     amountText: String? = null,
     amountColor: Color = TextSecondary,
+    showFullValue: Boolean = false,
 ) {
     val rowAlignment = if (amountText == null) Alignment.CenterVertically else Alignment.Top
     Row(
@@ -2215,7 +2226,7 @@ private fun SparkCopyRow(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = sparkTruncateDetailValue(value),
+                text = if (showFullValue) value else sparkTruncateDetailValue(value),
                 style = MaterialTheme.typography.bodyMedium,
                 fontFamily = FontFamily.Monospace,
                 color = MaterialTheme.colorScheme.onBackground,
@@ -2472,6 +2483,33 @@ private fun sparkRailBadge(payment: SparkPayment): SparkRailBadge {
         else -> SparkRailBadge(SparkPurple, SparkRail.SPARK)
     }
 }
+
+/** True for center Swap control L1↔Spark pegs (not peer Bitcoin/LN/Spark sends). */
+private fun sparkPaymentIsCenterSwap(
+    payment: SparkPayment,
+    sparkTransactionSources: Map<String, String>,
+    layer1Transactions: List<TransactionDetails>,
+): Boolean {
+    val stored = sparkTransactionSources[payment.id]
+        ?: sparkTransactionSources.entries
+            .firstOrNull { it.key.equals(payment.id, ignoreCase = true) }
+            ?.value
+    if (BitcoinTxSource.isSwapHistory(stored)) return true
+    val linked = sparkResolveLayer1Transaction(payment, layer1Transactions)
+    return linked?.isSwapHistory == true
+}
+
+@Composable
+private fun sparkPaymentDisplayTitle(
+    isReceive: Boolean,
+    isCenterSwap: Boolean,
+): String =
+    // Center Swap control L1 pegs → Swap; peer pays → Received/Sent. LN never uses this path.
+    when {
+        isCenterSwap -> stringResource(R.string.loc_85a12a5f)
+        isReceive -> stringResource(R.string.loc_301a5b91)
+        else -> stringResource(R.string.loc_1af68597)
+    }
 
 private fun sparkRailLabelRes(rail: SparkRail): Int =
     when (rail) {
@@ -2735,75 +2773,17 @@ private fun SparkQuickReceiveDialog(
     onDismiss: () -> Unit,
 ) {
     val ready = receiveState as? SparkReceiveState.Ready
-    var qrBitmap by remember(ready?.paymentRequest, privacyMode) { mutableStateOf<Bitmap?>(null) }
-
-    LaunchedEffect(ready?.paymentRequest, privacyMode) {
-        qrBitmap =
-            ready?.paymentRequest
-                ?.takeUnless { privacyMode }
-                ?.let { content ->
-                    withContext(Dispatchers.Default) {
-                        generateQrBitmap(content)
-                    }
-                }
-    }
-
-    Dialog(onDismissRequest = onDismiss) {
-        ProvideLocalizedResources {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
-            ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                when (receiveState) {
-                    SparkReceiveState.Loading -> CircularProgressIndicator(color = SparkPurple)
-                    is SparkReceiveState.Error -> Text(receiveState.message, color = ErrorRed)
-                    is SparkReceiveState.Ready -> {
-                        qrBitmap?.let { bitmap ->
-                            Box(
-                                modifier = Modifier
-                                    .size(200.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White)
-                                    .padding(8.dp),
-                            ) {
-                                Image(
-                                    bitmap = bitmap.asImageBitmap(),
-                                    contentDescription = stringResource(R.string.loc_6e2afb3f),
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Fit,
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = if (privacyMode) SPARK_HIDDEN_AMOUNT else receiveState.paymentRequest,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    is SparkReceiveState.Paid ->
-                        Text(
-                            text = stringResource(R.string.loc_739b859d),
-                            color = SuccessGreen,
-                        )
-                    SparkReceiveState.Idle ->
-                        Text(
-                            text = stringResource(R.string.spark_preparing_address),
-                            color = TextSecondary,
-                        )
-                }
-            }
-            }
-        }
-    }
+    val paid = receiveState as? SparkReceiveState.Paid
+    val err = receiveState as? SparkReceiveState.Error
+    QuickReceiveDialog(
+        payload = ready?.paymentRequest ?: paid?.paymentRequest,
+        onDismiss = onDismiss,
+        accentColor = SparkPurple,
+        isLoading =
+            receiveState is SparkReceiveState.Loading ||
+                receiveState is SparkReceiveState.Idle,
+        errorMessage = err?.message,
+        hidePayload = privacyMode,
+        hiddenPlaceholder = SPARK_HIDDEN_AMOUNT,
+    )
 }

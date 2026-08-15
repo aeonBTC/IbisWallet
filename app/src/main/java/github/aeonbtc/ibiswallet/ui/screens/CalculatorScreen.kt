@@ -3,10 +3,24 @@ package github.aeonbtc.ibiswallet.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -15,7 +29,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.material3.Text
 
 // Calculator-themed colors (iOS-style dark calculator)
 private val CalcBackground = Color(0xFF000000)
@@ -33,10 +46,11 @@ private val CalcHighlightText = Color(0xFFFF9F0A)
  * Mutable state holder for the calculator. Kept as a stable class so that
  * Compose can correctly track reads/writes without stale-lambda issues.
  */
-private class CalcState(
-    val cloakCode: String,
-    val onUnlock: () -> Unit,
-) {
+private class CalcState {
+    var onUnlock: () -> Unit = {}
+    var onWipe: (() -> Unit)? = null
+    var wipeCodeMatches: ((String) -> Boolean)? = null
+    var cloakCodeMatches: ((String) -> Boolean)? = null
     var display by mutableStateOf("0")
     var rawInput by mutableStateOf("")
     var firstOperand by mutableStateOf<Double?>(null)
@@ -107,16 +121,6 @@ private class CalcState(
         }
     }
 
-    /** Constant-time comparison for the cloak code to avoid timing oracles. */
-    private fun constantTimeCodeEquals(
-        a: String,
-        b: String,
-    ): Boolean =
-        java.security.MessageDigest.isEqual(
-            a.toByteArray(Charsets.UTF_8),
-            b.toByteArray(Charsets.UTF_8),
-        )
-
     fun operator(op: String) {
         val cur = parseDisplay()
         if (firstOperand != null && pendingOperator != null && !resetOnNextDigit) {
@@ -134,7 +138,14 @@ private class CalcState(
     }
 
     fun equals() {
-        if (constantTimeCodeEquals(rawInput, cloakCode)) {
+        // Evaluate wipe first so a cultural dual code can never unlock after wipe
+        // is configured to match (setup rejects equal codes; still fail closed here).
+        val isWipe = wipeCodeMatches?.invoke(rawInput) == true
+        if (isWipe) {
+            onWipe?.invoke()
+            return
+        }
+        if (cloakCodeMatches?.invoke(rawInput) == true) {
             onUnlock()
             return
         }
@@ -189,10 +200,16 @@ private class CalcState(
  */
 @Composable
 fun CalculatorScreen(
-    cloakCode: String,
+    codeMatches: (String) -> Boolean,
     onUnlock: () -> Unit,
+    onWipe: (() -> Unit)? = null,
+    wipeCodeMatches: ((String) -> Boolean)? = null,
 ) {
-    val s = remember { CalcState(cloakCode, onUnlock) }
+    val s = remember { CalcState() }
+    s.onUnlock = onUnlock
+    s.onWipe = onWipe
+    s.wipeCodeMatches = wipeCodeMatches
+    s.cloakCodeMatches = codeMatches
 
     val fontSize =
         when {

@@ -2,7 +2,6 @@ package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
 import androidx.compose.foundation.Image
-import androidx.core.net.toUri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +29,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -51,6 +51,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
@@ -62,7 +63,6 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.viewmodel.AppUpdateStatus
-import androidx.compose.material3.Text
 import kotlinx.coroutines.delay
 
 const val DONATE_BITCOIN_ADDRESS = "bc1qk54j45l8s20z6glxnt5zuk7efq2qsjj9n44wc8"
@@ -416,19 +416,33 @@ private fun DonateDialog(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                Text(
-                    text = DONATE_BITCOIN_ADDRESS,
-                    style = MaterialTheme.typography.bodySmall,
+            Text(
+                text = formatChunkedAddress(DONATE_BITCOIN_ADDRESS),
+                style = MaterialTheme.typography.bodyMedium.copy(
                     fontFamily = FontFamily.Monospace,
-                    color = TextSecondary,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Spacer(modifier = Modifier.width(6.dp))
+                ),
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            SecureClipboard.copyAndScheduleClear(
+                                context,
+                                DONATE_BITCOIN_ADDRESS,
+                            )
+                            showCopied = true
+                        }
+                        .padding(horizontal = 8.dp),
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 Icon(
                     imageVector = Icons.Default.ContentCopy,
                     contentDescription = stringResource(R.string.loc_3c19e32e),

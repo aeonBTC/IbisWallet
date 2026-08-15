@@ -9,7 +9,23 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -21,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPasteOff
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -30,15 +47,41 @@ import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedIconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
@@ -46,6 +89,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
@@ -58,11 +102,25 @@ import github.aeonbtc.ibiswallet.ui.components.SensitiveSeedIme
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.components.sensitiveSeedKeyboardOptions
-import github.aeonbtc.ibiswallet.ui.theme.*
+import github.aeonbtc.ibiswallet.ui.localization.descriptionText
+import github.aeonbtc.ibiswallet.ui.localization.seedVariantLabel
+import github.aeonbtc.ibiswallet.ui.localization.titleText
+import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
+import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
+import github.aeonbtc.ibiswallet.ui.theme.BorderColor
+import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
+import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
+import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
+import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
+import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
 import github.aeonbtc.ibiswallet.util.QrFormatParser
 import github.aeonbtc.ibiswallet.util.SecureClipboard
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.bitcoindevkit.Descriptor
 import org.bitcoindevkit.DescriptorSecretKey
 import org.bitcoindevkit.KeychainKind
@@ -70,14 +128,6 @@ import org.bitcoindevkit.Mnemonic
 import org.bitcoindevkit.Network
 import org.bitcoindevkit.NetworkKind
 import org.bitcoindevkit.WordCount
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import androidx.compose.material3.Text
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
-import github.aeonbtc.ibiswallet.ui.localization.descriptionText
-import github.aeonbtc.ibiswallet.ui.localization.seedVariantLabel
-import github.aeonbtc.ibiswallet.ui.localization.titleText
 
 private const val MIN_PIN_LENGTH = 4
 private const val MAX_PIN_LENGTH = 12
@@ -107,24 +157,32 @@ fun SecurityScreen(
     currentLockTiming: SecureStorage.LockTiming = SecureStorage.LockTiming.WHEN_MINIMIZED,
     isBiometricAvailable: Boolean = false,
     screenshotsDisabled: Boolean = false,
+    clearClipboardMode: SecureStorage.ClearClipboardMode =
+        SecureStorage.ClearClipboardMode.DISABLED,
     randomizePinPad: Boolean = false,
+    isSpendPinEnabled: Boolean = false,
     isDuressEnabled: Boolean = false,
     isDuressMode: Boolean = false,
     hasWallet: Boolean = true,
     autoWipeThreshold: SecureStorage.AutoWipeThreshold = SecureStorage.AutoWipeThreshold.DISABLED,
+    isWipePinEnabled: Boolean = false,
     isCloakModeEnabled: Boolean = false,
     onSetPinCode: (String) -> Unit = {},
     onEnableBiometric: () -> Unit = {},
     onDisableSecurity: () -> Unit = {},
     onLockTimingChange: (SecureStorage.LockTiming) -> Unit = {},
     onScreenshotsDisabledChange: (Boolean) -> Unit = {},
+    onClearClipboardModeChange: (SecureStorage.ClearClipboardMode) -> Unit = {},
     onRandomizePinPadChange: (Boolean) -> Unit = {},
+    onSpendPinEnabledChange: (Boolean) -> Unit = {},
     onSetupDuress: (
         pin: String,
         config: WalletImportConfig,
     ) -> Unit = { _, _ -> },
     onDisableDuress: () -> Unit = {},
     onAutoWipeThresholdChange: (SecureStorage.AutoWipeThreshold) -> Unit = {},
+    onSetupWipePin: (String) -> Unit = {},
+    onDisableWipePin: () -> Unit = {},
     onEnableCloakMode: (code: String) -> Unit = {},
     onDisableCloakMode: () -> Unit = {},
     onRestartApp: () -> Unit = {},
@@ -133,16 +191,19 @@ fun SecurityScreen(
 ) {
     var showPinSetup by remember { mutableStateOf(false) }
     var showDuressSetup by remember { mutableStateOf(false) }
+    var showWipePinSetup by remember { mutableStateOf(false) }
     var showCloakSetup by remember { mutableStateOf(false) }
 
     // Notify parent when any PIN setup sub-screen is active
-    val isPinSetupActive = showPinSetup || showDuressSetup || showCloakSetup
+    val isPinSetupActive = showPinSetup || showDuressSetup || showWipePinSetup || showCloakSetup
     LaunchedEffect(isPinSetupActive) {
         onPinSetupActiveChange(isPinSetupActive)
     }
     var showDisableConfirmDialog by remember { mutableStateOf(false) }
     var showDisableDuressDialog by remember { mutableStateOf(false) }
     var showAutoWipeConfirmDialog by remember { mutableStateOf(false) }
+    var showWipePinConfirmDialog by remember { mutableStateOf(false) }
+    var showDisableWipePinDialog by remember { mutableStateOf(false) }
     var showDisableCloakDialog by remember { mutableStateOf(false) }
     var showCloakRestartDialog by remember { mutableStateOf(false) }
 
@@ -163,6 +224,15 @@ fun SecurityScreen(
                 showDuressSetup = false
             },
             onBack = { showDuressSetup = false },
+        )
+    } else if (showWipePinSetup) {
+        WipePinSetupScreen(
+            currentSecurityMethod = currentSecurityMethod,
+            onWipePinSet = { pin ->
+                onSetupWipePin(pin)
+                showWipePinSetup = false
+            },
+            onBack = { showWipePinSetup = false },
         )
     } else if (showPinSetup) {
         PinSetupScreen(
@@ -207,173 +277,263 @@ fun SecurityScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Security Options
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
-            ) {
-                Column(
+            val isBiometricEnabled = currentSecurityMethod == SecureStorage.SecurityMethod.BIOMETRIC
+            val isPinEnabled = currentSecurityMethod == SecureStorage.SecurityMethod.PIN
+            val isSecurityActive = currentSecurityMethod != SecureStorage.SecurityMethod.NONE
+            val canEnableDuress = isSecurityActive && hasWallet
+            val showDuressEnabled = isDuressEnabled && !isDuressMode
+            val isAutoWipeSecurityActive = isSecurityActive
+
+            // General privacy
+            SecuritySectionCard(title = stringResource(R.string.loc_01940fd6)) {
+                Row(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onScreenshotsDisabledChange(!screenshotsDisabled) },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = stringResource(R.string.loc_a06704d8),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = BitcoinOrange,
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Biometric Option
-                    val isBiometricEnabled = currentSecurityMethod == SecureStorage.SecurityMethod.BIOMETRIC
                     Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = null,
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        ToggleOptionText(
+                            title = stringResource(R.string.loc_714c3012),
+                            subtitle = stringResource(R.string.loc_0d6a729c),
+                        )
+                    }
+
+                    SquareToggle(
+                        checked = screenshotsDisabled,
+                        onCheckedChange = onScreenshotsDisabledChange,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                val clearClipboardEnabled =
+                    clearClipboardMode != SecureStorage.ClearClipboardMode.DISABLED
+                val clearClipboardSubtitle =
+                    if (clearClipboardEnabled) {
+                        clearClipboardModeLabel(clearClipboardMode)
+                    } else {
+                        stringResource(R.string.security_clear_clipboard_subtitle_off)
+                    }
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                onClearClipboardModeChange(
+                                    if (clearClipboardEnabled) {
+                                        SecureStorage.ClearClipboardMode.DISABLED
+                                    } else {
+                                        SecureStorage.ClearClipboardMode.ON_LOCK_AND_CLOSE
+                                    },
+                                )
+                            },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ContentPasteOff,
+                            contentDescription = null,
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        ToggleOptionText(
+                            title = stringResource(R.string.security_clear_clipboard_title),
+                            subtitle = clearClipboardSubtitle,
+                        )
+                    }
+
+                    SquareToggle(
+                        checked = clearClipboardEnabled,
+                        onCheckedChange = { enabled ->
+                            onClearClipboardModeChange(
+                                if (enabled) {
+                                    SecureStorage.ClearClipboardMode.ON_LOCK_AND_CLOSE
+                                } else {
+                                    SecureStorage.ClearClipboardMode.DISABLED
+                                },
+                            )
+                        },
+                    )
+                }
+
+                if (clearClipboardEnabled) {
+                    ClearClipboardModeDropdown(
+                        currentMode = clearClipboardMode,
+                        onModeSelected = onClearClipboardModeChange,
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = isBiometricAvailable) {
-                                    if (!isBiometricEnabled) {
-                                        onEnableBiometric()
-                                    } else {
-                                        showDisableConfirmDialog = true
-                                    }
-                                },
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Fingerprint,
-                                contentDescription = null,
-                                tint = if (isBiometricAvailable) BitcoinOrange else TextSecondary.copy(alpha = 0.5f),
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            ToggleOptionText(
-                                title = stringResource(R.string.loc_922337f3),
-                                subtitle =
-                                    if (isBiometricAvailable) {
-                                        stringResource(R.string.loc_b2481aa2)
-                                    } else {
-                                        stringResource(R.string.loc_3e2ca137)
-                                    },
-                                titleColor =
-                                    if (isBiometricAvailable) {
-                                        MaterialTheme.colorScheme.onBackground
-                                    } else {
-                                        TextSecondary.copy(alpha = 0.5f)
-                                    },
-                                subtitleColor =
-                                    if (isBiometricAvailable) {
-                                        TextSecondary
-                                    } else {
-                                        TextSecondary.copy(alpha = 0.5f)
-                                    },
-                            )
-                        }
+                                .padding(start = 36.dp, top = 12.dp),
+                    )
+                }
+            }
 
-                        SquareToggle(
-                            checked = isBiometricEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled) {
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // App lock
+            SecuritySectionCard(title = stringResource(R.string.loc_a06704d8)) {
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(enabled = isBiometricAvailable) {
+                                if (!isBiometricEnabled) {
                                     onEnableBiometric()
                                 } else {
                                     showDisableConfirmDialog = true
                                 }
                             },
-                            enabled = isBiometricAvailable,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Fingerprint,
+                            contentDescription = null,
+                            tint = if (isBiometricAvailable) BitcoinOrange else TextSecondary.copy(alpha = 0.5f),
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        ToggleOptionText(
+                            title = stringResource(R.string.loc_922337f3),
+                            subtitle =
+                                if (isBiometricAvailable) {
+                                    stringResource(R.string.loc_b2481aa2)
+                                } else {
+                                    stringResource(R.string.loc_3e2ca137)
+                                },
+                            titleColor =
+                                if (isBiometricAvailable) {
+                                    MaterialTheme.colorScheme.onBackground
+                                } else {
+                                    TextSecondary.copy(alpha = 0.5f)
+                                },
+                            subtitleColor =
+                                if (isBiometricAvailable) {
+                                    TextSecondary
+                                } else {
+                                    TextSecondary.copy(alpha = 0.5f)
+                                },
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    SquareToggle(
+                        checked = isBiometricEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                onEnableBiometric()
+                            } else {
+                                showDisableConfirmDialog = true
+                            }
+                        },
+                        enabled = isBiometricAvailable,
+                    )
+                }
 
-                    // PIN Code Option
-                    val isPinEnabled = currentSecurityMethod == SecureStorage.SecurityMethod.PIN
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (!isPinEnabled) {
-                                        showPinSetup = true
-                                    } else {
-                                        showDisableConfirmDialog = true
-                                    }
-                                },
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            ToggleOptionText(
-                                title = stringResource(R.string.loc_4355b799),
-                                subtitle =
-                                    stringResource(
-                                        R.string.security_pin_unlock_code_format,
-                                        MIN_PIN_LENGTH,
-                                        MAX_PIN_LENGTH,
-                                    ),
-                            )
-                        }
+                Spacer(modifier = Modifier.height(12.dp))
 
-                        SquareToggle(
-                            checked = isPinEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled) {
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (!isPinEnabled) {
                                     showPinSetup = true
                                 } else {
                                     showDisableConfirmDialog = true
                                 }
                             },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        ToggleOptionText(
+                            title = stringResource(R.string.loc_4355b799),
+                            subtitle =
+                                stringResource(
+                                    R.string.security_pin_unlock_code_format,
+                                    MIN_PIN_LENGTH,
+                                    MAX_PIN_LENGTH,
+                                ),
                         )
                     }
 
-                    if (currentSecurityMethod != SecureStorage.SecurityMethod.NONE) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 12.dp),
-                            color = BorderColor,
-                        )
+                    SquareToggle(
+                        checked = isPinEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showPinSetup = true
+                            } else {
+                                showDisableConfirmDialog = true
+                            }
+                        },
+                    )
+                }
 
+                // Nested under PIN so Lock Timer / pad options read as PIN settings
+                if (isPinEnabled) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 36.dp, top = 12.dp),
+                    ) {
                         Text(
                             text = stringResource(R.string.loc_599c7d5f),
-                            style = MaterialTheme.typography.labelLarge,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = TextSecondary,
                         )
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
                         LockTimingDropdown(
                             currentTiming = currentLockTiming,
                             onTimingSelected = onLockTimingChange,
                         )
 
-                        HorizontalDivider(
-                            modifier = Modifier.padding(vertical = 12.dp),
-                            color = BorderColor,
-                        )
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         Row(
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(8.dp))
-                                    .clickable(enabled = isPinEnabled) { onRandomizePinPadChange(!randomizePinPad) },
+                                    .clickable { onRandomizePinPadChange(!randomizePinPad) },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -384,138 +544,73 @@ fun SecurityScreen(
                                 Icon(
                                     imageVector = Icons.Default.Refresh,
                                     contentDescription = null,
-                                    tint = if (isPinEnabled) BitcoinOrange else TextSecondary.copy(alpha = 0.5f),
+                                    tint = BitcoinOrange,
                                     modifier = Modifier.size(24.dp),
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
                                 ToggleOptionText(
                                     title = stringResource(R.string.loc_6e64c96f),
-                                    subtitle =
-                                        if (isPinEnabled) {
-                                            stringResource(R.string.security_randomize_pin_subtitle)
-                                        } else {
-                                            stringResource(R.string.loc_a0a0bf84)
-                                        },
-                                    titleColor =
-                                        if (isPinEnabled) {
-                                            MaterialTheme.colorScheme.onBackground
-                                        } else {
-                                            TextSecondary.copy(alpha = 0.5f)
-                                        },
-                                    subtitleColor =
-                                        if (isPinEnabled) {
-                                            TextSecondary
-                                        } else {
-                                            TextSecondary.copy(alpha = 0.5f)
-                                        },
+                                    subtitle = stringResource(R.string.security_randomize_pin_subtitle),
                                 )
                             }
 
                             SquareToggle(
                                 checked = randomizePinPad,
                                 onCheckedChange = onRandomizePinPadChange,
-                                enabled = isPinEnabled,
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { onSpendPinEnabledChange(!isSpendPinEnabled) },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = BitcoinOrange,
+                                    modifier = Modifier.size(24.dp),
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                ToggleOptionText(
+                                    title = stringResource(R.string.security_spend_pin_title),
+                                    subtitle = stringResource(R.string.security_spend_pin_subtitle),
+                                )
+                            }
+
+                            SquareToggle(
+                                checked = isSpendPinEnabled,
+                                onCheckedChange = onSpendPinEnabledChange,
                             )
                         }
                     }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Duress PIN card
-            // - Faded out when no security is enabled (with hint to enable PIN or biometric)
-            // - Fully interactive when security is enabled
-            val isSecurityActive = currentSecurityMethod != SecureStorage.SecurityMethod.NONE
-            val canEnableDuress = isSecurityActive && hasWallet
-            val showDuressEnabled = isDuressEnabled && !isDuressMode
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
-            ) {
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.loc_b68140bc),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (canEnableDuress) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f),
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
+                } else if (isBiometricEnabled) {
+                    // Lock timer still applies for biometric-only lock
+                    Column(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .then(
-                                    if (canEnableDuress) {
-                                        Modifier.clickable {
-                                            if (!showDuressEnabled) {
-                                                showDuressSetup = true
-                                            } else {
-                                                showDisableDuressDialog = true
-                                            }
-                                        }
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
+                                .padding(top = 12.dp),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Shield,
-                                contentDescription = null,
-                                tint = if (canEnableDuress) BitcoinOrange else TextSecondary.copy(alpha = 0.4f),
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            ToggleOptionText(
-                                title = stringResource(R.string.loc_b68140bc),
-                                subtitle =
-                                    if (!isSecurityActive) {
-                                        stringResource(R.string.loc_a1d57483)
-                                    } else if (!hasWallet) {
-                                        stringResource(R.string.loc_96e7526f)
-                                    } else {
-                                        stringResource(R.string.loc_f6649c50)
-                                    },
-                                titleColor =
-                                    if (canEnableDuress) {
-                                        MaterialTheme.colorScheme.onBackground
-                                    } else {
-                                        TextSecondary.copy(alpha = 0.4f)
-                                    },
-                                subtitleColor =
-                                    if (canEnableDuress) {
-                                        TextSecondary
-                                    } else {
-                                        TextSecondary.copy(alpha = 0.4f)
-                                    },
-                            )
-                        }
-
-                        SquareToggle(
-                            checked = showDuressEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled) {
-                                    showDuressSetup = true
-                                } else {
-                                    showDisableDuressDialog = true
-                                }
-                            },
-                            enabled = canEnableDuress,
+                        Text(
+                            text = stringResource(R.string.loc_599c7d5f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        LockTimingDropdown(
+                            currentTiming = currentLockTiming,
+                            onTimingSelected = onLockTimingChange,
                         )
                     }
                 }
@@ -523,252 +618,328 @@ fun SecurityScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Auto-Wipe card
-            // - Faded when no security is enabled
-            val isAutoWipeSecurityActive = currentSecurityMethod != SecureStorage.SecurityMethod.NONE
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
+            // Auto-Wipe
+            SecuritySectionCard(
+                title = stringResource(R.string.loc_10bf1589),
+                titleColor = if (isAutoWipeSecurityActive) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f),
             ) {
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = stringResource(R.string.loc_10bf1589),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (isAutoWipeSecurityActive) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f),
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint =
+                                if (isAutoWipeSecurityActive && autoWipeThreshold != SecureStorage.AutoWipeThreshold.DISABLED) {
+                                    ErrorRed
+                                } else if (isAutoWipeSecurityActive) {
+                                    BitcoinOrange
+                                } else {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                },
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        ToggleOptionText(
+                            title = stringResource(R.string.loc_4e19a59a),
+                            subtitle =
+                                if (isAutoWipeSecurityActive) {
+                                    stringResource(R.string.loc_3bbee4d1)
+                                } else {
+                                    stringResource(R.string.loc_560ec39d)
+                                },
+                            titleColor =
+                                if (isAutoWipeSecurityActive) {
+                                    MaterialTheme.colorScheme.onBackground
+                                } else {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                },
+                            subtitleColor =
+                                if (isAutoWipeSecurityActive) {
+                                    TextSecondary
+                                } else {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                },
+                        )
+                    }
 
+                    SquareToggle(
+                        checked = autoWipeThreshold != SecureStorage.AutoWipeThreshold.DISABLED,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showAutoWipeConfirmDialog = true
+                            } else {
+                                onAutoWipeThresholdChange(SecureStorage.AutoWipeThreshold.DISABLED)
+                            }
+                        },
+                        enabled = isAutoWipeSecurityActive,
+                    )
+                }
+
+                if (autoWipeThreshold != SecureStorage.AutoWipeThreshold.DISABLED) {
                     Spacer(modifier = Modifier.height(12.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Warning,
-                                contentDescription = null,
-                                tint =
-                                    if (isAutoWipeSecurityActive && autoWipeThreshold != SecureStorage.AutoWipeThreshold.DISABLED) {
-                                        ErrorRed
-                                    } else if (isAutoWipeSecurityActive) {
-                                        BitcoinOrange
-                                    } else {
-                                        TextSecondary.copy(alpha = 0.4f)
-                                    },
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            ToggleOptionText(
-                                title = stringResource(R.string.loc_4e19a59a),
-                                subtitle =
-                                    if (isAutoWipeSecurityActive) {
-                                        stringResource(R.string.loc_3bbee4d1)
-                                    } else {
-                                        stringResource(R.string.loc_560ec39d)
-                                    },
-                                titleColor =
-                                    if (isAutoWipeSecurityActive) {
-                                        MaterialTheme.colorScheme.onBackground
-                                    } else {
-                                        TextSecondary.copy(alpha = 0.4f)
-                                    },
-                                subtitleColor =
-                                    if (isAutoWipeSecurityActive) {
-                                        TextSecondary
-                                    } else {
-                                        TextSecondary.copy(alpha = 0.4f)
-                                    },
-                            )
-                        }
-
-                        SquareToggle(
-                            checked = autoWipeThreshold != SecureStorage.AutoWipeThreshold.DISABLED,
-                            onCheckedChange = { enabled ->
-                                if (enabled) {
-                                    showAutoWipeConfirmDialog = true
-                                } else {
-                                    onAutoWipeThresholdChange(SecureStorage.AutoWipeThreshold.DISABLED)
+                        SecureStorage.AutoWipeThreshold.entries
+                            .filter { it != SecureStorage.AutoWipeThreshold.DISABLED }
+                            .forEach { threshold ->
+                                val isSelected = threshold == autoWipeThreshold
+                                Box(
+                                    contentAlignment = Alignment.Center,
+                                    modifier =
+                                        Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (isSelected) {
+                                                    ErrorRed.copy(alpha = 0.15f)
+                                                } else {
+                                                    Color.Transparent
+                                                },
+                                            )
+                                            .border(
+                                                width = 1.dp,
+                                                color = if (isSelected) ErrorRed else BorderColor,
+                                                shape = RoundedCornerShape(8.dp),
+                                            )
+                                            .clickable { onAutoWipeThresholdChange(threshold) }
+                                            .padding(vertical = 8.dp),
+                                ) {
+                                    Text(
+                                        text = "${threshold.attempts}",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = if (isSelected) ErrorRed else TextSecondary,
+                                    )
                                 }
-                            },
-                            enabled = isAutoWipeSecurityActive,
+                            }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .then(
+                                if (isAutoWipeSecurityActive) {
+                                    Modifier.clickable {
+                                        if (!isWipePinEnabled) {
+                                            showWipePinConfirmDialog = true
+                                        } else {
+                                            showDisableWipePinDialog = true
+                                        }
+                                    }
+                                } else {
+                                    Modifier
+                                },
+                            ),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint =
+                                if (isAutoWipeSecurityActive && isWipePinEnabled) {
+                                    ErrorRed
+                                } else if (isAutoWipeSecurityActive) {
+                                    BitcoinOrange
+                                } else {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                },
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        ToggleOptionText(
+                            title = stringResource(R.string.security_wipe_pin_title),
+                            subtitle =
+                                if (isAutoWipeSecurityActive) {
+                                    if (isCloakModeEnabled) {
+                                        stringResource(R.string.security_wipe_pin_subtitle_with_cloak)
+                                    } else {
+                                        stringResource(R.string.security_wipe_pin_subtitle)
+                                    }
+                                } else {
+                                    stringResource(R.string.loc_560ec39d)
+                                },
+                            titleColor =
+                                if (isAutoWipeSecurityActive) {
+                                    MaterialTheme.colorScheme.onBackground
+                                } else {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                },
+                            subtitleColor =
+                                if (isAutoWipeSecurityActive) {
+                                    TextSecondary
+                                } else {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                },
                         )
                     }
 
-                    // Show attempt count selector when auto-wipe is enabled
-                    if (autoWipeThreshold != SecureStorage.AutoWipeThreshold.DISABLED) {
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            SecureStorage.AutoWipeThreshold.entries
-                                .filter { it != SecureStorage.AutoWipeThreshold.DISABLED }
-                                .forEach { threshold ->
-                                    val isSelected = threshold == autoWipeThreshold
-                                    Box(
-                                        contentAlignment = Alignment.Center,
-                                        modifier =
-                                            Modifier
-                                                .weight(1f)
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(
-                                                    if (isSelected) {
-                                                        ErrorRed.copy(alpha = 0.15f)
-                                                    } else {
-                                                        Color.Transparent
-                                                    },
-                                                )
-                                                .border(
-                                                    width = 1.dp,
-                                                    color = if (isSelected) ErrorRed else BorderColor,
-                                                    shape = RoundedCornerShape(8.dp),
-                                                )
-                                                .clickable { onAutoWipeThresholdChange(threshold) }
-                                                .padding(vertical = 8.dp),
-                                    ) {
-                                        Text(
-                                            text = "${threshold.attempts}",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = if (isSelected) ErrorRed else TextSecondary,
-                                        )
-                                    }
-                                }
-                        }
-                    }
+                    SquareToggle(
+                        checked = isWipePinEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showWipePinConfirmDialog = true
+                            } else {
+                                showDisableWipePinDialog = true
+                            }
+                        },
+                        enabled = isAutoWipeSecurityActive,
+                    )
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Cloak Mode card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
+            // Duress Wallet — keep layout identical in duress so decoy mode is not telegraphed
+            SecuritySectionCard(
+                title = stringResource(R.string.security_duress_section_title),
+                titleColor = if (canEnableDuress) BitcoinOrange else BitcoinOrange.copy(alpha = 0.4f),
             ) {
-                Column(
+                Row(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
-                ) {
-                    Text(
-                        text = stringResource(R.string.loc_bd14b437),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = BitcoinOrange,
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    if (!isCloakModeEnabled) {
-                                        showCloakSetup = true
-                                    } else {
-                                        showDisableCloakDialog = true
+                            .clip(RoundedCornerShape(8.dp))
+                            .then(
+                                if (canEnableDuress) {
+                                    Modifier.clickable {
+                                        if (!showDuressEnabled) {
+                                            showDuressSetup = true
+                                        } else {
+                                            showDisableDuressDialog = true
+                                        }
                                     }
+                                } else {
+                                    Modifier
                                 },
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                            ),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
                         verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Visibility,
-                                contentDescription = null,
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            ToggleOptionText(
-                                title = stringResource(R.string.loc_127261f8),
-                                subtitle =
-                                    if (isCloakModeEnabled) {
-                                        stringResource(R.string.loc_72808e02)
-                                    } else {
-                                        stringResource(R.string.loc_5d688c9a)
-                                    },
-                            )
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Shield,
+                            contentDescription = null,
+                            tint = if (canEnableDuress) BitcoinOrange else TextSecondary.copy(alpha = 0.4f),
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        ToggleOptionText(
+                            title = stringResource(R.string.loc_b68140bc),
+                            subtitle =
+                                if (!isSecurityActive) {
+                                    stringResource(R.string.loc_a1d57483)
+                                } else if (!hasWallet) {
+                                    stringResource(R.string.loc_96e7526f)
+                                } else {
+                                    stringResource(R.string.loc_f6649c50)
+                                },
+                            titleColor =
+                                if (canEnableDuress) {
+                                    MaterialTheme.colorScheme.onBackground
+                                } else {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                },
+                            subtitleColor =
+                                if (canEnableDuress) {
+                                    TextSecondary
+                                } else {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                },
+                        )
+                    }
 
-                        SquareToggle(
-                            checked = isCloakModeEnabled,
-                            onCheckedChange = { enabled ->
-                                if (enabled) {
+                    SquareToggle(
+                        checked = showDuressEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showDuressSetup = true
+                            } else {
+                                showDisableDuressDialog = true
+                            }
+                        },
+                        enabled = canEnableDuress,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Cloak Mode
+            SecuritySectionCard(title = stringResource(R.string.loc_bd14b437)) {
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (!isCloakModeEnabled) {
                                     showCloakSetup = true
                                 } else {
                                     showDisableCloakDialog = true
                                 }
                             },
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Screenshot Prevention
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = DarkCard),
-            ) {
-                Column(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { onScreenshotsDisabledChange(!screenshotsDisabled) },
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f),
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.VisibilityOff,
-                                contentDescription = null,
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(24.dp),
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            ToggleOptionText(
-                                title = stringResource(R.string.loc_714c3012),
-                                subtitle = stringResource(R.string.loc_0d6a729c),
-                            )
-                        }
-
-                        SquareToggle(
-                            checked = screenshotsDisabled,
-                            onCheckedChange = onScreenshotsDisabledChange,
+                        Icon(
+                            imageVector = Icons.Default.Visibility,
+                            contentDescription = null,
+                            tint = BitcoinOrange,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        ToggleOptionText(
+                            title = stringResource(R.string.loc_127261f8),
+                            subtitle =
+                                if (isCloakModeEnabled) {
+                                    if (isWipePinEnabled) {
+                                        stringResource(R.string.security_cloak_enabled_with_wipe_subtitle)
+                                    } else {
+                                        stringResource(R.string.loc_72808e02)
+                                    }
+                                } else {
+                                    stringResource(R.string.loc_5d688c9a)
+                                },
                         )
                     }
+
+                    SquareToggle(
+                        checked = isCloakModeEnabled,
+                        onCheckedChange = { enabled ->
+                            if (enabled) {
+                                showCloakSetup = true
+                            } else {
+                                showDisableCloakDialog = true
+                            }
+                        },
+                    )
                 }
             }
 
@@ -845,6 +1016,49 @@ fun SecurityScreen(
                             color = ErrorRed,
                         )
                     }
+                },
+            )
+        }
+
+        // Enable Wipe PIN Confirmation Dialog
+        if (showWipePinConfirmDialog) {
+            IbisConfirmDialog(
+                onDismissRequest = { showWipePinConfirmDialog = false },
+                title = stringResource(R.string.security_wipe_pin_enable_title),
+                confirmText = stringResource(R.string.loc_f40ccd04),
+                confirmColor = ErrorRed,
+                onConfirm = {
+                    showWipePinConfirmDialog = false
+                    showWipePinSetup = true
+                },
+                body = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = stringResource(R.string.security_wipe_pin_enable_message),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextSecondary,
+                        )
+                        Text(
+                            text = stringResource(R.string.loc_5ed5bb5d),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = ErrorRed,
+                        )
+                    }
+                },
+            )
+        }
+
+        // Disable Wipe PIN Confirmation Dialog
+        if (showDisableWipePinDialog) {
+            IbisConfirmDialog(
+                onDismissRequest = { showDisableWipePinDialog = false },
+                title = stringResource(R.string.security_wipe_pin_disable_title),
+                message = stringResource(R.string.security_wipe_pin_disable_message),
+                confirmText = stringResource(R.string.loc_80f874cd),
+                confirmColor = ErrorRed,
+                onConfirm = {
+                    onDisableWipePin()
+                    showDisableWipePinDialog = false
                 },
             )
         }
@@ -1047,6 +1261,217 @@ private fun PinSetupScreen(
 }
 
 @Composable
+private fun WipePinSetupScreen(
+    currentSecurityMethod: SecureStorage.SecurityMethod,
+    onWipePinSet: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    val secureStorage = remember { SecureStorage.getInstance(context) }
+    var pin by remember { mutableStateOf("") }
+    var confirmPin by remember { mutableStateOf("") }
+    var step by remember { mutableIntStateOf(1) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val pinsDontMatch = stringResource(R.string.security_wipe_pin_mismatch)
+    val mustDifferUnlock = stringResource(R.string.security_wipe_pin_must_differ_unlock)
+    val mustDifferDuress = stringResource(R.string.security_wipe_pin_must_differ_duress)
+    val mustDifferCloak = stringResource(R.string.security_wipe_pin_must_differ_cloak)
+    val isCloakEnabled = secureStorage.isCloakModeEnabled()
+
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .background(DarkBackground),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .imePadding()
+                    .navigationBarsPadding()
+                    .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = {
+                    if (step == 2) {
+                        step = 1
+                        confirmPin = ""
+                        error = null
+                    } else {
+                        onBack()
+                    }
+                }) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.loc_cdfc6e09),
+                        tint = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text =
+                    if (step == 1) {
+                        stringResource(R.string.security_wipe_pin_create_title)
+                    } else {
+                        stringResource(R.string.security_wipe_pin_confirm_title)
+                    },
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text =
+                    when {
+                        step == 1 ->
+                            stringResource(
+                                R.string.security_enter_pin_range_format,
+                                MIN_PIN_LENGTH,
+                                MAX_PIN_LENGTH,
+                            )
+                        else -> stringResource(R.string.loc_c3c70203)
+                    },
+                style = MaterialTheme.typography.titleMedium,
+                color = TextSecondary,
+            )
+
+            if (isCloakEnabled) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = stringResource(R.string.security_wipe_pin_cloak_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = ErrorRed,
+                    textAlign = TextAlign.Center,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            val currentPin = if (step == 1) pin else confirmPin
+            if (currentPin.isNotEmpty()) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    repeat(currentPin.length) {
+                        Box(
+                            modifier =
+                                Modifier
+                                    .size(12.dp)
+                                    .clip(CircleShape)
+                                    .background(ErrorRed),
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+            } else {
+                Spacer(modifier = Modifier.height(28.dp))
+            }
+
+            Box(
+                modifier = Modifier.heightIn(min = 24.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (error != null) {
+                    Text(
+                        text = error!!,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ErrorRed,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            PinNumberPad(
+                onNumberClick = { number ->
+                    val maxLen = if (step == 2) pin.length else MAX_PIN_LENGTH
+                    val activePin = if (step == 1) pin else confirmPin
+                    if (activePin.length < maxLen) {
+                        if (step == 1) {
+                            pin += number
+                            error = null
+                        } else {
+                            confirmPin += number
+                            error = null
+                        }
+                    }
+                },
+                onBackspaceClick = {
+                    if (step == 1 && pin.isNotEmpty()) {
+                        pin = pin.dropLast(1)
+                        error = null
+                    } else if (step == 2 && confirmPin.isNotEmpty()) {
+                        confirmPin = confirmPin.dropLast(1)
+                        error = null
+                    }
+                },
+                onConfirmClick =
+                    when (step) {
+                        1 ->
+                            if (pin.length >= MIN_PIN_LENGTH) {
+                                {
+                                    when {
+                                        currentSecurityMethod == SecureStorage.SecurityMethod.PIN &&
+                                            secureStorage.pinMatchesCurrent(pin) -> {
+                                            error = mustDifferUnlock
+                                            pin = ""
+                                        }
+                                        secureStorage.isDuressEnabled() &&
+                                            secureStorage.pinMatchesDuress(pin) -> {
+                                            error = mustDifferDuress
+                                            pin = ""
+                                        }
+                                        secureStorage.codeMatchesCloak(pin) -> {
+                                            error = mustDifferCloak
+                                            pin = ""
+                                        }
+                                        else -> {
+                                            step = 2
+                                            error = null
+                                        }
+                                    }
+                                }
+                            } else {
+                                null
+                            }
+                        2 ->
+                            if (confirmPin.length == pin.length) {
+                                {
+                                    if (pin == confirmPin) {
+                                        onWipePinSet(pin)
+                                    } else {
+                                        error = pinsDontMatch
+                                        confirmPin = ""
+                                    }
+                                }
+                            } else {
+                                null
+                            }
+                        else -> null
+                    },
+                confirmLabel = if (step == 1) "Next" else "Confirm",
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
 private fun PinNumberPad(
     onNumberClick: (String) -> Unit,
     onBackspaceClick: () -> Unit,
@@ -1158,9 +1583,110 @@ private fun lockTimingLabel(timing: SecureStorage.LockTiming): String =
     when (timing) {
         SecureStorage.LockTiming.DISABLED -> stringResource(R.string.loc_7d880cb5)
         SecureStorage.LockTiming.WHEN_MINIMIZED -> stringResource(R.string.security_lock_timing_when_minimized)
+        SecureStorage.LockTiming.ON_SCREEN_OFF -> stringResource(R.string.security_lock_timing_on_screen_off)
         SecureStorage.LockTiming.AFTER_1_MIN -> stringResource(R.string.security_lock_timing_after_1_min)
         SecureStorage.LockTiming.AFTER_5_MIN -> stringResource(R.string.security_lock_timing_after_5_min)
     }
+
+@Composable
+private fun clearClipboardModeLabel(mode: SecureStorage.ClearClipboardMode): String =
+    when (mode) {
+        SecureStorage.ClearClipboardMode.DISABLED ->
+            stringResource(R.string.loc_7d880cb5)
+        SecureStorage.ClearClipboardMode.ON_LOCK ->
+            stringResource(R.string.security_clear_clipboard_when_on_lock)
+        SecureStorage.ClearClipboardMode.ON_APP_CLOSE ->
+            stringResource(R.string.security_clear_clipboard_when_on_app_close)
+        SecureStorage.ClearClipboardMode.ON_LOCK_AND_CLOSE ->
+            stringResource(R.string.security_clear_clipboard_when_on_lock_and_close)
+        SecureStorage.ClearClipboardMode.WHEN_MINIMIZED ->
+            stringResource(R.string.security_clear_clipboard_when_minimized)
+    }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ClearClipboardModeDropdown(
+    currentMode: SecureStorage.ClearClipboardMode,
+    onModeSelected: (SecureStorage.ClearClipboardMode) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val options =
+        listOf(
+            SecureStorage.ClearClipboardMode.ON_LOCK,
+            SecureStorage.ClearClipboardMode.ON_APP_CLOSE,
+            SecureStorage.ClearClipboardMode.ON_LOCK_AND_CLOSE,
+            SecureStorage.ClearClipboardMode.WHEN_MINIMIZED,
+        )
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = modifier,
+    ) {
+        OutlinedTextField(
+            value = clearClipboardModeLabel(currentMode),
+            onValueChange = {},
+            readOnly = true,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            trailingIcon = {
+                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
+            },
+            colors =
+                OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = BitcoinOrange,
+                    unfocusedBorderColor = BorderColor,
+                    focusedLabelColor = BitcoinOrange,
+                    unfocusedLabelColor = TextSecondary,
+                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                ),
+            shape = RoundedCornerShape(8.dp),
+        )
+
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier =
+                Modifier
+                    .exposedDropdownSize(true)
+                    .background(DarkSurface),
+        ) {
+            options.forEach { mode ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = clearClipboardModeLabel(mode),
+                            style = MaterialTheme.typography.titleMedium,
+                            color =
+                                if (mode == currentMode) {
+                                    BitcoinOrange
+                                } else {
+                                    MaterialTheme.colorScheme.onBackground
+                                },
+                        )
+                    },
+                    onClick = {
+                        onModeSelected(mode)
+                        expanded = false
+                    },
+                    leadingIcon = {
+                        if (mode == currentMode) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = stringResource(R.string.common_selected),
+                                tint = BitcoinOrange,
+                            )
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1239,6 +1765,36 @@ private fun LockTimingDropdown(
 }
 
 @Composable
+private fun SecuritySectionCard(
+    title: String? = null,
+    titleColor: Color = BitcoinOrange,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+        ) {
+            if (title != null) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = titleColor,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            content()
+        }
+    }
+}
+
+@Composable
 private fun ToggleOptionText(
     title: String,
     subtitle: String,
@@ -1288,6 +1844,7 @@ private fun DuressSetupScreen(
     var confirmPin by remember { mutableStateOf("") }
     var step by remember { mutableIntStateOf(1) } // 1 = enter PIN, 2 = confirm PIN, 3 = seed phrase
     var error by remember { mutableStateOf<String?>(null) }
+    val mustDifferWipe = stringResource(R.string.security_wipe_pin_must_differ_wipe)
     var walletName by remember { mutableStateOf("") }
     var seedSource by remember { mutableStateOf(DuressSeedSource.GENERATE) }
     var manualSeedPhraseField by remember { mutableStateOf(TextFieldValue("")) }
@@ -1727,16 +2284,22 @@ private fun DuressSetupScreen(
                             1 ->
                                 if (pin.length >= MIN_PIN_LENGTH) {
                                     {
-                                        // Validate duress PIN != real PIN (if PIN security mode)
-                                        // Use pinMatchesCurrent() to avoid incrementing the failed attempt counter
-                                        if (currentSecurityMethod == SecureStorage.SecurityMethod.PIN &&
-                                            secureStorage.pinMatchesCurrent(pin)
-                                        ) {
-                                            error = "Must differ from your unlock PIN"
-                                            pin = ""
-                                        } else {
-                                            step = 2
-                                            error = null
+                                        // Validate duress PIN != unlock / wipe PINs
+                                        // Use non-mutating match helpers to avoid lockout counters
+                                        when {
+                                            currentSecurityMethod == SecureStorage.SecurityMethod.PIN &&
+                                                secureStorage.pinMatchesCurrent(pin) -> {
+                                                error = "Must differ from your unlock PIN"
+                                                pin = ""
+                                            }
+                                            secureStorage.pinMatchesWipe(pin) -> {
+                                                error = mustDifferWipe
+                                                pin = ""
+                                            }
+                                            else -> {
+                                                step = 2
+                                                error = null
+                                            }
                                         }
                                     }
                                 } else {
@@ -2891,10 +3454,13 @@ private fun CloakCodeSetupScreen(
     onCodeSet: (String) -> Unit,
     onBack: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val secureStorage = remember { SecureStorage.getInstance(context) }
     var code by remember { mutableStateOf("") }
     var confirmCode by remember { mutableStateOf("") }
     var step by remember { mutableIntStateOf(1) } // 1 = enter code, 2 = confirm code
     var error by remember { mutableStateOf<String?>(null) }
+    val mustDifferWipe = stringResource(R.string.security_wipe_pin_must_differ_wipe)
 
     Box(
         modifier =
@@ -2937,30 +3503,46 @@ private fun CloakCodeSetupScreen(
             Text(
                 text =
                     if (step == 1) {
-                        stringResource(R.string.loc_bbc273c5)
+                        stringResource(R.string.security_cloak_setup_title)
                     } else {
-                        stringResource(R.string.loc_b02d0f6b)
+                        stringResource(R.string.security_cloak_confirm_title)
                     },
                 style = MaterialTheme.typography.headlineMedium,
                 color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center,
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = stringResource(R.string.loc_1d1e82ec),
+                text =
+                    stringResource(
+                        R.string.security_enter_pin_range_format,
+                        MIN_CLOAK_CODE_LENGTH,
+                        MAX_CLOAK_CODE_LENGTH,
+                    ),
                 style = MaterialTheme.typography.titleMedium,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,
             )
 
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = stringResource(R.string.loc_75f1a5fd),
+                text = stringResource(R.string.security_cloak_setup_unlock_hint),
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = stringResource(R.string.security_cloak_setup_wipe_hint),
                 style = MaterialTheme.typography.bodyMedium,
                 color = ErrorRed,
                 textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
             )
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -3009,8 +3591,8 @@ private fun CloakCodeSetupScreen(
             PinNumberPad(
                 onNumberClick = { number ->
                     val maxLen = if (step == 2) code.length else MAX_CLOAK_CODE_LENGTH
-                    val currentCode = if (step == 1) code else confirmCode
-                    if (currentCode.length < maxLen) {
+                    val activeCode = if (step == 1) code else confirmCode
+                    if (activeCode.length < maxLen) {
                         if (step == 1) {
                             code += number
                             error = null
@@ -3034,8 +3616,13 @@ private fun CloakCodeSetupScreen(
                         1 ->
                             if (code.length >= MIN_CLOAK_CODE_LENGTH) {
                                 {
-                                    step = 2
-                                    error = null
+                                    if (secureStorage.pinMatchesWipe(code)) {
+                                        error = mustDifferWipe
+                                        code = ""
+                                    } else {
+                                        step = 2
+                                        error = null
+                                    }
                                 }
                             } else {
                                 null

@@ -1,49 +1,17 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
-import kotlinx.coroutines.withTimeoutOrNull
-import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
-import github.aeonbtc.ibiswallet.ui.theme.AccentRed
-import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
-import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentStatus
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitEachGesture
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.Dispatchers
-import github.aeonbtc.ibiswallet.util.getNfcAvailability
-import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
-import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
-import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
-import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
-import github.aeonbtc.ibiswallet.ui.components.AmountLabel
-import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
-import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
-import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
-import github.aeonbtc.ibiswallet.MainActivity
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.layout
-import androidx.compose.ui.graphics.Color
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.material3.AlertDialog
-import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.animation.AnimatedVisibility
 import android.content.Intent
 import android.graphics.Bitmap
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,31 +26,39 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.CallMade
 import androidx.compose.material.icons.automirrored.filled.CallReceived
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -95,7 +71,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -104,7 +82,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -112,36 +95,50 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
-import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.lightning.LightningNodeConnectionUriParser
+import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.Layer2Provider
+import github.aeonbtc.ibiswallet.data.model.LightningNodeChannel
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionTestPhase
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionTestResult
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionType
-import github.aeonbtc.ibiswallet.data.model.LightningNodeChannel
 import github.aeonbtc.ibiswallet.data.model.LightningNodePayment
 import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentDirection
+import github.aeonbtc.ibiswallet.data.model.LightningNodePaymentStatus
 import github.aeonbtc.ibiswallet.data.model.LightningNodeReceiveState
 import github.aeonbtc.ibiswallet.data.model.LightningNodeSendState
 import github.aeonbtc.ibiswallet.data.model.LightningNodeWalletState
-import github.aeonbtc.ibiswallet.data.model.Layer2Provider
+import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
+import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
+import github.aeonbtc.ibiswallet.ui.components.BalanceAmountText
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
+import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.StatusBadge
+import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
+import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
+import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
+import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
@@ -154,18 +151,16 @@ import github.aeonbtc.ibiswallet.util.LightningKind
 import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
+import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.isLightningAddressPayment
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.lightningNodeRecipientPlaceholder
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
-import java.text.SimpleDateFormat
-import java.util.Date
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToLong
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.ui.window.DialogProperties
 
 private const val LN_HIDDEN = "****"
 
@@ -186,6 +181,7 @@ fun LightningNodeBalanceScreen(
     onToggleDenomination: () -> Unit,
     onOpenConnectionSettings: () -> Unit,
     onQuickReceive: () -> Unit = {},
+    quickReceiveState: LightningNodeReceiveState = LightningNodeReceiveState.Idle,
     onScanQrResult: (String) -> Unit = {},
 ) {
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
@@ -202,6 +198,7 @@ fun LightningNodeBalanceScreen(
     var searchQuery by remember { mutableStateOf("") }
     var displayLimit by remember { mutableIntStateOf(25) }
     var showQrScanner by remember { mutableStateOf(false) }
+    var showQuickReceive by remember { mutableStateOf(false) }
     var selectedPayment by remember { mutableStateOf<LightningNodePayment?>(null) }
 
     val filteredPayments =
@@ -240,6 +237,21 @@ fun LightningNodeBalanceScreen(
                 onScanQrResult(it)
             },
             onDismiss = { showQrScanner = false },
+        )
+    }
+
+    if (showQuickReceive) {
+        val ready = quickReceiveState as? LightningNodeReceiveState.Ready
+        val paid = quickReceiveState as? LightningNodeReceiveState.Paid
+        val err = quickReceiveState as? LightningNodeReceiveState.Error
+        QuickReceiveDialog(
+            payload = ready?.paymentRequest ?: paid?.paymentRequest,
+            onDismiss = { showQuickReceive = false },
+            accentColor = accent,
+            isLoading =
+                quickReceiveState is LightningNodeReceiveState.Generating ||
+                    quickReceiveState is LightningNodeReceiveState.Idle,
+            errorMessage = err?.message,
         )
     }
 
@@ -379,24 +391,18 @@ fun LightningNodeBalanceScreen(
                                     .align(Alignment.Center),
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
-                            Text(
-                                text =
+                            BalanceAmountText(
+                                amountText =
                                     if (privacyMode) {
                                         LN_HIDDEN
                                     } else if (useSats) {
-                                        "${formatAmount(state.balanceSats.toULong(), true)} sats"
+                                        formatAmount(state.balanceSats.toULong(), true)
                                     } else {
-                                        "\u20BF ${formatAmount(state.balanceSats.toULong(), false)}"
+                                        formatAmount(state.balanceSats.toULong(), false)
                                     },
-                                style = MaterialTheme.typography.displaySmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                modifier =
-                                    Modifier.clickable(
-                                        interactionSource = remember { MutableInteractionSource() },
-                                        indication = null,
-                                        onClick = onToggleDenomination,
-                                    ),
+                                showBtcSymbol = !privacyMode && !useSats,
+                                showSatsUnit = !privacyMode && useSats,
+                                onClick = onToggleDenomination,
                             )
                             if (btcPrice != null && btcPrice > 0) {
                                 val fiatValue = (state.balanceSats.toDouble() / 100_000_000.0) * btcPrice
@@ -407,7 +413,7 @@ fun LightningNodeBalanceScreen(
                                         } else {
                                             formatFiat(fiatValue, fiatCurrency)
                                         },
-                                    style = MaterialTheme.typography.titleMedium,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
                                     color = TextSecondary,
                                 )
                             }
@@ -421,7 +427,10 @@ fun LightningNodeBalanceScreen(
                                     .align(Alignment.BottomStart)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkSurfaceVariant)
-                                    .clickable(enabled = state.isConnected) { onQuickReceive() },
+                                    .clickable(enabled = state.isConnected) {
+                                        showQuickReceive = true
+                                        onQuickReceive()
+                                    },
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCode,
@@ -1300,14 +1309,13 @@ private fun LightningNodePaymentDetailDialog(
                                                         nodeLabel
                                                     },
                                                 style =
-                                                    MaterialTheme.typography.bodyMedium.copy(
-                                                        fontFamily =
-                                                            if (payment.destinationAlias.isNullOrBlank()) {
-                                                                FontFamily.Monospace
-                                                            } else {
-                                                                FontFamily.Default
-                                                            },
-                                                    ),
+                                                    if (payment.destinationAlias.isNullOrBlank()) {
+                                                        MaterialTheme.typography.bodyMedium.copy(
+                                                            fontFamily = FontFamily.Monospace,
+                                                        )
+                                                    } else {
+                                                        MaterialTheme.typography.bodyMedium
+                                                    },
                                                 color = MaterialTheme.colorScheme.onBackground,
                                             )
                                         }
@@ -2514,6 +2522,7 @@ fun LightningNodeSendScreen(
     onToggleDenomination: () -> Unit = {},
     onOpenConnectionSettings: () -> Unit,
 ) {
+    val context = LocalContext.current
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     var paymentRequest by remember { mutableStateOf(sendDraft.recipientAddress) }
     var amountInput by remember { mutableStateOf(sendDraft.amountInput) }
@@ -2525,6 +2534,7 @@ fun LightningNodeSendScreen(
     var prepareError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(sendDraft) {
+        if (showConfirmDialog) return@LaunchedEffect
         if (sendDraft.recipientAddress.isNotBlank()) paymentRequest = sendDraft.recipientAddress
         if (sendDraft.amountInput.isNotBlank()) amountInput = sendDraft.amountInput
         isMaxMode = sendDraft.isMaxSend
@@ -2545,9 +2555,9 @@ fun LightningNodeSendScreen(
             parseLnSendAmount(amountInput, useSats, isUsdMode, btcPrice)
         }
     val supportsRoutingFeeLimit = connectionType != LightningNodeConnectionType.NWC
-    val parsedRecipient = parseSendRecipient(paymentRequest.trim())
+    val parsedRecipient = parseSendRecipient(paymentRequest.trim(), context)
     val recipientValidationError =
-        remember(parsedRecipient, paymentRequest, connectionType) {
+        remember(parsedRecipient, paymentRequest, connectionType, context) {
             if (paymentRequest.isBlank()) {
                 null
             } else {
@@ -2555,6 +2565,7 @@ fun LightningNodeSendScreen(
                     parsedRecipient,
                     Layer2Provider.LIGHTNING,
                     connectionType,
+                    context,
                 )
             }
         }
@@ -2573,8 +2584,10 @@ fun LightningNodeSendScreen(
         when (sendState) {
             is LightningNodeSendState.Decoding -> prepareError = null
             is LightningNodeSendState.Error -> {
-                showConfirmDialog = false
-                prepareError = sendState.message
+                // Keep confirm dialog open so failure is visible.
+                if (!showConfirmDialog) {
+                    prepareError = sendState.message
+                }
             }
             is LightningNodeSendState.Preview -> prepareError = null
             else -> Unit
@@ -2654,13 +2667,16 @@ fun LightningNodeSendScreen(
             onMaxFeePercentChange = onUpdateMaxFeePercent,
             onDismiss = {
                 showConfirmDialog = false
-                if (sendState is LightningNodeSendState.Paid) {
-                    clearSuccessfulSendDraft()
-                } else if (
-                    sendState !is LightningNodeSendState.Paying &&
-                    sendState !is LightningNodeSendState.Decoding
-                ) {
-                    onResetSend()
+                when (sendState) {
+                    is LightningNodeSendState.Paid -> clearSuccessfulSendDraft()
+                    is LightningNodeSendState.Error -> {
+                        prepareError = sendState.message
+                        onResetSend()
+                    }
+                    is LightningNodeSendState.Paying,
+                    is LightningNodeSendState.Decoding,
+                    -> Unit
+                    else -> onResetSend()
                 }
             },
             onDone = {
@@ -2674,12 +2690,13 @@ fun LightningNodeSendScreen(
         QrScannerDialog(
             onCodeScanned = { code ->
                 showQrScanner = false
-                val parsed = parseSendRecipient(code.trim())
+                val parsed = parseSendRecipient(code.trim(), context)
                 val error =
                     layer2RecipientValidationError(
                         parsed,
                         Layer2Provider.LIGHTNING,
                         connectionType,
+                        context,
                     )
                 if (error != null) {
                     scanError = error
@@ -2749,7 +2766,7 @@ fun LightningNodeSendScreen(
                     value = paymentRequest,
                     onValueChange = { input ->
                         val normalized = input.trim()
-                        when (val parsed = parseSendRecipient(normalized)) {
+                        when (val parsed = parseSendRecipient(normalized, context)) {
                             is ParsedSendRecipient.Lightning -> applyParsedRecipient(parsed)
                             else -> {
                                 paymentRequest = normalized
@@ -3164,6 +3181,18 @@ private fun LnSendConfirmationDialog(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(stringResource(R.string.loc_57cf7ca4), style = MaterialTheme.typography.titleMedium)
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    HorizontalDivider(color = BorderColor)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    IbisButton(
+                        onClick = onDismiss,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(48.dp),
+                    ) {
+                        Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                     }
                 }
                 is LightningNodeSendState.Error,
@@ -3889,11 +3918,9 @@ fun LightningNodeConnectionScreen(
     var tlsCert by remember { mutableStateOf(initialConfig.tlsCertPem) }
     var nwcUri by remember { mutableStateOf(initialConfig.nwcUri) }
     var useTor by remember {
-        mutableStateOf(initialConfig.useTor || initialConfig.host.endsWith(".onion"))
+        mutableStateOf(initialConfig.withOnionOnlyTor().useTor)
     }
     var tlsEnabled by remember {
-        // Follow the saved preference only — a leftover cert must not force TLS on
-        // when the user explicitly chose plain HTTP.
         mutableStateOf(initialConfig.useTls)
     }
     var showQrScanner by remember { mutableStateOf(false) }
@@ -3938,10 +3965,7 @@ fun LightningNodeConnectionScreen(
         clnRune = imported.clnRune
         tlsCert = imported.tlsCertPem
         nwcUri = imported.nwcUri
-        useTor =
-            imported.useTor ||
-                imported.host.endsWith(".onion", ignoreCase = true) ||
-                imported.nwcUri.contains(".onion", ignoreCase = true)
+        useTor = imported.withOnionOnlyTor().useTor
         tlsEnabled = imported.useTls
         onClearTest()
     }
@@ -3954,24 +3978,34 @@ fun LightningNodeConnectionScreen(
                 .removePrefix("http://")
                 .substringBefore('/')
                 .substringBefore(':')
-        val onion =
-            cleanedHost.endsWith(".onion", ignoreCase = true) ||
-                nwcUri.contains(".onion", ignoreCase = true)
         return LightningNodeConfig(
             type = type,
             host = cleanedHost,
             port = port.toIntOrNull() ?: defaultPortForType(type),
-            useTor = useTor || onion,
+            useTor = useTor,
             macaroonHex = macaroon.trim(),
             tlsCertPem = if (tlsEnabled) tlsCert.trim() else "",
             useTls = tlsEnabled,
-            allowInsecureTls = !tlsEnabled,
+            allowInsecureTls = false,
             // Carry over after a successful test so LAN reconnects skip dead HTTP.
             preferSessionTls = successDialogPayload?.preferSessionTls == true ||
                 initialConfig.preferSessionTls,
             nwcUri = nwcUri.trim(),
             clnRune = clnRune.trim(),
-        )
+        ).withOnionOnlyTor()
+    }
+
+    fun canSubmitConfig(): Boolean {
+        val config = currentConfig()
+        if (!config.isConfigured) return false
+        val needsCert =
+            tlsEnabled &&
+                (
+                    type == LightningNodeConnectionType.LND_REST ||
+                        type == LightningNodeConnectionType.CLN_REST ||
+                        type == LightningNodeConnectionType.NONE
+                )
+        return !needsCert || tlsCert.trim().isNotBlank()
     }
 
     if (showQrScanner) {
@@ -4034,7 +4068,7 @@ fun LightningNodeConnectionScreen(
 
     if (showSuccessSaveDialog) {
         val success = successDialogPayload
-        val canSave = currentConfig().isConfigured
+        val canSave = canSubmitConfig()
         val previewName = resolvedWalletName()
         AlertDialog(
             onDismissRequest = {
@@ -4300,9 +4334,7 @@ fun LightningNodeConnectionScreen(
                             host,
                             {
                                 host = it
-                                if (it.contains(".onion", ignoreCase = true)) {
-                                    useTor = true
-                                }
+                                useTor = it.contains(".onion", ignoreCase = true)
                                 onClearTest()
                             },
                             stringResource(R.string.ln_node_host),
@@ -4375,9 +4407,7 @@ fun LightningNodeConnectionScreen(
                             host,
                             {
                                 host = it
-                                if (it.contains(".onion", ignoreCase = true)) {
-                                    useTor = true
-                                }
+                                useTor = it.contains(".onion", ignoreCase = true)
                                 onClearTest()
                             },
                             stringResource(R.string.ln_node_host),
@@ -4455,9 +4485,7 @@ fun LightningNodeConnectionScreen(
                             nwcUri,
                             {
                                 nwcUri = it
-                                if (it.contains(".onion", ignoreCase = true)) {
-                                    useTor = true
-                                }
+                                useTor = it.contains(".onion", ignoreCase = true)
                                 onClearTest()
                             },
                             stringResource(R.string.ln_node_nwc_uri),
@@ -4474,16 +4502,6 @@ fun LightningNodeConnectionScreen(
                             },
                         )
                     }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(stringResource(R.string.ln_node_use_tor), color = TextPrimary, modifier = Modifier.weight(1f))
-                    SquareToggle(checked = useTor, onCheckedChange = { useTor = it; onClearTest() })
                 }
             }
         }
@@ -4508,7 +4526,7 @@ fun LightningNodeConnectionScreen(
 
         Button(
             onClick = { onTest(currentConfig()) },
-            enabled = !isTesting && currentConfig().isConfigured,
+            enabled = !isTesting && canSubmitConfig(),
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -4543,7 +4561,7 @@ fun LightningNodeConnectionScreen(
 
         Button(
             onClick = { onSave(resolvedWalletName(), currentConfig()) },
-            enabled = currentConfig().isConfigured,
+            enabled = canSubmitConfig(),
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -4611,6 +4629,7 @@ private fun LnField(
     label: String,
     keyboardType: KeyboardType = KeyboardType.Text,
     minLines: Int = 1,
+    maxLines: Int = minLines,
     trailingIcon: (@Composable () -> Unit)? = null,
     bottomTrailingContent: (@Composable () -> Unit)? = null,
 ) {
@@ -4622,6 +4641,7 @@ private fun LnField(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(label) },
                 minLines = minLines,
+                maxLines = maxLines.coerceAtLeast(minLines),
                 singleLine = false,
                 keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
                 // Reserve room so typed text doesn’t run under the bottom-right control.
@@ -4650,6 +4670,7 @@ private fun LnField(
             modifier = Modifier.fillMaxWidth(),
             label = { Text(label) },
             minLines = minLines,
+            maxLines = if (minLines == 1) 1 else maxLines.coerceAtLeast(minLines),
             singleLine = minLines == 1,
             keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
             trailingIcon = trailingIcon,

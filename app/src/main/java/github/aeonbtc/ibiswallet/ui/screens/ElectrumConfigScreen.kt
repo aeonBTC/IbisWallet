@@ -12,11 +12,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,6 +50,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -66,19 +67,19 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
-import kotlin.math.roundToInt
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.ElectrumConfig
 import github.aeonbtc.ibiswallet.tor.TorState
-import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
-import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.tor.TorStatus
+import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -92,8 +93,7 @@ import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
 import github.aeonbtc.ibiswallet.util.ServerUrlValidator
-import androidx.compose.ui.res.stringResource
-import androidx.compose.material3.Text
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -566,12 +566,21 @@ fun ElectrumConfigScreen(
                 )
             }
 
-            // Bottom spacing for scroll area
-            Spacer(modifier = Modifier.height(16.dp))
+            // Clearance so the FAB never covers the last row (e.g. auto-switch)
+            Spacer(modifier = Modifier.height(88.dp))
         }
 
         FloatingActionButton(
-            onClick = { if (!showAddServerForm) showAddServerForm = true },
+            onClick = {
+                if (!showAddServerForm) {
+                    serverToEdit = null
+                    serverUrl = ""
+                    serverPort = "50001"
+                    serverName = ""
+                    useSsl = false
+                    showAddServerForm = true
+                }
+            },
             modifier =
                 Modifier
                     .align(Alignment.BottomEnd)
@@ -608,20 +617,26 @@ internal fun ProtocolBadge(useSsl: Boolean) {
 }
 
 /**
- * Tor badge
+ * Tor badge.
+ * @param connecting when true, use accent orange (bootstrapping); otherwise purple (ready).
  */
 @Composable
-internal fun TorBadge() {
-    val purple = androidx.compose.ui.graphics.Color(0xFF9B59B6)
+internal fun TorBadge(connecting: Boolean = false) {
+    val accent =
+        if (connecting) {
+            BitcoinOrange
+        } else {
+            TorPurple
+        }
     Surface(
         shape = RoundedCornerShape(4.dp),
-        color = purple.copy(alpha = 0.15f),
-        border = BorderStroke(1.dp, purple.copy(alpha = 0.4f)),
+        color = accent.copy(alpha = 0.15f),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.4f)),
     ) {
         Text(
             text = stringResource(R.string.loc_c89a3806),
             style = MaterialTheme.typography.labelSmall,
-            color = purple,
+            color = accent,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
@@ -635,10 +650,12 @@ internal fun ServerDetailRow(
     label: String,
     value: String,
     monospace: Boolean = false,
+    /** When true, show the full value with wrapping instead of a single ellipsized line. */
+    fullValue: Boolean = false,
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = if (fullValue) Alignment.Top else Alignment.CenterVertically,
     ) {
         Text(
             text = label,
@@ -651,8 +668,9 @@ internal fun ServerDetailRow(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onBackground,
             fontFamily = if (monospace) androidx.compose.ui.text.font.FontFamily.Monospace else null,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            maxLines = if (fullValue) Int.MAX_VALUE else 1,
+            overflow = if (fullValue) TextOverflow.Clip else TextOverflow.Ellipsis,
+            modifier = if (fullValue) Modifier.weight(1f) else Modifier,
         )
     }
 }

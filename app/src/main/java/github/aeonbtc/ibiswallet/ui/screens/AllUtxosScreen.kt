@@ -24,8 +24,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AcUnit
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -53,12 +54,14 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
@@ -67,8 +70,8 @@ import github.aeonbtc.ibiswallet.ui.theme.AccentBlue
 import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
-import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
+import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
@@ -77,9 +80,6 @@ import github.aeonbtc.ibiswallet.util.SecureClipboard
 import java.text.NumberFormat
 import java.util.Locale
 import kotlin.math.pow
-import androidx.compose.ui.res.stringResource
-import github.aeonbtc.ibiswallet.R
-import androidx.compose.material3.Text
 
 @Composable
 fun AllUtxosScreen(
@@ -89,6 +89,7 @@ fun AllUtxosScreen(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     spendUnconfirmed: Boolean = true,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     addressEdgeCharacters: Int? = null,
     onFreezeUtxo: (String, Boolean) -> Unit = { _, _ -> },
     onSendFromUtxo: (UtxoInfo) -> Unit = {},
@@ -296,6 +297,7 @@ fun AllUtxosScreen(
                         fiatCurrency = fiatCurrency,
                         privacyMode = privacyMode,
                         spendUnconfirmed = spendUnconfirmed,
+                        dateFormat = dateFormat,
                         addressEdgeCharacters = addressEdgeCharacters,
                         onSaveLabel = { label ->
                             onSaveLabel(utxo.address, label)
@@ -353,6 +355,7 @@ private fun UtxoCard(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     spendUnconfirmed: Boolean = true,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
     addressEdgeCharacters: Int? = null,
     onSaveLabel: (String) -> Unit = {},
     onDeleteLabel: () -> Unit = {},
@@ -366,6 +369,10 @@ private fun UtxoCard(
     var isEditingLabel by remember(utxo.address) { mutableStateOf(false) }
     var labelDraft by remember(utxo.address, utxo.label) { mutableStateOf(utxo.label ?: "") }
     val focusRequester = remember { FocusRequester() }
+    val formattedTimestamp =
+        remember(utxo.timestamp, dateFormat) {
+            utxo.timestamp?.let { formatBalanceTimestamp(it, dateFormat) }.orEmpty()
+        }
 
     LaunchedEffect(isEditingLabel) {
         if (isEditingLabel) {
@@ -477,25 +484,35 @@ private fun UtxoCard(
                         }
                     }
 
-                // Confirmation status
-                Box(
-                    modifier =
-                        Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(
-                                if (utxo.isConfirmed) {
-                                    AccentGreen.copy(alpha = 0.2f)
-                                } else {
-                                    BitcoinOrange.copy(alpha = 0.2f)
-                                },
-                            )
-                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                ) {
-                    Text(
-                        text = if (utxo.isConfirmed) stringResource(R.string.loc_4ab75d7f) else stringResource(R.string.loc_1b684325),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (utxo.isConfirmed) AccentGreen else BitcoinOrange,
-                    )
+                Column(horizontalAlignment = Alignment.End) {
+                    // Confirmation status
+                    Box(
+                        modifier =
+                            Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(
+                                    if (utxo.isConfirmed) {
+                                        AccentGreen.copy(alpha = 0.2f)
+                                    } else {
+                                        BitcoinOrange.copy(alpha = 0.2f)
+                                    },
+                                )
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = if (utxo.isConfirmed) stringResource(R.string.loc_4ab75d7f) else stringResource(R.string.loc_1b684325),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (utxo.isConfirmed) AccentGreen else BitcoinOrange,
+                        )
+                    }
+                    if (formattedTimestamp.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = formattedTimestamp,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = TextSecondary,
+                        )
+                    }
                 }
                 }
             }
