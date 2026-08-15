@@ -1183,6 +1183,37 @@ class BitcoinUtilsTest : FunSpec({
             result.isWatchOnly shouldBe false
         }
 
+        test("extended private key backup is spendable") {
+            val wallet = org.json.JSONObject().apply {
+                put("name", "XPRV Wallet")
+                put("addressType", "SEGWIT")
+            }
+            val keyMaterial = org.json.JSONObject().apply {
+                put("extendedPrivateKey", "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi")
+            }
+
+            val result = BitcoinUtils.parseBackupJson(wallet, keyMaterial)
+            result.keyMaterial shouldBe "xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi"
+            result.isWatchOnly shouldBe false
+        }
+
+        test("legacy xprv under extendedPublicKey is spendable not watch-only") {
+            val wallet = org.json.JSONObject().apply {
+                put("name", "Legacy XPRV")
+                put("addressType", "SEGWIT")
+            }
+            val keyMaterial = org.json.JSONObject().apply {
+                put(
+                    "extendedPublicKey",
+                    "[d34db33f/84'/0'/0']xprv9s21ZrQH143K3QTDL4LXw2F7HEK3wJUD2nW2nRk4stbPy6cq3jPPqjiChkVvvNKmPGJxWUtg6LnF5kejMRNNU3TGtRBeJgk33yuGBxrMPHi",
+                )
+            }
+
+            val result = BitcoinUtils.parseBackupJson(wallet, keyMaterial)
+            result.isWatchOnly shouldBe false
+            result.keyMaterial shouldStartWith "[d34db33f/84'/0'/0']xprv"
+        }
+
         test("single address backup restores watch address as watch-only wallet") {
             val wallet = org.json.JSONObject().apply {
                 put("name", "Watched Address")

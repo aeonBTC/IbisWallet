@@ -37,6 +37,7 @@ class BackupJsonAdaptersTest : FunSpec({
                 "liquidTorEnabled": true,
                 "liquidAutoSwitch": true,
                 "liquidServerSelectedByUser": true,
+                "electrumServerSelectedByUser": true,
                 "liquidExplorer": "LIQUID_EXPLORER_CUSTOM",
                 "liquidExplorerCustomUrl": "https://liquid.example.com/explorer",
                 "boltzApiSource": "BOLTZ_API_TOR",
@@ -57,6 +58,8 @@ class BackupJsonAdaptersTest : FunSpec({
         settings.getString("priceCurrency") shouldBe "EUR"
         settings.getBoolean("historicalTxFiatEnabled") shouldBe true
         settings.getBoolean("autoSwitchServer") shouldBe true
+        settings.getBoolean("electrumServerSelectedByUser") shouldBe true
+        settings.getBoolean("liquidServerSelectedByUser") shouldBe true
         settings.getString("liquidExplorerCustomUrl") shouldBe "https://liquid.example.com/explorer"
         settings.getString("boltzApiSource") shouldBe "BOLTZ_API_TOR"
         settings.getString("sideSwapApiSource") shouldBe "SIDESWAP_API_TOR"

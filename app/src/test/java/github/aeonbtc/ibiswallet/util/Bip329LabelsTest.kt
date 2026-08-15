@@ -96,6 +96,17 @@ class Bip329LabelsTest : FunSpec({
             org.json.JSONObject(lines[1]).getString("network") shouldBe "spark"
         }
 
+        test("includes ark network field when provided") {
+            val content = Bip329Labels.export(
+                addressLabels = mapOf("ark1qtestaddress" to "Ark receive"),
+                transactionLabels = mapOf("42" to "Ark payment"),
+                network = Bip329LabelNetwork.ARK,
+            )
+            val lines = content.lines()
+            org.json.JSONObject(lines[0]).getString("network") shouldBe "ark"
+            org.json.JSONObject(lines[1]).getString("network") shouldBe "ark"
+        }
+
         test("omits origin field when null") {
             val content = Bip329Labels.export(
                 addressLabels = emptyMap(),
@@ -207,6 +218,34 @@ class Bip329LabelsTest : FunSpec({
             val result = Bip329Labels.import(content, Bip329LabelScope.SPARK)
 
             result.sparkTransactionLabels shouldContainExactly mapOf("sparkpayment1" to "Spark send")
+            result.bitcoinTransactionLabels.size shouldBe 0
+        }
+
+        test("routes ark network labels to ark maps") {
+            val content = """
+                {"type":"tx","ref":"7","label":"Ark send","network":"ark"}
+                {"type":"addr","ref":"ark1qtestaddress","label":"Ark receive","network":"ark"}
+            """.trimIndent()
+            val result = Bip329Labels.import(content)
+
+            result.arkTransactionLabels shouldContainExactly mapOf("7" to "Ark send")
+            result.arkAddressLabels shouldContainExactly mapOf("ark1qtestaddress" to "Ark receive")
+            result.totalArkLabelsImported shouldBe 2
+        }
+
+        test("infers ark network from ark1 address without network field") {
+            val content = """{"type":"addr","ref":"ark1qtestaddress","label":"Ark receive"}"""
+            val result = Bip329Labels.import(content)
+
+            result.arkAddressLabels shouldContainExactly mapOf("ark1qtestaddress" to "Ark receive")
+            result.bitcoinAddressLabels.size shouldBe 0
+        }
+
+        test("default ark scope routes unlabeled tx refs to ark movement labels") {
+            val content = """{"type":"tx","ref":"12","label":"Ark movement"}"""
+            val result = Bip329Labels.import(content, Bip329LabelScope.ARK)
+
+            result.arkTransactionLabels shouldContainExactly mapOf("12" to "Ark movement")
             result.bitcoinTransactionLabels.size shouldBe 0
         }
     }

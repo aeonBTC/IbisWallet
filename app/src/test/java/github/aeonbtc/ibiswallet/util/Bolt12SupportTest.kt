@@ -1,8 +1,8 @@
 package github.aeonbtc.ibiswallet.util
 
 import io.kotest.core.spec.style.FunSpec
-import io.kotest.matchers.types.shouldBeInstanceOf
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 
 class Bolt12SupportTest : FunSpec({
 

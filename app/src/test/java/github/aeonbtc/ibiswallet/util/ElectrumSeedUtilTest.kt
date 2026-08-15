@@ -115,6 +115,18 @@ class ElectrumSeedUtilTest : FunSpec({
     }
 
     context("bip39MnemonicToSeed") {
+        test("internal whitespace matches the official BIP39 vector") {
+            val seed =
+                ElectrumSeedUtil.bip39MnemonicToSeed(
+                    mnemonic = "abandon\nabandon  abandon\tabandon abandon abandon abandon abandon abandon abandon abandon about",
+                    passphrase = "TREZOR",
+                )
+
+            seed.joinToString("") { "%02x".format(it) } shouldBe
+                "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e5349553" +
+                "1f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04"
+        }
+
         test("matches the official BIP39 vector") {
             val seed =
                 ElectrumSeedUtil.bip39MnemonicToSeed(

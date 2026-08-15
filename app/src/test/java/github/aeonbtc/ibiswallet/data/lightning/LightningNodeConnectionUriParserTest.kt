@@ -85,6 +85,24 @@ class LightningNodeConnectionUriParserTest :
                 result.config.macaroonHex shouldBe "010203"
             }
 
+            "lndconnect disabletls uses HTTP without insecure TLS" {
+                val uri =
+                    "lndconnect://lnd.example:8080?macaroon=AQID&disabletls=1"
+                val result = LightningNodeConnectionUriParser.parse(uri)
+                result.config.useTls shouldBe false
+                result.config.allowInsecureTls shouldBe false
+                result.config.tlsCertPem shouldBe ""
+            }
+
+            "clnrest http uses HTTP without insecure TLS" {
+                val uri =
+                    "clnrest+http://cln.example:3010?rune=abcdefg1234567890"
+                val result = LightningNodeConnectionUriParser.parse(uri)
+                result.type shouldBe LightningNodeConnectionType.CLN_REST
+                result.config.useTls shouldBe false
+                result.config.allowInsecureTls shouldBe false
+            }
+
             "parses hex macaroon param" {
                 val uri =
                     "lndconnect://hexhost:8080?macaroon=aabbccdd"

@@ -3,6 +3,7 @@ package github.aeonbtc.ibiswallet.ui.screens
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.shouldBe
 
 class CoinControlSelectionTest : FunSpec({
 
@@ -65,5 +66,14 @@ class CoinControlSelectionTest : FunSpec({
         )
 
         restoredSelection.shouldContainExactly(second, first)
+    }
+
+    test("format keeps short outpoints intact") {
+        formatCoinControlOutpoint(utxo(outpoint = "abcd1234:1")) shouldBe "abcd1234:1"
+    }
+
+    test("format abbreviates a full txid and keeps the vout") {
+        val txid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        formatCoinControlOutpoint(utxo(outpoint = "$txid:3")) shouldBe "0123456789abcdef...89abcdef:3"
     }
 })

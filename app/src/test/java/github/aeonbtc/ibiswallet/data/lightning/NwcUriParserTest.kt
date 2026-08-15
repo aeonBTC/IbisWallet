@@ -42,5 +42,13 @@ class NwcUriParserTest :
                 normalized shouldStartWith "nostr+walletconnect://400333c1"
                 normalized.contains("secret=") shouldBe true
             }
+
+            "rejects plaintext ws relays" {
+                val plaintext =
+                    "nostr+walletconnect://400333c1d30174646b1cd9182580710f2710752371132e6a54b3a37bd9200c95" +
+                        "?relay=ws://relay.example.com" +
+                        "&secret=27f2a634db766bc724b3f33c0466e799bd5ead3348cc60db40957efc37b3e104"
+                runCatching { NwcUriParser.parse(plaintext) }.isFailure shouldBe true
+            }
         },
     )

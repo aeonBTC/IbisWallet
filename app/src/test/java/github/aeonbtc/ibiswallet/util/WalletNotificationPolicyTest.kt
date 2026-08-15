@@ -1,8 +1,8 @@
 package github.aeonbtc.ibiswallet.util
 
 import io.kotest.core.spec.style.FunSpec
-import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.collections.shouldBeEmpty
+import io.kotest.matchers.collections.shouldContainExactlyInAnyOrder
 import io.kotest.matchers.shouldBe
 
 class WalletNotificationPolicyTest : FunSpec({

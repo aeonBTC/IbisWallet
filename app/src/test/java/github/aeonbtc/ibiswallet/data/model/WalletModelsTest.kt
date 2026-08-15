@@ -236,6 +236,44 @@ class WalletModelsTest : FunSpec({
         }
     }
 
+    context("StoredWallet.inputDerivationPath") {
+        test("BIP39 custom account uses stored path not account 0") {
+            val wallet =
+                StoredWallet(
+                    id = "w",
+                    name = "Custom",
+                    addressType = AddressType.SEGWIT,
+                    derivationPath = "m/84'/0'/1'",
+                )
+            wallet.inputDerivationPath(change = false, index = 7) shouldBe "m/84'/0'/1'/0/7"
+            wallet.inputDerivationPath(change = true, index = 3) shouldBe "m/84'/0'/1'/1/3"
+        }
+
+        test("BIP39 default path replaces trailing receive branch") {
+            val wallet =
+                StoredWallet(
+                    id = "w",
+                    name = "Default",
+                    addressType = AddressType.SEGWIT,
+                    derivationPath = AddressType.SEGWIT.defaultPath,
+                )
+            wallet.inputDerivationPath(change = false, index = 0) shouldBe "m/84'/0'/0'/0/0"
+            wallet.inputDerivationPath(change = true, index = 1) shouldBe "m/84'/0'/0'/1/1"
+        }
+
+        test("Electrum standard uses m/branch/index") {
+            val wallet =
+                StoredWallet(
+                    id = "w",
+                    name = "Electrum",
+                    addressType = AddressType.LEGACY,
+                    derivationPath = "m/",
+                    seedFormat = SeedFormat.ELECTRUM_STANDARD,
+                )
+            wallet.inputDerivationPath(change = false, index = 2) shouldBe "m/0/2"
+        }
+    }
+
     // ── ImportResult ──
 
     context("Bip329Labels.ImportResult") {

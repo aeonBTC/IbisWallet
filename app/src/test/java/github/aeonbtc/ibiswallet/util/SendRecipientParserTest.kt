@@ -201,7 +201,7 @@ class SendRecipientParserTest : FunSpec({
             val parsed = parseSendRecipient("spark1qqexamplepaymentrequest")
 
             layer2RecipientValidationError(parsed, Layer2Provider.LIQUID) shouldBe
-                "Spark requests are not supported on Liquid send"
+                "Spark requests are not supported here"
         }
 
         test("spark address is accepted for Spark send validation") {
@@ -217,7 +217,7 @@ class SendRecipientParserTest : FunSpec({
             )
 
             layer2RecipientValidationError(parsed, Layer2Provider.SPARK) shouldBe
-                "Liquid requests are not supported on Spark send"
+                "Liquid requests are not supported here"
         }
 
         test("Bitcoin address is accepted for Spark send validation") {
@@ -288,7 +288,7 @@ class SendRecipientParserTest : FunSpec({
             )
 
             val error = layer2RecipientValidationError(recipient)
-            error shouldBe "Enter a Liquid, Spark, BOLT 11/12, or LN Address"
+            error shouldBe "Enter a Liquid, Spark, Ark, BOLT 11/12, or LN Address"
         }
 
         test("Lightning Node LND/NWC accept LN Address and reject BOLT12 offers") {
