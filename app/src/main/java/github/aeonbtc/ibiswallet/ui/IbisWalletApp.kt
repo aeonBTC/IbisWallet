@@ -334,6 +334,8 @@ fun IbisWalletApp(
     val walletState by viewModel.walletState.collectAsStateWithLifecycle()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val serversState by viewModel.serversState.collectAsStateWithLifecycle()
+    val mempoolUrl by viewModel.mempoolUrlState.collectAsStateWithLifecycle()
+    val mempoolServer by viewModel.mempoolServerState.collectAsStateWithLifecycle()
     val torState by viewModel.torState.collectAsStateWithLifecycle()
     val layer1Denomination by viewModel.denominationState.collectAsStateWithLifecycle()
     val appLocale by viewModel.appLocale.collectAsStateWithLifecycle()
@@ -472,16 +474,12 @@ fun IbisWalletApp(
         arkEnabledWallets,
         lightningEnabledWallets,
         isActiveWalletLiquidWatchOnly,
-        isArkLayer2Enabled,
     ) {
         val walletId = activeWalletObj?.id
         when {
             walletId == null -> Layer2Provider.NONE
-            isArkLayer2Enabled &&
-                (
-                    arkEnabledWallets[walletId]
-                        ?: arkViewModel.isArkEnabledForWallet(walletId)
-                    ) -> Layer2Provider.ARK
+            arkEnabledWallets[walletId]
+                ?: arkViewModel.isArkEnabledForWallet(walletId) -> Layer2Provider.ARK
             lightningEnabledWallets[walletId]
                 ?: lightningNodeViewModel.isLightningNodeEnabledForWallet(walletId) -> Layer2Provider.LIGHTNING
             sparkEnabledWallets[walletId] ?: sparkViewModel.isSparkEnabledForWallet(walletId) -> Layer2Provider.SPARK
@@ -971,7 +969,7 @@ fun IbisWalletApp(
         }
     }
 
-    val electrumConfig = viewModel.getElectrumConfig()
+    val electrumConfig = serversState.servers.find { it.id == serversState.activeServerId }
     val liquidElectrumConfig = liquidServersState.servers.find {
         it.id == liquidServersState.activeServerId
     }
@@ -1732,6 +1730,13 @@ fun IbisWalletApp(
     val arkDbTransferFailedFormat = stringResource(R.string.ark_db_transfer_failed_format)
     val arkDbAutoBackupFailedFormat = stringResource(R.string.ark_db_auto_backup_failed_format)
     val arkEsploraFallbackFormat = stringResource(R.string.ark_esplora_fallback_format)
+    val arkBoardSuccessFormat = stringResource(R.string.ark_board_success_format)
+    val arkBoardFailedGenericMessage = stringResource(R.string.ark_board_failed_generic)
+    val arkRecoverOnchainNeedL1AddressMessage = stringResource(R.string.ark_recover_onchain_need_l1_address)
+    val arkRecoverOnchainClearedMessage = stringResource(R.string.ark_recover_onchain_cleared)
+    val arkRecoverOnchainSuccessFormat = stringResource(R.string.ark_recover_onchain_success_format)
+    val arkRecoverOnchainFailedFormat = stringResource(R.string.ark_recover_onchain_failed_format)
+    val arkErrorGenericMessage = stringResource(R.string.ark_error_generic)
     val suppressWalletServerSnackbar: (String) -> Boolean = { message ->
         message == "Failed to connect to server" ||
             message == "Not connected to Electrum server" ||
@@ -2009,7 +2014,7 @@ fun IbisWalletApp(
                             formatAmount(event.amountSats.toULong(), useSats = false, includeUnit = true)
                         }
                     snackbarHostState.showSnackbar(
-                        context.getString(R.string.ark_board_success_format, amountLabel),
+                        arkBoardSuccessFormat.format(amountLabel),
                     )
                 }
                 is ArkEvent.BoardFailed -> {
@@ -2275,7 +2280,7 @@ fun IbisWalletApp(
     fun resolveActiveLayer2ProviderNow(): Layer2Provider {
         val walletId = walletState.activeWallet?.id ?: return Layer2Provider.NONE
         return when {
-            isArkLayer2Enabled && arkViewModel.isArkEnabledForWallet(walletId) -> Layer2Provider.ARK
+            arkViewModel.isArkEnabledForWallet(walletId) -> Layer2Provider.ARK
             lightningNodeViewModel.isLightningNodeEnabledForWallet(walletId) -> Layer2Provider.LIGHTNING
             sparkViewModel.isSparkEnabledForWallet(walletId) -> Layer2Provider.SPARK
             liquidViewModel.isLiquidWatchOnly(walletId) ||
@@ -4349,8 +4354,8 @@ fun IbisWalletApp(
                                                 receiveState = sparkReceiveState,
                                                 layer1Transactions = walletState.transactions,
                                                 layer1BlockHeight = walletState.blockHeight,
-                                                mempoolUrl = viewModel.getMempoolUrl(),
-                                                mempoolServer = viewModel.getMempoolServer(),
+                                                mempoolUrl = mempoolUrl,
+                                                mempoolServer = mempoolServer,
                                                 denomination = layer2Denomination,
                                                 btcPrice = btcPrice,
                                                 fiatCurrency = priceCurrency,
@@ -4414,8 +4419,8 @@ fun IbisWalletApp(
                                                 dateFormat = balanceDateFormat,
                                                 layer1Transactions = walletState.transactions,
                                                 layer1BlockHeight = walletState.blockHeight,
-                                                mempoolUrl = viewModel.getMempoolUrl(),
-                                                mempoolServer = viewModel.getMempoolServer(),
+                                                mempoolUrl = mempoolUrl,
+                                                mempoolServer = mempoolServer,
                                                 movementLabels = arkMovementLabels,
                                                 onTogglePrivacy = { viewModel.togglePrivacyMode() },
                                                 onRefresh = { arkViewModel.refresh() },
@@ -4478,9 +4483,7 @@ fun IbisWalletApp(
                                                         viewModel.getNewAddress()
                                                         scope.launch {
                                                             snackbarHostState.showSnackbar(
-                                                                context.getString(
-                                                                    R.string.ark_recover_onchain_need_l1_address,
-                                                                ),
+                                                                arkRecoverOnchainNeedL1AddressMessage,
                                                             )
                                                         }
                                                         return@ArkBalanceScreen
@@ -4493,9 +4496,7 @@ fun IbisWalletApp(
                                                                 onSuccess = { txid ->
                                                                     if (txid.isBlank()) {
                                                                         snackbarHostState.showSnackbar(
-                                                                            context.getString(
-                                                                                R.string.ark_recover_onchain_cleared,
-                                                                            ),
+                                                                            arkRecoverOnchainClearedMessage,
                                                                         )
                                                                     } else {
                                                                         val short =
@@ -4505,10 +4506,7 @@ fun IbisWalletApp(
                                                                                 txid
                                                                             }
                                                                         snackbarHostState.showSnackbar(
-                                                                            context.getString(
-                                                                                R.string.ark_recover_onchain_success_format,
-                                                                                short,
-                                                                            ),
+                                                                            arkRecoverOnchainSuccessFormat.format(short),
                                                                         )
                                                                     }
                                                                     viewModel.sync()
@@ -4516,12 +4514,9 @@ fun IbisWalletApp(
                                                                 },
                                                                 onFailure = { err ->
                                                                     snackbarHostState.showSnackbar(
-                                                                        context.getString(
-                                                                            R.string.ark_recover_onchain_failed_format,
+                                                                        arkRecoverOnchainFailedFormat.format(
                                                                             err.message
-                                                                                ?: context.getString(
-                                                                                    R.string.ark_error_generic,
-                                                                                ),
+                                                                                ?: arkErrorGenericMessage,
                                                                         ),
                                                                     )
                                                                 },
@@ -4629,8 +4624,8 @@ fun IbisWalletApp(
                                                 showHistoricalTxPrices = it
                                             },
                                             dateFormat = balanceDateFormat,
-                                            mempoolUrl = viewModel.getMempoolUrl(),
-                                            mempoolServer = viewModel.getMempoolServer(),
+                                            mempoolUrl = mempoolUrl,
+                                            mempoolServer = mempoolServer,
                                             isNodeConnected = visibleLightningConnected,
                                             isNodeConnecting = visibleLightningConnecting,
                                             connectionTarget = visibleLightningState.displayTarget(),
@@ -4669,8 +4664,8 @@ fun IbisWalletApp(
                                         BalanceScreen(
                                             walletState = walletState,
                                             denomination = layer1Denomination,
-                                            mempoolUrl = viewModel.getMempoolUrl(),
-                                            mempoolServer = viewModel.getMempoolServer(),
+                                            mempoolUrl = mempoolUrl,
+                                            mempoolServer = mempoolServer,
                                             btcPrice = btcPrice,
                                             fiatCurrency = priceCurrency,
                                             historicalBtcPrices = historicalTxBtcPrices,
@@ -4753,8 +4748,8 @@ fun IbisWalletApp(
                                 BalanceScreen(
                                     walletState = walletState,
                                     denomination = layer1Denomination,
-                                    mempoolUrl = viewModel.getMempoolUrl(),
-                                    mempoolServer = viewModel.getMempoolServer(),
+                                    mempoolUrl = mempoolUrl,
+                                    mempoolServer = mempoolServer,
                                     btcPrice = btcPrice,
                                     fiatCurrency = priceCurrency,
                                     historicalBtcPrices = historicalTxBtcPrices,
@@ -7447,35 +7442,31 @@ fun IbisWalletApp(
                                          isBoardingArkOnchain = true
                                          arkViewModel.boardOnchainAll { result ->
                                              isBoardingArkOnchain = false
-                                             result.onFailure { err ->
-                                                 scope.launch {
-                                                     snackbarHostState.showSnackbar(
-                                                         err.message
-                                                             ?: context.getString(
-                                                                 R.string.ark_board_failed_generic,
-                                                             ),
-                                                     )
-                                                 }
-                                             }
-                                         }
-                                     }
-                                 },
-                                 onBoardAmount = { amountSats ->
-                                     if (isBoardingArkOnchain) return@ArkLifecycleScreen
-                                     requireSpendAuth {
-                                         isBoardingArkOnchain = true
-                                         arkViewModel.boardOnchainAmount(amountSats) { result ->
-                                             isBoardingArkOnchain = false
-                                             result.onFailure { err ->
-                                                 scope.launch {
-                                                     snackbarHostState.showSnackbar(
-                                                         err.message
-                                                             ?: context.getString(
-                                                                 R.string.ark_board_failed_generic,
-                                                             ),
-                                                     )
-                                                 }
-                                             }
+                                              result.onFailure { err ->
+                                                  scope.launch {
+                                                      snackbarHostState.showSnackbar(
+                                                          err.message
+                                                              ?: arkBoardFailedGenericMessage,
+                                                      )
+                                                  }
+                                              }
+                                          }
+                                      }
+                                  },
+                                  onBoardAmount = { amountSats ->
+                                      if (isBoardingArkOnchain) return@ArkLifecycleScreen
+                                      requireSpendAuth {
+                                          isBoardingArkOnchain = true
+                                          arkViewModel.boardOnchainAmount(amountSats) { result ->
+                                              isBoardingArkOnchain = false
+                                              result.onFailure { err ->
+                                                  scope.launch {
+                                                      snackbarHostState.showSnackbar(
+                                                          err.message
+                                                              ?: arkBoardFailedGenericMessage,
+                                                      )
+                                                  }
+                                              }
                                          }
                                      }
                                  },
@@ -7499,9 +7490,7 @@ fun IbisWalletApp(
                                           viewModel.getNewAddress()
                                           scope.launch {
                                               snackbarHostState.showSnackbar(
-                                                  context.getString(
-                                                      R.string.ark_recover_onchain_need_l1_address,
-                                                  ),
+                                                  arkRecoverOnchainNeedL1AddressMessage,
                                               )
                                           }
                                           return@ArkLifecycleScreen
@@ -7514,35 +7503,27 @@ fun IbisWalletApp(
                                               // Callback already on Main; always clear spinner.
                                               isRecoveringArkBelowMinBoard = false
                                               scope.launch {
-                                                  result.fold(
-                                                      onSuccess = { detail ->
-                                                          snackbarHostState.showSnackbar(
-                                                              if (detail.isBlank()) {
-                                                                  context.getString(
-                                                                      R.string.ark_recover_onchain_cleared,
-                                                                  )
-                                                              } else {
-                                                                  context.getString(
-                                                                      R.string.ark_recover_onchain_success_format,
-                                                                      detail,
-                                                                  )
-                                                              },
-                                                          )
-                                                          viewModel.sync()
-                                                          arkViewModel.refresh()
-                                                      },
-                                                      onFailure = { err ->
-                                                          snackbarHostState.showSnackbar(
-                                                              context.getString(
-                                                                  R.string.ark_recover_onchain_failed_format,
-                                                                  err.message
-                                                                      ?: context.getString(
-                                                                          R.string.ark_error_generic,
-                                                                      ),
-                                                              ),
-                                                          )
-                                                      },
-                                                  )
+                                                   result.fold(
+                                                       onSuccess = { detail ->
+                                                           snackbarHostState.showSnackbar(
+                                                               if (detail.isBlank()) {
+                                                                   arkRecoverOnchainClearedMessage
+                                                               } else {
+                                                                   arkRecoverOnchainSuccessFormat.format(detail)
+                                                               },
+                                                           )
+                                                           viewModel.sync()
+                                                           arkViewModel.refresh()
+                                                       },
+                                                       onFailure = { err ->
+                                                           snackbarHostState.showSnackbar(
+                                                               arkRecoverOnchainFailedFormat.format(
+                                                                   err.message
+                                                                       ?: arkErrorGenericMessage,
+                                                               ),
+                                                           )
+                                                       },
+                                                   )
                                               }
                                           }
                                       }

@@ -97,7 +97,6 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
 import github.aeonbtc.ibiswallet.util.ServerUrlValidator
 import github.aeonbtc.ibiswallet.util.WalletNotificationDeliveryState
-import github.aeonbtc.ibiswallet.viewmodel.ArkViewModel
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -918,8 +917,6 @@ fun Layer2OptionsScreen(
             onLiquidEnabledChange = onLiquidEnabledChange,
             sparkEnabled = sparkEnabled,
             onSparkEnabledChange = onSparkEnabledChange,
-            arkEnabled = arkEnabled,
-            onArkEnabledChange = onArkEnabledChange,
             lightningNodeEnabled = lightningNodeEnabled,
             onLightningNodeEnabledChange = onLightningNodeEnabledChange,
         )
@@ -989,8 +986,6 @@ private fun Layer2OptionsCard(
     onLiquidEnabledChange: (Boolean) -> Unit,
     sparkEnabled: Boolean,
     onSparkEnabledChange: (Boolean) -> Unit,
-    arkEnabled: Boolean,
-    onArkEnabledChange: (Boolean) -> Unit,
     lightningNodeEnabled: Boolean,
     onLightningNodeEnabledChange: (Boolean) -> Unit,
 ) {
@@ -1012,29 +1007,6 @@ private fun Layer2OptionsCard(
                 onCheckedChange = onLightningNodeEnabledChange,
                 checkedColor = LightningYellow,
             )
-        }
-
-        if (ArkViewModel.ARK_LAYER2_TOGGLE_ENABLED) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                ToggleOptionText(
-                    title = stringResource(R.string.ark_title),
-                    subtitle = stringResource(R.string.settings_ark_subtitle),
-                    titleColor = TextPrimary,
-                    subtitleColor = TextSecondary,
-                    modifier = Modifier.weight(1f),
-                )
-                SquareToggle(
-                    checked = arkEnabled,
-                    onCheckedChange = onArkEnabledChange,
-                    checkedColor = ArkRust,
-                )
-            }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
