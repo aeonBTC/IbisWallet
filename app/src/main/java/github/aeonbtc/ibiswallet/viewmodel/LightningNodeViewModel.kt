@@ -183,6 +183,7 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
         if (heartbeatJob?.isActive == true) return
         heartbeatJob?.cancel()
         var consecutiveFailures = 0
+        var consecutiveHeartbeats = 0
         heartbeatJob =
             viewModelScope.launch {
                 while (true) {
@@ -196,13 +197,22 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
                     if (!isConnected.value) break
                     if (isAppInBackground && !isBackgroundKeepAliveActive()) break
 
-                    // Full poll: balance + LN payments + L1 (when available). Remote
-                    // nodes have no Electrum-style push; this is how incoming txs land in UI.
+                    consecutiveHeartbeats++
+                    val shouldFullRefresh =
+                        consecutiveHeartbeats == 1 ||
+                            consecutiveHeartbeats % FULL_REFRESH_EVERY_HEARTBEATS == 0
                     val alive =
-                        withTimeoutOrNull(HEARTBEAT_REFRESH_TIMEOUT_MS) {
-                            runCatching { repository.refreshState() }.isSuccess &&
-                                isConnected.value
-                        } ?: runCatching { repository.pingConnection() }.getOrDefault(false)
+                        if (shouldFullRefresh) {
+                            withTimeoutOrNull(HEARTBEAT_REFRESH_TIMEOUT_MS) {
+                                runCatching { repository.refreshState() }.isSuccess &&
+                                    isConnected.value
+                            } ?: runCatching { repository.pingConnection() }.getOrDefault(false)
+                        } else {
+                            withTimeoutOrNull(HEARTBEAT_REFRESH_TIMEOUT_MS) {
+                                runCatching { repository.pingConnection() }.getOrDefault(false) &&
+                                    isConnected.value
+                            } ?: false
+                        }
 
                     if (alive) {
                         consecutiveFailures = 0
@@ -708,6 +718,7 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
         /** Full refresh includes balance + payments + on-chain lists (Tor nodes need headroom). */
         private const val HEARTBEAT_REFRESH_TIMEOUT_MS = 30_000L
         private const val HEARTBEAT_MAX_FAILURES = 3
+        private const val FULL_REFRESH_EVERY_HEARTBEATS = 6
         private const val WALLET_SWITCH_CANCEL_TIMEOUT_MS = 8_000L
         /** Faster listPayments poll while a receive invoice is open. */
         private const val OPEN_INVOICE_POLL_INTERVAL_MS = 3_000L

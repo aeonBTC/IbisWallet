@@ -160,7 +160,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
 
                     val alive =
                         withTimeoutOrNull(HEARTBEAT_PING_TIMEOUT_MS) {
-                            runCatching { repository.refreshState() }.isSuccess &&
+                            runCatching { repository.refreshStateForHeartbeat() }.isSuccess &&
                                 isSparkConnected.value
                         } ?: false
 

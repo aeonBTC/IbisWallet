@@ -170,6 +170,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private var addressRefreshJob: Job? = null
     private var labelRefreshJob: Job? = null
     private var syncTimesRefreshJob: Job? = null
+    private val derivedSnapshotConsumers = java.util.concurrent.atomic.AtomicInteger(0)
 
     // Server state for reactive UI updates
     private val _serversState = MutableStateFlow(ServersState())
@@ -558,8 +559,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         return@collectLatest
                     }
 
-                    _allUtxos.value = repository.getAllUtxos()
-                    refreshAddressBook()
+                    refreshDerivedSnapshotsIfObserved()
                 }
         }
 
@@ -700,6 +700,25 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         _allAddresses.value = Triple(emptyList(), emptyList(), emptyList())
     }
 
+    fun acquireDerivedSnapshots() {
+        derivedSnapshotConsumers.incrementAndGet()
+        refreshDerivedSnapshotsIfObserved(force = true)
+    }
+
+    fun releaseDerivedSnapshots() {
+        derivedSnapshotConsumers.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+    }
+
+    private fun refreshDerivedSnapshotsIfObserved(force: Boolean = false) {
+        if (!force && derivedSnapshotConsumers.get() <= 0) {
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            _allUtxos.value = repository.getAllUtxos()
+        }
+        refreshAddressBook()
+    }
+
     private fun refreshAddressBook() {
         addressRefreshJob?.cancel()
         addressRefreshJob =
@@ -746,9 +765,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun refreshCurrentWalletSnapshots() {
-        refreshAddressBook()
         refreshLabelSnapshots()
-        refreshUtxos()
+        refreshDerivedSnapshotsIfObserved()
     }
 
     private fun refreshActiveWalletSnapshotsIfNeeded(walletId: String) {
@@ -1592,7 +1610,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             when (val result = repository.getNewAddress()) {
                 is WalletResult.Success -> {
-                    refreshAddressBook()
+                    refreshDerivedSnapshotsIfObserved()
                     _events.emit(WalletEvent.AddressGenerated(result.data))
                 }
                 is WalletResult.Error -> {

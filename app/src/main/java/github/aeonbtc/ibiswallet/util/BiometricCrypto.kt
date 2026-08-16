@@ -22,7 +22,16 @@ object BiometricCrypto {
      * Get or create a KeyStore-backed AES key that requires biometric auth,
      * and return an initialized Cipher for CryptoObject binding.
      *
-     * Invalidated on biometric enrollment change. PIN wrap remains the recovery path.
+     * The key is deliberately created with setInvalidatedByBiometricEnrollment(false):
+     * with `true`, adding or removing a fingerprint in system settings permanently
+     * destroys the key — and since the spend-secret master key is wrapped only under
+     * this key in biometric mode, that silently makes every wallet secret
+     * (mnemonics, keys, LN credentials) unrecoverable. Per-use biometric auth is
+     * still enforced via setUserAuthenticationRequired(true) with no validity window.
+     *
+     * The key must NEVER be deleted or recreated outside the confirmed
+     * KeyPermanentlyInvalidatedException recovery below — any existing biometric
+     * wrap becomes permanently undecryptable the moment the key is replaced.
      */
     fun getBiometricCipher(
         mode: Int = Cipher.ENCRYPT_MODE,
@@ -32,10 +41,6 @@ object BiometricCrypto {
         val keyAlias = SecureStorage.BIOMETRIC_KEY_ALIAS
 
         if (!keyStore.containsAlias(keyAlias)) {
-            createBiometricKey(keyAlias)
-        } else if (mode == Cipher.ENCRYPT_MODE) {
-            // Recreate so setInvalidatedByBiometricEnrollment(true) applies on re-enroll.
-            runCatching { keyStore.deleteEntry(keyAlias) }
             createBiometricKey(keyAlias)
         }
 
@@ -72,7 +77,7 @@ object BiometricCrypto {
                 .setBlockModes(KeyProperties.BLOCK_MODE_CBC)
                 .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_PKCS7)
                 .setUserAuthenticationRequired(true)
-                .setInvalidatedByBiometricEnrollment(true)
+                .setInvalidatedByBiometricEnrollment(false)
                 .build(),
         )
         keyGen.generateKey()

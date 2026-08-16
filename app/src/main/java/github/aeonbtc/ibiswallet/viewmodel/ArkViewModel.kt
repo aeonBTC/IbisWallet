@@ -94,6 +94,9 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     private val _arkEsploraAddress = MutableStateFlow(secureStorage.getArkEsploraAddress())
     val arkEsploraAddress: StateFlow<String> = _arkEsploraAddress.asStateFlow()
 
+    private val _isRecoveringOnchain = MutableStateFlow(false)
+    val isRecoveringOnchain: StateFlow<Boolean> = _isRecoveringOnchain.asStateFlow()
+
     /** Manual export / import / auto-backup restore in flight (UI busy indicator). */
     private val _dbTransferInProgress = MutableStateFlow<ArkDbTransferProgress?>(null)
     val dbTransferInProgress: StateFlow<ArkDbTransferProgress?> = _dbTransferInProgress.asStateFlow()
@@ -232,21 +235,7 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startHeartbeat() {
-        if (isAppInBackground && !isBackgroundKeepAliveActive()) return
-        if (heartbeatJob?.isActive == true) return
-        heartbeatJob?.cancel()
-        heartbeatJob =
-            viewModelScope.launch {
-                while (true) {
-                    delay(HEARTBEAT_INTERVAL_MS)
-                    if (!isArkConnected.value) break
-                    if (isAppInBackground && !isBackgroundKeepAliveActive()) break
-                    runCatching { repository.refreshState() }
-                        .onFailure { error ->
-                            if (error is CancellationException) throw error
-                        }
-                }
-            }
+        // Full ASP hydrate is pull-to-refresh / maintenance only.
     }
 
     private fun stopHeartbeat() {
@@ -557,20 +546,31 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         feeRateSatPerVb: Long = 2L,
         onResult: (Result<String>) -> Unit = {},
     ) {
+        if (_isRecoveringOnchain.value) return
+        _isRecoveringOnchain.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            val result =
-                runCatching {
-                    repository.recoverOnchainDepositToLayer1(
-                        destinationAddress = destinationAddress,
-                        feeRateSatPerVb = feeRateSatPerVb,
-                    )
-                }.fold(
-                    onSuccess = { it },
-                    onFailure = { Result.failure(it) },
-                )
-            // Always deliver on Main so UI busy flags clear even if recover threw.
-            withContext(Dispatchers.Main) {
-                onResult(result)
+            try {
+                val result =
+                    try {
+                        repository.recoverOnchainDepositToLayer1(
+                            destinationAddress = destinationAddress,
+                            feeRateSatPerVb = feeRateSatPerVb,
+                        )
+                    } catch (err: CancellationException) {
+                        throw err
+                    } catch (err: Exception) {
+                        repository.emitArkEvent(
+                            ArkEvent.RecoverFailed(
+                                err.message ?: appContext.getString(R.string.ark_error_generic),
+                            ),
+                        )
+                        Result.failure(err)
+                    }
+                withContext(Dispatchers.Main) {
+                    onResult(result)
+                }
+            } finally {
+                _isRecoveringOnchain.value = false
             }
         }
     }
@@ -1082,7 +1082,6 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "ArkViewModel"
-        private const val HEARTBEAT_INTERVAL_MS = 60_000L
         private const val MAINTENANCE_INTERVAL_MS = 5 * 60_000L
         private const val ARK_WALLET_SWITCH_CANCEL_TIMEOUT_MS = 2_000L
     }

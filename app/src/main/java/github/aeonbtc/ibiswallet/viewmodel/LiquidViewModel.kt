@@ -299,6 +299,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     private var liquidAddressRefreshJob: Job? = null
     private var liquidUtxoRefreshJob: Job? = null
     private var liquidLabelRefreshJob: Job? = null
+    private val derivedSnapshotConsumers = java.util.concurrent.atomic.AtomicInteger(0)
     private var sendPreviewJob: Job? = null
     private var sendPreviewRequestId = 0L
     private val reviewPreparationMutex = Mutex()
@@ -359,9 +360,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         clearDerivedLiquidSnapshots()
                     } else {
                         refreshBoltzRescueMnemonic()
-                        refreshLiquidAddressBook()
-                        refreshLiquidUtxos()
                         refreshLiquidTransactionLabelSnapshots(walletId)
+                        refreshDerivedSnapshotsIfObserved()
                     }
                 }
         }
@@ -401,9 +401,8 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 .distinctUntilChanged()
                 .collect {
                     if (loadedWalletId.value != null) {
-                        refreshLiquidAddressBook()
-                        refreshLiquidUtxos()
                         refreshLiquidTransactionLabelSnapshots()
+                        refreshDerivedSnapshotsIfObserved()
                         clearSettledLightningInvoiceUiIfNeeded()
                     }
                 }
@@ -504,10 +503,26 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             }
     }
 
-    private fun refreshCurrentLiquidSnapshots() {
+    fun acquireDerivedSnapshots() {
+        derivedSnapshotConsumers.incrementAndGet()
+        refreshDerivedSnapshotsIfObserved(force = true)
+    }
+
+    fun releaseDerivedSnapshots() {
+        derivedSnapshotConsumers.updateAndGet { current -> (current - 1).coerceAtLeast(0) }
+    }
+
+    private fun refreshDerivedSnapshotsIfObserved(force: Boolean = false) {
+        if (!force && derivedSnapshotConsumers.get() <= 0) {
+            return
+        }
         refreshLiquidAddressBook()
         refreshLiquidUtxos()
+    }
+
+    private fun refreshCurrentLiquidSnapshots() {
         refreshLiquidTransactionLabelSnapshots()
+        refreshDerivedSnapshotsIfObserved()
     }
 
     private fun refreshPendingLightningInvoices() {

@@ -35,6 +35,14 @@ object WalletNotificationPolicy {
         )
     }
 
+    fun shouldPersistTracking(
+        previousTrackedTxids: Set<String>,
+        previousBaselineEstablished: Boolean,
+        update: WalletNotificationTrackingUpdate,
+    ): Boolean =
+        update.trackedTxids != previousTrackedTxids ||
+            update.baselineEstablished != previousBaselineEstablished
+
     fun resolveDeliveryState(
         appEnabled: Boolean,
         permissionGranted: Boolean,
