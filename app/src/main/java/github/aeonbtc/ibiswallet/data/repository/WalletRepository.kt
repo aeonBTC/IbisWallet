@@ -491,6 +491,8 @@ class WalletRepository(context: Context) {
         walletIsSingleKey = false
         walletTransactionCache.clear()
         peekAddressStringCache.clear()
+        scriptHashByKeychainIndex.clear()
+        lastSubscribedScriptHashFingerprint = null
         incrementalReconcileCounter = 0
         lastIncrementalReconcileAtMs = 0L
     }
@@ -545,6 +547,8 @@ class WalletRepository(context: Context) {
         walletIsSingleKey = isSingleKey
         walletTransactionCache.clear()
         peekAddressStringCache.clear()
+        scriptHashByKeychainIndex.clear()
+        lastSubscribedScriptHashFingerprint = null
         incrementalReconcileCounter = 0
         lastIncrementalReconcileAtMs = 0L
     }
@@ -695,6 +699,8 @@ class WalletRepository(context: Context) {
     // is deterministic but each call crosses a JNI boundary and is expensive on large wallets
     // (thousands of revealed addresses). Cleared on wallet unload/replace.
     private val peekAddressStringCache = java.util.concurrent.ConcurrentHashMap<Pair<KeychainKind, UInt>, String>()
+    private val scriptHashByKeychainIndex = java.util.concurrent.ConcurrentHashMap<Pair<KeychainKind, UInt>, String>()
+    private var lastSubscribedScriptHashFingerprint: String? = null
     private var incrementalReconcileCounter = 0
     private var lastIncrementalReconcileAtMs = 0L
 
@@ -4113,8 +4119,7 @@ class WalletRepository(context: Context) {
                         0u
                     }
                 for (i in start..lastExternal) {
-                    val addr = currentWallet.peekAddress(KeychainKind.EXTERNAL, i)
-                    hashSet.add(computeScriptHash(addr.address.scriptPubkey()))
+                    hashSet.add(scriptHashForRevealedAddress(currentWallet, KeychainKind.EXTERNAL, i))
                 }
             }
             // Sample from internal (change) keychain
@@ -4127,8 +4132,7 @@ class WalletRepository(context: Context) {
                         0u
                     }
                 for (i in start..lastInternal) {
-                    val addr = currentWallet.peekAddress(KeychainKind.INTERNAL, i)
-                    hashSet.add(computeScriptHash(addr.address.scriptPubkey()))
+                    hashSet.add(scriptHashForRevealedAddress(currentWallet, KeychainKind.INTERNAL, i))
                 }
             }
         } catch (e: Exception) {
@@ -4183,16 +4187,13 @@ class WalletRepository(context: Context) {
             val lastExternal = currentWallet.derivationIndex(KeychainKind.EXTERNAL)
             if (lastExternal != null) {
                 for (i in 0u..lastExternal) {
-                    val addr = currentWallet.peekAddress(KeychainKind.EXTERNAL, i)
-                    hashSet.add(computeScriptHash(addr.address.scriptPubkey()))
+                    hashSet.add(scriptHashForRevealedAddress(currentWallet, KeychainKind.EXTERNAL, i))
                 }
             }
-            // All revealed internal (change) addresses
             val lastInternal = currentWallet.derivationIndex(KeychainKind.INTERNAL)
             if (lastInternal != null) {
                 for (i in 0u..lastInternal) {
-                    val addr = currentWallet.peekAddress(KeychainKind.INTERNAL, i)
-                    hashSet.add(computeScriptHash(addr.address.scriptPubkey()))
+                    hashSet.add(scriptHashForRevealedAddress(currentWallet, KeychainKind.INTERNAL, i))
                 }
             }
         } catch (e: Exception) {
@@ -4208,9 +4209,29 @@ class WalletRepository(context: Context) {
     fun clearScriptHashCache() {
         scriptHashStatusCache.clear()
         subscribedScriptHashes.clear()
+        lastSubscribedScriptHashFingerprint = null
         electrumCache.clearScriptHashStatuses()
         invalidatePreparedSendCache()
     }
+
+    private fun scriptHashForRevealedAddress(
+        currentWallet: Wallet,
+        keychain: KeychainKind,
+        index: UInt,
+    ): String {
+        val key = keychain to index
+        scriptHashByKeychainIndex[key]?.let { return it }
+        val address = peekAddressStringCached(currentWallet, keychain, index)
+        val hash =
+            computeScriptHash(
+                Address(address, currentWallet.network()).scriptPubkey(),
+            )
+        scriptHashByKeychainIndex[key] = hash
+        return hash
+    }
+
+    private fun scriptHashSetFingerprint(scriptHashes: Collection<String>): String =
+        scriptHashes.sorted().joinToString(separator = "\n")
 
     fun invalidatePreparedSendCache() {
         preparedBitcoinSendCache = null
@@ -4793,29 +4814,37 @@ class WalletRepository(context: Context) {
                 secureStorage.getActiveWalletId()
                     ?: return@withContext SubscriptionResult.FAILED
 
-            // Stop any existing collector
-            stopNotificationCollector()
-
-            // Check if wallet needs full sync first (first-ever import)
             if (secureStorage.needsFullSync(activeWalletId)) {
                 if (BuildConfig.DEBUG) Log.d(TAG, "Wallet needs full sync — running before subscriptions")
-                val syncResult = sync() // Redirects to fullSync internally
+                val syncResult = sync()
                 if (syncResult is WalletResult.Error) {
                     return@withContext SubscriptionResult.FAILED
                 }
-                // After full sync, re-read the wallet (addresses are now revealed)
             }
 
             val revealedGapLimitAddresses = revealConfiguredGapLimit(currentWallet, activeWalletId)
-
-            // Gather ALL revealed script hashes
             val allScriptHashes = getAllRevealedScriptHashes(currentWallet)
             if (allScriptHashes.isEmpty()) return@withContext SubscriptionResult.FAILED
 
+            val fingerprint = scriptHashSetFingerprint(allScriptHashes)
+            val collectorAlive = notificationCollectorJob?.isActive == true
+            if (
+                !revealedGapLimitAddresses &&
+                    collectorAlive &&
+                    proxy.isSubscriptionAlive() &&
+                    fingerprint == lastSubscribedScriptHashFingerprint &&
+                    subscribedScriptHashes.containsAll(allScriptHashes)
+            ) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "Subscription set unchanged — skipping re-subscribe (${allScriptHashes.size})")
+                }
+                return@withContext SubscriptionResult.NO_CHANGES
+            }
+
+            stopNotificationCollector()
+
             if (BuildConfig.DEBUG) Log.d(TAG, "Subscribing ${allScriptHashes.size} addresses for real-time updates")
 
-            // Subscribe on the proxy's dedicated subscription socket.
-            // Returns current statuses AND starts the notification listener.
             val currentStatuses = proxy.startSubscriptions(allScriptHashes)
 
             if (currentStatuses.isEmpty()) {
@@ -4826,6 +4855,7 @@ class WalletRepository(context: Context) {
             // Track which script hashes are subscribed
             subscribedScriptHashes.clear()
             subscribedScriptHashes.addAll(currentStatuses.keys)
+            lastSubscribedScriptHashFingerprint = fingerprint
 
             // Do NOT populate scriptHashStatusCache yet — if we populate it now with
             // the server's current statuses, sync()'s pre-check will compare the cache
@@ -4982,6 +5012,7 @@ class WalletRepository(context: Context) {
         val newStatuses = proxy.subscribeAdditionalScriptHashes(newHashes)
         subscribedScriptHashes.addAll(newHashes)
         scriptHashStatusCache.putAll(newStatuses)
+        lastSubscribedScriptHashFingerprint = scriptHashSetFingerprint(subscribedScriptHashes)
     }
 
     /**
@@ -8437,7 +8468,7 @@ class WalletRepository(context: Context) {
 
                 // Query multiple targets from low to high priority.
                 // Wider spacing gives Bitcoin Core's estimator room to differentiate.
-                val targets = listOf(1UL, 2UL, 3UL, 6UL, 12UL, 25UL, 36UL, 144UL)
+                val targets = listOf(2UL, 6UL, 12UL, 144UL)
                 val rawResults =
                     targets.map { target ->
                         try {
@@ -8452,20 +8483,14 @@ class WalletRepository(context: Context) {
                     rawResults.map { raw ->
                         if (raw < 0.0) null else btcPerKbToSatPerVb(raw)
                     }
-                // estimates[0]=1, [1]=2, [2]=3, [3]=6, [4]=12, [5]=25, [6]=36, [7]=144
+                // estimates[0]=2, [1]=6, [2]=12, [3]=144
 
                 val minRate = _minFeeRate.value
 
-                // Pick the best available estimate for each priority bucket.
-                // Fall through from tightest target to looser targets when a target returns -1.
-                // "fastest" = target 1 or 2 or 3
-                // "halfHour" = target 3 or 6
-                // "hour" = target 6 or 12
-                // "economy" = target 144 or 36 or 25
-                val fastest = (estimates[0] ?: estimates[1] ?: estimates[2])
-                val halfHour = (estimates[2] ?: estimates[3])
-                val hour = (estimates[3] ?: estimates[4])
-                val economy = (estimates[7] ?: estimates[6] ?: estimates[5])
+                val fastest = estimates[0]
+                val halfHour = estimates[1] ?: estimates[0]
+                val hour = estimates[2] ?: estimates[1]
+                val economy = estimates[3] ?: estimates[2]
 
                 // If no target returned a valid estimate, the server doesn't support fee estimation
                 if (fastest == null && halfHour == null && hour == null && economy == null) {

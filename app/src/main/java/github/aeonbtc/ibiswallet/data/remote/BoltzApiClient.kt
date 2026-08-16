@@ -89,9 +89,15 @@ class BoltzApiClient(
     private var reconnectAttempts = 0
     private var reconnectJob: Job? = null
     private val requestCounter = AtomicLong(0L)
+    @Volatile private var cachedTorHttpClient: OkHttpClient? = null
 
     private fun httpClient(): OkHttpClient {
-        return if (useTor()) {
+        if (!useTor()) {
+            cachedTorHttpClient = null
+            return baseHttpClient
+        }
+        cachedTorHttpClient?.let { return it }
+        val client =
             baseHttpClient.newBuilder()
                 .proxy(
                     Proxy(
@@ -101,9 +107,8 @@ class BoltzApiClient(
                 )
                 .dns(SocksProxyHostnameDns)
                 .build()
-        } else {
-            baseHttpClient
-        }
+        cachedTorHttpClient = client
+        return client
     }
 
     /**

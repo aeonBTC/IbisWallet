@@ -290,6 +290,8 @@ class SparkRepository(
 
     suspend fun refreshState() = refreshState(SparkSyncPolicy.modeForManualRefresh())
 
+    suspend fun refreshStateForHeartbeat() = refreshState(SparkSyncPolicy.modeForHeartbeat())
+
     private suspend fun refreshFromEvent() = refreshState(SparkRefreshMode.ReadCached)
 
     suspend fun receive(
@@ -1632,6 +1634,8 @@ internal object SparkSyncPolicy {
             recoverySyncCompletedForWalletId != requestedWalletId
 
     fun modeForManualRefresh(): SparkRefreshMode = SparkRefreshMode.ExplicitSdkSync
+
+    fun modeForHeartbeat(): SparkRefreshMode = SparkRefreshMode.ReadCached
 
     fun modeForSdkEvent(): SparkRefreshMode = SparkRefreshMode.ReadCached
 

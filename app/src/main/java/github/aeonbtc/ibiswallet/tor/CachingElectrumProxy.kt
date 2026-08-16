@@ -987,6 +987,17 @@ class CachingElectrumProxy(
      * Ensure the subscription connection is alive and handshake complete.
      * Must be called while holding [subLock].
      */
+    fun isSubscriptionAlive(): Boolean =
+        subLock.withLock {
+            val socket = subSocket
+            subHandshakeDone &&
+                socket != null &&
+                !socket.isClosed &&
+                socket.isConnected &&
+                subWriter != null &&
+                subReader != null
+        }
+
     private fun ensureSubConnectionLocked(): Boolean {
         val writer = subWriter
         val reader = subReader

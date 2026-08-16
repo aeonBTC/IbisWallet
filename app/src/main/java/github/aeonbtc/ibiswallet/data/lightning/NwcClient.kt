@@ -46,6 +46,7 @@ class NwcClient : LightningNodeBackend {
     private var clientSecretKey: ECKey? = null
     private var clientPubkeyHex: String? = null
     private var useTor: Boolean = false
+    private var sessionHttpClient: OkHttpClient? = null
     private val baseHttpClient =
         OkHttpClient.Builder()
             .connectTimeout(45, TimeUnit.SECONDS)
@@ -60,6 +61,7 @@ class NwcClient : LightningNodeBackend {
             val uri = NwcUriParser.parse(config.nwcUri)
             parsed = uri
             useTor = uri.relays.any { it.contains(".onion", ignoreCase = true) }
+            sessionHttpClient = buildSessionHttpClient()
             val secretBytes = hexToBytes(uri.secret)
             val key = ECKey.fromPrivate(BigInteger(1, secretBytes), true)
             clientSecretKey = key
@@ -343,6 +345,7 @@ class NwcClient : LightningNodeBackend {
         parsed = null
         clientSecretKey = null
         clientPubkeyHex = null
+        sessionHttpClient = null
     }
 
     private suspend fun request(
@@ -552,7 +555,9 @@ class NwcClient : LightningNodeBackend {
             .substringBefore('/')
             .ifBlank { relayUrl }
 
-    private fun httpClient(): OkHttpClient {
+    private fun httpClient(): OkHttpClient = sessionHttpClient ?: buildSessionHttpClient().also { sessionHttpClient = it }
+
+    private fun buildSessionHttpClient(): OkHttpClient {
         val builder =
             baseHttpClient
                 .newBuilder()
@@ -565,7 +570,6 @@ class NwcClient : LightningNodeBackend {
                     InetSocketAddress("127.0.0.1", github.aeonbtc.ibiswallet.tor.TorManager.socksPort()),
                 ),
             )
-            // Force hostname resolution through SOCKS so Tor handles .onion / remote DNS.
             builder.dns { hostname ->
                 listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
             }

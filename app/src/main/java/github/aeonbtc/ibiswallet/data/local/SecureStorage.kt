@@ -205,11 +205,10 @@ class SecureStorage private constructor(private val context: Context) {
                 try {
                     cipher.doFinal(wrapped.ciphertext)
                 } catch (e: Exception) {
-                    // The biometric key was invalidated and recreated (e.g. a legacy key
-                    // killed by a fingerprint enrollment change), so this wrap can never
-                    // be decrypted again. Drop the dead wrap so the state is consistent
-                    // and biometric can be re-enrolled, then surface a clear error.
-                    securePrefs.edit { remove(KEY_SPEND_MASTER_BIOMETRIC_WRAPPED) }
+                    // The biometric key no longer matches this wrap (e.g. a legacy key
+                    // killed by a fingerprint enrollment change). NEVER delete the wrap
+                    // here — it is the only copy of the encrypted spend master, and a
+                    // transient Keystore failure must not turn into permanent data loss.
                     throw IllegalStateException(
                         "Biometric key changed; disable and re-enable biometric unlock in Security settings",
                         e,
@@ -221,6 +220,14 @@ class SecureStorage private constructor(private val context: Context) {
                         ?: if (readWrappedSecret(KEY_SPEND_MASTER_PIN_WRAPPED) != null) {
                             throw IllegalStateException(
                                 "Biometric lock is not enrolled; enable it again in Security settings",
+                            )
+                        } else if (hasEncryptedSpendSecrets()) {
+                            // Wallet secrets exist that are wrapped under a master we can
+                            // no longer unwrap (biometric wrap gone, no PIN wrap). Minting
+                            // a random master here would make the app look unlocked while
+                            // every secret is unreadable — fail loudly instead.
+                            throw IllegalStateException(
+                                "Wallet secrets are still encrypted but the biometric key is unavailable; restore wallets from backup",
                             )
                         } else {
                             randomSpendSecretKey()
@@ -238,6 +245,14 @@ class SecureStorage private constructor(private val context: Context) {
         spendSecretKey = master
         migrateLegacySpendSecrets()
     }
+
+    /** True when any wallet still has secrets encrypted under a spend master. */
+    private fun hasEncryptedSpendSecrets(): Boolean =
+        getWalletIds().any { walletId ->
+            walletSpendSecretKeys(walletId).any { key ->
+                securePrefs.getString(key, null)?.startsWith(ENCRYPTED_SPEND_SECRET_PREFIX) == true
+            }
+        }
 
     /**
      * Bind biometric unlock to the current spend-secret session.
@@ -5640,6 +5655,7 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_ARK_FUNDING_TXIDS_PREFIX = "ark_funding_txids_"
         private const val KEY_ARK_ONCHAIN_RECOVER_SUPPRESS_PREFIX = "ark_onchain_recover_suppress_"
         private const val KEY_ARK_RECOVERED_ONCHAIN_DEPOSIT_PREFIX = "ark_recovered_onchain_deposit_"
+        private const val KEY_ARK_RECOVERED_TXIDS_PREFIX = "ark_recovered_txids_"
         private const val KEY_LN_NODE_TYPE_PREFIX = "ln_node_type_"
         private const val KEY_LN_NODE_HOST_PREFIX = "ln_node_host_"
         private const val KEY_LN_NODE_PORT_PREFIX = "ln_node_port_"
@@ -6351,6 +6367,35 @@ class SecureStorage private constructor(private val context: Context) {
             } else {
                 putString("${KEY_ARK_FUNDING_TXIDS_PREFIX}$walletId", normalized.joinToString(","))
             }
+        }
+    }
+
+    /**
+     * Txids spent/created by L1 recover of a below-min Bark on-chain deposit. These outputs
+     * (spent funding + recover change) must never re-paint as fresh unboarded deposits.
+     */
+    fun getArkRecoveredTxids(walletId: String): Set<String> {
+        val raw = regularPrefs.getString("${KEY_ARK_RECOVERED_TXIDS_PREFIX}$walletId", null) ?: return emptySet()
+        return raw
+            .split(',')
+            .map { it.trim().lowercase() }
+            .filter { it.length == 64 && it.all { ch -> ch in '0'..'9' || ch in 'a'..'f' } }
+            .toSet()
+    }
+
+    fun addArkRecoveredTxids(
+        walletId: String,
+        txids: Collection<String>,
+    ) {
+        if (walletId.isBlank()) return
+        val normalized =
+            txids
+                .map { it.trim().lowercase() }
+                .filter { it.length == 64 && it.all { ch -> ch in '0'..'9' || ch in 'a'..'f' } }
+        if (normalized.isEmpty()) return
+        val next = (getArkRecoveredTxids(walletId) + normalized).toList().takeLast(100)
+        regularPrefs.edit {
+            putString("${KEY_ARK_RECOVERED_TXIDS_PREFIX}$walletId", next.joinToString(","))
         }
     }
 

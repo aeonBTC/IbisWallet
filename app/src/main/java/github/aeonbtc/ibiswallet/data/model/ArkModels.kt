@@ -578,6 +578,14 @@ sealed class ArkEvent {
     data class BoardFailed(
         val message: String,
     ) : ArkEvent()
+
+    data class RecoverSucceeded(
+        val txid: String,
+    ) : ArkEvent()
+
+    data class RecoverFailed(
+        val message: String,
+    ) : ArkEvent()
 }
 
 /** Latest external Ark DB auto-backup snapshot metadata for UI. */

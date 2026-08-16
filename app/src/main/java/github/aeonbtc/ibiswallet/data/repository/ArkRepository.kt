@@ -186,6 +186,9 @@ class ArkRepository(
     private var postOpenSyncJob: Job? = null
     private var manualRefreshJob: Job? = null
     private val autoDbBackupRunning = AtomicBoolean(false)
+    /** Nested user-visible hydrates (load / pull-to-refresh). Background paints must not touch this. */
+    private val syncSpinner = ArkSyncSpinner()
+    private var syncSpinnerTimeoutJob: Job? = null
     private var lastAutoDbBackupFingerprint: String? = null
     private var preparedDestination: String? = null
     private var preparedAmountSats: Long? = null
@@ -557,6 +560,7 @@ class ArkRepository(
                     generation = generation,
                     walletId = walletId,
                     attemptBoard = false,
+                    indicateSync = true,
                 )
                 return@withContext
             }
@@ -600,6 +604,8 @@ class ArkRepository(
                     primeCachedReceiveStateLocked(walletId)
                 }
             }
+            beginSyncSpinner()
+            try {
             val credentials =
                 try {
                     resolveBarkCredentials(walletId)
@@ -626,7 +632,7 @@ class ArkRepository(
                 markLoadFailed(walletId, localizedString(R.string.ark_error_chain_source))
                 return@withContext
             }
-            // ASP is live — pill goes Connected. Mailbox / hydrate stay on the sync spinner.
+            // ASP is live — pill goes Connected. Sync spinner stays until attach + local paint.
             mutex.withLock {
                 if (generation == loadGeneration.get()) {
                     markArkServerLiveLocked(walletId)
@@ -722,7 +728,6 @@ class ArkRepository(
                             publishReceiveAddressesFastLocked(walletId)
                             _arkState.value =
                                 _arkState.value.copy(
-                                    isSyncing = true,
                                     aspHydrated = false,
                                 )
                             true
@@ -761,7 +766,6 @@ class ArkRepository(
                     refreshStateLocked(sync = false, attemptBoard = false)
                     _arkState.value =
                         _arkState.value.copy(
-                            isSyncing = true,
                             aspHydrated = false,
                         )
                 }
@@ -785,6 +789,9 @@ class ArkRepository(
                     scheduleDatadirLockReopen(walletId)
                 }
             }
+            } finally {
+                endSyncSpinner()
+            }
         }
 
     suspend fun unloadWallet() =
@@ -792,7 +799,7 @@ class ArkRepository(
             mutex.withLock { unloadLocked() }
         }
 
-    suspend fun refreshState() =
+    suspend fun refreshState(indicateSync: Boolean = true) =
         withContext(Dispatchers.IO) {
             // Always hydrate from ASP outside [mutex] so send/review is not stuck behind
             // heartbeat / maintenance, and local Bark DB is never treated as source of truth.
@@ -837,6 +844,16 @@ class ArkRepository(
                 loadWallet(snapshot.walletId)
                 return@withContext
             }
+            if (indicateSync) beginSyncSpinner()
+            try {
+                mutex.withLock {
+                    if (wallet === snapshot.wallet) {
+                        refreshStateLocked(sync = false, attemptBoard = false)
+                    }
+                }
+            } finally {
+                if (indicateSync) endSyncSpinner()
+            }
             hydrateFromAspOutsideLock(
                 reason = "refresh",
                 expectedWallet = snapshot.wallet,
@@ -844,6 +861,7 @@ class ArkRepository(
                 generation = snapshot.generation,
                 walletId = snapshot.walletId,
                 attemptBoard = false,
+                indicateSync = false,
             )
             // Opt-in auto-board only (default off).
             if (secureStorage.isArkAutoBoardEnabled()) {
@@ -940,6 +958,7 @@ class ArkRepository(
                     generation = snapshot.generation,
                     walletId = snapshot.walletId,
                     attemptBoard = false,
+                    indicateSync = true,
                 )
                 maybeMarkMailboxScanned(recovery)
                 val recoveredCount = recovery?.recovered?.vtxoIds?.size ?: 0
@@ -1073,6 +1092,7 @@ class ArkRepository(
                         generation = generation,
                         walletId = walletId,
                         attemptBoard = false,
+                        indicateSync = false,
                     )
                     maybeMarkMailboxScanned(recovery)
                     // Opt-in auto-board only (default off).
@@ -1107,12 +1127,15 @@ class ArkRepository(
         generation: Long,
         walletId: String,
         attemptBoard: Boolean,
+        indicateSync: Boolean = true,
     ) {
         if (generation != loadGeneration.get()) return
         SecureLog.w(TAG, "Ark ASP hydrate ($reason) for $walletId")
-        runCatching { expectedWallet.runDaemon() }
-        var lastError: String? = null
-        var networkOk = false
+        if (indicateSync) beginSyncSpinner()
+        try {
+            runCatching { expectedWallet.runDaemon() }
+            var lastError: String? = null
+            var networkOk = false
         // Fresh enable is usually empty; one refreshServer+sync is enough. Retry only
         // when the first pass failed or a known-nonempty wallet still looks empty.
         val maxAttempts =
@@ -1179,7 +1202,7 @@ class ArkRepository(
                 refreshStateLocked(sync = false, attemptBoard = false)
                 _arkState.value =
                     _arkState.value.copy(
-                        isSyncing = false,
+                        isSyncing = isSyncSpinnerHeld(),
                         aspHydrated = false,
                         error = lastError ?: _arkState.value.error,
                     )
@@ -1195,14 +1218,51 @@ class ArkRepository(
                     "mailbox=${runCatching { expectedWallet.mailboxIdentifier() }.getOrNull()}",
             )
         }
+        } finally {
+            if (indicateSync) endSyncSpinner()
+        }
     }
+
+    private fun beginSyncSpinner() {
+        syncSpinner.begin()
+        if (!_arkState.value.isSyncing) {
+            _arkState.value = _arkState.value.copy(isSyncing = true)
+        }
+        syncSpinnerTimeoutJob?.cancel()
+        syncSpinnerTimeoutJob =
+            eventScope.launch {
+                delay(ARK_SYNC_SPINNER_MAX_MS)
+                forceStopSyncSpinner()
+            }
+    }
+
+    private fun endSyncSpinner() {
+        if (syncSpinner.end() && _arkState.value.isSyncing) {
+            _arkState.value = _arkState.value.copy(isSyncing = false)
+        }
+        if (!syncSpinner.isHeld()) {
+            syncSpinnerTimeoutJob?.cancel()
+            syncSpinnerTimeoutJob = null
+        }
+    }
+
+    private fun forceStopSyncSpinner() {
+        syncSpinner.reset()
+        syncSpinnerTimeoutJob?.cancel()
+        syncSpinnerTimeoutJob = null
+        if (_arkState.value.isSyncing) {
+            _arkState.value = _arkState.value.copy(isSyncing = false)
+        }
+    }
+
+    private fun isSyncSpinnerHeld(): Boolean = syncSpinner.isHeld()
 
     private fun markAspHydratedLocked(walletId: String) {
         if (walletId.isBlank() || _loadedWalletId.value != walletId) return
         aspHydratedWalletId = walletId
         _arkState.value =
             _arkState.value.copy(
-                isSyncing = false,
+                isSyncing = isSyncSpinnerHeld(),
                 isConnecting = false,
                 isConnected = true,
                 aspHydrated = true,
@@ -2548,7 +2608,7 @@ class ArkRepository(
         } else {
             // Paint on-chain deposit without boarding.
             eventScope.launch {
-                runCatching { refreshState() }
+                runCatching { refreshState(indicateSync = false) }
             }
         }
     }
@@ -2896,7 +2956,7 @@ class ArkRepository(
      * Uses Bark [OnchainWallet.send] — not board.
      *
      * Native send/sync run **outside** [mutex] so a hung Esplora/send cannot brick Ark UI.
-     * Post-send paint is applied under the lock with a bounded refresh.
+     * Mutex waits are bounded so a stuck refresh cannot pin the Recover spinner.
      */
     suspend fun recoverOnchainDepositToLayer1(
         destinationAddress: String,
@@ -2905,95 +2965,140 @@ class ArkRepository(
         withContext(Dispatchers.IO) {
             val dest = destinationAddress.trim()
             if (dest.isBlank()) {
-                return@withContext Result.failure(Exception(localizedString(R.string.loc_9f80cab8)))
-            }
-            val onchain =
-                mutex.withLock { onchainWallet }
-                    ?: return@withContext Result.failure(
-                        Exception(localizedString(R.string.ark_error_onchain_wallet_unavailable)),
-                    )
-            val walletId = mutex.withLock { _loadedWalletId.value }
-            val depositSnapshot = mutex.withLock { snapshotPendingDepositForRecoverLocked() }
-
-            val syncAndBalance =
-                runCatching {
-                    withTimeout(RECOVER_ONCHAIN_TIMEOUT_MS) {
-                        runCatching { onchain.sync() }
-                        onchain.balance()
-                    }
-                }
-            if (syncAndBalance.isFailure) {
-                return@withContext Result.failure(
-                    Exception(
-                        publicError(
-                            syncAndBalance.exceptionOrNull()
-                                ?: Exception(localizedString(R.string.ark_recover_onchain_failed_format, "timeout")),
-                        ),
-                    ),
+                return@withContext emitRecoverResult(
+                    Result.failure(Exception(localizedString(R.string.loc_9f80cab8))),
                 )
             }
-            val confirmed = syncAndBalance.getOrNull()?.confirmedSats?.toLong() ?: 0L
+            val snapshot =
+                withMutexTimeout(RECOVER_MUTEX_WAIT_MS) {
+                    RecoverOnchainSnapshot(
+                        onchain = onchainWallet,
+                        walletId = _loadedWalletId.value,
+                        deposit = snapshotPendingDepositForRecoverLocked(),
+                        paintedConfirmedSats = _arkState.value.onchainConfirmedSats,
+                        paintedUtxos = _arkState.value.onchainUtxos,
+                    )
+                } ?: return@withContext emitRecoverResult(
+                    Result.failure(Exception(localizedString(R.string.ark_recover_onchain_busy))),
+                )
+            val onchain =
+                snapshot.onchain
+                    ?: return@withContext emitRecoverResult(
+                        Result.failure(Exception(localizedString(R.string.ark_error_onchain_wallet_unavailable))),
+                    )
+            val walletId = snapshot.walletId
+            val depositSnapshot = snapshot.deposit
+
+            // send() spends already-indexed BDK UTXOs — do not Esplora-sync first.
+            var confirmed =
+                runCatching { onchain.balance().confirmedSats.toLong() }.getOrDefault(0L)
             if (confirmed <= 0L) {
-                mutex.withLock {
-                    if (depositSnapshot != null && depositSnapshot.effectiveBalanceSats > 0L) {
-                        persistRecoveredOnchainDepositLocked(
-                            walletId = walletId,
-                            destinationAddress = dest,
-                            recoverTxid = "",
-                            snapshot = depositSnapshot,
-                            amountSats = depositSnapshot.effectiveBalanceSats,
+                withMutexTimeout(RECOVER_MUTEX_WAIT_MS) {
+                    if (!onchainRevealCatchUpDone) {
+                        onchainRevealCatchUpDone = true
+                        catchUpOnchainDepositRevelationLocked(onchain)
+                    }
+                }
+                try {
+                    withTimeout(RECOVER_ONCHAIN_SYNC_TIMEOUT_MS) {
+                        onchain.sync()
+                    }
+                } catch (err: TimeoutCancellationException) {
+                    if (snapshot.paintedConfirmedSats <= 0L) {
+                        return@withContext emitRecoverResult(
+                            Result.failure(Exception(localizedString(R.string.ark_recover_onchain_timeout))),
                         )
                     }
-                    applyRecoverOnchainPaintClearedLocked(walletId)
+                } catch (err: CancellationException) {
+                    throw err
+                } catch (err: Exception) {
+                    if (snapshot.paintedConfirmedSats <= 0L) {
+                        return@withContext emitRecoverResult(Result.failure(Exception(publicError(err))))
+                    }
                 }
-                return@withContext Result.success("")
+                confirmed = runCatching { onchain.balance().confirmedSats.toLong() }.getOrDefault(0L)
+            }
+            if (confirmed <= 0L) {
+                return@withContext emitRecoverResult(
+                    Result.failure(Exception(localizedString(R.string.ark_recover_onchain_nothing))),
+                )
             }
 
             val rate = feeRateSatPerVb.coerceIn(1L, 200L)
-            // Leave headroom for fee so send doesn't fail on dust remainder.
-            val feePad = (rate * 200L).coerceAtLeast(300L)
+            // 1-in-1-out P2TR is ~110 vB; keep a small pad so change is not dust.
+            val feePad = (rate * 140L).coerceAtLeast(200L)
             val sendAmount = (confirmed - feePad).coerceAtLeast(546L)
             if (sendAmount >= confirmed) {
-                return@withContext Result.failure(
-                    Exception(localizedString(R.string.ark_recover_onchain_fee_too_high)),
+                return@withContext emitRecoverResult(
+                    Result.failure(Exception(localizedString(R.string.ark_recover_onchain_fee_too_high))),
                 )
             }
 
-            val sendResult =
-                runCatching {
-                    withTimeout(RECOVER_ONCHAIN_TIMEOUT_MS) {
-                        onchain.send(dest, sendAmount.toULong(), rate.toULong())
-                    }
-                }
             val txid =
-                sendResult.getOrElse { err ->
-                    return@withContext Result.failure(Exception(publicError(err)))
+                try {
+                    onchain.send(dest, sendAmount.toULong(), rate.toULong())
+                } catch (err: CancellationException) {
+                    throw err
+                } catch (err: Exception) {
+                    return@withContext emitRecoverResult(Result.failure(Exception(publicError(err))))
                 }
 
-            runCatching {
-                withTimeout(RECOVER_ONCHAIN_TIMEOUT_MS / 2) { onchain.sync() }
-            }
-
-            mutex.withLock {
+            val persisted =
+                withMutexTimeout(RECOVER_MUTEX_WAIT_MS) {
+                    persistRecoveredOnchainDepositLocked(
+                        walletId = walletId,
+                        destinationAddress = dest,
+                        recoverTxid = txid,
+                        snapshot = depositSnapshot,
+                        amountSats = confirmed,
+                        paintedUtxos = snapshot.paintedUtxos,
+                    )
+                    applyRecoverOnchainPaintClearedLocked(walletId)
+                    true
+                }
+            if (persisted == null) {
                 persistRecoveredOnchainDepositLocked(
                     walletId = walletId,
                     destinationAddress = dest,
                     recoverTxid = txid,
                     snapshot = depositSnapshot,
                     amountSats = confirmed,
+                    paintedUtxos = snapshot.paintedUtxos,
                 )
                 applyRecoverOnchainPaintClearedLocked(walletId)
-                // Best-effort refresh; never block recover success on a hung Esplora paint.
-                runCatching {
-                    withTimeout(RECOVER_ONCHAIN_TIMEOUT_MS / 2) {
-                        refreshStateLocked(sync = true, attemptBoard = false)
-                    }
-                }
-                // Re-assert zero paint after refresh (fee-pad dust / lag still below min).
-                applyRecoverOnchainPaintClearedLocked(walletId)
             }
-            Result.success(txid)
+            emitRecoverResult(Result.success(txid))
         }
+
+    private fun emitRecoverResult(result: Result<String>): Result<String> {
+        result.fold(
+            onSuccess = { txid -> _events.tryEmit(ArkEvent.RecoverSucceeded(txid)) },
+            onFailure = { err ->
+                _events.tryEmit(
+                    ArkEvent.RecoverFailed(
+                        err.message ?: localizedString(R.string.ark_error_generic),
+                    ),
+                )
+            },
+        )
+        return result
+    }
+
+    private suspend fun <T> withMutexTimeout(
+        timeoutMs: Long,
+        block: suspend () -> T,
+    ): T? =
+        withTimeoutOrNull(timeoutMs) {
+            mutex.withLock { block() }
+        }
+
+    private data class RecoverOnchainSnapshot(
+        val onchain: OnchainWallet?,
+        val walletId: String?,
+        val deposit: ArkMovement?,
+        val paintedConfirmedSats: Long,
+        val paintedUtxos: List<ArkOnchainUtxo>,
+    )
 
     /** Must hold [mutex]. Clear on-chain paint + funding tags after L1 recover. */
     private fun applyRecoverOnchainPaintClearedLocked(walletId: String?) {
@@ -5254,6 +5359,7 @@ class ArkRepository(
 
     fun markLoadFailed(walletId: String, message: String) {
         aspHydratedWalletId = null
+        forceStopSyncSpinner()
         _arkState.value =
             ArkWalletState(
                 walletId = walletId,
@@ -5470,7 +5576,6 @@ class ArkRepository(
         val walletId = _loadedWalletId.value ?: return
         val previousNeedsRefresh = _arkState.value.needsRefresh
         val previousRefreshSoon = _arkState.value.refreshSoon
-        _arkState.value = _arkState.value.copy(isSyncing = true, error = null)
         try {
             if (sync) {
                 runCatching { w.sync() }
@@ -5565,12 +5670,11 @@ class ArkRepository(
             // After L1 recover of a stuck deposit, never re-inflate stale inbound paint —
             // including fee-pad leftover dust still below ASP min (session + prefs flag).
             val liveOnchainTotal = liveOnchainConfirmed + liveOnchainPending
-            // List UTXOs once; deposit-chain details reuse the result (no second Esplora crawl).
-            val allowTxHistoryFallback =
-                liveOnchainTotal > 0L ||
-                    previousState.onchainTotalSats > 0L ||
-                    balance.pendingBoardSats.toLong() > 0L ||
-                    previousState.onchainUtxos.isNotEmpty()
+            // /utxo already includes mempool. /txs fallback can resurrect spent boarded funding.
+            val allowTxHistoryFallback = balance.pendingBoardSats.toLong() > 0L
+            val recoveredOnchainTxids = recoveredOnchainTxidsLocked(walletId)
+            val boardedOnchainTxids = boardedOnchainTxidsLocked(walletId, previousState.movements)
+            val ignoredOnchainTxids = recoveredOnchainTxids + boardedOnchainTxids + knownBoardTxids
             val liveListedOnchainUtxos =
                 if (onchainWallet == null) {
                     emptyList()
@@ -5584,13 +5688,12 @@ class ArkRepository(
                                 previousState.onchainUtxos.firstOrNull()?.address,
                             ),
                         allowTxHistoryFallback = allowTxHistoryFallback,
-                    )
+                    ).filterNot { ignoredOnchainTxids.contains(it.txid.trim().lowercase()) }
                 }
             val depositChainDetails =
                 resolveArkDepositChainDetails(
                     walletId = walletId,
                     pendingBoards = pendingBoards,
-                    knownBoardTxids = knownBoardTxids,
                     fallbackAmountSats =
                         maxOf(
                             liveOnchainTotal,
@@ -5601,24 +5704,22 @@ class ArkRepository(
                     tipHeight = tipHeight,
                     knownUtxos = liveListedOnchainUtxos,
                 )
+            // Leftover recover change lives on an unremembered Bark address, so Esplora never
+            // lists it while Bark balance still counts it. With no fresh listed UTXO, that is
+            // recover dust — keep suppress on even if the flag was already cleared.
             val recoverSuppressed =
                 suppressStaleOnchainPaint ||
-                    secureStorage.isArkOnchainRecoverSuppressed(walletId)
+                    secureStorage.isArkOnchainRecoverSuppressed(walletId) ||
+                    (
+                        recoveredOnchainTxids.isNotEmpty() &&
+                            liveListedOnchainUtxos.isEmpty()
+                    )
             if (recoverSuppressed != suppressStaleOnchainPaint) {
                 suppressStaleOnchainPaint = recoverSuppressed
             }
-            val suppressActive =
-                recoverSuppressed &&
-                    liveListedOnchainUtxos.isEmpty() &&
-                    (
-                        liveOnchainTotal <= 0L ||
-                            (
-                                minBoardAmountSats != null &&
-                                    liveOnchainTotal < minBoardAmountSats
-                            )
-                    )
-            if (recoverSuppressed && (!suppressActive || liveListedOnchainUtxos.isNotEmpty())) {
-                // A fresh unspent deposit resumes normal paint regardless of ASP minimum.
+            val suppressActive = recoverSuppressed && liveListedOnchainUtxos.isEmpty()
+            if (recoverSuppressed && liveListedOnchainUtxos.isNotEmpty()) {
+                // A new unspent deposit (not a recovered funding / leftover change tx) resumes paint.
                 markOnchainRecoverSuppressedLocked(walletId, suppressed = false)
             }
             val listedOnchainUtxos =
@@ -5675,7 +5776,9 @@ class ArkRepository(
                 when {
                     utxoTotalSats > 0L -> utxoTotalSats
                     barkPendingOnly > 0L -> barkPendingOnly
-                    else -> depositChainDetails?.amountSats ?: 0L
+                    depositChainDetails?.boardTxid.isNullOrBlank() ->
+                        depositChainDetails?.amountSats ?: 0L
+                    else -> 0L
                 }
             val esploraConfsForBuckets =
                 when {
@@ -5699,7 +5802,7 @@ class ArkRepository(
                         esploraAmountSats = esploraAmountForBuckets,
                         esploraFundingConfirmations = esploraConfsForBuckets,
                         onchainWalletPresent = onchainWallet != null,
-                        preservePreviousWhenLiveZero = true,
+                        preservePreviousWhenLiveZero = !recoverSuppressed,
                     spendableSats =
                         maxOf(
                             balance.spendableSats.toLong(),
@@ -5844,8 +5947,7 @@ class ArkRepository(
                 ArkWalletState(
                     walletId = walletId,
                     isInitialized = true,
-                    // Local paint finished — hydrate / mailbox keep the spinner via isSyncing.
-                    isSyncing = false,
+                    isSyncing = isSyncSpinnerHeld(),
                     isConnected = true,
                     isConnecting = false,
                     fingerprint = fingerprint,
@@ -5942,7 +6044,7 @@ class ArkRepository(
         } catch (e: Exception) {
             _arkState.value =
                 _arkState.value.copy(
-                    isSyncing = false,
+                    isSyncing = isSyncSpinnerHeld(),
                     error = publicError(e),
                 )
         }
@@ -6025,6 +6127,7 @@ class ArkRepository(
         }
         _loadedWalletId.value = null
         _isConnected.value = false
+        forceStopSyncSpinner()
         // Keep isConnecting when UI already retargeted to another wallet mid-switch.
         if (!switchedAway) {
             _isConnecting.value = false
@@ -6360,7 +6463,7 @@ class ArkRepository(
                                     refreshStateLocked(sync = false)
                                 }
                             is WalletNotification.ChannelLagging ->
-                                mutex.withLock { refreshStateLocked(sync = true) }
+                                mutex.withLock { refreshStateLocked(sync = false) }
                         }
                     }
                 }
@@ -7811,7 +7914,15 @@ class ArkRepository(
     private fun recoveredOnchainDepositsToMovements(
         walletId: String,
     ): List<ArkMovement> =
-        secureStorage.getArkRecoveredOnchainDeposits(walletId).map { deposit ->
+        secureStorage.getArkRecoveredOnchainDeposits(walletId)
+            // One history row per recover sweep, even if older builds wrote one record
+            // per painted funding UTXO.
+            .distinctBy { deposit ->
+                deposit.recoverTxid.trim().lowercase().ifBlank {
+                    deposit.fundingTxid.trim().lowercase()
+                }
+            }
+            .map { deposit ->
             val fundingKey =
                 deposit.fundingTxid.trim().lowercase().ifBlank {
                     deposit.recoverTxid.trim().lowercase()
@@ -7856,6 +7967,7 @@ class ArkRepository(
         recoverTxid: String,
         snapshot: ArkMovement?,
         amountSats: Long,
+        paintedUtxos: List<ArkOnchainUtxo> = emptyList(),
     ) {
         if (walletId.isNullOrBlank()) return
         val fundingTxid =
@@ -7863,11 +7975,22 @@ class ArkRepository(
                 // Prefer longest-known funding id from secure storage when synthetic row lacked it.
                 secureStorage.getArkFundingTxids(walletId).lastOrNull().orEmpty()
             }
+        // Suppress every painted funding output + the recover sweep itself, not just the
+        // snapshot row — leftover recover change must never re-paint as a fresh deposit.
+        val suppressTxids =
+            (
+                paintedUtxos.map { it.txid } +
+                    listOfNotNull(
+                        fundingTxid.takeIf { it.length == 64 },
+                        recoverTxid.takeIf { it.length == 64 },
+                    )
+            )
+        secureStorage.addArkRecoveredTxids(walletId, suppressTxids)
         val now = Instant.now().toString()
         secureStorage.saveArkRecoveredOnchainDeposit(
             walletId,
             ArkRecoveredOnchainDeposit(
-                fundingTxid = fundingTxid,
+                fundingTxid = fundingTxid.ifBlank { recoverTxid },
                 amountSats = amountSats.coerceAtLeast(snapshot?.effectiveBalanceSats ?: 0L),
                 destinationAddress = destinationAddress,
                 recoverTxid = recoverTxid,
@@ -7877,6 +8000,30 @@ class ArkRepository(
             ),
         )
     }
+
+    private fun recoveredOnchainTxidsLocked(walletId: String): Set<String> =
+        secureStorage.getArkRecoveredTxids(walletId) +
+            secureStorage.getArkRecoveredOnchainDeposits(walletId)
+                .flatMap { deposit ->
+                    listOf(deposit.fundingTxid, deposit.recoverTxid)
+                }
+                .map { it.trim().lowercase() }
+                .filter { it.length == 64 }
+
+    private fun boardedOnchainTxidsLocked(
+        walletId: String,
+        previousMovements: List<ArkMovement>,
+    ): Set<String> =
+        (
+            previousMovements +
+                recoveredOnchainDepositsToMovements(walletId)
+        ).filter { movement ->
+            ArkDepositPolicy.isBoardDepositMovement(movement) &&
+                !ArkDepositPolicy.isSyntheticPendingOnchainDeposit(movement) &&
+                !ArkDepositPolicy.isRecoveredOnchainMovement(movement)
+        }
+            .flatMap { ArkDepositPolicy.movementChainTxids(it) }
+            .toSet()
 
     private data class ArkDepositChainDetails(
         val fundingTxid: String,
@@ -7895,26 +8042,16 @@ class ArkRepository(
     private fun resolveArkDepositChainDetails(
         walletId: String,
         pendingBoards: List<uniffi.bark.PendingBoard>,
-        knownBoardTxids: List<String>,
         fallbackAmountSats: Long,
         tipHeight: Int?,
         knownUtxos: List<ArkOnchainUtxo> = emptyList(),
     ): ArkDepositChainDetails? {
-        val boardTxids =
-            (pendingBoards.map { it.txid } + knownBoardTxids)
-                .map { it.trim().lowercase() }
-                .filter { it.length == 64 }
-                .distinct()
-        // Prefer live pending boards only — historical board txids can mean many serial Esplora hits.
+        // Live pending boards only — historical board txids resurrect already-boarded funding.
         val liveBoardTxids =
             pendingBoards
                 .map { it.txid.trim().lowercase() }
                 .filter { it.length == 64 }
                 .distinct()
-                .ifEmpty {
-                    // One historical board is enough when no pending boards and no UTXO list yet.
-                    if (knownUtxos.isEmpty()) boardTxids.take(1) else emptyList()
-                }
         for (boardTxid in liveBoardTxids) {
             fetchEsploraTransaction(boardTxid)?.let { boardTx ->
                 val boardStatus = boardTx.optJSONObject("status")
@@ -8511,8 +8648,12 @@ class ArkRepository(
         private const val ESPLORA_TX_HISTORY_FALLBACK_LIMIT = 8
         /** Fallback when ArkInfo is unknown — Second ASP uses 6. */
         private const val DEFAULT_BOARD_CONFIRMATIONS = 6
-        /** Bound on-chain recover (sync/send/refresh) so a hung Esplora cannot spin UI forever. */
-        private const val RECOVER_ONCHAIN_TIMEOUT_MS = 90_000L
+        /** Only used when Bark's local BDK cache has no confirmed funds. */
+        private const val RECOVER_ONCHAIN_SYNC_TIMEOUT_MS = 20_000L
+        /** Fail recover quickly when another Ark job is holding [mutex]. */
+        private const val RECOVER_MUTEX_WAIT_MS = 3_000L
+        /** Balance-card spinner hard cap — native ASP hydrate must not hold it indefinitely. */
+        private const val ARK_SYNC_SPINNER_MAX_MS = 12_000L
         /** Poll open BOLT11 receive for paid status while Receive is open. */
         private const val LIGHTNING_RECEIVE_WATCH_INTERVAL_MS = 2_000L
         private const val LIGHTNING_RECEIVE_WATCH_ATTEMPTS = 150
