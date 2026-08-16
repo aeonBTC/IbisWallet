@@ -42,6 +42,10 @@ class SparkRepositorySyncPolicyTest : FunSpec({
         SparkSyncPolicy.modeForSdkEvent() shouldBe SparkRefreshMode.ReadCached
     }
 
+    test("heartbeat refresh only reads cached Spark state") {
+        SparkSyncPolicy.modeForHeartbeat() shouldBe SparkRefreshMode.ReadCached
+    }
+
     test("payment history pagination advances by Spark page size") {
         SparkPaymentHistoryPaging.nextOffset(100u) shouldBe 150u
     }

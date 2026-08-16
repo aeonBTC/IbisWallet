@@ -79,6 +79,34 @@ class WalletNotificationPolicyTest : FunSpec({
         ) shouldBe WalletNotificationDeliveryState.SYSTEM_DISABLED
     }
 
+    test("persist helper skips identical tracking snapshots") {
+        val update =
+            WalletNotificationTrackingUpdate(
+                trackedTxids = setOf("a"),
+                notifyTxids = emptySet(),
+                baselineEstablished = true,
+            )
+        WalletNotificationPolicy.shouldPersistTracking(
+            previousTrackedTxids = setOf("a"),
+            previousBaselineEstablished = true,
+            update = update,
+        ) shouldBe false
+    }
+
+    test("persist helper writes when the tracked set changes") {
+        val update =
+            WalletNotificationTrackingUpdate(
+                trackedTxids = setOf("a", "b"),
+                notifyTxids = setOf("b"),
+                baselineEstablished = true,
+            )
+        WalletNotificationPolicy.shouldPersistTracking(
+            previousTrackedTxids = setOf("a"),
+            previousBaselineEstablished = true,
+            update = update,
+        ) shouldBe true
+    }
+
     test("ready state is reported when app and Android both allow notifications") {
         WalletNotificationPolicy.resolveDeliveryState(
             appEnabled = true,
