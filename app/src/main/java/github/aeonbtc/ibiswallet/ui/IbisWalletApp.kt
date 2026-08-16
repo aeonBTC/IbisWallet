@@ -122,6 +122,7 @@ import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.ArkEvent
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveKind
+import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.ArkWalletState
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.LightningNodeEvent
@@ -393,6 +394,7 @@ fun IbisWalletApp(
     val isArkConnected by arkViewModel.isArkConnected.collectAsStateWithLifecycle()
     val isArkConnecting by arkViewModel.isArkConnecting.collectAsStateWithLifecycle()
     val isArkLayer2Enabled by arkViewModel.isArkLayer2Enabled.collectAsStateWithLifecycle()
+    val isRecoveringArkOnchain by arkViewModel.isRecoveringOnchain.collectAsStateWithLifecycle()
     val arkAutoDelegatedRefreshEnabled by
         arkViewModel.autoDelegatedRefreshEnabled.collectAsStateWithLifecycle()
     val arkAutoBoardEnabled by arkViewModel.autoBoardEnabled.collectAsStateWithLifecycle()
@@ -942,7 +944,6 @@ fun IbisWalletApp(
     var showSparkEnableInfoDialog by remember { mutableStateOf(false) }
     var showLightningNodeEnableInfoDialog by remember { mutableStateOf(false) }
     var showArkEnableInfoDialog by remember { mutableStateOf(false) }
-    var isRecoveringArkBelowMinBoard by remember { mutableStateOf(false) }
     var isBoardingArkOnchain by remember { mutableStateOf(false) }
     var arkReceiveInitialKind by remember {
         mutableStateOf(ArkReceiveKind.ARK_ADDRESS)
@@ -2020,6 +2021,31 @@ fun IbisWalletApp(
                 is ArkEvent.BoardFailed -> {
                     snackbarHostState.showSnackbar(event.message)
                 }
+                is ArkEvent.RecoverSucceeded -> {
+                    val detail = event.txid.trim()
+                    snackbarHostState.showSnackbar(
+                        if (detail.isBlank()) {
+                            arkRecoverOnchainClearedMessage
+                        } else {
+                            val short =
+                                if (detail.length > 16) {
+                                    "${detail.take(8)}…${detail.takeLast(8)}"
+                                } else {
+                                    detail
+                                }
+                            arkRecoverOnchainSuccessFormat.format(short)
+                        },
+                    )
+                    viewModel.sync()
+                    arkViewModel.refresh()
+                }
+                is ArkEvent.RecoverFailed -> {
+                    snackbarHostState.showSnackbar(
+                        arkRecoverOnchainFailedFormat.format(
+                            event.message.ifBlank { arkErrorGenericMessage },
+                        ),
+                    )
+                }
                 else -> Unit
             }
         }
@@ -2035,23 +2061,36 @@ fun IbisWalletApp(
         if (!initialSyncComplete) return@LaunchedEffect
         val walletId = walletState.activeWallet?.id ?: return@LaunchedEffect
         val currentTransactions = walletState.transactions
+        delay(400)
 
         val persistedTxids = secureStorage.getNotifiedTxids(walletId)
         val currentTxids = currentTransactions.map { it.txid }.toSet()
+        val hadBaseline = secureStorage.hasNotifiedTxidsBaseline(walletId)
         if (walletState.isTransactionHistoryLoading) {
-            secureStorage.saveNotifiedTxids(walletId, persistedTxids + currentTxids)
-            secureStorage.setNotifiedTxidsBaseline(walletId, true)
+            val merged = persistedTxids + currentTxids
+            if (merged != persistedTxids || !hadBaseline) {
+                secureStorage.saveNotifiedTxids(walletId, merged)
+                secureStorage.setNotifiedTxidsBaseline(walletId, true)
+            }
             return@LaunchedEffect
         }
         val trackingUpdate =
             WalletNotificationPolicy.updateTrackedTransactions(
                 currentTxids = currentTxids,
                 trackedTxids = persistedTxids,
-                baselineEstablished = secureStorage.hasNotifiedTxidsBaseline(walletId),
+                baselineEstablished = hadBaseline,
             )
 
-        secureStorage.saveNotifiedTxids(walletId, trackingUpdate.trackedTxids)
-        secureStorage.setNotifiedTxidsBaseline(walletId, trackingUpdate.baselineEstablished)
+        if (
+            WalletNotificationPolicy.shouldPersistTracking(
+                previousTrackedTxids = persistedTxids,
+                previousBaselineEstablished = hadBaseline,
+                update = trackingUpdate,
+            )
+        ) {
+            secureStorage.saveNotifiedTxids(walletId, trackingUpdate.trackedTxids)
+            secureStorage.setNotifiedTxidsBaseline(walletId, trackingUpdate.baselineEstablished)
+        }
 
         if (!walletNotificationsEnabled || trackingUpdate.notifyTxids.isEmpty()) {
             return@LaunchedEffect
@@ -2081,18 +2120,28 @@ fun IbisWalletApp(
         if (!initialLiquidSyncComplete) return@LaunchedEffect
         val walletId = loadedLiquidWalletId ?: return@LaunchedEffect
         val currentTransactions = liquidState.transactions
+        delay(400)
 
         val persistedTxids = secureStorage.getNotifiedLiquidTxids(walletId)
         val currentTxids = currentTransactions.map { it.txid }.toSet()
+        val hadBaseline = secureStorage.hasNotifiedLiquidTxidsBaseline(walletId)
         val trackingUpdate =
             WalletNotificationPolicy.updateTrackedTransactions(
                 currentTxids = currentTxids,
                 trackedTxids = persistedTxids,
-                baselineEstablished = secureStorage.hasNotifiedLiquidTxidsBaseline(walletId),
+                baselineEstablished = hadBaseline,
             )
 
-        secureStorage.saveNotifiedLiquidTxids(walletId, trackingUpdate.trackedTxids)
-        secureStorage.setNotifiedLiquidTxidsBaseline(walletId, trackingUpdate.baselineEstablished)
+        if (
+            WalletNotificationPolicy.shouldPersistTracking(
+                previousTrackedTxids = persistedTxids,
+                previousBaselineEstablished = hadBaseline,
+                update = trackingUpdate,
+            )
+        ) {
+            secureStorage.saveNotifiedLiquidTxids(walletId, trackingUpdate.trackedTxids)
+            secureStorage.setNotifiedLiquidTxidsBaseline(walletId, trackingUpdate.baselineEstablished)
+        }
 
         if (!walletNotificationsEnabled || trackingUpdate.notifyTxids.isEmpty()) {
             return@LaunchedEffect
@@ -4477,7 +4526,7 @@ fun IbisWalletApp(
                                                 },
                                                 autoRefreshEnabled = arkAutoDelegatedRefreshEnabled,
                                                 onRecoverBelowMinBoard = {
-                                                    if (isRecoveringArkBelowMinBoard) return@ArkBalanceScreen
+                                                    if (isRecoveringArkOnchain) return@ArkBalanceScreen
                                                     val dest = walletState.currentAddress?.trim().orEmpty()
                                                     if (dest.isBlank()) {
                                                         viewModel.getNewAddress()
@@ -4488,43 +4537,19 @@ fun IbisWalletApp(
                                                         }
                                                         return@ArkBalanceScreen
                                                     }
-                                                    isRecoveringArkBelowMinBoard = true
-                                                    arkViewModel.recoverOnchainDepositToLayer1(dest) { result ->
-                                                        isRecoveringArkBelowMinBoard = false
-                                                        scope.launch {
-                                                            result.fold(
-                                                                onSuccess = { txid ->
-                                                                    if (txid.isBlank()) {
-                                                                        snackbarHostState.showSnackbar(
-                                                                            arkRecoverOnchainClearedMessage,
-                                                                        )
-                                                                    } else {
-                                                                        val short =
-                                                                            if (txid.length > 16) {
-                                                                                "${txid.take(8)}…${txid.takeLast(8)}"
-                                                                            } else {
-                                                                                txid
-                                                                            }
-                                                                        snackbarHostState.showSnackbar(
-                                                                            arkRecoverOnchainSuccessFormat.format(short),
-                                                                        )
-                                                                    }
-                                                                    viewModel.sync()
-                                                                    arkViewModel.refresh()
-                                                                },
-                                                                onFailure = { err ->
-                                                                    snackbarHostState.showSnackbar(
-                                                                        arkRecoverOnchainFailedFormat.format(
-                                                                            err.message
-                                                                                ?: arkErrorGenericMessage,
-                                                                        ),
-                                                                    )
-                                                                },
-                                                            )
-                                                        }
-                                                    }
+                                                    val feeRate =
+                                                        ((feeEstimationState as? FeeEstimationResult.Success)
+                                                            ?.estimates
+                                                            ?.halfHourFee
+                                                            ?: 2.0)
+                                                            .toLong()
+                                                            .coerceAtLeast(1L)
+                                                    arkViewModel.recoverOnchainDepositToLayer1(
+                                                        destinationAddress = dest,
+                                                        feeRateSatPerVb = feeRate,
+                                                    )
                                                 },
-                                                isRecoveringBelowMinBoard = isRecoveringArkBelowMinBoard,
+                                                isRecoveringBelowMinBoard = isRecoveringArkOnchain,
                                                 onOpenBoarding = {
                                                     navController.navigate(
                                                         Screen.ArkLifecycle.createRoute(
@@ -4828,6 +4853,7 @@ fun IbisWalletApp(
                         }
                     }
                     composable(Screen.Send.route) {
+                        ObserveDerivedWalletSnapshots(viewModel, liquidViewModel)
                         val utxos by viewModel.allUtxos.collectAsStateWithLifecycle()
                         val layer1SendDraft by viewModel.sendScreenDraft.collectAsStateWithLifecycle()
                         val dryRunResult by viewModel.dryRunResult.collectAsStateWithLifecycle()
@@ -6729,6 +6755,7 @@ fun IbisWalletApp(
                             )
                         },
                     ) {
+                        ObserveDerivedWalletSnapshots(viewModel, liquidViewModel)
                         val bitcoinAddressBook by viewModel.allAddresses.collectAsStateWithLifecycle()
                         val liquidAddressBook by liquidViewModel.allLiquidAddresses.collectAsStateWithLifecycle()
                         val liquidUtxosForAddresses by liquidViewModel.allLiquidUtxos.collectAsStateWithLifecycle()
@@ -6802,6 +6829,7 @@ fun IbisWalletApp(
                             )
                         },
                     ) {
+                        ObserveDerivedWalletSnapshots(viewModel, liquidViewModel)
                         val liquidUtxos by liquidViewModel.allLiquidUtxos.collectAsStateWithLifecycle()
                         if (isLiquidAvailable && activeLayer == WalletLayer.LAYER2) {
                             AllUtxosScreen(
@@ -7032,6 +7060,7 @@ fun IbisWalletApp(
                     composable(
                         route = Screen.Swap.route,
                     ) {
+                        ObserveDerivedWalletSnapshots(viewModel, liquidViewModel)
                         DisposableEffect(Unit) {
                             liquidViewModel.setSwapScreenActive(true)
                             onDispose {
@@ -7243,6 +7272,7 @@ fun IbisWalletApp(
                     composable(
                         route = Screen.SparkTransfer.route,
                     ) {
+                        ObserveDerivedWalletSnapshots(viewModel)
                         if (!isLayer2Available) {
                             LaunchedEffect(Unit) {
                                 navController.navigate(Screen.Balance.route) {
@@ -7484,7 +7514,7 @@ fun IbisWalletApp(
                                  recoverDestinationAddress = walletState.currentAddress,
                                  onEnsureRecoverAddress = { viewModel.getNewAddress() },
                                  onRecoverOnchain = {
-                                      if (isRecoveringArkBelowMinBoard) return@ArkLifecycleScreen
+                                      if (isRecoveringArkOnchain) return@ArkLifecycleScreen
                                       val dest = walletState.currentAddress?.trim().orEmpty()
                                       if (dest.isBlank()) {
                                           viewModel.getNewAddress()
@@ -7496,46 +7526,28 @@ fun IbisWalletApp(
                                           return@ArkLifecycleScreen
                                       }
                                       requireSpendAuth {
-                                          isRecoveringArkBelowMinBoard = true
+                                          val feeRate =
+                                              ((feeEstimationState as? FeeEstimationResult.Success)
+                                                  ?.estimates
+                                                  ?.halfHourFee
+                                                  ?: 2.0)
+                                                  .toLong()
+                                                  .coerceAtLeast(1L)
                                           arkViewModel.recoverOnchainDepositToLayer1(
                                               destinationAddress = dest,
-                                          ) { result ->
-                                              // Callback already on Main; always clear spinner.
-                                              isRecoveringArkBelowMinBoard = false
-                                              scope.launch {
-                                                   result.fold(
-                                                       onSuccess = { detail ->
-                                                           snackbarHostState.showSnackbar(
-                                                               if (detail.isBlank()) {
-                                                                   arkRecoverOnchainClearedMessage
-                                                               } else {
-                                                                   arkRecoverOnchainSuccessFormat.format(detail)
-                                                               },
-                                                           )
-                                                           viewModel.sync()
-                                                           arkViewModel.refresh()
-                                                       },
-                                                       onFailure = { err ->
-                                                           snackbarHostState.showSnackbar(
-                                                               arkRecoverOnchainFailedFormat.format(
-                                                                   err.message
-                                                                       ?: arkErrorGenericMessage,
-                                                               ),
-                                                           )
-                                                       },
-                                                   )
-                                              }
-                                          }
+                                              feeRateSatPerVb = feeRate,
+                                          )
                                       }
                                   },
                                   isBoarding = isBoardingArkOnchain,
-                                  isRecoveringOnchain = isRecoveringArkBelowMinBoard,
+                                  isRecoveringOnchain = isRecoveringArkOnchain,
                                  onReset = { arkViewModel.resetLifecycleState() },
                                  onBack = { navController.popBackStack() },
                                  initialTab = lifecycleTab,
                             )
                        }
                       composable(route = Screen.ArkTransfer.route) {
+                          ObserveDerivedWalletSnapshots(viewModel)
                           if (!isLayer2Available) {
                               LaunchedEffect(Unit) {
                                   navController.navigate(Screen.Balance.route) {
@@ -7905,6 +7917,21 @@ private fun FullSyncProgressDialog(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ObserveDerivedWalletSnapshots(
+    viewModel: WalletViewModel,
+    liquidViewModel: LiquidViewModel? = null,
+) {
+    DisposableEffect(viewModel, liquidViewModel) {
+        viewModel.acquireDerivedSnapshots()
+        liquidViewModel?.acquireDerivedSnapshots()
+        onDispose {
+            viewModel.releaseDerivedSnapshots()
+            liquidViewModel?.releaseDerivedSnapshots()
         }
     }
 }

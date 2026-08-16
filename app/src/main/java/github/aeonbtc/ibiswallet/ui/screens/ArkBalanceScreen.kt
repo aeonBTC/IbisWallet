@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -122,7 +123,6 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
-import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
@@ -1025,7 +1025,7 @@ private fun ArkBalanceCard(
                     )
                 }
 
-                val syncEnabled = arkState.isInitialized && !arkState.isSyncing && !arkState.isConnecting
+                val syncEnabled = arkState.isInitialized && !arkState.isSyncing
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier =
@@ -1036,7 +1036,7 @@ private fun ArkBalanceCard(
                             .background(DarkSurfaceVariant)
                             .clickable(enabled = syncEnabled) { onRefresh() },
                 ) {
-                    if (arkState.isSyncing || arkState.isConnecting) {
+                    if (arkState.isSyncing) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(24.dp),
                             color = ArkRust,
@@ -1197,14 +1197,14 @@ private fun ArkMovementRow(
     val icon =
         when {
             isRefresh -> Icons.Default.Sync
-            // Recovered L1 is still an inbound on-chain deposit history row (title: Received).
-            isRecoveredL1 || isReceive -> Icons.AutoMirrored.Filled.CallReceived
+            isRecoveredL1 -> Icons.Default.Undo
+            isReceive -> Icons.AutoMirrored.Filled.CallReceived
             else -> Icons.AutoMirrored.Filled.CallMade
         }
     val iconTint =
         when {
-            isRecoveredL1 -> WarningYellow
             isRefresh -> ArkRust
+            isRecoveredL1 -> BitcoinOrange
             isBelowMin || isReceive -> AccentGreen
             else -> AccentRed
         }
@@ -1260,7 +1260,8 @@ private fun ArkMovementRow(
                     contentDescription =
                         when {
                             isRefresh -> stringResource(R.string.ark_movement_refresh)
-                            isRecoveredL1 || isReceive -> stringResource(R.string.loc_301a5b91)
+                            isRecoveredL1 -> stringResource(R.string.ark_history_title_recovered)
+                            isReceive -> stringResource(R.string.loc_301a5b91)
                             else -> stringResource(R.string.loc_1af68597)
                         },
                     tint = iconTint,
@@ -1337,7 +1338,7 @@ private fun ArkMovementRow(
                     isRecoveredL1 ->
                         ArkPendingBadge(
                             text = stringResource(R.string.ark_history_badge_recovered_l1),
-                            color = SuccessGreen,
+                            color = BitcoinOrange,
                         )
                     isPending ->
                         ArkPendingBadge(text = stringResource(R.string.loc_1b684325))
@@ -1655,6 +1656,9 @@ private fun arkMovementDisplayTitle(
     if (arkMovementIsRefresh(movement)) {
         return stringResource(R.string.ark_movement_refresh)
     }
+    if (ArkDepositPolicy.isRecoveredOnchainMovement(movement)) {
+        return stringResource(R.string.ark_history_title_recovered)
+    }
     // Center Swap control board/offboard → Swap; peer pays → Received/Sent. LN excluded.
     if (arkMovementIsCenterSwap(movement, layer1Transactions)) {
         return stringResource(R.string.loc_85a12a5f)
@@ -1916,11 +1920,13 @@ private fun ArkMovementDetailSheet(
     val context = LocalContext.current
     val amount = movement.displayBalanceSats()
     val isRefresh = arkMovementIsRefresh(movement)
+    val isRecoveredL1 = ArkDepositPolicy.isRecoveredOnchainMovement(movement)
     val isReceive = amount >= 0 && !isRefresh
     val absAmount = abs(amount).toULong()
     val accentColor =
         when {
             isRefresh -> ArkRust
+            isRecoveredL1 -> BitcoinOrange
             isReceive -> AccentGreen
             else -> AccentRed
         }
@@ -1931,7 +1937,6 @@ private fun ArkMovementDetailSheet(
     val isLightningRail = rail == ArkHistoryRail.LIGHTNING
     val isFailed = arkMovementIsFailed(movement.status)
     val isBelowMin = ArkDepositPolicy.isBelowMinOnchainMovement(movement)
-    val isRecoveredL1 = ArkDepositPolicy.isRecoveredOnchainMovement(movement)
     val isBoardDeposit = arkMovementIsBoardDeposit(movement)
     val isUnfinishedBoard = arkMovementIsUnfinishedBoardDeposit(movement)
     val resolvedRequiredBoardConfirmations =
@@ -2014,7 +2019,7 @@ private fun ArkMovementDetailSheet(
         when {
             isFailed -> ErrorRed
             isBelowMin -> WarningYellow
-            isRecoveredL1 -> SuccessGreen
+            isRecoveredL1 -> BitcoinOrange
             isConfirmed -> AccentGreen
             else -> BitcoinOrange
         }
@@ -2045,7 +2050,7 @@ private fun ArkMovementDetailSheet(
     val amountText =
         if (privacyMode) {
             ARK_HIDDEN_AMOUNT
-        } else if (isFailed) {
+        } else if (isFailed || isRecoveredL1) {
             formatAmount(absAmount, useSats, includeUnit = true)
         } else {
             "${if (isReceive) "+" else "-"}${formatAmount(absAmount, useSats, includeUnit = true)}"
@@ -2110,9 +2115,15 @@ private fun ArkMovementDetailSheet(
     // (display only — not written into history, so it won't force receive-address rotation).
     // Board deposits: L1 counterparty address is the paid deposit address (most accurate).
     // Refresh rounds have no peer — omit recipient entirely.
+    val recoveredDestination =
+        movement.sentToAddresses
+            .firstOrNull { it.isNotBlank() && !it.trimStart().startsWith("{") }
     val recipientOrSource =
         when {
             isRefresh || isLightningRail -> null
+            isRecoveredL1 ->
+                recoveredDestination
+                    ?: layer1Transaction?.address?.takeIf { it.isNotBlank() }
             isReceive && isBoardDeposit ->
                 movement.receivedOnAddresses
                     .firstOrNull {
@@ -2302,6 +2313,7 @@ private fun ArkMovementDetailSheet(
                                 imageVector =
                                     when {
                                         isRefresh -> Icons.Default.Sync
+                                        isRecoveredL1 -> Icons.Default.Undo
                                         isReceive -> Icons.AutoMirrored.Filled.CallReceived
                                         else -> Icons.AutoMirrored.Filled.CallMade
                                     },
@@ -2490,10 +2502,13 @@ private fun ArkMovementDetailSheet(
                                 )
                                 Text(
                                     text =
-                                        if (isReceive) {
-                                            stringResource(R.string.loc_b47edf23)
-                                        } else {
-                                            stringResource(R.string.loc_eaf579ea)
+                                        when {
+                                            isRecoveredL1 ->
+                                                stringResource(R.string.ark_history_recovered_to)
+                                            isReceive ->
+                                                stringResource(R.string.loc_b47edf23)
+                                            else ->
+                                                stringResource(R.string.loc_eaf579ea)
                                         },
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
@@ -2503,11 +2518,17 @@ private fun ArkMovementDetailSheet(
                                     if (privacyMode) {
                                         ARK_HIDDEN_AMOUNT
                                     } else if (recipientAmountSats != null) {
-                                        "${if (isReceive) "+" else "-"}${formatAmount(
-                                            recipientAmountSats.toULong(),
-                                            useSats,
-                                            includeUnit = true,
-                                        )}"
+                                        val formatted =
+                                            formatAmount(
+                                                recipientAmountSats.toULong(),
+                                                useSats,
+                                                includeUnit = true,
+                                            )
+                                        when {
+                                            isRecoveredL1 -> formatted
+                                            isReceive -> "+$formatted"
+                                            else -> "-$formatted"
+                                        }
                                     } else {
                                         amountText
                                     }
@@ -2515,10 +2536,13 @@ private fun ArkMovementDetailSheet(
                                 ArkDetailCopyRow(
                                     value = peerDisplay,
                                     copyLabel =
-                                        if (isReceive) {
-                                            stringResource(R.string.loc_b47edf23)
-                                        } else {
-                                            stringResource(R.string.loc_eaf579ea)
+                                        when {
+                                            isRecoveredL1 ->
+                                                stringResource(R.string.ark_history_recovered_to)
+                                            isReceive ->
+                                                stringResource(R.string.loc_b47edf23)
+                                            else ->
+                                                stringResource(R.string.loc_eaf579ea)
                                         },
                                     copied = showCopiedRecipient,
                                     accentColor = if (isBitcoinRail) BitcoinOrange else ArkRust,
@@ -2595,7 +2619,7 @@ private fun ArkMovementDetailSheet(
                                 )
                             }
 
-                            if (isBitcoinRail && !isRefresh) {
+                            if (isBitcoinRail && !isRefresh && !isRecoveredL1) {
                                 HorizontalDivider(
                                     modifier = Modifier.padding(vertical = 6.dp),
                                     color = TextSecondary.copy(alpha = 0.1f),

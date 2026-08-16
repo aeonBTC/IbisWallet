@@ -1018,7 +1018,14 @@ fun ArkLifecycleScreen(
         Spacer(modifier = Modifier.height(32.dp))
     }
 
-    if (showRecoverConfirmDialog) {
+    var wasRecoveringOnchain by remember { mutableStateOf(false) }
+    LaunchedEffect(isRecoveringOnchain) {
+        if (wasRecoveringOnchain && !isRecoveringOnchain) {
+            showRecoverConfirmDialog = false
+        }
+        wasRecoveringOnchain = isRecoveringOnchain
+    }
+    if (showRecoverConfirmDialog || isRecoveringOnchain) {
         val dest = recoverDestinationAddress?.trim().orEmpty()
         val hasDest = dest.isNotBlank()
         IbisConfirmDialog(
@@ -1027,12 +1034,16 @@ fun ArkLifecycleScreen(
             },
             title = stringResource(R.string.ark_boarding_recover_dialog_title),
             message = stringResource(R.string.ark_boarding_recover_dialog_body),
-            confirmText = stringResource(R.string.ark_boarding_recover_dialog_confirm),
+            confirmText =
+                if (isRecoveringOnchain) {
+                    stringResource(R.string.ark_boarding_recover_dialog_working)
+                } else {
+                    stringResource(R.string.ark_boarding_recover_dialog_confirm)
+                },
             confirmEnabled = hasDest && !isRecoveringOnchain,
             confirmColor = ArkRust,
             dismissEnabled = !isRecoveringOnchain,
             onConfirm = {
-                showRecoverConfirmDialog = false
                 onRecoverOnchain()
             },
             onDismissAction = {
