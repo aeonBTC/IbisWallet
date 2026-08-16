@@ -261,7 +261,13 @@ class SecureStorage private constructor(private val context: Context) {
     fun enrollBiometricLock(cipher: Cipher) {
         val master =
             spendSecretKey
-                ?: throw IllegalStateException("Spend session is locked")
+                ?: if (getSecurityMethod() == SecurityMethod.NONE && !hasEncryptedSpendSecrets()) {
+                    // Enrolling from a no-security state: secrets are still plaintext,
+                    // so mint the master that migrateLegacySpendSecrets() wraps them under.
+                    randomSpendSecretKey()
+                } else {
+                    throw IllegalStateException("Spend session is locked")
+                }
         writeWrappedSecret(
             key = KEY_SPEND_MASTER_BIOMETRIC_WRAPPED,
             wrapped =
