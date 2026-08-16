@@ -15,9 +15,15 @@ Security fixes are applied to the latest release on [GitHub Releases](https://gi
 
 **Do not open a public GitHub issue for security-sensitive findings.**
 
-1. Prefer a private channel to the maintainer (see the repository owner profile / release notes for contact).
-2. If no private channel is available, open a [GitHub Security Advisory](https://github.com/aeonBTC/IbisWallet/security/advisories/new) (private) when the repository enables them.
-3. Include: affected version/build, reproduction steps, impact (funds, privacy, lockout, wipe), and any PoC that does **not** put third-party funds at risk.
+### Email me
+
+Send reports to **[aeonbtc@proton.me](mailto:aeonbtc@proton.me)**.
+
+- Encrypt with PGP when the finding is sensitive: fingerprint `9A61 2482 4FCC 0EF0 5F3A 8184 C0F0 581E B6C4 E1D6` ([key](https://keys.openpgp.org/vks/v1/by-fingerprint/9A6124824FCC0EF05F3A8184C0F0581EB6C4E1D6)).
+- Include: affected version/build, reproduction steps, impact (funds, privacy, lockout, wipe), and any PoC that does **not** put third-party funds at risk.
+- You will get a reply when the report is received.
+
+Alternatively, open a [GitHub Security Advisory](https://github.com/aeonBTC/IbisWallet/security/advisories/new) (private) when the repository enables them.
 
 ### Bug bounty
 
