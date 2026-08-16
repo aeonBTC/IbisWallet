@@ -4,6 +4,7 @@ package github.aeonbtc.ibiswallet.ui
 
 import android.Manifest
 import android.content.Intent
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -6419,6 +6420,10 @@ fun IbisWalletApp(
                                                 securityMethod = SecureStorage.SecurityMethod.BIOMETRIC
                                                 isSecurityEnabled = true
                                             }.onFailure {
+                                                Log.w(
+                                                    "IbisWalletApp",
+                                                    "Biometric enrollment failed: ${it.message}",
+                                                )
                                                 scope.launch {
                                                     snackbarHostState.showSnackbar(
                                                         biometricUnavailableMessage,
