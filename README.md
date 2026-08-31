@@ -103,10 +103,10 @@ Most recent audit: [August 15th, 2026](https://github.com/aeonBTC/IbisWallet/rel
 
 As I originally made this wallet for myself, I do not expect donations. However, tokens aren't cheap. So if you wish to show thanks, please do. 
 
-<img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
+<img width="217" height="200" alt="image" src="https://github.com/user-attachments/assets/ea7993d0-ce33-4578-b534-5ea86cd74038" />
 
 ```bash
-bc1qk54j45l8s20z6glxnt5zuk7efq2qsjj9n44wc8
+bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8
 ```
 
 
