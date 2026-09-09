@@ -87,9 +87,13 @@ Requer Android Studio com JDK 17.
 
 ## Bug Bounty
 
+**Nota:** O programa de bug bounty está atualmente suspenso por falta de fundos. Relatos são bem-vindos e serão reconhecidos, mas nenhuma recompensa monetária será paga até que o programa seja retomado.
+
 Oferecemos $1.000 pagos em BTC por vulnerabilidades críticas no Ibis Wallet que possam levar à perda não autorizada de fundos do usuário.
 
 Estão no escopo vulnerabilidades com um caminho de ataque prático e realista que resulte em roubo ou perda permanente de fundos (p. ex. comprometimento remoto da carteira, extração da seed, manipulação de transações etc.).
+
+O Ibis é um software em beta feito para usuários experientes de Bitcoin. Backups da seed fora do dispositivo são prática padrão esperada: problemas totalmente recuperáveis restaurando da seed, sem roubo por terceiros, são reconhecidos, mas ficam fora das recompensas.
 
 Problemas de menor gravidade, vulnerabilidades teóricas sem caminho de exploit prático, ou achados que não levem à perda de fundos serão reconhecidos, mas em geral ficam fora do escopo de recompensas monetárias.
 
@@ -106,7 +110,7 @@ Como originalmente fiz esta carteira para mim, não espero doações. No entanto
 <img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
 
 ```bash
-bc1qk54j45l8s20z6glxnt5zuk7efq2qsjj9n44wc8
+bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8
 ```
 
 ## Licença
