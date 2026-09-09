@@ -87,7 +87,7 @@ Requer Android Studio com JDK 17.
 
 ## Bug Bounty
 
-> [!WARNING]
+> [!IMPORTANT]
 > **Programa de bug bounty suspenso por falta de fundos.** Relatos são bem-vindos e serão reconhecidos, mas nenhuma recompensa monetária será paga até que o programa seja retomado.
 
 Oferecemos $1.000 pagos em BTC por vulnerabilidades críticas no Ibis Wallet que possam levar à perda não autorizada de fundos do usuário.
