@@ -27,9 +27,11 @@ Alternatively, open a [GitHub Security Advisory](https://github.com/aeonBTC/Ibis
 
 ### Bug bounty
 
-A bounty of **$1,000 BTC** is offered for **critical** vulnerabilities with a practical path to **unauthorized loss of user funds** (for example remote wallet compromise, seed extraction, or transaction manipulation that steals or permanently destroys funds).
+> **Bug bounty program is currently paused due to lack of funds.** Reports are welcome and will be acknowledged, but no monetary rewards will be paid until the program resumes.
 
-| In scope for bounty | Out of scope for bounty (may still be acknowledged) |
+The paused bounty offered **$1,000 BTC** for **critical** vulnerabilities with a practical path to **unauthorized loss of user funds** (for example remote wallet compromise, seed extraction, or transaction manipulation that steals or permanently destroys funds).
+
+| In scope for bounty (when active) | Out of scope for bounty (may still be acknowledged) |
 |---------------------|-----------------------------------------------------|
 | Practical theft or permanent loss of funds | Theoretical issues without a realistic exploit path |
 | Remote compromise leading to fund loss | UI/UX polish, cosmetic bugs |
@@ -39,7 +41,7 @@ A bounty of **$1,000 BTC** is offered for **critical** vulnerabilities with a pr
 | | Social engineering, phishing, or user error |
 | | Compromised Android OS / rooted device / malware with full device control (baseline threat; see Threat model) |
 
-Lower-severity issues that do not lead to fund loss may be fixed without a monetary reward.
+When the program is active, lower-severity issues that do not lead to fund loss may be fixed without a monetary reward.
 
 ### Disclosure expectations
 
@@ -98,9 +100,11 @@ While **app lock is enabled** (PIN or biometric), high-value secrets are stored 
 
 When the app locks, the in-memory master key is zeroed (`lockSpendSecretSession`). Without a successful unlock, spend secrets cannot be decrypted even if encrypted prefs are readable on a compromised filesystem snapshot that still requires the Keystore path—defense is layered, not absolute (see Threat model).
 
-**Disabling app lock** (`SecurityMethod.NONE`) deliberately migrates spend secrets back to EncryptedSharedPreferences values **without** the session wrap (so the wallet remains usable with no unlock), then zeros the in-memory master key. Encrypted prefs still protect at rest via the Keystore master key.
+**Disabling app lock** (`SecurityMethod.NONE`) deliberately migrates spend secrets back to EncryptedSharedPreferences values **without** the session wrap (so the wallet remains usable with no unlock), then zeros the in-memory master key. Encrypted prefs still protect at rest via the Keystore master key. Disabling requires an explicit funds-at-risk confirmation in the Security screen; programmatic callers must pass `acknowledgedDowngradeRisk = true`.
 
 Biometric Keystore keys use `setInvalidatedByBiometricEnrollment(false)` so adding/removing fingerprints does **not** permanently orphan the spend-secret master key. Legacy invalidated keys are deleted and recreated so biometric can be re-enrolled. Biometric is **BIOMETRIC_STRONG** only (no device-credential fallback on the crypto-bound path).
+
+Enrollment-change handling is fail-closed: the tripwire canary (`ibis_biometric_tripwire`) reports `OK` / `CHANGED` / `UNKNOWN`. `CHANGED` blocks the first biometric unlock and sets a one-shot warning (a second attempt after the user has seen the warning may proceed and re-baselines). `UNKNOWN` (unreadable Keystore) blocks with a retryable error instead of silently proceeding.
 
 ### What is never logged
 
@@ -152,7 +156,7 @@ Viewing key material and similar sensitive UI paths can require PIN/biometric ag
 
 ### Per-wallet locks
 
-Individual wallets can be flagged locked in metadata. Opening or unlocking a locked wallet requires app PIN/biometric (persona-scoped in duress). This is a **UI/session authorization gate**, not a second encryption layer over that wallet’s secrets. Disabling global security clears wallet locks. Requires app security to be enabled before locking a wallet.
+Individual wallets can be flagged locked in metadata. Opening or unlocking a locked wallet requires app PIN/biometric (persona-scoped in duress). This is a **UI/session authorization gate**, not a second encryption layer over that wallet’s secrets. Authorization expires after 5 minutes and never survives process death; locked wallets are excluded from full-backup export unless freshly authorized this session. Disabling global security clears wallet locks. Requires app security to be enabled before locking a wallet.
 
 ### Session unlock flag
 
@@ -179,10 +183,15 @@ So changing the device clock or a simple reboot cannot trivially clear the same-
 
 | Input | During lockout |
 |-------|----------------|
-| Correct **duress** PIN | Always succeeds; resets failed counter / lockout; never triggers auto-wipe |
-| Correct **wipe** PIN | Always succeeds and wipes; does not unlock |
+| Correct **duress** PIN | Blocked like any other PIN (uniform response — no oracle for which PIN is decoy) |
+| Correct **wipe** PIN | Blocked like any other PIN (uniform response) |
 | Correct unlock PIN | Subject to lockout when locked out |
 | Biometric failures | OS rate-limits; do not increment the app failed-PIN counter toward auto-wipe |
+
+A reboot combined with clock rollback cannot clear an active rate limit: when a
+reboot is detected while failed attempts are at/above the threshold, a bounded
+grace wall deadline (30–120s) is re-armed. The wall deadline always expires, so
+the real PIN is never bricked.
 
 ---
 
@@ -258,7 +267,8 @@ Disguises the app as a **Calculator**:
 - Recent-apps label shows “Calculator”  
 - Cloak prefs use **synchronous `commit`** before `exitProcess` so state survives restart  
 - Restart path: stop Tor, start `MainActivity` via explicit intent, exit process  
-- Cloak unlock code is stored in encrypted prefs as a string (constant-time compare); it is **not** PBKDF2-hashed like unlock/duress/wipe PINs  
+- Cloak unlock code is PBKDF2-hashed like unlock/duress/wipe PINs, with exponential-backoff rate limiting on `=` guesses (wrong codes are indistinguishable from locked-out state)
+- Launcher alias state is OS-visible (`PackageManager` component state): a forensic examiner can see which alias is enabled — cloak hides the icon/label from casual view, not from `pm` inspection  
 
 Cloak Mode is **UI/OS surface** deniability, not cryptographic hiding of the APK from a forensic examiner with full disk access.
 
@@ -356,11 +366,29 @@ Optional GitHub Releases API poll (`AppUpdateService`). Default **off** (welcome
 
 When connecting to a remote LND/CLN node:
 
+- No credential-bearing auto-probe: the client uses the configured transport
+  as-is (single candidate). Clearnet credentials are sent only over pinned-cert
+  TLS, or over an explicitly acknowledged insecure transport — never via silent
+  trust-all/plaintext probing. The setup form fails closed before any socket or
+  credential use otherwise.
 - Optional PEM pin (and optional mTLS client identity when the paste includes client key+cert)
-- Clearnet TLS without a pasted cert may use trust-all for self-signed home nodes—prefer pasting `tls.cert`
-- User-chosen plain HTTP is allowed for LAN
-- Hostname verification is disabled once the user-selected trust policy is applied (pin or trust-all)—pinning is the integrity control when a cert is supplied
+- Clearnet TLS without a pasted cert fails closed unless the per-host
+  "Allow insecure transport" acknowledgment is set (setup screen; persisted per
+  wallet; never inferred from legacy flags, imports, or backups — pre-fix
+  installs must re-pin or re-acknowledge)
+- Clearnet plain HTTP requires the same explicit acknowledgment (setup-screen
+  checkbox); the Test button stays disabled without it
+- `.onion` hosts via Tor need neither a cert nor the acknowledgment — Tor
+  authenticates and encrypts the endpoint end-to-end (clearnet-over-Tor stays
+  rejected; empty setup form defaults TLS off and auto-enables it when a
+  clearnet host is typed, until the user touches the toggle)
+- Hostname verification is disabled once the user-selected trust policy is applied (pin or acknowledged-insecure/trust-all)—pinning is the integrity control when a cert is supplied
 - Tor: SOCKS + DNS-through-proxy; HTTP/1.1 preferred over Tor
+
+App-level `cleartextTrafficPermitted` stays enabled because LAN Electrum is an
+intentional feature; Lightning Node cleartext is gated one layer up (per-host
+acknowledgment + fail-closed clients), so the manifest flag alone cannot leak
+macaroons/runes.
 
 ### Remote credentials
 
@@ -368,11 +396,19 @@ LND macaroon, CLN rune, TLS PEM, and NWC URI are spend secrets. Host/port/type m
 
 ### NWC (NIP-47)
 
-NWC URI parsed strictly (`nostr+walletconnect://`, hex pubkey/secret, `ws://`/`wss://` relays). Payloads use **NIP-44 v2** (secp256k1 ECDH + HKDF + ChaCha20 + HMAC-SHA256) with legacy **NIP-04** decrypt fallback for older wallets.
+NWC URI parsed strictly (`nostr+walletconnect://`, hex pubkey/secret, `ws://`/`wss://` relays). Payloads use **NIP-44 v2** (secp256k1 ECDH + HKDF + ChaCha20 + HMAC-SHA256); legacy **NIP-04** decrypt fallback is **disabled by default** (`allowLegacyNip04Fallback = false`). Responses are accepted within a 60s window with future-dated events rejected, and duplicate signed responses are ignored (replay guard).
+
+### Lightning Node backup restores
+
+Restored Lightning Node configs always start offline (`restoreNeedsConfirm=true`) until the user confirms in the Connection screen. The legacy `allowInsecureTls` backup flag is never restored as true without an explicit `acknowledgedInsecure=true` in the same backup JSON; the live config mirrors the explicit acknowledgment only. Pre-fix backups must re-pin or re-acknowledge before credentials travel over clearnet again.
+
+### Ark Esplora fallback
+
+Clearnet Esplora may fall back across reachable hosts with a user-visible notice; `.onion` hosts never fall back to clearnet. Automatic clearnet fallback can be disabled (`Ark → Esplora auto-fallback` setting, default on) for a fail-closed open that only contacts the configured host.
 
 ### Deep links and external send input
 
-Incoming VIEW intents and NFC reads only accept recognized payment formats (`isRecognizedSendInput` / payment URI schemes). Input is held as pending send state and consumed after unlock—not auto-broadcast.
+Incoming VIEW intents and NFC reads only accept recognized payment formats (`isRecognizedSendInput` / payment URI schemes). Unrecognized or oversized payloads are dropped at ingest; recognized payloads carry an origin tag (deep link / NFC / external) for review surfaces. Input is held as pending send state and consumed after unlock—not auto-broadcast.
 
 ### Explorer / browser opens
 
