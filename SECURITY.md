@@ -40,6 +40,7 @@ The paused bounty offered **$1,000 BTC** for **critical** vulnerabilities with a
 | | Dependency CVEs with no practical impact on Ibis |
 | | Social engineering, phishing, or user error |
 | | Compromised Android OS / rooted device / malware with full device control (baseline threat; see Threat model) |
+| | Issues fully recoverable by restoring from off-device seed backup, with no third-party theft (seed backups are expected standard practice for this beta software) |
 
 When the program is active, lower-severity issues that do not lead to fund loss may be fixed without a monetary reward.
 
