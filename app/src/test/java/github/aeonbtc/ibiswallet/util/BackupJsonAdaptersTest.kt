@@ -135,6 +135,7 @@ class BackupJsonAdaptersTest : FunSpec({
                             timestamp = 1_717_171_717L,
                             address = "bc1qdeposit",
                             claimError = "pending",
+                            isSwapDeposit = true,
                         ),
                     ),
                 onchainDepositAddress = "bc1qcachedaddress",

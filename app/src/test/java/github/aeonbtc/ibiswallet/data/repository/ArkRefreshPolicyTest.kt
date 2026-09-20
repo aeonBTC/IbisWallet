@@ -56,6 +56,33 @@ class ArkRefreshPolicyTest : FunSpec({
         ) shouldBe listOf(earliest)
     }
 
+    test("null fee skip is waived when refresh is already due") {
+        ArkRefreshPolicy.shouldSkipAutoRefreshForFee(
+            feeSats = null,
+            needsRefresh = true,
+            maxFeeSats = 5_000L,
+            dailyRemainingSats = 25_000L,
+        ) shouldBe false
+    }
+
+    test("null fee skip stays in the soon window") {
+        ArkRefreshPolicy.shouldSkipAutoRefreshForFee(
+            feeSats = null,
+            needsRefresh = false,
+            maxFeeSats = 5_000L,
+            dailyRemainingSats = 25_000L,
+        ) shouldBe true
+    }
+
+    test("over-cap fee still skips when due") {
+        ArkRefreshPolicy.shouldSkipAutoRefreshForFee(
+            feeSats = 6_000L,
+            needsRefresh = true,
+            maxFeeSats = 5_000L,
+            dailyRemainingSats = 25_000L,
+        ) shouldBe true
+    }
+
     test("scheduled fee uses fee tier at scheduled height and rounds once") {
         ArkRefreshPolicy.estimateScheduledFeeSats(
             vtxos = listOf(vtxo("a", 1_010), vtxo("b", 1_020)),

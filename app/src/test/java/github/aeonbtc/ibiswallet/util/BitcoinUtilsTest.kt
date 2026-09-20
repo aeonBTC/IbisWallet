@@ -751,6 +751,13 @@ class BitcoinUtilsTest : FunSpec({
             )
             result shouldBe "[00000000/84'/0'/0']xpub6ABC"
         }
+
+        test("empty origin path omits path segment") {
+            val result = BitcoinUtils.buildKeyWithOrigin(
+                "xpub6ABC", "73c5da0a", "", AddressType.SEGWIT,
+            )
+            result shouldBe "[73c5da0a]xpub6ABC"
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -1575,6 +1582,100 @@ class BitcoinUtilsTest : FunSpec({
                     includeChange = true,
                 )
             (withChange > sweep) shouldBe true
+        }
+    }
+
+    context("bip39 derivation path") {
+        test("strips trailing receive branch") {
+            BitcoinUtils.bip39AccountDerivationPath("m/84'/0'/0'/0") shouldBe "m/84'/0'/0'"
+        }
+
+        test("keeps custom account") {
+            BitcoinUtils.bip39AccountDerivationPath("m/84'/0'/1'") shouldBe "m/84'/0'/1'"
+        }
+
+        test("accepts h hardened marker") {
+            BitcoinUtils.bip39AccountDerivationPath("m/84h/0h/1h") shouldBe "m/84'/0'/1'"
+        }
+
+        test("rejects letters") {
+            BitcoinUtils.isValidBip39DerivationPath("m/abc") shouldBe false
+        }
+
+        test("maps default account back to address type default") {
+            BitcoinUtils.persistableBip39DerivationPath("m/84'/0'/0'", AddressType.SEGWIT) shouldBe
+                AddressType.SEGWIT.defaultPath
+        }
+
+        test("keeps current path when account is unchanged") {
+            BitcoinUtils.persistableBip39DerivationPath(
+                "m/84'/0'/1'/0",
+                AddressType.SEGWIT,
+                "m/84'/0'/1'",
+            ) shouldBe "m/84'/0'/1'"
+        }
+
+        test("maps Electrum default account back to m") {
+            BitcoinUtils.persistableDerivationPath("m/", "m", "m") shouldBe "m"
+        }
+
+        test("origin path strips m/ prefix") {
+            BitcoinUtils.originPathFromDerivationPath("m/84'/0'/1'") shouldBe "84'/0'/1'"
+        }
+
+        test("master origin path is empty") {
+            BitcoinUtils.originPathFromDerivationPath("m") shouldBe ""
+        }
+
+        test("matches SegWit default path") {
+            BitcoinUtils.matchingAddressTypeForPath("m/84'/0'/0'/0") shouldBe AddressType.SEGWIT
+        }
+
+        test("matches Legacy account path") {
+            BitcoinUtils.matchingAddressTypeForPath("m/44'/0'/0'") shouldBe AddressType.LEGACY
+        }
+
+        test("custom path is not a preset") {
+            BitcoinUtils.matchingAddressTypeForPath("m/84'/0'/1'") shouldBe null
+        }
+    }
+
+    context("isLiquidMainnetAddress") {
+        test("accepts mainnet confidential lq1 address") {
+            BitcoinUtils.isLiquidMainnetAddress(
+                "lq1qqf8er278e6nyvuwtgf39e6ewvdcnjupn9a86rzpx655y5lhkt0walu3djf9cklkxd3ryld97hu8h3xepw7sh2rlu7q45dcew5",
+            ) shouldBe true
+        }
+
+        test("accepts mainnet unconfidential ex1 address") {
+            BitcoinUtils.isLiquidMainnetAddress("ex1q7gkeyjut0mrxc3j0kjlt7rmcnvsh0gt45d3fud") shouldBe true
+        }
+
+        test("accepts mainnet base58 address") {
+            BitcoinUtils.isLiquidMainnetAddress("GqiQRsPEyJLAsEBFB5R34KHuqxDNkG3zur") shouldBe true
+        }
+
+        test("rejects testnet and regtest addresses") {
+            BitcoinUtils.isLiquidMainnetAddress("tex1q6rz28mcfaxtmd6v789l9rrlrusdprr9p634wu8") shouldBe false
+            BitcoinUtils.isLiquidMainnetAddress(
+                "tlq1qq2xvpcvfup5j8zscjq05u2wxxjcyewk7979f3mmz5l7uw5pqmx6xf5xy50hsn6vhkm5euwt72x878eq6zxx2z58hd7zrsg9qn",
+            ) shouldBe false
+            BitcoinUtils.isLiquidMainnetAddress("ert1qwhh2n5qypypm0eufahm2pvj8raj9zq5c27cysu") shouldBe false
+            BitcoinUtils.isLiquidMainnetAddress(
+                "el1qq0umk3pez693jrrlxz9ndlkuwne93gdu9g83mhhzuyf46e3mdzfpva0w48gqgzgrklncnm0k5zeyw8my2ypfsmxh4xcjh2rse",
+            ) shouldBe false
+        }
+
+        test("unsupportedNonMainnetLiquidReason flags hostile URIs") {
+            BitcoinUtils.unsupportedNonMainnetLiquidReason(
+                "liquid:ert1qwhh2n5qypypm0eufahm2pvj8raj9zq5c27cysu?amount=0.5",
+            ) shouldBe BitcoinUtils.UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
+            BitcoinUtils.unsupportedNonMainnetLiquidReason(
+                "liquid:lq1qqf8er278e6nyvuwtgf39e6ewvdcnjupn9a86rzpx655y5lhkt0walu3djf9cklkxd3ryld97hu8h3xepw7sh2rlu7q45dcew5?amount=0.5",
+            ) shouldBe null
+            BitcoinUtils.unsupportedNonMainnetLiquidReason(
+                "ert1qwhh2n5qypypm0eufahm2pvj8raj9zq5c27cysu",
+            ) shouldBe BitcoinUtils.UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
         }
     }
 

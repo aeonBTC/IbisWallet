@@ -15,6 +15,7 @@ class SparkServiceErrorsTest : FunSpec({
                     R.string.spark_error_connection -> "Spark connection failed"
                     R.string.spark_error_unavailable -> "Spark service unavailable"
                     R.string.spark_error_generic -> "Spark request failed"
+                    R.string.spark_send_self_payment -> "SELF_PAYMENT_GUIDANCE"
                     else -> "unexpected:$resId"
                 }
         }
@@ -65,6 +66,14 @@ class SparkServiceErrorsTest : FunSpec({
             RuntimeException("Amount below minimum"),
             fallback = "Spark receive failed",
         ) shouldBe "Amount below minimum"
+    }
+
+    test("maps self-payment rejection to consolidation guidance") {
+        SparkServiceErrors.mapFailure(
+            localizer,
+            RuntimeException("Service error: cannot send to self"),
+            fallback = "Spark send failed",
+        ) shouldBe "SELF_PAYMENT_GUIDANCE"
     }
 
     test("blank message uses fallback when fallback is useful") {

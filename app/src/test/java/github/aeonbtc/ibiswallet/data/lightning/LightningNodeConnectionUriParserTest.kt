@@ -91,6 +91,7 @@ class LightningNodeConnectionUriParserTest :
                 val result = LightningNodeConnectionUriParser.parse(uri)
                 result.config.useTls shouldBe false
                 result.config.allowInsecureTls shouldBe false
+                result.config.acknowledgedInsecure shouldBe false
                 result.config.tlsCertPem shouldBe ""
             }
 
@@ -101,6 +102,7 @@ class LightningNodeConnectionUriParserTest :
                 result.type shouldBe LightningNodeConnectionType.CLN_REST
                 result.config.useTls shouldBe false
                 result.config.allowInsecureTls shouldBe false
+                result.config.acknowledgedInsecure shouldBe false
             }
 
             "parses hex macaroon param" {

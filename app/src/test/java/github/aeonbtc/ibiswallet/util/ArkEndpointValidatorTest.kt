@@ -42,4 +42,44 @@ class ArkEndpointValidatorTest : FunSpec({
                 "https://example.com/api"
         }
     }
+
+    context("network consistency") {
+        test("mainnet pair is consistent") {
+            ArkEndpointValidator.isConsistentPair(
+                "https://ark.second.tech",
+                "https://mempool.second.tech/api",
+            ) shouldBe true
+        }
+
+        test("testnet ASP with mainnet Esplora is inconsistent") {
+            ArkEndpointValidator.isConsistentPair(
+                "https://testnet.ark.second.tech",
+                "https://mempool.second.tech/api",
+            ) shouldBe false
+        }
+
+        test("signet Esplora with mainnet ASP is inconsistent") {
+            ArkEndpointValidator.isConsistentPair(
+                "https://ark.second.tech",
+                "https://signet.esplora.example.com/api",
+            ) shouldBe false
+        }
+
+        test("matching testnet markers are consistent") {
+            ArkEndpointValidator.isConsistentPair(
+                "https://testnet.ark.example.com",
+                "https://testnet.esplora.example.com/api",
+            ) shouldBe true
+        }
+
+        test("blank side skips the pair check") {
+            ArkEndpointValidator.isConsistentPair("", "https://mempool.second.tech/api") shouldBe true
+            ArkEndpointValidator.isConsistentPair("https://ark.second.tech", "") shouldBe true
+        }
+
+        test("marker needs token boundaries") {
+            ArkEndpointValidator.networkMarker("https://latestnet.example.com") shouldBe null
+            ArkEndpointValidator.networkMarker("https://testnet.example.com") shouldBe "testnet"
+        }
+    }
 })

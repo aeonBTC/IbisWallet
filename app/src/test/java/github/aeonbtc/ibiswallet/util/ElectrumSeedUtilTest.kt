@@ -138,6 +138,24 @@ class ElectrumSeedUtilTest : FunSpec({
                 "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e5349553" +
                 "1f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04"
         }
+
+        test("leading/trailing whitespace matches canonical seed (SP/BDK agreement)") {
+            val canonical =
+                ElectrumSeedUtil.bip39MnemonicToSeed(
+                    mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+                    passphrase = "TREZOR",
+                )
+            val padded =
+                ElectrumSeedUtil.bip39MnemonicToSeed(
+                    mnemonic = "  abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about  ",
+                    passphrase = "TREZOR",
+                )
+            padded.toList() shouldBe canonical.toList()
+        }
+
+        test("rejects blank mnemonic instead of deriving a garbage SP seed") {
+            runCatching { ElectrumSeedUtil.bip39MnemonicToSeed("   ") }.isFailure shouldBe true
+        }
     }
 
     // ── masterKeyFromSeed ──
@@ -245,6 +263,16 @@ class ElectrumSeedUtilTest : FunSpec({
             )
             external.contains(fp) shouldBe true
         }
+
+        test("custom path is used in origin") {
+            val seed = ElectrumSeedUtil.mnemonicToSeed(segwitSeed)
+            val (external, _) = ElectrumSeedUtil.buildDescriptorStrings(
+                seed,
+                ElectrumSeedUtil.ElectrumSeedType.SEGWIT,
+                "m/0'/1'",
+            )
+            external.contains("/0'/1']") shouldBe true
+        }
     }
 
     // ── deriveExtendedPublicKey ──
@@ -335,6 +363,65 @@ class ElectrumSeedUtilTest : FunSpec({
 
         test("SEGWIT has prefix 100") {
             ElectrumSeedUtil.ElectrumSeedType.SEGWIT.prefix shouldBe "100"
+        }
+    }
+
+    // ── xpubFromXprv ──
+
+    context("xpubFromXprv") {
+        val mnemonic =
+            "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+
+        fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
+
+        test("vendored secp256k1 multiply maps 1 to the generator point") {
+            val one = ByteArray(31) + byteArrayOf(1)
+            ElectrumSeedUtil.publicKeyFromPrivate(one).toHex() shouldBe
+                "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+        }
+
+        test("derives an xpub preserving depth, fingerprint, child and chaincode") {
+            val seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic)
+            val xprv = ElectrumSeedUtil.deriveXprv(seed, "m/48'/0'/0'/2'")
+            val xpub = ElectrumSeedUtil.xpubFromXprv(xprv)
+
+            xpub shouldStartWith "xpub"
+            val prvPayload = BitcoinUtils.Base58.decodeChecked(xprv)
+            val pubPayload = BitcoinUtils.Base58.decodeChecked(xpub)
+            pubPayload.copyOfRange(0, 4).toHex() shouldBe "0488b21e"
+            // depth, parent fingerprint, child number, chain code preserved
+            pubPayload.copyOfRange(4, 45).toHex() shouldBe prvPayload.copyOfRange(4, 45).toHex()
+            // embedded pubkey equals G * embedded privkey
+            val privKey = prvPayload.copyOfRange(46, 78)
+            pubPayload.copyOfRange(45, 78).toHex() shouldBe
+                ElectrumSeedUtil.publicKeyFromPrivate(privKey).toHex()
+        }
+
+        test("matches bitcoinj pubkey for the same xprv") {
+            val seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic)
+            val xprv = ElectrumSeedUtil.deriveXprv(seed, "m/48'/0'/0'/2'")
+            val xpub = ElectrumSeedUtil.xpubFromXprv(xprv)
+            // deserializeB58(null, ...) zeroes depth/parent-fingerprint metadata
+            // in this bitcoinj version, so compare the pubkey point itself.
+            val btcPub =
+                org.bitcoinj.crypto.DeterministicKey.deserializeB58(
+                    null,
+                    xprv,
+                    org.bitcoinj.params.MainNetParams.get(),
+                ).dropPrivateBytes().pubKeyPoint.getEncoded(true)
+            BitcoinUtils.Base58.decodeChecked(xpub).copyOfRange(45, 78).toList() shouldBe btcPub.toList()
+        }
+
+        test("rejects garbage and public keys") {
+            io.kotest.assertions.throwables.shouldThrow<IllegalArgumentException> {
+                ElectrumSeedUtil.xpubFromXprv("notakey")
+            }
+            val seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic)
+            val xprv = ElectrumSeedUtil.deriveXprv(seed, "m/48'/0'/0'/2'")
+            val xpub = ElectrumSeedUtil.xpubFromXprv(xprv)
+            io.kotest.assertions.throwables.shouldThrow<IllegalArgumentException> {
+                ElectrumSeedUtil.xpubFromXprv(xpub)
+            }
         }
     }
 })

@@ -185,6 +185,26 @@ class SparkRepositorySyncPolicyTest : FunSpec({
         now += SPARK_NETWORK_RECONNECT_MIN_INTERVAL_MS
         debouncer.recordScheduleRequest() shouldBe true
     }
+
+    test("force reconnect runs immediately but honors the minimum interval") {
+        var now = 0L
+        val debouncer = SparkReconnectDebouncer(clock = { now })
+
+        debouncer.tryRecordForceReconnect() shouldBe true
+        debouncer.tryRecordForceReconnect() shouldBe false
+
+        now += SPARK_NETWORK_RECONNECT_MIN_INTERVAL_MS
+        debouncer.tryRecordForceReconnect() shouldBe true
+    }
+
+    test("force reconnect blocks a trailing scheduled reconnect within the interval") {
+        var now = 0L
+        val debouncer = SparkReconnectDebouncer(clock = { now })
+
+        debouncer.tryRecordForceReconnect() shouldBe true
+        debouncer.recordScheduleRequest() shouldBe false
+        debouncer.shouldRunReconnect() shouldBe false
+    }
 })
 
 private fun sparkDeposit(

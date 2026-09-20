@@ -55,7 +55,7 @@ class LightningNodeConfigTorTest : StringSpec({
         candidates[0] shouldBe config
     }
 
-    "TLS off connectCandidates tries HTTPS then HTTP" {
+    "TLS off connectCandidates never auto-probes (single explicit candidate)" {
         val config =
             LightningNodeConfig(
                 type = LightningNodeConnectionType.CLN_REST,
@@ -65,10 +65,54 @@ class LightningNodeConfigTorTest : StringSpec({
                 clnRune = "rune",
             )
         val candidates = config.connectCandidates()
-        candidates.size shouldBe 2
-        candidates[0].useTls shouldBe true
-        candidates[0].allowInsecureTls shouldBe true
-        candidates[1].useTls shouldBe false
-        candidates[1].allowInsecureTls shouldBe false
+        candidates.size shouldBe 1
+        candidates[0] shouldBe config
+        candidates[0].useTls shouldBe false
+    }
+
+    "clearnet without pin or acknowledgment is not credential-authorized" {
+        LightningNodeConfig(
+            type = LightningNodeConnectionType.LND_REST,
+            host = "node.example.com",
+            port = 8080,
+            useTls = false,
+            macaroonHex = "aa",
+        ).isCredentialTransportAuthorized() shouldBe false
+        LightningNodeConfig(
+            type = LightningNodeConnectionType.LND_REST,
+            host = "node.example.com",
+            port = 8080,
+            useTls = true,
+            macaroonHex = "aa",
+        ).isCredentialTransportAuthorized() shouldBe false
+    }
+
+    "pinned cert or explicit acknowledgment authorizes clearnet credentials" {
+        LightningNodeConfig(
+            type = LightningNodeConnectionType.LND_REST,
+            host = "node.example.com",
+            port = 8080,
+            useTls = true,
+            tlsCertPem = "CERT",
+            macaroonHex = "aa",
+        ).isCredentialTransportAuthorized() shouldBe true
+        LightningNodeConfig(
+            type = LightningNodeConnectionType.LND_REST,
+            host = "node.example.com",
+            port = 8080,
+            useTls = false,
+            acknowledgedInsecure = true,
+            macaroonHex = "aa",
+        ).isCredentialTransportAuthorized() shouldBe true
+    }
+
+    "onion hosts are credential-authorized via Tor without pin or ack" {
+        LightningNodeConfig(
+            type = LightningNodeConnectionType.LND_REST,
+            host = "abc123.onion",
+            port = 8080,
+            useTls = false,
+            macaroonHex = "aa",
+        ).isCredentialTransportAuthorized() shouldBe true
     }
 })

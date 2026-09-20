@@ -5,6 +5,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 
 class ArkDepositPolicyTest : FunSpec({
 
@@ -87,6 +88,21 @@ class ArkDepositPolicyTest : FunSpec({
                 requiredBoardConfirmations = 3,
             ) shouldBe false
         }
+
+        test("zero required means register-on-sight like Bark run_confirm") {
+            ArkDepositPolicy.boardConfirmationsMet(
+                boardConfirmations = 0,
+                requiredBoardConfirmations = 0,
+            ) shouldBe true
+            ArkDepositPolicy.boardConfirmationsMet(
+                boardConfirmations = null,
+                requiredBoardConfirmations = 0,
+            ) shouldBe false
+            ArkDepositPolicy.boardConfirmationsMet(
+                boardConfirmations = 0,
+                requiredBoardConfirmations = -1,
+            ) shouldBe false
+        }
     }
 
     context("isBelowMinBoardAmount") {
@@ -111,49 +127,17 @@ class ArkDepositPolicyTest : FunSpec({
         }
     }
 
-    context("isStuckBelowMinBoard") {
-        test("pending board is never stuck") {
-            ArkDepositPolicy.isStuckBelowMinBoard(
-                onchainConfirmedSats = 7_000L,
-                pendingBoardSats = 1L,
-                minBoardAmountSats = 50_000L,
-            ) shouldBe false
-        }
-
-        test("confirmed below min with no pending board is stuck") {
-            ArkDepositPolicy.isStuckBelowMinBoard(
-                onchainConfirmedSats = 7_000L,
-                pendingBoardSats = 0L,
-                minBoardAmountSats = 50_000L,
-            ) shouldBe true
-        }
-
-        test("confirmed at min is not stuck") {
-            ArkDepositPolicy.isStuckBelowMinBoard(
-                onchainConfirmedSats = 50_000L,
-                pendingBoardSats = 0L,
-                minBoardAmountSats = 50_000L,
-            ) shouldBe false
-        }
-    }
-
-    context("shortfallToMinBoard") {
-        test("returns remaining sats when below min") {
-            ArkDepositPolicy.shortfallToMinBoard(7_000L, 50_000L) shouldBe 43_000L
-        }
-
-        test("null when at or above min or unknown min") {
-            ArkDepositPolicy.shortfallToMinBoard(50_000L, 50_000L).shouldBeNull()
-            ArkDepositPolicy.shortfallToMinBoard(7_000L, null).shouldBeNull()
-            ArkDepositPolicy.shortfallToMinBoard(0L, 50_000L).shouldBeNull()
-        }
-    }
-
     context("boardProgressLabel") {
         test("caps displayed depth at required") {
             ArkDepositPolicy.boardProgressLabel(12, 3) shouldBe "3/3"
             ArkDepositPolicy.boardProgressLabel(1, 3) shouldBe "1/3"
             ArkDepositPolicy.boardProgressLabel(null, 3).shouldBeNull()
+        }
+
+        test("zero required still labels") {
+            ArkDepositPolicy.boardProgressLabel(0, 0) shouldBe "0/0"
+            ArkDepositPolicy.boardProgressLabel(null, 0).shouldBeNull()
+            ArkDepositPolicy.boardProgressLabel(0, -1).shouldBeNull()
         }
     }
 
@@ -360,7 +344,7 @@ class ArkDepositPolicyTest : FunSpec({
             val previous =
                 listOf(
                     movement(1, createdAt = "2026-01-01T00:00:00Z"),
-                    movement(2, createdAt = "2026-02-01T00:00:00Z", amount = 999L),
+                    movement(2, createdAt = "2026-02-01T00:00:00Z"),
                 )
             val merged =
                 ArkDepositPolicy.mergePreservedMovements(
@@ -368,8 +352,101 @@ class ArkDepositPolicyTest : FunSpec({
                     previous = previous,
                 )
             merged.map { it.id } shouldContainExactly listOf(2, 1)
-            // Live wins on id collision.
+            // Live wins on fingerprint collision (status/enrichment update).
             merged.first { it.id == 2 }.effectiveBalanceSats shouldBe 1_000L
+        }
+
+        test("same id with different content is a distinct payment, not an update") {
+            // Bark movement ids are per-DB row ids: any session recreation restarts
+            // the id space, so a new payment can reuse an old row's id.
+            val live = listOf(movement(1, createdAt = "2026-03-01T00:00:00Z", amount = 2_000L))
+            val previous = listOf(movement(1, createdAt = "2026-01-01T00:00:00Z", amount = 1_000L))
+            val merged =
+                ArkDepositPolicy.mergePreservedMovements(
+                    live = live,
+                    previous = previous,
+                )
+            merged.map { it.effectiveBalanceSats } shouldContainExactly listOf(2_000L, 1_000L)
+        }
+
+        test("status-only update replaces instead of duplicating") {
+            val live = listOf(movement(4, status = "completed"))
+            val previous = listOf(movement(4, status = "pending"))
+            val merged =
+                ArkDepositPolicy.mergePreservedMovements(
+                    live = live,
+                    previous = previous,
+                )
+            merged.map { it.id } shouldContainExactly listOf(4)
+            merged.single().status shouldBe "completed"
+        }
+
+        test("pending send and its finished settlement are one row") {
+            // Settlement mutates the row in place: effective 0→final, output VTXOs
+            // filled in, completedAt set. None of that may split the payment.
+            val pending =
+                ArkMovement(
+                    id = 6,
+                    status = "pending",
+                    subsystemName = "bark",
+                    subsystemKind = "arkoor",
+                    intendedBalanceSats = -50L,
+                    effectiveBalanceSats = 0L,
+                    offchainFeeSats = 0L,
+                    createdAt = "2026-09-11T17:07:00Z",
+                    updatedAt = "2026-09-11T17:07:00Z",
+                )
+            val finished =
+                pending.copy(
+                    status = "finished",
+                    effectiveBalanceSats = -50L,
+                    updatedAt = "2026-09-11T17:08:00Z",
+                    completedAt = "2026-09-11T17:08:00Z",
+                    outputVtxoIds = listOf("abc123:0"),
+                )
+            val merged =
+                ArkDepositPolicy.mergePreservedMovements(
+                    live = listOf(finished),
+                    previous = listOf(pending),
+                )
+            merged.size shouldBe 1
+            merged.single().status shouldBe "finished"
+            merged.single().effectiveBalanceSats shouldBe -50L
+        }
+
+        test("duplicate live rows collapse to the settled copy") {
+            // Bark can return the same send twice in one history() call (stale
+            // pending ghost + finished row). Painting both crashes LazyColumn on
+            // duplicate keys — collapse to one, settled wins either order.
+            val pending =
+                ArkMovement(
+                    id = 4,
+                    status = "pending",
+                    subsystemName = "bark",
+                    subsystemKind = "arkoor",
+                    intendedBalanceSats = -50L,
+                    effectiveBalanceSats = 0L,
+                    offchainFeeSats = 0L,
+                    createdAt = "2026-09-11T17:07:14.194815400-07:00",
+                    updatedAt = "2026-09-11T17:07:14.194815400-07:00",
+                )
+            val finished =
+                pending.copy(
+                    status = "finished",
+                    effectiveBalanceSats = -50L,
+                    updatedAt = "2026-09-11T17:08:00Z",
+                    completedAt = "2026-09-11T17:08:00Z",
+                    outputVtxoIds = listOf("abc123:0"),
+                )
+            listOf(listOf(pending, finished), listOf(finished, pending)).forEach { live ->
+                val merged =
+                    ArkDepositPolicy.mergePreservedMovements(
+                        live = live,
+                        previous = emptyList(),
+                    )
+                merged.size shouldBe 1
+                merged.single().status shouldBe "finished"
+            }
         }
 
         test("drops synthetic pending deposit from previous when live omits it") {
@@ -457,6 +534,108 @@ class ArkDepositPolicyTest : FunSpec({
                 live = live,
                 previous = emptyList(),
             ).map { it.id } shouldContainExactly listOf(2, 1, 3)
+        }
+    }
+
+    context("causal ordering") {
+        val fundingTxid = "a".repeat(64)
+
+        fun send(
+            id: Int,
+            createdAt: String,
+        ) = ArkMovement(
+            id = id,
+            status = "pending",
+            subsystemName = "bark",
+            subsystemKind = "offboard",
+            intendedBalanceSats = -5_450L,
+            effectiveBalanceSats = -5_450L,
+            offchainFeeSats = 0L,
+            createdAt = createdAt,
+            updatedAt = createdAt,
+            onchainTxids = listOf(fundingTxid),
+        )
+
+        fun receive(
+            id: Int,
+            createdAt: String,
+        ) = ArkMovement(
+            id = id,
+            status = "pending",
+            subsystemName = "Bitcoin",
+            subsystemKind = "board",
+            intendedBalanceSats = 5_000L,
+            effectiveBalanceSats = 5_000L,
+            offchainFeeSats = 0L,
+            createdAt = createdAt,
+            updatedAt = createdAt,
+            onchainTxids = listOf(fundingTxid),
+        )
+
+        test("self-transfer receive sorts above its send despite an older stamp") {
+            // Bark can stamp the send movement later than the deposit's first
+            // sighting; wall-clock order would invert the causal pair.
+            val sendRow = send(id = 4, createdAt = "2026-09-11T19:04:50Z")
+            val receiveRow = receive(id = -7, createdAt = "2026-09-11T19:04:10Z")
+            val sorted =
+                ArkDepositPolicy.sortMovementsChronologically(listOf(sendRow, receiveRow))
+            sorted.map { it.id } shouldContainExactly listOf(-7, 4)
+        }
+
+        test("unlinked rows keep pure time order") {
+            val sendRow = send(id = 4, createdAt = "2026-09-11T19:04:50Z")
+            val stranger =
+                receive(id = -7, createdAt = "2026-09-11T19:04:10Z").copy(onchainTxids = emptyList())
+            val sorted =
+                ArkDepositPolicy.sortMovementsChronologically(listOf(sendRow, stranger))
+            sorted.map { it.id } shouldContainExactly listOf(4, -7)
+        }
+    }
+
+    context("movementUnionKey") {
+        fun movement(
+            id: Int,
+            createdAt: String = "2026-01-01T00:00:00Z",
+            amount: Long = 1_000L,
+            status: String = "completed",
+        ) = ArkMovement(
+            id = id,
+            status = status,
+            subsystemName = "bark",
+            subsystemKind = "arkoor",
+            intendedBalanceSats = amount,
+            effectiveBalanceSats = amount,
+            offchainFeeSats = 0L,
+            createdAt = createdAt,
+            updatedAt = createdAt,
+        )
+
+        test("stable across status, label and address enrichment") {
+            val base = movement(5)
+            val updated =
+                base.copy(
+                    status = "pending",
+                    label = "groceries",
+                    sentToAddresses = listOf("ark1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"),
+                    updatedAt = "2026-01-02T00:00:00Z",
+                    completedAt = "2026-01-02T00:00:00Z",
+                )
+            ArkDepositPolicy.movementUnionKey(base) shouldBe ArkDepositPolicy.movementUnionKey(updated)
+        }
+
+        test("differs across payments sharing an id") {
+            val first = movement(5, createdAt = "2026-01-01T00:00:00Z", amount = 1_000L)
+            val second = movement(5, createdAt = "2026-03-01T00:00:00Z", amount = 2_000L)
+            ArkDepositPolicy.movementUnionKey(first) shouldNotBe ArkDepositPolicy.movementUnionKey(second)
+        }
+
+        test("distinctPaintedMovements collapses poisoned paints, settled wins") {
+            val pending = movement(5, status = "pending")
+            val finished = movement(5, status = "finished")
+            val other = movement(9, createdAt = "2026-01-02T00:00:00Z")
+            val painted = ArkDepositPolicy.distinctPaintedMovements(listOf(pending, other, finished))
+            painted.map { it.id } shouldContainExactly listOf(9, 5)
+            painted.single { it.id == 5 }.status shouldBe "finished"
         }
     }
 

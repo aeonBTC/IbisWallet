@@ -19,6 +19,34 @@ class ArkEsploraOpenPolicyTest : FunSpec({
             )
     }
 
+    test("pins a reachable preferred host ahead of a faster fallback") {
+        ArkEsploraOpenPolicy.orderForOpen(
+            listOf(
+                "https://mempool.space/api",
+                "https://mempool.second.tech/api/",
+            ),
+            preferred = "https://mempool.second.tech/api",
+        ) shouldBe
+            listOf(
+                "https://mempool.second.tech/api",
+                "https://mempool.space/api",
+            )
+    }
+
+    test("does not notify when preferred host is the one that opened") {
+        ArkEsploraOpenPolicy.shouldNotifyFallback(
+            preferred = "https://mempool.second.tech/api/",
+            active = "https://mempool.second.tech/api",
+        ) shouldBe false
+    }
+
+    test("notifies only when a different host actually opened") {
+        ArkEsploraOpenPolicy.shouldNotifyFallback(
+            preferred = "https://mempool.second.tech/api",
+            active = "https://mempool.space/api",
+        ) shouldBe true
+    }
+
     test("drops blanks and duplicates") {
         ArkEsploraOpenPolicy.orderForOpen(
             listOf(

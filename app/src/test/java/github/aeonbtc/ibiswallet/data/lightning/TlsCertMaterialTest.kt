@@ -8,10 +8,10 @@ import okhttp3.OkHttpClient
 class TlsCertMaterialTest :
     StringSpec(
         {
-            "skips hostname verification for IP and onion" {
-                TlsCertMaterial.shouldSkipHostnameVerification("192.168.1.10") shouldBe true
+            "skips hostname verification for onion only" {
                 TlsCertMaterial.shouldSkipHostnameVerification("abc.onion") shouldBe true
-                TlsCertMaterial.shouldSkipHostnameVerification("localhost") shouldBe true
+                TlsCertMaterial.shouldSkipHostnameVerification("192.168.1.10") shouldBe false
+                TlsCertMaterial.shouldSkipHostnameVerification("localhost") shouldBe false
                 TlsCertMaterial.shouldSkipHostnameVerification("node.example.com") shouldBe false
             }
 

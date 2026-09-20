@@ -261,6 +261,64 @@ class WalletModelsTest : FunSpec({
             wallet.inputDerivationPath(change = true, index = 1) shouldBe "m/84'/0'/0'/1/1"
         }
 
+        test("BIP39 seed wallet can edit derivation path") {
+            val wallet =
+                StoredWallet(
+                    id = "w",
+                    name = "Seed",
+                    addressType = AddressType.SEGWIT,
+                    derivationPath = AddressType.SEGWIT.defaultPath,
+                )
+            wallet.canEditDerivationPath() shouldBe true
+        }
+
+        test("watch-only HD can edit derivation path") {
+            val wallet =
+                StoredWallet(
+                    id = "w",
+                    name = "Watch",
+                    addressType = AddressType.SEGWIT,
+                    derivationPath = AddressType.SEGWIT.defaultPath,
+                    isWatchOnly = true,
+                )
+            wallet.canEditDerivationPath() shouldBe true
+        }
+
+        test("Electrum seed can edit derivation path") {
+            val wallet =
+                StoredWallet(
+                    id = "w",
+                    name = "Electrum",
+                    addressType = AddressType.LEGACY,
+                    derivationPath = "m",
+                    seedFormat = SeedFormat.ELECTRUM_STANDARD,
+                )
+            wallet.canEditDerivationPath() shouldBe true
+        }
+
+        test("single-key wallet cannot edit derivation path") {
+            val wallet =
+                StoredWallet(
+                    id = "w",
+                    name = "WIF",
+                    addressType = AddressType.SEGWIT,
+                    derivationPath = "single",
+                )
+            wallet.canEditDerivationPath() shouldBe false
+        }
+
+        test("Electrum custom path uses stored path") {
+            val wallet =
+                StoredWallet(
+                    id = "w",
+                    name = "Electrum",
+                    addressType = AddressType.LEGACY,
+                    derivationPath = "m/0'/1'",
+                    seedFormat = SeedFormat.ELECTRUM_STANDARD,
+                )
+            wallet.inputDerivationPath(change = false, index = 2) shouldBe "m/0'/1'/0/2"
+        }
+
         test("Electrum standard uses m/branch/index") {
             val wallet =
                 StoredWallet(

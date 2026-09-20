@@ -174,6 +174,25 @@ class SendRecipientParserTest : FunSpec({
         }
     }
 
+    context("Ark recipients") {
+        test("bare ark1 address parses without amount") {
+            val parsed = parseSendRecipient("ark1qtestaddressonly")
+
+            parsed.shouldBeInstanceOf<ParsedSendRecipient.Ark>()
+            parsed.address shouldBe "ark1qtestaddressonly"
+            parsed.amountSats shouldBe null
+        }
+
+        test("ark1 URI extracts amount and label") {
+            val parsed = parseSendRecipient("ark1qtestaddressonly?amount=0.00010000&label=Coffee")
+
+            parsed.shouldBeInstanceOf<ParsedSendRecipient.Ark>()
+            parsed.address shouldBe "ark1qtestaddressonly"
+            parsed.amountSats shouldBe 10_000L
+            parsed.label shouldBe "Coffee"
+        }
+    }
+
     context("Spark recipients") {
         test("spark1 address parses as Spark recipient") {
             val parsed = parseSendRecipient("spark1qqexamplepaymentrequest")
@@ -382,6 +401,67 @@ class SendRecipientParserTest : FunSpec({
         test("leaves bare address unchanged") {
             normalizeSparkAddressLabelRef("bc1qtestaddressxxxxxxxxxxxxxxxxxxxxxx") shouldBe
                 "bc1qtestaddressxxxxxxxxxxxxxxxxxxxxxx"
+        }
+    }
+
+    context("Liquid cross-network rejection") {
+        val mainnetConfidential =
+            "lq1qqf8er278e6nyvuwtgf39e6ewvdcnjupn9a86rzpx655y5lhkt0walu3djf9cklkxd3ryld97hu8h3xepw7sh2rlu7q45dcew5"
+        val hostileHrps =
+            listOf(
+                "ert1qwhh2n5qypypm0eufahm2pvj8raj9zq5c27cysu",
+                "el1qq0umk3pez693jrrlxz9ndlkuwne93gdu9g83mhhzuyf46e3mdzfpva0w48gqgzgrklncnm0k5zeyw8my2ypfsmxh4xcjh2rse",
+                "tex1q6rz28mcfaxtmd6v789l9rrlrusdprr9p634wu8",
+                "tlq1qq2xvpcvfup5j8zscjq05u2wxxjcyewk7979f3mmz5l7uw5pqmx6xf5xy50hsn6vhkm5euwt72x878eq6zxx2z58hd7zrsg9qn",
+            )
+
+        test("hostile liquid URIs are rejected with mainnet error") {
+            for (address in hostileHrps) {
+                val parsed = parseSendRecipient("liquid:$address?amount=0.5")
+
+                parsed.shouldBeInstanceOf<ParsedSendRecipient.Unknown>()
+                (parsed as ParsedSendRecipient.Unknown).errorMessage shouldBe
+                    BitcoinUtils.UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
+                isRecognizedSendInput("liquid:$address?amount=0.5") shouldBe false
+            }
+        }
+
+        test("bare hostile Liquid addresses are rejected") {
+            for (address in hostileHrps) {
+                val parsed = parseSendRecipient(address)
+
+                parsed.shouldBeInstanceOf<ParsedSendRecipient.Unknown>()
+                isRecognizedSendInput(address) shouldBe false
+            }
+        }
+
+        test("mainnet Liquid address is accepted") {
+            val parsed = parseSendRecipient("liquid:$mainnetConfidential?amount=0.5")
+
+            parsed.shouldBeInstanceOf<ParsedSendRecipient.Liquid>()
+            (parsed as ParsedSendRecipient.Liquid).address shouldBe mainnetConfidential
+            isRecognizedSendInput("liquid:$mainnetConfidential?amount=0.5") shouldBe true
+        }
+
+        test("Liquid send validation rejects cross-network address") {
+            val hostile =
+                ParsedSendRecipient.Liquid(
+                    rawInput = "liquid:ert1qwhh2n5qypypm0eufahm2pvj8raj9zq5c27cysu",
+                    address = "ert1qwhh2n5qypypm0eufahm2pvj8raj9zq5c27cysu",
+                )
+
+            layer2RecipientValidationError(hostile, Layer2Provider.LIQUID) shouldBe
+                BitcoinUtils.UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
+        }
+
+        test("Liquid send validation accepts mainnet address") {
+            val mainnet =
+                ParsedSendRecipient.Liquid(
+                    rawInput = "liquid:$mainnetConfidential",
+                    address = mainnetConfidential,
+                )
+
+            layer2RecipientValidationError(mainnet, Layer2Provider.LIQUID) shouldBe null
         }
     }
 })

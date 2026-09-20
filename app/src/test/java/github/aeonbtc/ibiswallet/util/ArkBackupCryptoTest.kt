@@ -245,4 +245,62 @@ class ArkWalletDataPackTest : FunSpec({
             }
         }
     }
+
+    context("manifest binding") {
+        fun boundManifest(
+            seedFingerprint: String = "abcdef0123456789",
+            walletId: String = "wallet-1",
+        ) = ArkWalletDataPack.Manifest(
+            seedFingerprint = seedFingerprint,
+            walletId = walletId,
+            movementCount = 0,
+            maxMovementId = 0,
+            spendableSats = 0L,
+            chainTipHeight = 0L,
+            createdAtMs = 0L,
+        )
+
+        test("matching fingerprint binds") {
+            ArkWalletDataPack.isManifestBoundToWallet(
+                boundManifest("abcdef0123456789", "wallet-1"),
+                "abcdef0123456789",
+            ) shouldBe true
+        }
+
+        test("foreign seed fingerprint is rejected") {
+            ArkWalletDataPack.isManifestBoundToWallet(
+                boundManifest("ffff000000000000", "wallet-1"),
+                "abcdef0123456789",
+            ) shouldBe false
+        }
+
+        test("same seed but different wallet id still binds (reimport/rename)") {
+            ArkWalletDataPack.isManifestBoundToWallet(
+                boundManifest("abcdef0123456789", "wallet-2"),
+                "abcdef0123456789",
+            ) shouldBe true
+        }
+
+        test("fingerprint comparison ignores case") {
+            ArkWalletDataPack.isManifestBoundToWallet(
+                boundManifest("ABCDEF0123456789", "wallet-1"),
+                "abcdef0123456789",
+            ) shouldBe true
+        }
+
+        test("blank fingerprint is unbound-but-allowed regardless of wallet id") {
+            // Pre-manifest era: install proceeds, caller must force a mailbox scan.
+            ArkWalletDataPack.isManifestBoundToWallet(
+                boundManifest("", "wallet-2"),
+                "abcdef0123456789",
+            ) shouldBe true
+        }
+
+        test("fully blank manifest is unbound-but-allowed") {
+            ArkWalletDataPack.isManifestBoundToWallet(
+                boundManifest("", ""),
+                "abcdef0123456789",
+            ) shouldBe true
+        }
+    }
 })
