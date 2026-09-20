@@ -68,6 +68,7 @@ import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
+import github.aeonbtc.ibiswallet.util.requiresRejection
 import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import github.aeonbtc.ibiswallet.viewmodel.ManualBroadcastState
 
@@ -101,7 +102,7 @@ fun BroadcastTransactionScreen(
                 try {
                     context.contentResolver.openInputStream(uri)?.use { stream ->
                         val result = parseTxFileBytes(stream.readBytesWithLimit(InputLimits.TX_FILE_BYTES))
-                        if (result != null) {
+                        if (result != null && !result.requiresRejection()) {
                             inputData = result.data
                         }
                     }

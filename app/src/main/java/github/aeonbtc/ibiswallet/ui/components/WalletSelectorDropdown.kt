@@ -202,7 +202,7 @@ fun WalletSelectorPanel(
     lightningConfigForWallet: (String) -> LightningNodeConfig? = { null },
     /** Bump when a node connection config is saved so Server/Port/Mode lines refresh. */
     lightningConfigRevision: Int = 0,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
 ) {
     val dismissThresholdPx = with(LocalDensity.current) { 56.dp.toPx() }
     var accumulatedSwipeUpPx by remember(expanded) { mutableFloatStateOf(0f) }
@@ -395,7 +395,7 @@ private fun WalletPanelItem(
     isActive: Boolean,
     isSyncing: Boolean = false,
     lastFullSyncTime: Long? = null,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     layer2Enabled: Boolean = false,
     liquidLayer2Enabled: Boolean = layer2Enabled,
     sparkLayer2Enabled: Boolean = layer2Enabled,

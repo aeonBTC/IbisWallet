@@ -78,6 +78,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.Bip39ChecksumHelper
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -118,6 +119,19 @@ fun GenerateWalletScreen(
     var generatedMnemonic by remember { mutableStateOf<String?>(null) }
     var backedUp by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
+    var diceText by remember { mutableStateOf("") }
+    var showDice by remember { mutableStateOf(false) }
+
+    val minDiceRolls =
+        remember(selectedWordCount) {
+            Bip39ChecksumHelper.minGenerateDiceRolls(
+                if (selectedWordCount == WordCount.WORDS12) 12 else 24,
+            )
+        }
+    val diceValid =
+        remember(diceText, minDiceRolls) {
+            diceText.isBlank() || Bip39ChecksumHelper.isValidDiceRolls(diceText, minDiceRolls)
+        }
 
     // Reset copied state after 3 seconds
     LaunchedEffect(copied) {
@@ -127,9 +141,21 @@ fun GenerateWalletScreen(
         }
     }
 
-    // Generate mnemonic using BDK (entropy sourced from platform CSPRNG)
+    // Generate mnemonic using BDK. Blank dice field uses the platform CSPRNG;
+    // entered dice rolls derive entropy solely from the rolls (dice-only,
+    // no phone randomness mixed in).
     fun generateMnemonic() {
-        val mnemonic = Mnemonic(selectedWordCount)
+        val entropy =
+            Bip39ChecksumHelper.diceEntropyOrNull(
+                diceText,
+                if (selectedWordCount == WordCount.WORDS12) 12 else 24,
+            )
+        val mnemonic =
+            if (entropy == null) {
+                Mnemonic(selectedWordCount)
+            } else {
+                Mnemonic.fromEntropy(entropy)
+            }
         generatedMnemonic = mnemonic.toString()
         backedUp = false
         copied = false
@@ -320,10 +346,84 @@ fun GenerateWalletScreen(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(12.dp))
+                HorizontalDivider(color = BorderColor)
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { showDice = !showDice }
+                            .padding(vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.loc_4b7e2c19),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    Icon(
+                        imageVector =
+                            if (showDice) {
+                                Icons.Default.KeyboardArrowUp
+                            } else {
+                                Icons.Default.KeyboardArrowDown
+                            },
+                        contentDescription = null,
+                        tint = TextSecondary,
+                    )
+                }
+                AnimatedVisibility(
+                    visible = showDice,
+                    enter = expandVertically(),
+                    exit = shrinkVertically(),
+                ) {
+                    Column {
+                        Text(
+                            text = stringResource(R.string.loc_8f1d6a33, minDiceRolls),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = diceText,
+                            onValueChange = { diceText = it.filter { char -> char in '0'..'9' } },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = {
+                                Text(
+                                    stringResource(R.string.loc_71aa30d4),
+                                    color = TextSecondary.copy(alpha = 0.5f),
+                                )
+                            },
+                            singleLine = true,
+                            isError = !diceValid,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            shape = RoundedCornerShape(8.dp),
+                            colors =
+                                OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = BitcoinOrange,
+                                    unfocusedBorderColor = BorderColor,
+                                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                    cursorColor = BitcoinOrange,
+                                ),
+                        )
+                        if (!diceValid) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(R.string.loc_2e9c5f07, minDiceRolls),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ErrorRed,
+                            )
+                        }
+                    }
+                }
                 if (generatedMnemonic == null) {
                     Spacer(modifier = Modifier.height(12.dp))
                     IbisButton(
                         onClick = { generateMnemonic() },
+                        enabled = diceValid,
                         modifier =
                             Modifier
                                 .fillMaxWidth()
@@ -412,6 +512,7 @@ fun GenerateWalletScreen(
 
                                 OutlinedIconButton(
                                     onClick = { generateMnemonic() },
+                                    enabled = diceValid,
                                     modifier = Modifier.size(40.dp),
                                     shape = RoundedCornerShape(8.dp),
                                     border = BorderStroke(1.dp, BorderColor),

@@ -78,7 +78,9 @@ import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.SecureClipboard
+import github.aeonbtc.ibiswallet.util.detectedNetwork
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
+import github.aeonbtc.ibiswallet.util.requiresRejection
 import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import java.text.NumberFormat
 import java.util.Locale
@@ -145,8 +147,12 @@ fun LiquidPsetScreen(
                 try {
                     context.contentResolver.openInputStream(uri)?.use { stream ->
                         val result = parseTxFileBytes(stream.readBytesWithLimit(InputLimits.TX_FILE_BYTES))
-                        if (result != null) {
+                        if (result != null && !result.requiresRejection() &&
+                            result.detectedNetwork() != github.aeonbtc.ibiswallet.util.TxFileNetwork.BITCOIN
+                        ) {
                             onSignedDataReceived(result.data)
+                        } else {
+                            Toast.makeText(context, psetReadFailedText, Toast.LENGTH_SHORT).show()
                         }
                     }
                 } catch (_: Exception) {

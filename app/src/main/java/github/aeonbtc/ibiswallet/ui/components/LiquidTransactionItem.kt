@@ -74,7 +74,7 @@ fun LiquidTransactionItem(
     privacyMode: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     onLongClick: (() -> Unit)? = null,
     label: String? = null,
 ) {

@@ -162,7 +162,7 @@ enum class SpeedUpMethod {
 fun BalanceScreen(
     walletState: WalletState = WalletState(),
     denomination: String = SecureStorage.DENOMINATION_BTC,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
     btcPrice: Double? = null,
@@ -1122,7 +1122,7 @@ private fun Layer2RequiredPlaceholder(
 private fun TransactionItem(
     transaction: TransactionDetails,
     useSats: Boolean = false,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     label: String? = null,
     btcPrice: Double? = null,
     historicalBtcPrice: Double? = null,
@@ -1622,7 +1622,7 @@ fun TransactionDetailDialog(
     transaction: TransactionDetails,
     currentBlockHeight: UInt? = null,
     useSats: Boolean = false,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
     btcPrice: Double? = null,
@@ -1912,7 +1912,7 @@ fun TransactionDetailDialog(
                     Box(
                         modifier =
                             Modifier
-                                .align(Alignment.TopEnd)
+                                .align(Alignment.TopStart)
                                 .size(28.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(DarkCard.copy(alpha = 0.72f))

@@ -104,6 +104,7 @@ fun QuickReceiveDialog(
             onDismissRequest = { showEnlargedQr = false },
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
+            SecureDialogSideEffect()
             Box(
                 modifier =
                     Modifier

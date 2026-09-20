@@ -30,6 +30,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -69,6 +71,8 @@ import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
+import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -97,6 +101,10 @@ fun ReceiveScreen(
     onShowAllAddresses: () -> Unit = {},
     onShowAllUtxos: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
+    silentReceivePreferred: Boolean = false,
+    onSilentReceiveChange: (Boolean) -> Unit = {},
+    silentScanDisclosureAcknowledged: Boolean = true,
+    onAcknowledgeSilentScanDisclosure: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val copyReceiveToast = stringResource(R.string.loc_b6b10bfe)
@@ -104,6 +112,28 @@ fun ReceiveScreen(
     val receiveNoShareAppMessage = stringResource(R.string.receive_no_share_app)
     val labelSavedToast = stringResource(R.string.loc_171555e8)
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
+    var silentMode by remember(walletState.activeWallet?.id, silentReceivePreferred) {
+        mutableStateOf(silentReceivePreferred)
+    }
+    val showSilentToggle = walletState.canReceiveSilentPayments && !walletState.silentPaymentAddress.isNullOrBlank()
+    var showSilentScanDisclosure by remember(walletState.activeWallet?.id) { mutableStateOf(false) }
+    fun setSilentModeWithDisclosure(enabled: Boolean) {
+        silentMode = enabled
+        onSilentReceiveChange(enabled)
+        // One-time privacy disclosure: finding your silent payments requires
+        // sharing the scan key with the Electrum server. Show it the first
+        // time the toggle is switched on; the toggle itself stays effective
+        // regardless of the dialog outcome.
+        if (enabled && !silentScanDisclosureAcknowledged) {
+            showSilentScanDisclosure = true
+        }
+    }
+    val displayAddress =
+        if (silentMode && showSilentToggle) {
+            walletState.silentPaymentAddress
+        } else {
+            walletState.currentAddress
+        }
 
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var labelText by remember { mutableStateOf("") }
@@ -139,10 +169,13 @@ fun ReceiveScreen(
 
     // Build the URI/content for QR code
     val qrContent =
-        remember(walletState.currentAddress, amountInSats, showAmountField, labelText, showLabelField, embedLabelInQr) {
-            walletState.currentAddress?.let { address ->
+        remember(displayAddress, amountInSats, showAmountField, labelText, showLabelField, embedLabelInQr) {
+            displayAddress?.let { address ->
                 val bitcoinAmountSats = amountInSats?.takeIf { showAmountField && it > 0 }
-                val label = labelText.trim().takeIf { showLabelField && embedLabelInQr && it.isNotBlank() }
+                val label =
+                    labelText.trim().takeIf {
+                        !silentMode && showLabelField && embedLabelInQr && it.isNotBlank()
+                    }
                 if (bitcoinAmountSats != null || label != null) {
                     val params = mutableListOf<String>()
                     bitcoinAmountSats?.let {
@@ -163,6 +196,12 @@ fun ReceiveScreen(
             SecureClipboard.copyAndScheduleClear(context, content)
             Toast.makeText(context, copyReceiveToast, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // Drop the previous wallet's QR immediately on switch so a stale address is
+    // never shown as the new wallet's.
+    LaunchedEffect(walletState.activeWallet?.id) {
+        qrBitmap = null
     }
 
     // Generate QR code when content changes
@@ -219,6 +258,7 @@ fun ReceiveScreen(
         Dialog(
             onDismissRequest = { showEnlargedQr = false },
         ) {
+            SecureDialogSideEffect()
             Box(
                 modifier =
                     Modifier
@@ -322,13 +362,13 @@ fun ReceiveScreen(
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color.White)
                             .combinedClickable(
-                                enabled = walletState.currentAddress != null,
+                                enabled = displayAddress != null,
                                 onClick = { showEnlargedQr = true },
                                 onLongClick = copyReceiveRequest,
                             ),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (qrBitmap != null && walletState.currentAddress != null) {
+                    if (qrBitmap != null && displayAddress != null) {
                         Image(
                             bitmap = qrBitmap!!.asImageBitmap(),
                             contentDescription = stringResource(R.string.loc_416323aa),
@@ -351,20 +391,21 @@ fun ReceiveScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Address display — chunked every 6 chars, split across 2 lines
+                // Address display — chunked every 7 chars, two lines
                 Text(
-                    text = formatChunkedAddress(walletState.currentAddress)
+                    text = formatChunkedAddress(displayAddress)
                         .ifBlank { stringResource(R.string.loc_fb85740c) },
                     style = MaterialTheme.typography.bodyMedium.copy(
                         fontFamily = FontFamily.Monospace,
                     ),
                     color =
-                        if (walletState.currentAddress != null) {
+                        if (displayAddress != null) {
                             MaterialTheme.colorScheme.onBackground
                         } else {
                             TextSecondary
                         },
                     textAlign = TextAlign.Center,
+                    maxLines = 2,
                     modifier =
                         Modifier
                             .fillMaxWidth()
@@ -384,7 +425,7 @@ fun ReceiveScreen(
                         icon = Icons.Default.ContentCopy,
                         tint = BitcoinOrange,
                         onClick = copyReceiveRequest,
-                        enabled = walletState.currentAddress != null,
+                        enabled = displayAddress != null,
                         iconSize = 17.dp,
                     )
                     ReceiveActionButton(
@@ -392,7 +433,7 @@ fun ReceiveScreen(
                         icon = Icons.Default.Refresh,
                         tint = BitcoinOrange,
                         onClick = onGenerateAddress,
-                        enabled = walletState.isInitialized,
+                        enabled = walletState.isInitialized && !silentMode,
                         iconSize = 20.dp,
                     )
                     ReceiveActionButton(
@@ -429,6 +470,78 @@ fun ReceiveScreen(
 
                 // Toggle switches for Amount and Label
                 Column(modifier = Modifier.fillMaxWidth()) {
+                    if (showSilentToggle) {
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        setSilentModeWithDisclosure(!silentMode)
+                                    }
+                                    .padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.receive_silent),
+                                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                            SquareToggle(
+                                checked = silentMode,
+                                onCheckedChange = { enabled ->
+                                    setSilentModeWithDisclosure(enabled)
+                                },
+                            )
+                        }
+                        if (silentMode && walletState.silentPaymentsSupported == false) {
+                            Text(
+                                text = stringResource(R.string.receive_silent_server_unavailable),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                            )
+                        }
+                    }
+                    if (showSilentScanDisclosure) {
+                        ScrollableAlertDialog(
+                            onDismissRequest = {
+                                showSilentScanDisclosure = false
+                                onAcknowledgeSilentScanDisclosure()
+                            },
+                            containerColor = DarkCard,
+                            title = {
+                                Text(
+                                    stringResource(R.string.receive_silent),
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            },
+                            text = {
+                                Text(
+                                    stringResource(R.string.receive_silent_disclosure_message),
+                                    color = TextSecondary,
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+                                )
+                            },
+                            confirmButton = {
+                                Button(
+                                    onClick = {
+                                        showSilentScanDisclosure = false
+                                        onAcknowledgeSilentScanDisclosure()
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors =
+                                        ButtonDefaults.buttonColors(
+                                            containerColor = BitcoinOrange,
+                                        ),
+                                ) {
+                                    Text(stringResource(R.string.receive_silent_disclosure_ok))
+                                }
+                            },
+                        )
+                    }
                     // Amount toggle
                     Row(
                         modifier =
@@ -589,7 +702,7 @@ fun ReceiveScreen(
                             Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { showLabelField = !showLabelField }
+                                .clickable(enabled = !silentMode) { showLabelField = !showLabelField }
                                 .padding(vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
@@ -597,11 +710,17 @@ fun ReceiveScreen(
                         Text(
                             text = stringResource(R.string.loc_cf667fec),
                             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
-                            color = MaterialTheme.colorScheme.onBackground,
+                            color =
+                                if (silentMode) {
+                                    TextSecondary.copy(alpha = 0.4f)
+                                } else {
+                                    MaterialTheme.colorScheme.onBackground
+                                },
                         )
                         SquareToggle(
                             checked = showLabelField,
                             onCheckedChange = { showLabelField = it },
+                            enabled = !silentMode,
                         )
                     }
 
@@ -621,7 +740,7 @@ fun ReceiveScreen(
                                         unfocusedBorderColor = BorderColor,
                                         cursorColor = BitcoinOrange,
                                     ),
-                                enabled = walletState.currentAddress != null,
+                                enabled = !silentMode && walletState.currentAddress != null,
                                 trailingIcon = {
                                     if (labelText.isNotEmpty() && walletState.currentAddress != null) {
                                         androidx.compose.material3.TextButton(
@@ -629,6 +748,7 @@ fun ReceiveScreen(
                                                 onSaveLabel(walletState.currentAddress, labelText)
                                                 Toast.makeText(context, labelSavedToast, Toast.LENGTH_SHORT).show()
                                             },
+                                            enabled = !silentMode,
                                         ) {
                                             Text(stringResource(R.string.loc_f55495e0), color = BitcoinOrange)
                                         }
@@ -646,13 +766,13 @@ fun ReceiveScreen(
                                 Text(
                                     text = stringResource(R.string.loc_2b196e9d),
                                     style = MaterialTheme.typography.labelMedium,
-                                    color = TextSecondary,
+                                    color = if (silentMode) TextSecondary.copy(alpha = 0.4f) else TextSecondary,
                                     modifier = Modifier.padding(end = 8.dp),
                                 )
                                 SquareToggle(
                                     checked = embedLabelInQr,
                                     onCheckedChange = { embedLabelInQr = it },
-                                    enabled = walletState.currentAddress != null,
+                                    enabled = !silentMode && walletState.currentAddress != null,
                                     trackWidth = 36.dp,
                                     trackHeight = 20.dp,
                                     thumbSize = 14.dp,

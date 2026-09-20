@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,7 +20,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -65,7 +65,8 @@ import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.viewmodel.AppUpdateStatus
 import kotlinx.coroutines.delay
 
-const val DONATE_BITCOIN_ADDRESS = "bc1qk54j45l8s20z6glxnt5zuk7efq2qsjj9n44wc8"
+const val DONATE_BITCOIN_ADDRESS = "bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8"
+const val DONATE_BITCOIN_URI = "bitcoin:$DONATE_BITCOIN_ADDRESS"
 
 @Composable
 fun AboutScreen(
@@ -290,7 +291,7 @@ private fun DonateDialog(
     onDonateClick: () -> Unit,
 ) {
     val context = LocalContext.current
-    val qrBitmap = remember { generateQrBitmap(DONATE_BITCOIN_ADDRESS) }
+    val qrBitmap = remember { generateQrBitmap(DONATE_BITCOIN_URI) }
     var showCopied by remember { mutableStateOf(false) }
     var showEnlargedQr by remember { mutableStateOf(false) }
 
@@ -401,7 +402,16 @@ private fun DonateDialog(
                             .size(220.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color.White)
-                            .clickable { showEnlargedQr = true }
+                            .combinedClickable(
+                                onClick = { showEnlargedQr = true },
+                                onLongClick = {
+                                    SecureClipboard.copyAndScheduleClear(
+                                        context,
+                                        DONATE_BITCOIN_ADDRESS,
+                                    )
+                                    showCopied = true
+                                },
+                            )
                             .padding(8.dp),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -436,32 +446,8 @@ private fun DonateDialog(
                         .padding(horizontal = 8.dp),
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Default.ContentCopy,
-                    contentDescription = stringResource(R.string.loc_3c19e32e),
-                    tint = if (showCopied) BitcoinOrange else TextSecondary,
-                    modifier =
-                        Modifier
-                            .size(16.dp)
-                            .clickable {
-                                SecureClipboard.copyAndScheduleClear(
-                                    context,
-                                    DONATE_BITCOIN_ADDRESS,
-                                )
-                                showCopied = true
-                            },
-                )
-            }
-
             if (showCopied) {
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = stringResource(R.string.loc_e287255d),
                     style = MaterialTheme.typography.bodySmall,

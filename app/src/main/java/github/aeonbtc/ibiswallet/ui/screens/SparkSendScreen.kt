@@ -34,7 +34,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -54,14 +56,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeQuote
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeSpeed
 import github.aeonbtc.ibiswallet.data.model.SparkSendState
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
@@ -79,6 +85,7 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
+import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
@@ -97,8 +104,8 @@ fun SparkSendScreen(
     availableSats: Long,
     onUpdateDraft: (SendScreenDraft) -> Unit,
     onLoadOnchainFeeQuotes: suspend (String, Long, Boolean) -> List<SparkOnchainFeeQuote>,
-    onPrepareSend: (String, Long?, SparkOnchainFeeSpeed, Boolean) -> Unit,
-    onPrepareSendMany: (List<Pair<String, Long>>) -> Unit = {},
+    onPrepareSend: (String, Long?, SparkOnchainFeeSpeed, Boolean, String?) -> Unit,
+    onPrepareSendMany: (List<Pair<String, Long>>, String?) -> Unit = { _, _ -> },
     onSendPrepared: () -> Unit,
     onSendPreparedMany: () -> Unit = {},
     onResetSend: () -> Unit,
@@ -120,7 +127,28 @@ fun SparkSendScreen(
     var onchainFeeQuotesLoading by remember { mutableStateOf(false) }
     var isMultiMode by remember { mutableStateOf(false) }
     var showMultiDialog by remember { mutableStateOf(false) }
+    // Synchronous review guard: sendState flips to Preparing only after the
+    // ViewModel processes onPrepareSend, so a rapid double-tap would fire two
+    // prepares (the second overwriting the first under sendMutex, then both
+    // dialogs racing). Cleared whenever sendState settles below.
+    var reviewClickGuard by remember { mutableStateOf(false) }
     val multiRecipients = remember { mutableStateListOf<Pair<String, String>>() }
+
+    // NFC reader mode: tapping a tag fills the recipient via pendingSendInput.
+    val sendNfcContext = LocalContext.current
+    val mainActivity = sendNfcContext as? MainActivity
+    val nfcReaderOwner = remember { Any() }
+    val nfcAvailable = sendNfcContext.getNfcAvailability().canRead
+    DisposableEffect(mainActivity, nfcAvailable) {
+        if (mainActivity != null && nfcAvailable) {
+            mainActivity.requestNfcReaderMode(nfcReaderOwner)
+        }
+        onDispose {
+            mainActivity?.releaseNfcReaderMode(nfcReaderOwner)
+        }
+    }
+    val isNfcReaderActive = nfcAvailable && mainActivity?.isNfcReaderModeActive == true
+    val nfcReaderState by NfcRuntimeStatus.readerState.collectAsState()
 
     LaunchedEffect(draft) {
         if (showConfirmDialog) return@LaunchedEffect
@@ -201,6 +229,7 @@ fun SparkSendScreen(
         when (sendState) {
             is SparkSendState.Preparing -> prepareError = null
             is SparkSendState.Error -> {
+                reviewClickGuard = false
                 // Keep confirm dialog open so failure is visible.
                 if (!showConfirmDialog) {
                     prepareError = sendState.message
@@ -208,7 +237,13 @@ fun SparkSendScreen(
             }
             is SparkSendState.Preview,
             is SparkSendState.MultiPreview,
-            -> prepareError = null
+            is SparkSendState.Sent,
+            is SparkSendState.MultiSent,
+            is SparkSendState.Idle,
+            -> {
+                reviewClickGuard = false
+                prepareError = null
+            }
             else -> Unit
         }
     }
@@ -464,6 +499,28 @@ fun SparkSendScreen(
                             style = MaterialTheme.typography.titleLarge,
                             color = TextPrimary,
                         )
+                        if (isNfcReaderActive) {
+                            val nfcStatusLabel =
+                                when (nfcReaderState) {
+                                    NfcReaderUiState.Inactive,
+                                    NfcReaderUiState.Ready,
+                                    -> stringResource(R.string.nfc_status_receive_ready)
+                                    NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                                    NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                                }
+                            val nfcStatusColor =
+                                if (nfcReaderState == NfcReaderUiState.Detecting) {
+                                    SparkPurple
+                                } else {
+                                    SuccessGreen
+                                }
+                            NfcStatusIndicator(
+                                label = nfcStatusLabel,
+                                contentDescription = nfcStatusLabel,
+                                modifier = Modifier.padding(top = 2.dp),
+                                color = nfcStatusColor,
+                            )
+                        }
                     }
                     SparkChipButton(
                         text = "Coin Control",
@@ -481,15 +538,10 @@ fun SparkSendScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(stringResource(R.string.loc_eaf579ea), style = MaterialTheme.typography.labelLarge, color = TextSecondary)
-                    SparkChipButton(
-                        text =
-                            if (isMultiMode) {
-                                "${stringResource(R.string.loc_fcc11f52)} (${multiRecipientPairs.size})"
-                            } else {
-                                stringResource(R.string.loc_fcc11f52)
-                            },
-                        selected = isMultiMode,
+                    MultiRecipientToggleChip(
+                        isMultiMode = isMultiMode,
                         enabled = !busy,
+                        accentColor = SparkPurple,
                         onClick = {
                             if (!isMultiMode) {
                                 isMultiMode = true
@@ -510,16 +562,16 @@ fun SparkSendScreen(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 if (isMultiMode) {
-                    Card(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !busy) { showMultiDialog = true },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        border = BorderStroke(1.dp, SparkPurple),
+                    RecipientsSummaryCard(
+                        modifier = Modifier.clickable(enabled = !busy) { showMultiDialog = true },
+                        accentColor = SparkPurple,
+                        borderColor = SparkPurple,
+                        addEnabled = !busy,
+                        onAddRecipient = {
+                            multiRecipients.add("" to "")
+                            showMultiDialog = true
+                        },
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
                             Text(
                                 text = stringResource(R.string.send_recipients_title_format, multiRecipientPairs.size),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -545,7 +597,6 @@ fun SparkSendScreen(
                                     color = SparkPurple,
                                 )
                             }
-                        }
                     }
                 } else {
                 OutlinedTextField(
@@ -807,24 +858,40 @@ fun SparkSendScreen(
         Spacer(modifier = Modifier.height(12.dp))
         Button(
             onClick = {
+                if (reviewClickGuard) return@Button
+                reviewClickGuard = true
                 showConfirmDialog = true
+                val sendLabel = labelText.trim().takeIf { it.isNotBlank() }
                 if (isMultiMode) {
-                    onPrepareSendMany(multiRecipientPairs)
+                    onPrepareSendMany(multiRecipientPairs, sendLabel)
                 } else {
                     val amountForPrepare: Long? =
                         when {
-                            isMaxMode -> null
+                            // Max-send ("drain") still needs an explicit amount
+                            // everywhere except amount-bearing invoices: fixed
+                            // invoice amount first, else the full balance (the
+                            // repository re-resolves this defensively, but the
+                            // screen owns the correct value).
+                            isMaxMode ->
+                                recipientFixedAmountSats?.takeIf { it > 0L }
+                                    ?: availableSats.takeIf { it > 0L }
                             amountSats != null && amountSats > 0L -> amountSats
                             else -> recipientFixedAmountSats?.takeIf { it > 0L }
                         }
-                    onPrepareSend(paymentRequest.trim(), amountForPrepare, onchainFeeSpeed, isMaxMode)
+                    onPrepareSend(
+                        paymentRequest.trim(),
+                        amountForPrepare,
+                        onchainFeeSpeed,
+                        isMaxMode,
+                        sendLabel,
+                    )
                 }
             },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(48.dp),
             shape = RoundedCornerShape(8.dp),
-            enabled = canSparkReview,
+            enabled = canSparkReview && !reviewClickGuard,
             colors =
                 ButtonDefaults.buttonColors(
                     containerColor = SparkPurple,
@@ -1089,8 +1156,18 @@ private fun SparkSendConfirmationDialog(
                 is SparkSendState.Preview,
                 is SparkSendState.MultiPreview,
                 -> {
+                    // Synchronous click guard: sendState flips to Sending only
+                    // after the ViewModel processes the confirm, so a rapid
+                    // double-tap would invoke onConfirm twice. The guard resets
+                    // on every sendState change via the remember key.
+                    var confirmGuard by remember(sendState) { mutableStateOf(false) }
                     Button(
-                        onClick = onConfirm,
+                        onClick = {
+                            if (!confirmGuard) {
+                                confirmGuard = true
+                                onConfirm()
+                            }
+                        },
                         modifier =
                             Modifier
                                 .fillMaxWidth()
@@ -1602,7 +1679,9 @@ private fun sparkReviewAmountText(
     if (privacyMode) {
         SPARK_SEND_HIDDEN
     } else {
-        "-${formatAmount(value.toULong(), useSats, includeUnit = true)}"
+        // Zero is not a debit — never render "-0 sats".
+        val formatted = formatAmount(value.coerceAtLeast(0L).toULong(), useSats, includeUnit = true)
+        if (value > 0L) "-$formatted" else formatted
     }
 
 private fun sparkReviewUsdSubtext(

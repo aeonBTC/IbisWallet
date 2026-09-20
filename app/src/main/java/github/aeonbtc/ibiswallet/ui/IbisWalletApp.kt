@@ -10,14 +10,11 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
@@ -49,8 +46,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
@@ -83,6 +78,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -102,6 +98,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -123,6 +120,7 @@ import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.ArkEvent
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveKind
+import github.aeonbtc.ibiswallet.data.model.ArkTransferState
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.data.model.ArkWalletState
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
@@ -130,7 +128,12 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodeEvent
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
 import github.aeonbtc.ibiswallet.data.model.SparkEvent
+import github.aeonbtc.ibiswallet.data.model.SparkExitFlowState
+import github.aeonbtc.ibiswallet.data.model.SparkExitFundingUtxo
+import github.aeonbtc.ibiswallet.data.model.SparkExitLiveUtxo
+import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
+import github.aeonbtc.ibiswallet.data.model.SparkSendState
 import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.data.model.SyncProgress
 import github.aeonbtc.ibiswallet.data.model.WalletLayer
@@ -162,9 +165,10 @@ import github.aeonbtc.ibiswallet.ui.screens.BackupRestoreScreen
 import github.aeonbtc.ibiswallet.ui.screens.BackupWalletEntry
 import github.aeonbtc.ibiswallet.ui.screens.BalanceScreen
 import github.aeonbtc.ibiswallet.ui.screens.BroadcastTransactionScreen
+import github.aeonbtc.ibiswallet.ui.screens.ChecksumHelperScreen
 import github.aeonbtc.ibiswallet.ui.screens.CombinedServerConfigScreen
 import github.aeonbtc.ibiswallet.ui.screens.CurrentServerCard
-import github.aeonbtc.ibiswallet.ui.screens.DONATE_BITCOIN_ADDRESS
+import github.aeonbtc.ibiswallet.ui.screens.DONATE_BITCOIN_URI
 import github.aeonbtc.ibiswallet.ui.screens.ElectrumConfigScreen
 import github.aeonbtc.ibiswallet.ui.screens.FullBackupPreview
 import github.aeonbtc.ibiswallet.ui.screens.GenerateWalletScreen
@@ -197,6 +201,7 @@ import github.aeonbtc.ibiswallet.ui.screens.SettingsScreen
 import github.aeonbtc.ibiswallet.ui.screens.SparkBalanceScreen
 import github.aeonbtc.ibiswallet.ui.screens.SparkReceiveScreen
 import github.aeonbtc.ibiswallet.ui.screens.SparkSendScreen
+import github.aeonbtc.ibiswallet.ui.screens.SparkExitScreen
 import github.aeonbtc.ibiswallet.ui.screens.SparkTransferScreen
 import github.aeonbtc.ibiswallet.ui.screens.SwapScreen
 import github.aeonbtc.ibiswallet.ui.screens.SweepPrivateKeyScreen
@@ -222,6 +227,7 @@ import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.ReleaseNotesFormatter
 import github.aeonbtc.ibiswallet.util.WalletNotificationHelper
+import github.aeonbtc.ibiswallet.util.SparkServiceErrors
 import github.aeonbtc.ibiswallet.util.WalletNotificationPolicy
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
@@ -229,6 +235,7 @@ import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import github.aeonbtc.ibiswallet.util.resolveLayer2SendDraft
 import github.aeonbtc.ibiswallet.util.resolveSendRoute
+import github.aeonbtc.ibiswallet.viewmodel.ArkDbTransferProgress
 import github.aeonbtc.ibiswallet.viewmodel.ArkViewModel
 import github.aeonbtc.ibiswallet.viewmodel.LightningNodeViewModel
 import github.aeonbtc.ibiswallet.viewmodel.LiquidEvent
@@ -250,6 +257,8 @@ private enum class WalletAuthPurpose {
     OPEN_WALLET,
     DISABLE_LOCK,
 }
+
+private const val LOCKED_WALLET_AUTH_TTL_MS = 5 * 60 * 1000L
 
 private data class PendingWalletUnlock(
     val walletId: String,
@@ -376,6 +385,7 @@ fun IbisWalletApp(
     val sparkState by sparkViewModel.sparkState.collectAsStateWithLifecycle()
     val sparkSendState by sparkViewModel.sendState.collectAsStateWithLifecycle()
     val sparkReceiveState by sparkViewModel.receiveState.collectAsStateWithLifecycle()
+    val sparkPendingLnInvoice by sparkViewModel.pendingLnInvoice.collectAsStateWithLifecycle()
     val sparkAddressLabels by sparkViewModel.sparkAddressLabels.collectAsStateWithLifecycle()
     val sparkSendDraft by sparkViewModel.sendDraft.collectAsStateWithLifecycle()
     val loadedSparkWalletId by sparkViewModel.loadedWalletId.collectAsStateWithLifecycle()
@@ -388,6 +398,7 @@ fun IbisWalletApp(
     val arkReceiveState by arkViewModel.receiveState.collectAsStateWithLifecycle()
     val arkTransferState by arkViewModel.transferState.collectAsStateWithLifecycle()
     val arkLifecycleState by arkViewModel.lifecycleState.collectAsStateWithLifecycle()
+    val arkMailboxRescanBlocked by arkViewModel.mailboxRescanBlocked.collectAsStateWithLifecycle()
     val arkAddressLabels by arkViewModel.arkAddressLabels.collectAsStateWithLifecycle()
     val arkMovementLabels by arkViewModel.arkMovementLabels.collectAsStateWithLifecycle()
     val arkSendDraft by arkViewModel.sendDraft.collectAsStateWithLifecycle()
@@ -407,12 +418,18 @@ fun IbisWalletApp(
         arkViewModel.autoDbBackupLastMs.collectAsStateWithLifecycle()
     val arkLatestAutoDbBackup by
         arkViewModel.latestAutoDbBackup.collectAsStateWithLifecycle()
+    val arkAutoDbBackupLoading by
+        arkViewModel.autoDbBackupLoading.collectAsStateWithLifecycle()
     val arkDbTransferInProgress by
         arkViewModel.dbTransferInProgress.collectAsStateWithLifecycle()
+    val arkEmergencyExitFeeQuote by
+        arkViewModel.emergencyExitFeeQuote.collectAsStateWithLifecycle()
     val arkDbBackupProtectionRevision by
         arkViewModel.dbBackupProtectionRevision.collectAsStateWithLifecycle()
     val arkBackupAlertDismissedWalletIds by
         arkViewModel.backupAlertDismissedWalletIds.collectAsStateWithLifecycle()
+    val arkRefreshAlertSnoozeUntilMs by
+        arkViewModel.refreshAlertSnoozeUntilMs.collectAsStateWithLifecycle()
     val arkEsploraAddress by arkViewModel.arkEsploraAddress.collectAsStateWithLifecycle()
     val lightningEnabledWallets by lightningNodeViewModel.lightningEnabledWallets.collectAsStateWithLifecycle()
     val lightningNodeState by lightningNodeViewModel.walletState.collectAsStateWithLifecycle()
@@ -443,6 +460,7 @@ fun IbisWalletApp(
     val isLiquidTorEnabled by liquidViewModel.isLiquidTorEnabled.collectAsStateWithLifecycle()
     val liquidAutoSwitch by liquidViewModel.liquidAutoSwitchServer.collectAsStateWithLifecycle()
     val liquidTorState by liquidViewModel.torState.collectAsStateWithLifecycle()
+    val arkTorState by arkViewModel.torState.collectAsStateWithLifecycle()
     val boltzApiSource by liquidViewModel.boltzApiSource.collectAsStateWithLifecycle()
     val sideSwapApiSource by liquidViewModel.sideSwapApiSource.collectAsStateWithLifecycle()
     val liquidBlockHeight by liquidViewModel.liquidBlockHeight.collectAsStateWithLifecycle()
@@ -884,6 +902,7 @@ fun IbisWalletApp(
     val walletUnlockSecurityRequiredMessage = stringResource(R.string.loc_7378b4ca)
     val walletLockEnableSecurityMessage = stringResource(R.string.loc_e440bb19)
     val biometricUnavailableMessage = stringResource(R.string.loc_0039435a)
+    val keyMaterialUnavailableMessage = stringResource(R.string.key_material_unavailable)
 
     // Security state - tracks whether app lock is enabled for the lock icon
     var isSecurityEnabled by remember { mutableStateOf(viewModel.isSecurityEnabled()) }
@@ -927,6 +946,27 @@ fun IbisWalletApp(
         }
     }
     var authorizedLockedWalletId by remember { mutableStateOf<String?>(null) }
+    var authorizedLockedWalletAtMs by remember { mutableLongStateOf(0L) }
+
+    /**
+     * Per-wallet locks are a session authorization gate, not a second
+     * encryption layer. Authorization expires after [LOCKED_WALLET_AUTH_TTL_MS]
+     * so an old unlock cannot silently export/sign for a locked wallet later.
+     */
+    fun isLockedWalletAuthorized(walletId: String): Boolean {
+        if (authorizedLockedWalletId != walletId) return false
+        return System.currentTimeMillis() - authorizedLockedWalletAtMs < LOCKED_WALLET_AUTH_TTL_MS
+    }
+
+    fun grantLockedWalletAuthorization(walletId: String) {
+        authorizedLockedWalletId = walletId
+        authorizedLockedWalletAtMs = System.currentTimeMillis()
+    }
+
+    fun clearLockedWalletAuthorization() {
+        authorizedLockedWalletId = null
+        authorizedLockedWalletAtMs = 0L
+    }
     var lastProcessedAppUnlockCounter by remember { mutableIntStateOf(0) }
     var showServerStatusDialog by remember { mutableStateOf(false) }
     var hideFullSyncDialog by remember { mutableStateOf(false) }
@@ -1114,6 +1154,7 @@ fun IbisWalletApp(
 
     appUpdatePrompt?.let { prompt ->
         var changelogExpanded by remember(prompt.latestVersionName) { mutableStateOf(false) }
+        var changelogOverflows by remember(prompt.latestVersionName) { mutableStateOf(false) }
         val releaseNotes = prompt.releaseNotes.trim()
         val formattedReleaseNotes =
             remember(releaseNotes) {
@@ -1143,53 +1184,44 @@ fun IbisWalletApp(
                     {
                         HorizontalDivider(color = BorderColor)
                         Spacer(modifier = Modifier.height(8.dp))
-                        Row(
+                        Text(
+                            text = stringResource(R.string.update_popup_changelog),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        Text(
+                            text = formattedReleaseNotes ?: AnnotatedString(releaseNotes),
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { changelogExpanded = !changelogExpanded }
-                                    .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = stringResource(R.string.update_popup_changelog),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onBackground,
-                            )
-                            Icon(
-                                imageVector =
-                                    if (changelogExpanded) {
-                                        Icons.Default.KeyboardArrowUp
-                                    } else {
-                                        Icons.Default.KeyboardArrowDown
-                                    },
-                                contentDescription =
-                                    stringResource(
-                                        if (changelogExpanded) {
-                                            R.string.update_popup_changelog_collapse
-                                        } else {
-                                            R.string.update_popup_changelog_expand
-                                        },
-                                    ),
-                                tint = TextSecondary,
-                            )
-                        }
-                        AnimatedVisibility(
-                            visible = changelogExpanded,
-                            enter = expandVertically() + fadeIn(),
-                            exit = shrinkVertically() + fadeOut(),
-                        ) {
-                            Text(
-                                text = formattedReleaseNotes ?: AnnotatedString(releaseNotes),
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 8.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                            )
+                                    .padding(top = 8.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                            maxLines = if (changelogExpanded) Int.MAX_VALUE else 6,
+                            overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { result ->
+                                if (!changelogExpanded) {
+                                    changelogOverflows = result.hasVisualOverflow
+                                }
+                            },
+                        )
+                        if (changelogOverflows || changelogExpanded) {
+                            TextButton(
+                                onClick = { changelogExpanded = !changelogExpanded },
+                                modifier = Modifier.padding(top = 4.dp),
+                            ) {
+                                Text(
+                                    text =
+                                        stringResource(
+                                            if (changelogExpanded) {
+                                                R.string.update_popup_changelog_show_less
+                                            } else {
+                                                R.string.update_popup_changelog_show_more
+                                            },
+                                        ),
+                                    color = BitcoinOrange,
+                                )
+                            }
                         }
                     }
                 } else {
@@ -1298,6 +1330,7 @@ fun IbisWalletApp(
                     liquidGapLimit = liquidViewModel.getLiquidGapLimit(storedWallet.id),
                     isLiquidWatchOnly = liquidViewModel.isLiquidWatchOnly(storedWallet.id),
                     isLightningNode = isLnNode,
+                    canEditDerivationPath = viewModel.canEditDerivationPath(storedWallet.id),
                     lightningTypeLabel = lnConfig?.listTypeLabel(lightningNodeTitle),
                     lightningDetail = lnConfig?.listDetailLine(lightningListCopy),
                     lightningPort = lnConfig?.listPortLine(lightningListCopy),
@@ -1307,7 +1340,11 @@ fun IbisWalletApp(
         }
 
     fun completeWalletSelection(request: PendingWalletUnlock) {
-        authorizedLockedWalletId = if (request.isLocked) request.walletId else null
+        if (request.isLocked) {
+            grantLockedWalletAuthorization(request.walletId)
+        } else {
+            clearLockedWalletAuthorization()
+        }
         pendingMainWalletId = request.walletId
         pendingMainLayer = request.targetLayer
         liquidViewModel.setActiveLayer(request.targetLayer)
@@ -1347,7 +1384,7 @@ fun IbisWalletApp(
                 securityMethod = viewModel.getSecurityMethod(),
             )
 
-        val needsAuth = wallet.isLocked && authorizedLockedWalletId != walletId
+        val needsAuth = wallet.isLocked && !isLockedWalletAuthorized(walletId)
         if (!needsAuth) {
             completeWalletSelection(request)
             return
@@ -1379,7 +1416,7 @@ fun IbisWalletApp(
         if (request.securityMethod == SecureStorage.SecurityMethod.NONE) {
             viewModel.setWalletLocked(walletId, false)
             if (authorizedLockedWalletId == walletId) {
-                authorizedLockedWalletId = null
+                clearLockedWalletAuthorization()
             }
             return
         }
@@ -1402,6 +1439,7 @@ fun IbisWalletApp(
         }
 
         authorizedLockedWalletId = null
+        authorizedLockedWalletAtMs = 0L
         pendingWalletUnlock = null
 
         val fallbackWalletId =
@@ -1426,7 +1464,7 @@ fun IbisWalletApp(
             WalletAuthPurpose.OPEN_WALLET -> completeWalletSelection(request)
             WalletAuthPurpose.DISABLE_LOCK -> {
                 if (authorizedLockedWalletId == request.walletId) {
-                    authorizedLockedWalletId = null
+                    clearLockedWalletAuthorization()
                 }
                 viewModel.setWalletLocked(request.walletId, false)
             }
@@ -1449,7 +1487,7 @@ fun IbisWalletApp(
         val activeWallet = walletState.activeWallet ?: return@LaunchedEffect
         if (appUnlockCounter == 0 || appUnlockCounter == lastProcessedAppUnlockCounter) return@LaunchedEffect
         if (activeWallet.isLocked) {
-            authorizedLockedWalletId = activeWallet.id
+            grantLockedWalletAuthorization(activeWallet.id)
         }
         lastProcessedAppUnlockCounter = appUnlockCounter
     }
@@ -1459,7 +1497,7 @@ fun IbisWalletApp(
         if (!requiresActiveWalletAuth) return@LaunchedEffect
         if (!activeWallet.isLocked) return@LaunchedEffect
         if (pendingMainWalletId != null && pendingMainWalletId != activeWallet.id) return@LaunchedEffect
-        if (authorizedLockedWalletId == activeWallet.id || pendingWalletUnlock?.walletId == activeWallet.id) return@LaunchedEffect
+        if (isLockedWalletAuthorized(activeWallet.id) || pendingWalletUnlock?.walletId == activeWallet.id) return@LaunchedEffect
         requestWalletSelection(activeWallet.id)
     }
 
@@ -1474,11 +1512,13 @@ fun IbisWalletApp(
                     // Persona-scoped PIN: in duress only the decoy PIN works so a
                     // second code never proves dual-wallet setup under coercion.
                     val unlocked =
-                        if (isDuressMode) {
-                            secureStorage.isDuressEnabled() &&
-                                secureStorage.verifyDuressPin(pin, incrementFailedAttempts = true)
-                        } else {
-                            secureStorage.verifyPin(pin)
+                        withContext(Dispatchers.Default) {
+                            if (isDuressMode) {
+                                secureStorage.isDuressEnabled() &&
+                                    secureStorage.verifyDuressPin(pin, incrementFailedAttempts = true)
+                            } else {
+                                secureStorage.verifyPin(pin)
+                            }
                         }
                     if (unlocked) {
                         pendingWalletUnlock = null
@@ -1505,11 +1545,13 @@ fun IbisWalletApp(
             onCancel = { pendingSpendAction = null },
             onPinEntered = { pin ->
                 val unlocked =
-                    if (isDuressMode) {
-                        secureStorage.isDuressEnabled() &&
-                            secureStorage.verifyDuressPin(pin, incrementFailedAttempts = true)
-                    } else {
-                        secureStorage.verifyPin(pin)
+                    withContext(Dispatchers.Default) {
+                        if (isDuressMode) {
+                            secureStorage.isDuressEnabled() &&
+                                secureStorage.verifyDuressPin(pin, incrementFailedAttempts = true)
+                        } else {
+                            secureStorage.verifyPin(pin)
+                        }
                     }
                     if (unlocked) {
                         pendingSpendAction = null
@@ -1536,11 +1578,13 @@ fun IbisWalletApp(
                 onCancel = { pendingSensitiveAuth = null },
                 onPinEntered = { pin ->
                     val unlocked =
-                        if (isDuressMode) {
-                            secureStorage.isDuressEnabled() &&
-                                secureStorage.verifyDuressPin(pin, incrementFailedAttempts = true)
-                        } else {
-                            secureStorage.verifyPin(pin)
+                        withContext(Dispatchers.Default) {
+                            if (isDuressMode) {
+                                secureStorage.isDuressEnabled() &&
+                                    secureStorage.verifyDuressPin(pin, incrementFailedAttempts = true)
+                            } else {
+                                secureStorage.verifyPin(pin)
+                            }
                         }
                     if (unlocked) {
                         pendingSensitiveAuth = null
@@ -1727,6 +1771,8 @@ fun IbisWalletApp(
     val arkRefreshFailedFormat = stringResource(R.string.ark_refresh_failed_format)
     val arkMailboxRecoveryCompletedMessage = stringResource(R.string.ark_mailbox_recovery_completed)
     val arkMailboxRecoveryFailedFormat = stringResource(R.string.ark_mailbox_recovery_failed_format)
+    val arkDriftRescanMessage = stringResource(R.string.ark_drift_rescan_notice)
+    val arkMailboxRescanStartedMessage = stringResource(R.string.ark_mailbox_rescan_started)
     val arkDbExportDoneMessage = stringResource(R.string.ark_db_export_done)
     val arkDbImportDoneMessage = stringResource(R.string.ark_db_import_done)
     val arkDbTransferFailedFormat = stringResource(R.string.ark_db_transfer_failed_format)
@@ -1734,11 +1780,39 @@ fun IbisWalletApp(
     val arkEsploraFallbackFormat = stringResource(R.string.ark_esplora_fallback_format)
     val arkBoardSuccessFormat = stringResource(R.string.ark_board_success_format)
     val arkBoardFailedGenericMessage = stringResource(R.string.ark_board_failed_generic)
+    val arkBoardNoFallbackMessage = stringResource(R.string.ark_board_no_fallback_address)
+    val arkBoardBroadcastMismatchMessage = stringResource(R.string.ark_board_broadcast_mismatch)
     val arkRecoverOnchainNeedL1AddressMessage = stringResource(R.string.ark_recover_onchain_need_l1_address)
     val arkRecoverOnchainClearedMessage = stringResource(R.string.ark_recover_onchain_cleared)
     val arkRecoverOnchainSuccessFormat = stringResource(R.string.ark_recover_onchain_success_format)
     val arkRecoverOnchainFailedFormat = stringResource(R.string.ark_recover_onchain_failed_format)
     val arkErrorGenericMessage = stringResource(R.string.ark_error_generic)
+    val sparkWithdrawalFailedMessage = stringResource(R.string.spark_transfer_withdrawal_failed)
+    val sparkExitBackupSavedMessage = stringResource(R.string.spark_exit_backup_saved)
+    val sparkExitInvalidDestinationMessage = stringResource(R.string.loc_04536bb4)
+    val sparkExitImportOkFormat = stringResource(R.string.spark_exit_import_ok_format)
+    val sparkDepositClaimDoneMessage = stringResource(R.string.spark_deposit_claim_done)
+    // Friendly Spark error mapping: curated validation messages pass through
+    // verbatim; SDK/transport internals collapse to localized generics so raw
+    // protocol text never reaches a snackbar.
+    val sparkErrInsufficient = stringResource(R.string.loc_534e1eb2)
+    val sparkErrUnavailable = stringResource(R.string.spark_error_unavailable)
+    val sparkErrConnection = stringResource(R.string.spark_error_connection)
+    val sparkErrGeneric = stringResource(R.string.spark_error_generic)
+    val sparkExitErrorLocalizer =
+        remember(sparkErrInsufficient, sparkErrUnavailable, sparkErrConnection, sparkErrGeneric) {
+            object : SparkServiceErrors.Localizer {
+                override fun get(resId: Int): String =
+                    when (resId) {
+                        R.string.loc_534e1eb2 -> sparkErrInsufficient
+                        R.string.spark_error_unavailable -> sparkErrUnavailable
+                        R.string.spark_error_connection -> sparkErrConnection
+                        else -> sparkErrGeneric
+                    }
+            }
+        }
+    fun sparkErrorMessage(error: Exception): String =
+        SparkServiceErrors.mapFailure(sparkExitErrorLocalizer, error, sparkWithdrawalFailedMessage)
     val suppressWalletServerSnackbar: (String) -> Boolean = { message ->
         message == "Failed to connect to server" ||
             message == "Not connected to Electrum server" ||
@@ -1980,6 +2054,15 @@ fun IbisWalletApp(
                         arkMailboxRecoveryFailedFormat.format(event.message),
                     )
                 }
+                is ArkEvent.CrossDeviceDriftRescan -> {
+                    snackbarHostState.showSnackbar(arkDriftRescanMessage)
+                }
+                is ArkEvent.MailboxRescanStarted -> {
+                    snackbarHostState.showSnackbar(arkMailboxRescanStartedMessage)
+                }
+                is ArkEvent.MailboxRescanBlocked -> {
+                    snackbarHostState.showSnackbar(event.message)
+                }
                 is ArkEvent.ArkDbExported -> {
                     snackbarHostState.showSnackbar(arkDbExportDoneMessage)
                 }
@@ -2005,13 +2088,10 @@ fun IbisWalletApp(
                 is ArkEvent.OnchainUnavailable -> {
                     snackbarHostState.showSnackbar(event.message)
                 }
-                is ArkEvent.BoardBelowMinimum -> {
-                    snackbarHostState.showSnackbar(event.message)
-                }
                 is ArkEvent.BoardSucceeded -> {
                     val amountLabel =
                         if (layer2Denomination == SecureStorage.DENOMINATION_SATS) {
-                            "${event.amountSats} sats"
+                            formatAmount(event.amountSats.toULong(), useSats = true, includeUnit = true)
                         } else {
                             formatAmount(event.amountSats.toULong(), useSats = false, includeUnit = true)
                         }
@@ -2275,9 +2355,9 @@ fun IbisWalletApp(
             arkEnabledWallets[walletId] ?: arkViewModel.isArkEnabledForWallet(walletId)
 
         if (!isArkLayer2Enabled || activeLayer2Provider != Layer2Provider.ARK || !arkOnForWallet) {
-            if (loadedArkWalletId == walletId) {
-                arkViewModel.unloadArkWallet()
-            }
+            // Unconditional: only the selected wallet may stay loaded. A stale session from a
+            // previously selected wallet must die even though loaded != walletId.
+            arkViewModel.unloadArkWallet()
             return@LaunchedEffect
         }
 
@@ -3291,6 +3371,17 @@ fun IbisWalletApp(
                     }
                 }
 
+                // The Tor badge above follows Esplora: ASP traffic always goes direct
+                // (Bark has no Tor path), say so whenever Tor is implied.
+                if (esploraIsOnion) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(R.string.ark_tor_asp_direct_note),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
+                }
+
                 val err = visibleArkState.error
                 if (err != null && !isConnecting) {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -4147,6 +4238,7 @@ fun IbisWalletApp(
                                                 isConnected = visibleLightningConnected,
                                                 isConnecting = visibleLightningConnecting,
                                                 connectionTarget = visibleLightningState.displayTarget(),
+                                                walletId = activeWalletId,
                                                 denomination = layer2Denomination,
                                                 privacyMode = privacyMode,
                                                 btcPrice = btcPrice,
@@ -4199,6 +4291,10 @@ fun IbisWalletApp(
                                                 },
                                                 onResetReceive = { sparkViewModel.resetReceiveState() },
                                                 onToggleDenomination = toggleLayer2Denomination,
+                                                pendingLnInvoice = sparkPendingLnInvoice,
+                                                onPrimeLnInvoice = { sparkViewModel.primeLnInvoiceFromCache() },
+                                                walletId = activeWalletId,
+                                                walletReady = loadedSparkWalletId == activeWalletId,
                                             )
                                         } else if (isArkAvailable) {
                                             ArkReceiveScreen(
@@ -4208,7 +4304,7 @@ fun IbisWalletApp(
                                                 btcPrice = btcPrice,
                                                 fiatCurrency = priceCurrency,
                                                 privacyMode = privacyMode,
-                                                minBoardAmountSats = visibleArkState.minBoardAmountSats,
+                                                walletId = activeWalletId,
                                                 // Handle open is enough to mint addresses; don't wait
                                                 // for full ASP hydrate / balance paint.
                                                 walletReady = loadedArkWalletId == activeWalletId,
@@ -4232,10 +4328,13 @@ fun IbisWalletApp(
                                                     arkViewModel.resetReceiveState()
                                                 },
                                                 onToggleDenomination = toggleLayer2Denomination,
+                                                isOnchainDepositAvailable =
+                                                    !arkViewModel.hasBip39Passphrase(activeWalletId),
                                             )
                                         } else {
                                             LiquidReceiveScreen(
                                                 liquidAddress = liquidState.currentAddress,
+                                                walletId = activeWalletId,
                                                 currentAddressLabel = liquidState.currentAddressLabel,
                                                 denomination = layer2Denomination,
                                                 btcPrice = btcPrice,
@@ -4284,6 +4383,7 @@ fun IbisWalletApp(
                                             isNodeConnected = visibleLightningConnected,
                                             isNodeConnecting = visibleLightningConnecting,
                                             connectionTarget = visibleLightningState.displayTarget(),
+                                            walletId = activeWalletId,
                                             onGenerateAddress = { lightningNodeViewModel.generateOnchainAddress() },
                                             onShowAllAddresses = {
                                                 navController.navigate(Screen.AllAddresses.route)
@@ -4305,6 +4405,10 @@ fun IbisWalletApp(
                                             onShowAllAddresses = { navController.navigate(Screen.AllAddresses.route) },
                                             onShowAllUtxos = { navController.navigate(Screen.AllUtxos.route) },
                                             onToggleDenomination = toggleLayer1Denomination,
+                                            silentReceivePreferred = viewModel.getSilentPaymentReceiveMode(),
+                                            onSilentReceiveChange = { viewModel.setSilentPaymentReceiveMode(it) },
+                                            silentScanDisclosureAcknowledged = viewModel.hasAcknowledgedSilentPaymentScanDisclosure(),
+                                            onAcknowledgeSilentScanDisclosure = { viewModel.acknowledgeSilentPaymentScanDisclosure() },
                                         )
                                     }
                                 }
@@ -4322,6 +4426,10 @@ fun IbisWalletApp(
                                     onShowAllAddresses = { navController.navigate(Screen.AllAddresses.route) },
                                     onShowAllUtxos = { navController.navigate(Screen.AllUtxos.route) },
                                     onToggleDenomination = toggleLayer1Denomination,
+                                    silentReceivePreferred = viewModel.getSilentPaymentReceiveMode(),
+                                    onSilentReceiveChange = { viewModel.setSilentPaymentReceiveMode(it) },
+                                    silentScanDisclosureAcknowledged = viewModel.hasAcknowledgedSilentPaymentScanDisclosure(),
+                                    onAcknowledgeSilentScanDisclosure = { viewModel.acknowledgeSilentPaymentScanDisclosure() },
                                 )
                             }
                         }
@@ -4454,6 +4562,37 @@ fun IbisWalletApp(
                                                         sparkViewModel.deleteAllSparkHistory(walletId)
                                                     }
                                                 },
+                                                onOpenExit = {
+                                                    navController.navigate(Screen.SparkExit.route)
+                                                },
+                                                onFetchInstantClaimQuote = { txid, vout ->
+                                                    sparkViewModel.fetchDepositClaimQuote(txid, vout)
+                                                },
+                                                onClaimDepositNow = { quote ->
+                                                    requireSpendAuth {
+                                                        scope.launch {
+                                                            try {
+                                                                // claimDepositNow refreshes wallet state
+                                                                // itself, dropping the deposit from pending.
+                                                                sparkViewModel.claimDepositNow(
+                                                                    quote.txid,
+                                                                    quote.vout,
+                                                                    quote.amountSats,
+                                                                    quote.feeSats,
+                                                                )
+                                                                snackbarHostState.showSnackbar(
+                                                                    sparkDepositClaimDoneMessage,
+                                                                )
+                                                            } catch (e: CancellationException) {
+                                                                throw e
+                                                            } catch (e: Exception) {
+                                                                snackbarHostState.showSnackbar(
+                                                                    sparkErrorMessage(e),
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                },
                                             )
                                         } else if (isArkAvailable) {
                                             ArkBalanceScreen(
@@ -4472,6 +4611,7 @@ fun IbisWalletApp(
                                                 mempoolUrl = mempoolUrl,
                                                 mempoolServer = mempoolServer,
                                                 movementLabels = arkMovementLabels,
+                                                addressLabels = arkAddressLabels,
                                                 onTogglePrivacy = { viewModel.togglePrivacyMode() },
                                                 onRefresh = { arkViewModel.refresh() },
                                                 onToggleDenomination = toggleLayer2Denomination,
@@ -4510,6 +4650,7 @@ fun IbisWalletApp(
                                                 },
                                                 isDbBackupProtected =
                                                     remember(
+                                                        visibleArkState.walletId,
                                                         activeWalletId,
                                                         arkDbBackupProtectionRevision,
                                                         arkAutoDbBackupEnabled,
@@ -4517,40 +4658,33 @@ fun IbisWalletApp(
                                                         arkAutoDbBackupLastMs,
                                                         arkLatestAutoDbBackup,
                                                     ) {
-                                                        arkViewModel.isDbBackupProtected(activeWalletId)
+                                                        arkViewModel.isDbBackupProtected(
+                                                            visibleArkState.walletId ?: activeWalletId,
+                                                        )
                                                     },
                                                 backupAlertDismissed =
-                                                    activeWalletId != null &&
-                                                        activeWalletId in arkBackupAlertDismissedWalletIds,
+                                                    (visibleArkState.walletId ?: activeWalletId)?.let { dialogWalletId ->
+                                                        dialogWalletId in arkBackupAlertDismissedWalletIds
+                                                    } == true,
                                                 onDismissBackupAlert = {
-                                                    arkViewModel.dismissBackupAlert(activeWalletId)
-                                                },
-                                                autoRefreshEnabled = arkAutoDelegatedRefreshEnabled,
-                                                onRecoverBelowMinBoard = {
-                                                    if (isRecoveringArkOnchain) return@ArkBalanceScreen
-                                                    val dest = walletState.currentAddress?.trim().orEmpty()
-                                                    if (dest.isBlank()) {
-                                                        viewModel.getNewAddress()
-                                                        scope.launch {
-                                                            snackbarHostState.showSnackbar(
-                                                                arkRecoverOnchainNeedL1AddressMessage,
-                                                            )
-                                                        }
-                                                        return@ArkBalanceScreen
-                                                    }
-                                                    val feeRate =
-                                                        ((feeEstimationState as? FeeEstimationResult.Success)
-                                                            ?.estimates
-                                                            ?.halfHourFee
-                                                            ?: 2.0)
-                                                            .toLong()
-                                                            .coerceAtLeast(1L)
-                                                    arkViewModel.recoverOnchainDepositToLayer1(
-                                                        destinationAddress = dest,
-                                                        feeRateSatPerVb = feeRate,
+                                                    arkViewModel.dismissBackupAlert(
+                                                        visibleArkState.walletId ?: activeWalletId,
                                                     )
                                                 },
-                                                isRecoveringBelowMinBoard = isRecoveringArkOnchain,
+                                                refreshAlertSnoozed =
+                                                    (visibleArkState.walletId ?: activeWalletId)?.let { dialogWalletId ->
+                                                        (arkRefreshAlertSnoozeUntilMs[dialogWalletId] ?: 0L) >
+                                                            System.currentTimeMillis()
+                                                    } == true,
+                                                onSnoozeRefreshAlert = {
+                                                    arkViewModel.snoozeRefreshAlert(
+                                                        visibleArkState.walletId ?: activeWalletId,
+                                                    )
+                                                },
+                                                autoRefreshEnabled = arkAutoDelegatedRefreshEnabled,
+                                                isMailboxRescanning =
+                                                    arkDbTransferInProgress ==
+                                                        ArkDbTransferProgress.RESCANNING,
                                                 onOpenBoarding = {
                                                     navController.navigate(
                                                         Screen.ArkLifecycle.createRoute(
@@ -4969,11 +5103,11 @@ fun IbisWalletApp(
                                                     onLoadOnchainFeeQuotes = { paymentRequest, amountSats, useAllFunds ->
                                                         sparkViewModel.getOnchainFeeQuotes(paymentRequest, amountSats, useAllFunds)
                                                     },
-                                                    onPrepareSend = { paymentRequest, amountSats, onchainFeeSpeed, useAllFunds ->
-                                                        sparkViewModel.prepareSend(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds)
+                                                    onPrepareSend = { paymentRequest, amountSats, onchainFeeSpeed, useAllFunds, label ->
+                                                        sparkViewModel.prepareSend(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds, label)
                                                     },
-                                                    onPrepareSendMany = { recipients ->
-                                                        sparkViewModel.prepareSendMany(recipients)
+                                                    onPrepareSendMany = { recipients, label ->
+                                                        sparkViewModel.prepareSendMany(recipients, label)
                                                     },
                                                       onSendPrepared = {
                                                           requireSpendAuth { sparkViewModel.sendPrepared() }
@@ -5463,6 +5597,13 @@ fun IbisWalletApp(
                                                 localCosignerKeyMaterial = keyMaterial?.localCosignerKeyMaterial,
                                             )
                                         }
+                                    if (info == null) {
+                                        // Never silently swallow — the user authenticated
+                                        // and expects to see the key material.
+                                        scope.launch {
+                                            snackbarHostState.showSnackbar(keyMaterialUnavailableMessage)
+                                        }
+                                    }
                                     onResult(info)
                                 }
                             },
@@ -5477,16 +5618,17 @@ fun IbisWalletApp(
                                 }
                             },
                             arkDeleteRiskForWallet = { walletId ->
-                                if (!arkViewModel.isArkEnabledForWallet(walletId)) {
-                                    null
-                                } else {
-                                    val risk = arkViewModel.assessDeleteRisk(walletId)
+                                // Always assess: a disabled-Ark wallet can still hold
+                                // VTXOs / a session DB (assessDeleteRisk detects
+                                // hasSessionDb), and deleting with a generic prompt
+                                // would silently strand funds.
+                                val risk = arkViewModel.assessDeleteRisk(walletId)
                                     github.aeonbtc.ibiswallet.ui.screens.ArkDeleteRiskUi(
                                         hasActivity = risk.hasActivity,
                                         blocksDelete = risk.blocksDelete,
                                         warnsDelete = risk.warnsDelete,
+                                        isOffchainOnly = risk.isOffchainOnly,
                                     )
-                                }
                             },
                             onSelectWallet = { wallet ->
                                 requestWalletSelection(wallet.id, navigateToBalance = true)
@@ -5711,8 +5853,15 @@ fun IbisWalletApp(
                                     arkTransactionCount = arkLabels.second,
                                 )
                             },
-                            onEditWallet = { walletId, newName, newGapLimit, newFingerprint ->
-                                viewModel.editWallet(walletId, newName, newGapLimit, newFingerprint)
+                            onEditWallet = { walletId, newName, newGapLimit, newFingerprint, newDerivationPath, newAddressType ->
+                                viewModel.editWallet(
+                                    walletId,
+                                    newName,
+                                    newGapLimit,
+                                    newFingerprint,
+                                    newDerivationPath,
+                                    newAddressType,
+                                )
                             },
                             onReorderWallets = { orderedIds ->
                                 viewModel.reorderWallets(orderedIds)
@@ -5724,7 +5873,12 @@ fun IbisWalletApp(
                                 if (sparkViewModel.isSparkEnabledForWallet(wallet.id)) {
                                     sparkViewModel.syncWallet(wallet.id)
                                 }
-                                if (arkViewModel.isArkEnabledForWallet(wallet.id)) {
+                                // Ark holds a single native session for the selected wallet only —
+                                // never pull a background wallet in (it would evict the active one).
+                                if (
+                                    wallet.id == walletState.activeWallet?.id &&
+                                    arkViewModel.isArkEnabledForWallet(wallet.id)
+                                ) {
                                     arkViewModel.fullSyncMailboxRecovery(wallet.id)
                                 }
                                 if (!wallet.isLiquidWatchOnly && !wallet.isLightningNode) {
@@ -5806,7 +5960,6 @@ fun IbisWalletApp(
                                         liquidViewModel.unloadLiquidWallet()
                                         sparkViewModel.unloadSparkWallet()
                                         lightningNodeViewModel.unloadLightningWallet()
-                                        arkViewModel.loadArkWallet(walletId)
                                     } else {
                                         arkViewModel.unloadArkWallet()
                                     }
@@ -5861,6 +6014,9 @@ fun IbisWalletApp(
                             )
                         },
                     ) {
+                        val checksumResult by it.savedStateHandle
+                            .getStateFlow<String?>("checksum_result", null)
+                            .collectAsStateWithLifecycle()
                         ImportWalletScreen(
                             onImport = { config ->
                                 viewModel.importWallet(config)
@@ -5868,17 +6024,43 @@ fun IbisWalletApp(
                             onImportLiquidWatchOnly = { name, ctDescriptor, gapLimit ->
                                 viewModel.importLiquidWatchOnlyWallet(name, ctDescriptor, gapLimit)
                             },
-                            onImportFromBackup = { backupJson, importServerSettings ->
-                                viewModel.importFromBackup(backupJson, importServerSettings)
-                            },
-                            onParseBackupFile = { uri, password ->
-                                viewModel.parseBackupFile(uri, password)
-                            },
                             onBack = { navController.popBackStack() },
                             onSweepPrivateKey = { navController.navigate(Screen.SweepPrivateKey.route) },
+                            onOpenChecksumHelper = { navController.navigate(Screen.ChecksumHelper.route) },
+                            prefillResult = checksumResult,
+                            onChecksumResultConsumed = {
+                                it.savedStateHandle.remove<String?>("checksum_result")
+                            },
                             existingWalletNames = existingWalletNames,
                             isLoading = uiState.isLoading,
                             error = uiState.error,
+                        )
+                    }
+                    composable(
+                        route = Screen.ChecksumHelper.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        ChecksumHelperScreen(
+                            onBack = { navController.popBackStack() },
+                            onUsePhrase = { phrase ->
+                                navController.previousBackStackEntry
+                                    ?.savedStateHandle
+                                    ?.set("checksum_result", phrase)
+                                navController.popBackStack()
+                            },
                         )
                     }
                     composable(
@@ -6252,7 +6434,7 @@ fun IbisWalletApp(
                             onArkEsploraUrlChange = { url ->
                                 arkViewModel.setArkEsploraAddressAndReload(url)
                             },
-                            layer2TorStatus = liquidTorState.status,
+                            layer2TorStatus = arkTorState.status,
                             onOpenLiquidElectrum = {
                                 navController.navigate(Screen.LiquidServerConfig.route) {
                                     launchSingleTop = true
@@ -6473,10 +6655,18 @@ fun IbisWalletApp(
                             isWipePinEnabled = wipePinEnabled,
                             isCloakModeEnabled = cloakModeEnabled,
                             onSetPinCode = { pin ->
-                                viewModel.savePin(pin)
-                                viewModel.setSecurityMethod(SecureStorage.SecurityMethod.PIN)
-                                securityMethod = SecureStorage.SecurityMethod.PIN
-                                isSecurityEnabled = true
+                                runCatching {
+                                    viewModel.savePin(pin)
+                                }.onSuccess {
+                                    viewModel.setSecurityMethod(SecureStorage.SecurityMethod.PIN)
+                                    securityMethod = SecureStorage.SecurityMethod.PIN
+                                    isSecurityEnabled = true
+                                }.onFailure {
+                                    Log.w("IbisWalletApp", "Save PIN failed: ${it.message}")
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(walletOperationFailedMessage)
+                                    }
+                                }
                             },
                             onEnableBiometric = {
                                 viewModel.setSpendPinEnabled(false)
@@ -6484,29 +6674,49 @@ fun IbisWalletApp(
                                 pendingBiometricEnrollment = true
                             },
                             onDisableSecurity = {
-                                // Disabling security also disables duress
-                                if (duressEnabled) {
-                                    viewModel.disableDuress(
-                                        onComplete = { duressEnabled = false },
-                                        onDeleteL2Data = { walletId ->
-                                            liquidViewModel.deleteWalletData(walletId)
-                                            sparkViewModel.deleteWalletData(walletId)
-                                            arkViewModel.deleteWalletData(walletId)
-                                            lightningNodeViewModel.deleteWalletData(walletId)
-                                        },
+                                // Migrate secrets first: setSecurityMethod(NONE) throws
+                                // in a duress session (decoy master cannot decrypt the
+                                // real wallet) and is transactional, so a failure
+                                // leaves PIN hash + method untouched. Only mutate
+                                // the rest after it succeeds — clearPin before a
+                                // failed migration used to brick the lock screen.
+                                runCatching {
+                                    // onDisableSecurity is only reachable after the
+                                    // Security screen's explicit disable confirmation,
+                                    // which serves as the downgrade-risk acknowledgment.
+                                    viewModel.setSecurityMethod(
+                                        SecureStorage.SecurityMethod.NONE,
+                                        acknowledgedDowngradeRisk = true,
                                     )
+                                }.onSuccess {
+                                    // Disabling security also disables duress
+                                    if (duressEnabled) {
+                                        viewModel.disableDuress(
+                                            onComplete = { duressEnabled = false },
+                                            onDeleteL2Data = { walletId ->
+                                                liquidViewModel.deleteWalletData(walletId)
+                                                sparkViewModel.deleteWalletData(walletId)
+                                                arkViewModel.deleteWalletData(walletId)
+                                                lightningNodeViewModel.deleteWalletData(walletId)
+                                            },
+                                        )
+                                    }
+                                    // Disabling security also disables auto-wipe / wipe PIN / spend PIN
+                                    viewModel.setAutoWipeThreshold(SecureStorage.AutoWipeThreshold.DISABLED)
+                                    autoWipeThreshold = SecureStorage.AutoWipeThreshold.DISABLED
+                                    viewModel.clearWipePin()
+                                    wipePinEnabled = false
+                                    viewModel.setSpendPinEnabled(false)
+                                    spendPinEnabled = false
+                                    viewModel.clearPin()
+                                    securityMethod = SecureStorage.SecurityMethod.NONE
+                                    isSecurityEnabled = false
+                                }.onFailure {
+                                    Log.w("IbisWalletApp", "Disable security failed: ${it.message}")
+                                    scope.launch {
+                                        snackbarHostState.showSnackbar(walletOperationFailedMessage)
+                                    }
                                 }
-                                // Disabling security also disables auto-wipe / wipe PIN / spend PIN
-                                viewModel.setAutoWipeThreshold(SecureStorage.AutoWipeThreshold.DISABLED)
-                                autoWipeThreshold = SecureStorage.AutoWipeThreshold.DISABLED
-                                viewModel.clearWipePin()
-                                wipePinEnabled = false
-                                viewModel.setSpendPinEnabled(false)
-                                spendPinEnabled = false
-                                viewModel.clearPin()
-                                viewModel.setSecurityMethod(SecureStorage.SecurityMethod.NONE)
-                                securityMethod = SecureStorage.SecurityMethod.NONE
-                                isSecurityEnabled = false
                             },
                             onLockTimingChange = { timing ->
                                 viewModel.setLockTiming(timing)
@@ -6627,7 +6837,7 @@ fun IbisWalletApp(
                                     context.startActivity(Intent(Intent.ACTION_VIEW, releaseUrl.toUri()))
                                 }
                             },
-                            onDonateClick = { handleParsedSendInput(DONATE_BITCOIN_ADDRESS) },
+                            onDonateClick = { handleParsedSendInput(DONATE_BITCOIN_URI) },
                             onBack = { navController.popBackStack() },
                         )
                     }
@@ -6662,6 +6872,11 @@ fun IbisWalletApp(
                                 requireSensitiveAuth {
                                     scope.launch {
                                         runCatching { arkViewModel.unloadArkWalletAndAwait() }
+                                        val freshLockedAuth =
+                                            authorizedLockedWalletId
+                                                ?.takeIf { isLockedWalletAuthorized(it) }
+                                                ?.let { setOf(it) }
+                                                .orEmpty()
                                         viewModel.exportFullBackup(
                                             uri,
                                             walletIds,
@@ -6669,6 +6884,7 @@ fun IbisWalletApp(
                                             includeServers,
                                             includeAppSettings,
                                             password,
+                                            authorizedLockedWalletIds = freshLockedAuth,
                                         )
                                     }
                                 }
@@ -7278,7 +7494,7 @@ fun IbisWalletApp(
                         route = Screen.SparkTransfer.route,
                     ) {
                         ObserveDerivedWalletSnapshots(viewModel)
-                        if (!isLayer2Available) {
+                        if (!isLayer2Available || !isSparkAvailable) {
                             LaunchedEffect(Unit) {
                                 navController.navigate(Screen.Balance.route) {
                                     popUpTo(Screen.SparkTransfer.route) {
@@ -7287,9 +7503,6 @@ fun IbisWalletApp(
                                     launchSingleTop = true
                                 }
                             }
-                            return@composable
-                        }
-                        if (!isSparkAvailable) {
                             return@composable
                         }
                         Column(modifier = Modifier.fillMaxSize()) {
@@ -7374,9 +7587,36 @@ fun IbisWalletApp(
                                     onLoadSparkWithdrawalFeeQuotes = { address, amount, isMaxSend ->
                                         sparkViewModel.getOnchainFeeQuotes(address, amount, isMaxSend)
                                     },
-                                    onExecuteSparkToLayer1 = {
+                                    onExecuteSparkToLayer1 = { address, amount, feeSpeed, isMaxSend ->
                                         requireSpendAuth {
-                                            scope.launch { sparkViewModel.sendPreparedNow() }
+                                            scope.launch {
+                                                try {
+                                                    val paymentId =
+                                                        sparkViewModel.sendSparkWithdrawal(
+                                                            destinationAddress = address,
+                                                            amountSats = amount,
+                                                            onchainFeeSpeed = feeSpeed,
+                                                            useAllFunds = isMaxSend,
+                                                        )
+                                                    if (paymentId == null) {
+                                                        val detail =
+                                                            (sparkViewModel.sendState.value as? SparkSendState.Error)
+                                                                ?.message?.takeIf { it.isNotBlank() }
+                                                        snackbarHostState.showSnackbar(
+                                                            detail ?: sparkWithdrawalFailedMessage,
+                                                        )
+                                                    }
+                                                    sparkViewModel.resetSendState()
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    snackbarHostState.showSnackbar(
+                                                        e.message?.takeIf { it.isNotBlank() }
+                                                            ?: sparkWithdrawalFailedMessage,
+                                                    )
+                                                    sparkViewModel.resetSendState()
+                                                }
+                                            }
                                         }
                                     },
                                     onResetSparkSend = {
@@ -7404,6 +7644,216 @@ fun IbisWalletApp(
                              }
                          }
                      }
+                    composable(
+                        route = Screen.SparkExit.route,
+                    ) {
+                        ObserveDerivedWalletSnapshots(viewModel)
+                        if (!isLayer2Available || !isSparkAvailable) {
+                            LaunchedEffect(Unit) {
+                                navController.navigate(Screen.Balance.route) {
+                                    popUpTo(Screen.SparkExit.route) {
+                                        inclusive = true
+                                    }
+                                    launchSingleTop = true
+                                }
+                            }
+                            return@composable
+                        }
+                        val sparkExitFlow by sparkViewModel.exitFlow.collectAsStateWithLifecycle()
+                        val sparkExitUtxos by viewModel.allUtxos.collectAsStateWithLifecycle()
+                        val sparkExitBackupStale by sparkViewModel.isExitBackupStale.collectAsStateWithLifecycle()
+                        LaunchedEffect(Unit) {
+                            // Refresh the L1 UTXO snapshot first: funding
+                            // re-validation and signer binding both read it,
+                            // and a stale cache could green-light spent input.
+                            viewModel.refreshUtxos()
+                            sparkViewModel.restoreSparkExit()
+                            if (sparkViewModel.exitFlow.value is SparkExitFlowState.InProgress) {
+                                runCatching { sparkViewModel.checkSparkExit() }
+                            }
+                        }
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier.weight(1f)) {
+                                SparkExitScreen(
+                                    exitFlow = sparkExitFlow,
+                                    layer1Utxos = sparkExitUtxos,
+                                    layer1Address = walletState.currentAddress,
+                                    useSats = layer2Denomination == SecureStorage.DENOMINATION_SATS,
+                                    privacyMode = privacyMode,
+                                    feeEstimationState = feeEstimationState,
+                                    sparkBalanceSats = visibleSparkState.balanceSats,
+                                    unclaimedDepositSats = visibleSparkState.unclaimedDeposits.sumOf { it.amountSats },
+                                    onRefreshBitcoinFees = { viewModel.fetchFeeEstimates() },
+                                    onQuote = { feeRate, destination ->
+                                        scope.launch {
+                                            try {
+                                                // Network-exact destination gate: the
+                                                // sweep must parse for the loaded L1
+                                                // wallet's network. The repository
+                                                // additionally checksum-guards the
+                                                // format, so a bypass still fails.
+                                                if (!viewModel.isValidAddressForWallet(destination)) {
+                                                    snackbarHostState.showSnackbar(
+                                                        sparkExitInvalidDestinationMessage,
+                                                    )
+                                                    return@launch
+                                                }
+                                                sparkViewModel.quoteSparkExit(feeRate, destination)
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar(
+                                                    sparkErrorMessage(e),
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onBuild = { funding ->
+                                        requireSpendAuth {
+                                            scope.launch {
+                                                try {
+                                                    val reviewed =
+                                                        sparkExitFlow as? SparkExitFlowState.QuoteReady
+                                                            ?: throw IllegalStateException(
+                                                                "Exit quote expired — re-quote before building",
+                                                            )
+                                                    sparkViewModel.buildSparkExit(
+                                                        funding,
+                                                        reviewed.quote,
+                                                        sparkExitUtxos.toSparkExitLiveView(),
+                                                        exitCpfpSigner(
+                                                            viewModel,
+                                                            sparkViewModel,
+                                                            funding,
+                                                        ),
+                                                    )
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    snackbarHostState.showSnackbar(
+                                                        sparkErrorMessage(e),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onRebuild = { feeRate, funding ->
+                                        requireSpendAuth {
+                                            scope.launch {
+                                                try {
+                                                    // Both the fee-bump path (InProgress) and the
+                                                    // redo path (RedoRequired) rebuild the same
+                                                    // leaves; the 0.25 planner resumes from chain
+                                                    // state either way.
+                                                    val redo = sparkExitFlow as? SparkExitFlowState.RedoRequired
+                                                    val progress =
+                                                        sparkExitFlow as? SparkExitFlowState.InProgress
+                                                    val destination =
+                                                        redo?.quote?.destination ?: progress?.destination
+                                                    val leafIds = redo?.quote?.leafIds ?: progress?.leafIds
+                                                    if (destination != null && leafIds != null) {
+                                                        sparkViewModel.rebuildSparkExit(
+                                                            feeRate,
+                                                            destination,
+                                                            leafIds,
+                                                            funding,
+                                                            sparkExitUtxos.toSparkExitLiveView(),
+                                                            exitCpfpSigner(
+                                                                viewModel,
+                                                                sparkViewModel,
+                                                                funding,
+                                                            ),
+                                                        )
+                                                    }
+                                                } catch (e: CancellationException) {
+                                                    throw e
+                                                } catch (e: Exception) {
+                                                    snackbarHostState.showSnackbar(
+                                                        sparkErrorMessage(e),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    },
+                                    onCheckStatus = {
+                                        scope.launch {
+                                            try {
+                                                sparkViewModel.checkSparkExit()
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar(
+                                                    sparkErrorMessage(e),
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onDiscard = { sparkViewModel.clearSparkExit() },
+                                    onExportBackup = {
+                                        scope.launch {
+                                            try {
+                                                sparkViewModel.exportSparkExitBackup()
+                                                snackbarHostState.showSnackbar(
+                                                    sparkExitBackupSavedMessage,
+                                                )
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar(
+                                                    sparkErrorMessage(e),
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onExportExitCopy = { uri ->
+                                        scope.launch {
+                                            try {
+                                                sparkViewModel.exportExitCopyToUri(uri)
+                                                snackbarHostState.showSnackbar(
+                                                    sparkExitBackupSavedMessage,
+                                                )
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar(
+                                                    sparkErrorMessage(e),
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onImportExitBackup = { uri ->
+                                        scope.launch {
+                                            try {
+                                                val result =
+                                                    sparkViewModel.importExitBackupFromUri(uri)
+                                                snackbarHostState.showSnackbar(
+                                                    sparkExitImportOkFormat.format(
+                                                        result.importedLeaves,
+                                                        result.skippedForeignLeaves,
+                                                        result.skippedChains,
+                                                        result.skippedConflictingLeaves,
+                                                    ),
+                                                )
+                                                sparkViewModel.refresh()
+                                            } catch (e: CancellationException) {
+                                                throw e
+                                            } catch (e: Exception) {
+                                                snackbarHostState.showSnackbar(
+                                                    sparkErrorMessage(e),
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onBack = { navController.popBackStack() },
+                                    utxoScriptHex = viewModel::fundingScriptHexForAddress,
+                                    isExitBackupStale = sparkExitBackupStale,
+                                    // L1 wallet tip for timelock countdowns;
+                                    // null falls back to height-free text.
+                                    chainTipHeight = walletState.blockHeight?.toLong(),
+                                )
+                            }
+                        }
+                    }
                      composable(
                          route = Screen.ArkLifecycle.route,
                          arguments =
@@ -7434,18 +7884,30 @@ fun IbisWalletApp(
                                 onAutoDbBackupEnabledChange = { enabled ->
                                     arkViewModel.setArkAutoDbBackupEnabled(enabled)
                                 },
-                                autoDbBackupFolderUri = arkAutoDbBackupFolderUri,
-                                autoDbBackupLastMs = arkAutoDbBackupLastMs,
-                                latestAutoDbBackup = arkLatestAutoDbBackup,
-                                onPickAutoDbBackupFolder = {
-                                    (context as? github.aeonbtc.ibiswallet.MainActivity)
-                                        ?.skipNextBackgroundLockForActivityResult()
-                                    arkAutoDbBackupFolderLauncher.launch(null)
-                                },
+                                 autoDbBackupFolderUri = arkAutoDbBackupFolderUri,
+                                 autoDbBackupLastMs = arkAutoDbBackupLastMs,
+                                 latestAutoDbBackup = arkLatestAutoDbBackup,
+                                 autoDbBackupLoading = arkAutoDbBackupLoading,
+                                 onPickAutoDbBackupFolder = {
+                                     (context as? github.aeonbtc.ibiswallet.MainActivity)
+                                         ?.skipNextBackgroundLockForActivityResult()
+                                     arkAutoDbBackupFolderLauncher.launch(null)
+                                 },
+                                 onRescanMailbox = {
+                                     (visibleArkState.walletId ?: activeWalletId)?.let { id ->
+                                         arkViewModel.rescanMailbox(id)
+                                     }
+                                 },
+                                 rescanBlocked = arkMailboxRescanBlocked,
                                  onPrepareRefresh = { ids -> arkViewModel.prepareRefresh(ids) },
-                                 onExecuteRefresh = {
+                                 onExecuteRefresh = { useScheduled ->
                                      // Always delegated-first (ties to Settings → Auto delegated refresh policy).
-                                     requireSpendAuth { arkViewModel.executeRefresh(delegated = true) }
+                                     requireSpendAuth {
+                                         arkViewModel.executeRefresh(
+                                             delegated = true,
+                                             useScheduled = useScheduled,
+                                         )
+                                     }
                                  },
                                  onExportArkDb = { uri -> arkViewModel.exportArkDbToUri(uri) },
                                  onImportArkDb = { uri -> arkViewModel.importArkDbFromUri(uri) },
@@ -7458,8 +7920,30 @@ fun IbisWalletApp(
                                  onProgressExits = {
                                      requireSpendAuth { arkViewModel.progressUnilateralExits() }
                                  },
-                                 onPrepareClaim = { dest, ids ->
-                                     arkViewModel.prepareClaimExits(dest, ids)
+                                 onRefreshExitFeeRate = { arkViewModel.refreshExitFeeRate() },
+                                 emergencyExitFeeQuote = arkEmergencyExitFeeQuote,
+                                 onRefreshEmergencyExitFeeQuote = { ids ->
+                                     arkViewModel.refreshEmergencyExitFeeQuote(ids)
+                                 },
+                                 requireExitBackupAck =
+                                     remember(
+                                         visibleArkState.walletId,
+                                         activeWalletId,
+                                         arkDbBackupProtectionRevision,
+                                         arkAutoDbBackupEnabled,
+                                         arkAutoDbBackupFolderUri,
+                                         arkAutoDbBackupLastMs,
+                                         arkLatestAutoDbBackup,
+                                     ) {
+                                         !arkViewModel.isDbBackupProtected(
+                                             visibleArkState.walletId ?: activeWalletId,
+                                         )
+                                     },
+                                 onCancelExits = { ids ->
+                                     requireSpendAuth { arkViewModel.cancelUnilateralExits(ids) }
+                                 },
+                                 onPrepareClaim = { dest, ids, feeRate ->
+                                     arkViewModel.prepareClaimExits(dest, ids, feeRate)
                                  },
                                   onExecuteClaim = {
                                       requireSpendAuth {
@@ -7505,17 +7989,6 @@ fun IbisWalletApp(
                                          }
                                      }
                                  },
-                                 onTopUpOnchain = {
-                                      liquidViewModel.setActiveLayer(
-                                          WalletLayer.LAYER2,
-                                          walletState.activeWallet?.id,
-                                      )
-                                      arkReceiveInitialKind = ArkReceiveKind.BITCOIN_ADDRESS
-                                      arkViewModel.receive(ArkReceiveKind.BITCOIN_ADDRESS)
-                                      navController.navigate(Screen.Receive.route) {
-                                          launchSingleTop = true
-                                      }
-                                  },
                                  recoverDestinationAddress = walletState.currentAddress,
                                  onEnsureRecoverAddress = { viewModel.getNewAddress() },
                                  onRecoverOnchain = {
@@ -7549,6 +8022,9 @@ fun IbisWalletApp(
                                  onReset = { arkViewModel.resetLifecycleState() },
                                  onBack = { navController.popBackStack() },
                                  initialTab = lifecycleTab,
+                                 unilateralExitUnavailable =
+                                     arkViewModel.hasBip39Passphrase(walletState.activeWallet?.id) ||
+                                         (visibleArkState.isConnected && !visibleArkState.onchainWalletOpen),
                             )
                        }
                       composable(route = Screen.ArkTransfer.route) {
@@ -7622,7 +8098,10 @@ fun IbisWalletApp(
                                       arkOnchainBoardingAvailable =
                                           !arkViewModel.hasBip39Passphrase(
                                               walletState.activeWallet?.id,
-                                          ),
+                                          ) && visibleArkState.onchainWalletOpen,
+                                      // Single-tx self-board funds from L1 (passphrase-capable), so it
+                                      // only needs the Bark wallet loaded — not the on-chain wallet.
+                                      arkSingleTxBoardingAvailable = visibleArkState.isConnected,
                                       onPrepareBoard = { amount, boardAll ->
                                           arkViewModel.prepareBoard(amount, boardAll)
                                       },
@@ -7636,21 +8115,100 @@ fun IbisWalletApp(
                                           )
                                       },
                                       onExecuteBoard = { address, amount, feeRate, isMaxSend, selectedUtxos, precomputedFeeSats ->
-                                          // L1 → Bark deposit only (Spark-style). Board later via maintenance.
+                                          // Single-tx self-board (default): build + sign the funding tx in L1,
+                                          // register it with Bark via boardPsbt, then broadcast. Falls back to
+                                          // the legacy 2-tx fund-then-board path when Bark rejects the PSBT.
                                           requireSpendAuth {
                                               scope.launch {
                                                   try {
+                                                      // Capture the reviewed preview BEFORE marking in-progress:
+                                                      // markBoardFundingInProgress flips transferState, so any
+                                                      // later read would miss the BoardPreview.
+                                                      val preview =
+                                                          arkTransferState as? ArkTransferState.BoardPreview
+                                                      val funding =
+                                                          preview?.boardFunding?.takeIf { it.address == address }
                                                       arkViewModel.markBoardFundingInProgress()
-                                                      val (txid, _) =
-                                                          viewModel.sendBitcoinForSwap(
-                                                              recipientAddress = address,
-                                                              amountSats = amount,
-                                                              feeRate = feeRate,
-                                                              selectedUtxos = selectedUtxos,
-                                                              isMaxSend = isMaxSend,
-                                                              precomputedFeeSats = precomputedFeeSats,
+                                                      // Phase 1+2 (safe to fall back): build+sign, then register
+                                                      // with Bark. Nothing is registered until boardPsbt succeeds.
+                                                      val signed =
+                                                          if (funding != null) {
+                                                              runCatching {
+                                                                  viewModel.buildBoardFundingTx(
+                                                                      recipientAddress = address,
+                                                                      amountSats = amount,
+                                                                      feeRate = feeRate,
+                                                                      selectedUtxos = selectedUtxos,
+                                                                      isMaxSend = isMaxSend,
+                                                                      precomputedFeeSats = precomputedFeeSats,
+                                                                  )
+                                                              }.getOrNull()
+                                                          } else {
+                                                              null
+                                                          }
+                                                      val boardTxid =
+                                                          if (funding != null && signed != null) {
+                                                              arkViewModel.boardSingleTxFunding(
+                                                                  signed.signedPsbtBase64,
+                                                                  funding,
+                                                              ).getOrNull()
+                                                          } else {
+                                                              null
+                                                          }
+                                                      if (signed == null ||
+                                                          boardTxid == null ||
+                                                          !boardTxid.equals(signed.txid, ignoreCase = true)
+                                                      ) {
+                                                          // Single-tx unavailable (legacy preview, build/sign
+                                                          // failed, or boardPsbt rejected): L1 → Bark DEPOSIT
+                                                          // address only (Spark-style). Board later via
+                                                          // maintenance. The fallback must target the deposit
+                                                          // address — never the funding address: a different
+                                                          // tx to the funding address would have no board
+                                                          // registered for its txid. Always resolve the deposit
+                                                          // address rather than reusing `address`: under a stale
+                                                          // dialog it may hold a funding address, which Bark's
+                                                          // on-chain wallet does not watch.
+                                                          val fallbackAddress =
+                                                              arkViewModel.legacyDepositAddressForFallback()
+                                                                  ?: address.takeIf { funding == null }
+                                                          require(!fallbackAddress.isNullOrBlank()) {
+                                                              arkBoardNoFallbackMessage
+                                                          }
+                                                          val (txid, _) =
+                                                              viewModel.sendBitcoinForSwap(
+                                                                  recipientAddress = fallbackAddress,
+                                                                  amountSats = amount,
+                                                                  feeRate = feeRate,
+                                                                  selectedUtxos = selectedUtxos,
+                                                                  isMaxSend = isMaxSend,
+                                                                  precomputedFeeSats = precomputedFeeSats,
+                                                              )
+                                                          arkViewModel.completeLayer1Funding(txid)
+                                                          return@launch
+                                                      }
+                                                      // Phase 3 (no fallback past this point): the board is
+                                                      // registered for signed.txid — broadcast exactly that tx.
+                                                      // A broadcast failure is verified against the network
+                                                      // first (Bark may have broadcast it via Esplora); only a
+                                                      // genuinely missing tx surfaces as an error for retry.
+                                                      // Retrying via prepare mints a fresh funding address and
+                                                      // the unbroadcast board fails once its inputs are spent.
+                                                      val broadcastTxid =
+                                                          viewModel.broadcastBoardFundingTx(
+                                                              signed.signedPsbtBase64,
                                                           )
-                                                      arkViewModel.completeLayer1Funding(txid)
+                                                      require(
+                                                          broadcastTxid.equals(
+                                                              signed.txid,
+                                                              ignoreCase = true,
+                                                          ),
+                                                      ) {
+                                                          arkBoardBroadcastMismatchMessage
+                                                      }
+                                                      arkViewModel.completeSingleTxBoard(
+                                                          broadcastTxid,
+                                                      )
                                                   } catch (e: CancellationException) {
                                                       throw e
                                                   } catch (e: Exception) {
@@ -7693,12 +8251,17 @@ fun IbisWalletApp(
                              if (liquidViewModel.isLiquidEnabledForWallet(wallet.id)) {
                                  liquidViewModel.requestFullSync(wallet.id)
                              }
-                             if (sparkViewModel.isSparkEnabledForWallet(wallet.id)) {
-                                 sparkViewModel.refresh()
-                             }
-                             if (arkViewModel.isArkEnabledForWallet(wallet.id)) {
-                                 arkViewModel.fullSyncMailboxRecovery(wallet.id)
-                             }
+                              if (sparkViewModel.isSparkEnabledForWallet(wallet.id)) {
+                                  sparkViewModel.refresh()
+                              }
+                              // Ark holds a single native session for the selected wallet only —
+                              // never pull a background wallet in (it would evict the active one).
+                              if (
+                                  wallet.id == walletState.activeWallet?.id &&
+                                  arkViewModel.isArkEnabledForWallet(wallet.id)
+                              ) {
+                                  arkViewModel.fullSyncMailboxRecovery(wallet.id)
+                              }
                              if (
                                  wallet.derivationPath != "liquid_ct" &&
                                  wallet.walletKind != github.aeonbtc.ibiswallet.data.model.WalletKind.LIGHTNING_NODE
@@ -7784,7 +8347,6 @@ fun IbisWalletApp(
                                       liquidViewModel.unloadLiquidWallet()
                                       sparkViewModel.unloadSparkWallet()
                                       lightningNodeViewModel.unloadLightningWallet()
-                                      arkViewModel.loadArkWallet(walletId)
                                   } else {
                                       arkViewModel.unloadArkWallet()
                                   }
@@ -7955,4 +8517,36 @@ private fun parseArkHistoricalTimestampMillis(raw: String): Long? {
         return java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli()
     }
     return null
+}
+
+/** Live L1 view for Spark exit funding re-validation (spent/frozen/confirmed). */
+private fun List<UtxoInfo>.toSparkExitLiveView(): List<SparkExitLiveUtxo> =
+    map { utxo ->
+        SparkExitLiveUtxo(
+            outpoint = utxo.outpoint,
+            isConfirmed = utxo.isConfirmed,
+            isFrozen = utxo.isFrozen,
+        )
+    }
+
+/**
+ * Binds the SDK CPFP signer to the reviewed funding selection and wallet.
+ * After process death the screen selection is empty while the repository
+ * falls back to persisted inputs — the signer resolves the same fallback so
+ * its expectations always match what the build actually funds with.
+ */
+private fun exitCpfpSigner(
+    walletViewModel: WalletViewModel,
+    sparkViewModel: SparkViewModel,
+    funding: List<SparkExitFundingUtxo>,
+): suspend (ByteArray) -> ByteArray {
+    val effective = funding.ifEmpty { sparkViewModel.getPersistedExitFunding() }
+    val expectedOutpoints = effective.map { "${it.txid}:${it.vout}".lowercase() }.toSet()
+    val expectedScripts = effective.map { it.scriptPubkeyHex.lowercase() }.toSet()
+    // Snapshot the active wallet id now (pre-spend-auth UI thread is fine for
+    // a read); the repository re-checks it on the IO thread at sign time.
+    val expectedWalletId = walletViewModel.getActiveWalletIdForExit()
+    return { psbtBytes ->
+        walletViewModel.signExitCpfpPsbt(psbtBytes, expectedOutpoints, expectedScripts, expectedWalletId)
+    }
 }

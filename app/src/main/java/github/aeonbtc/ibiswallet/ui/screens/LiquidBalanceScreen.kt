@@ -144,7 +144,7 @@ import kotlin.math.pow
 @Composable
 fun LiquidBalanceScreen(
     denomination: String = SecureStorage.DENOMINATION_BTC,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     historicalBtcPrices: Map<String, Double> = emptyMap(),
@@ -936,7 +936,7 @@ private fun LiquidHistoricalFiatText(
 private fun LiquidTransactionDetailDialog(
     transaction: LiquidTransaction,
     useSats: Boolean,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     btcPrice: Double?,
     fiatCurrency: String,
     historicalBtcPrice: Double?,
@@ -1280,7 +1280,7 @@ private fun LiquidTransactionDetailDialog(
                     Box(
                         modifier =
                             Modifier
-                                .align(Alignment.TopEnd)
+                                .align(Alignment.TopStart)
                                 .size(28.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(DarkCard.copy(alpha = 0.72f))

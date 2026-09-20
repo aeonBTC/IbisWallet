@@ -46,6 +46,7 @@ fun CertificateDialog(
     onReject: () -> Unit,
 ) {
     Dialog(onDismissRequest = onReject) {
+        SecureDialogSideEffect()
         Card(
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),

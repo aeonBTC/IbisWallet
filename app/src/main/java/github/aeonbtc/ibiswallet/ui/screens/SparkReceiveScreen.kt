@@ -40,11 +40,14 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,11 +67,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveState
+import github.aeonbtc.ibiswallet.data.model.SparkPendingLnInvoice
+import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -85,6 +95,7 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
+import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -105,11 +116,17 @@ fun SparkReceiveScreen(
     onSaveAddressLabel: (String, String) -> Unit = { _, _ -> },
     onResetReceive: () -> Unit,
     onToggleDenomination: () -> Unit,
+    pendingLnInvoice: SparkPendingLnInvoice? = null,
+    onPrimeLnInvoice: () -> Unit = {},
+    walletId: String? = null,
+    walletReady: Boolean = true,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
-    var receiveTab by remember { mutableIntStateOf(0) }
+    // A pending (unpaid) LN invoice keeps the Lightning tab selected across
+    // navigation/process death; it clears only when paid or replaced.
+    var receiveTab by rememberSaveable { mutableIntStateOf(if (pendingLnInvoice != null) 1 else 0) }
     var amountText by remember { mutableStateOf("") }
     var descriptionText by remember { mutableStateOf("") }
     var showAmountField by remember { mutableStateOf(false) }
@@ -136,7 +153,10 @@ fun SparkReceiveScreen(
                     ((usd / btcPrice) * 100_000_000).roundToLong()
                 }
             } else if (useSats) {
-                amountText.filter { it.isDigit() }.toLongOrNull()
+                // Strict digits-only (same policy as the send screens): never
+                // silently strip letters into a different amount ("12a3" must
+                // not become 123 sats on a receive request).
+                amountText.trim().toLongOrNull()
             } else {
                 amountText.toDoubleOrNull()?.let { btc ->
                     (btc * 100_000_000).roundToLong()
@@ -144,12 +164,15 @@ fun SparkReceiveScreen(
             }
         }
     val requestedAmountSats = amountSats?.takeIf { showAmountField && it > 0 }
-    val embeddedLabel = descriptionText.trim().takeIf { showLabelField && embedLabelInQr && it.isNotBlank() }
+    // Local label (typed) vs embedded label (in QR/invoice). A plain Spark address has no
+    // per-payment identity in history, so a typed label forces invoice mode to stay attachable.
+    val typedLabel = descriptionText.trim().takeIf { showLabelField && it.isNotBlank() }
+    val embeddedLabel = typedLabel?.takeIf { embedLabelInQr }
     val isLightningMode = activeKind == SparkReceiveKind.BOLT11_INVOICE
     val requestKind =
         when {
             activeKind == SparkReceiveKind.SPARK_ADDRESS &&
-                (requestedAmountSats != null || embeddedLabel != null) -> SparkReceiveKind.SPARK_INVOICE
+                (requestedAmountSats != null || typedLabel != null) -> SparkReceiveKind.SPARK_INVOICE
             else -> activeKind
         }
     val paid = receiveState as? SparkReceiveState.Paid
@@ -217,15 +240,65 @@ fun SparkReceiveScreen(
                 ?.let { sparkAddressLabels[it] }
                 .orEmpty()
         }
+    // Drop the previous wallet's QR immediately on switch so a stale address is
+    // never shown as the new wallet's. The request effect below regenerates it.
+    LaunchedEffect(walletId) {
+        qrBitmap = null
+    }
     // Match the other receive screens by showing a default request immediately, and
     // switch Spark QR generation to invoice mode when amount/label must be embedded.
-    LaunchedEffect(requestKind, requestedAmountSats, embeddedLabel) {
+    // walletId/walletReady are keys so switching wallets while staying on this
+    // screen re-requests for the new wallet once its SDK handle is loaded; firing
+    // before the new wallet loads would hit the old handle (or fail) and strand
+    // the QR in Idle/Error until the user toggles tabs.
+    LaunchedEffect(walletId, requestKind, requestedAmountSats, embeddedLabel, typedLabel, walletReady) {
+        if (walletId == null || !walletReady) return@LaunchedEffect
         when (requestKind) {
             SparkReceiveKind.BOLT11_INVOICE -> Unit
-            SparkReceiveKind.BITCOIN_ADDRESS,
-            SparkReceiveKind.SPARK_ADDRESS,
-            -> onReceive(requestKind, null, "", false)
+            // Pass the typed label through so the repository persists it for the (cached or fresh)
+            // on-chain address; the QR itself only embeds it when the toggle is on.
+            SparkReceiveKind.BITCOIN_ADDRESS -> onReceive(requestKind, null, typedLabel.orEmpty(), false)
+            SparkReceiveKind.SPARK_ADDRESS -> onReceive(requestKind, null, "", false)
             SparkReceiveKind.SPARK_INVOICE -> onReceive(requestKind, requestedAmountSats, embeddedLabel.orEmpty(), false)
+        }
+    }
+
+    // Pending LN invoices survive navigation: repaint the cached invoice when
+    // (re-)entering the Lightning tab instead of showing an empty form.
+    LaunchedEffect(walletId, receiveTab, pendingLnInvoice?.paymentRequest) {
+        if (receiveTab == 1 && pendingLnInvoice != null &&
+            (receiveState is SparkReceiveState.Idle || receiveState is SparkReceiveState.Error)
+        ) {
+            onPrimeLnInvoice()
+        }
+    }
+
+    // Restore the amount/description present at generation time; only blank
+    // fields are filled so user edits are never clobbered.
+    LaunchedEffect(pendingLnInvoice?.paymentRequest) {
+        val pending = pendingLnInvoice
+        if (pending != null && amountText.isBlank() && descriptionText.isBlank()) {
+            pending.amountSats?.takeIf { it > 0 }?.let { amountText = formatSatsForReceiveInput(it, useSats) }
+            if (pending.description.isNotBlank()) {
+                descriptionText = pending.description
+                showLabelField = true
+                embedLabelInQr = true
+            }
+        }
+    }
+
+    // Local-only labels (embed toggle off) are not in the invoice/QR payload, so attach them to
+    // the generated invoice here — otherwise they would be silently dropped. Embedded labels are
+    // already persisted by the repository on generation; this is idempotent for those.
+    LaunchedEffect(baseRequestText, typedLabel, requestKind, isLightningReady) {
+        val invoice =
+            when {
+                requestKind == SparkReceiveKind.SPARK_INVOICE -> baseRequestText
+                isLightningReady -> requestText
+                else -> null
+            }
+        if (!typedLabel.isNullOrBlank() && !invoice.isNullOrBlank() && embeddedLabel == null) {
+            onSaveAddressLabel(normalizeSparkAddressLabelRef(invoice), typedLabel)
         }
     }
 
@@ -247,6 +320,31 @@ fun SparkReceiveScreen(
                 }
     }
 
+    // NFC HCE broadcast: same payload as the QR so a tap shares the request.
+    // Suppressed in privacy mode (matching the hidden QR) and for paid LN.
+    val mainActivity = context as? MainActivity
+    val nfcShareOwner = remember { Any() }
+    val nfcAvailable = context.getNfcAvailability().canBroadcast
+    val hasNfcSharePayload = nfcAvailable && requestText != null && !privacyMode && !isLightningPaid
+    val nfcShareState by NfcRuntimeStatus.shareState.collectAsState()
+    DisposableEffect(mainActivity, hasNfcSharePayload) {
+        if (mainActivity != null && hasNfcSharePayload) {
+            mainActivity.requestPreferredHceService(nfcShareOwner)
+        }
+        onDispose {
+            mainActivity?.releasePreferredHceService(nfcShareOwner)
+        }
+    }
+    val isNfcBroadcasting = hasNfcSharePayload && mainActivity?.isPreferredHceServiceActive == true
+    DisposableEffect(requestText, nfcAvailable, privacyMode, isLightningPaid) {
+        if (hasNfcSharePayload) {
+            NdefHostApduService.setNdefPayload(requestText)
+        }
+        onDispose {
+            NdefHostApduService.setNdefPayload(null)
+        }
+    }
+
     LaunchedEffect(isLightningPaid) {
         if (isLightningPaid) {
             amountText = ""
@@ -262,6 +360,7 @@ fun SparkReceiveScreen(
         Dialog(
             onDismissRequest = { showEnlargedQr = false },
         ) {
+            SecureDialogSideEffect()
             Box(
                 modifier =
                     Modifier
@@ -323,6 +422,30 @@ fun SparkReceiveScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (isNfcBroadcasting) {
+                    val nfcStatusLabel =
+                        when (nfcShareState) {
+                            NfcShareUiState.Inactive,
+                            NfcShareUiState.Ready,
+                            -> stringResource(R.string.nfc_status_share_ready)
+                            NfcShareUiState.Sharing -> stringResource(R.string.nfc_status_sharing)
+                        }
+                    val nfcStatusColor =
+                        if (nfcShareState == NfcShareUiState.Sharing) {
+                            SparkPurple
+                        } else {
+                            SuccessGreen
+                        }
+                    NfcStatusIndicator(
+                        label = nfcStatusLabel,
+                        contentDescription = nfcStatusLabel,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp),
+                        color = nfcStatusColor,
+                    )
+                }
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
@@ -335,7 +458,12 @@ fun SparkReceiveScreen(
                     }
                     SparkReceiveTab("Lightning", receiveTab == 1, LightningYellow, Modifier.weight(1f)) {
                         receiveTab = 1
-                        onResetReceive()
+                        // A pending invoice is repainted, not discarded, when selecting its tab.
+                        if (pendingLnInvoice != null) {
+                            onPrimeLnInvoice()
+                        } else {
+                            onResetReceive()
+                        }
                     }
                     SparkReceiveTab("On-chain", receiveTab == 2, BitcoinOrange, Modifier.weight(1f)) {
                         receiveTab = 2
@@ -416,6 +544,8 @@ fun SparkReceiveScreen(
                                 labelText = descriptionText,
                                 showLabelField = showLabelField,
                                 embedLabelInInvoice = embedLabelInQr,
+                                invoiceText = requestText,
+                                onSaveInvoiceLabel = onSaveAddressLabel,
                                 onAmountTextChange = { amountText = it },
                                 onUsdModeChange = {
                                     amountText =
@@ -783,7 +913,9 @@ fun SparkReceiveScreen(
                                         }
 
                                         useSats -> {
-                                            amountText = input.filter { c -> c.isDigit() }
+                                            if (input.isEmpty() || input.all { c -> c.isDigit() }) {
+                                                amountText = input
+                                            }
                                         }
 
                                         else -> {
@@ -1019,6 +1151,8 @@ private fun SparkLightningInvoiceForm(
     labelText: String,
     showLabelField: Boolean,
     embedLabelInInvoice: Boolean,
+    invoiceText: String? = null,
+    onSaveInvoiceLabel: (String, String) -> Unit = { _, _ -> },
     onAmountTextChange: (String) -> Unit,
     onUsdModeChange: (Boolean) -> Unit,
     onShowLabelFieldChange: (Boolean) -> Unit,
@@ -1109,7 +1243,11 @@ private fun SparkLightningInvoiceForm(
                             }
                         }
 
-                        useSats -> onAmountTextChange(input.filter { c -> c.isDigit() })
+                        useSats -> {
+                            if (input.isEmpty() || input.all { c -> c.isDigit() }) {
+                                onAmountTextChange(input)
+                            }
+                        }
                         else -> {
                             if (input.isEmpty() || input.matches(Regex("^\\d*\\.?\\d{0,8}$"))) {
                                 onAmountTextChange(input)
@@ -1195,11 +1333,14 @@ private fun SparkLightningInvoiceForm(
                             cursorColor = LightningYellow,
                         ),
                         trailingIcon = {
-                            if (labelText.isNotBlank()) {
+                            if (labelText.isNotBlank() && invoiceText != null) {
                                 TextButton(
                                     onClick = {
-                                        onLabelTextChange(labelText.trim())
-                                        Toast.makeText(context, "Label will be saved with invoice", Toast.LENGTH_SHORT).show()
+                                        onSaveInvoiceLabel(
+                                            normalizeSparkAddressLabelRef(invoiceText),
+                                            labelText.trim(),
+                                        )
+                                        Toast.makeText(context, "Label saved", Toast.LENGTH_SHORT).show()
                                     },
                                 ) {
                                     Text(stringResource(R.string.loc_f55495e0), color = LightningYellow)
@@ -1269,6 +1410,17 @@ private fun formatSparkAmountForReceive(
     }
 }
 
+/** Parse-safe amount text for restoring an invoice amount into the input field. */
+private fun formatSatsForReceiveInput(
+    sats: Long,
+    useSats: Boolean,
+): String =
+    if (useSats) {
+        sats.toString()
+    } else {
+        String.format(Locale.US, "%.8f", sats / 100_000_000.0).trimEnd('0').trimEnd('.')
+    }
+
 private fun sparkDisplayUnit(useSats: Boolean): String = if (useSats) "sats" else "BTC"
 
 private fun formatSparkFiat(
@@ -1303,7 +1455,9 @@ private fun buildSparkBitcoinRequest(
     val params = mutableListOf<String>()
     amountSats?.let {
         val btcAmount = it.toDouble() / 100_000_000.0
-        params += "amount=${String.format(Locale.US, "%.8f", btcAmount)}"
+        // Trimmed (not %.8f-padded) to match pasted-address formatting.
+        val formatted = String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
+        params += "amount=$formatted"
     }
     label?.let {
         params += "label=${URLEncoder.encode(it, "UTF-8")}"

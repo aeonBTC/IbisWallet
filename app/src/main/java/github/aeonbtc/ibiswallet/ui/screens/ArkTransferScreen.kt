@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.ArkTransferState
+import github.aeonbtc.ibiswallet.data.model.ArkBoardFeePolicy
 import github.aeonbtc.ibiswallet.data.model.ArkWalletState
 import github.aeonbtc.ibiswallet.data.model.DryRunResult
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
@@ -119,6 +120,8 @@ private sealed interface ArkTransferReview {
         val changeSats: Long = 0L,
         val hasChange: Boolean = false,
         val selectedUtxos: List<UtxoInfo> = emptyList(),
+        /** Bark board fee component (ASP sweep + service fee), separate from the L1 fee. */
+        val boardFeeSats: Long? = null,
     ) : ArkTransferReview
 
     data class Offboard(
@@ -157,6 +160,12 @@ fun ArkTransferScreen(
     onRefreshBitcoinFees: () -> Unit = {},
     /** BIP39 passphrase wallets cannot board via Bark's built-in on-chain wallet. */
     arkOnchainBoardingAvailable: Boolean = true,
+    /**
+     * Single-tx self-board only needs the Bark wallet loaded (funding comes from
+     * L1). Passphrase wallets can board while this is true even when
+     * [arkOnchainBoardingAvailable] is false.
+     */
+    arkSingleTxBoardingAvailable: Boolean = true,
     onPrepareBoard: (Long, Boolean) -> Unit,
     /** L1 funding dry-run to Bark Bitcoin deposit address (matches Spark deposit fees). */
     onPreviewLayer1Funding: suspend (String, Long, Double, Boolean, List<UtxoInfo>?) -> DryRunResult? =
@@ -304,8 +313,6 @@ fun ArkTransferScreen(
             else -> null
         }
     val customFeeUnavailableNote = stringResource(R.string.ark_transfer_custom_fee_unavailable)
-    val customDestinationUnavailableNote =
-        stringResource(R.string.ark_transfer_custom_destination_unavailable)
 
     val amountSats =
         remember(amountInput, useSats, isUsdMode, btcPrice, isMaxMode, availableBalance) {
@@ -324,6 +331,23 @@ fun ArkTransferScreen(
             }
         }
 
+    // Gate the amount field to the ASP boarding minimum (prepareBoard enforces
+    // it too). Max mode boards the whole available balance, so it is exempt.
+    val minBoard = arkState.minBoardAmountSats?.takeIf { it > 0L }
+    val belowMinBoard =
+        isLayer1ToArk && !isMaxMode && amountSats != null && minBoard != null && amountSats < minBoard
+    val minBoardText =
+        minBoard?.let {
+            if (privacyMode) {
+                stringResource(R.string.ark_boarding_min_format, "****")
+            } else {
+                stringResource(
+                    R.string.ark_boarding_min_format,
+                    formatAmount(it.toULong(), useSats, includeUnit = true),
+                )
+            }
+        }
+
     // Stay busy from click through dry-run + dialog open so controls don't re-enable mid-flow.
     val isBusy =
         isPreparingReview ||
@@ -338,37 +362,26 @@ fun ArkTransferScreen(
         } else {
             defaultFeeRate
         }
-    val minBoardAmountSats = arkState.minBoardAmountSats?.takeIf { it > 0L }
-    val amountBelowMinBoard =
-        isLayer1ToArk &&
-            minBoardAmountSats != null &&
-            amountSats != null &&
-            ArkDepositPolicy.isBelowMinBoardAmount(amountSats, minBoardAmountSats)
     val canPrepare =
         !isBusy &&
             amountSats != null &&
             amountSats > 0 &&
+            !belowMinBoard &&
             isElectrumConnected &&
-            !(isLayer1ToArk && !arkOnchainBoardingAvailable) &&
-            !amountBelowMinBoard &&
+            !(isLayer1ToArk && !arkOnchainBoardingAvailable && !arkSingleTxBoardingAvailable) &&
             !isCustomDestinationMissing &&
             destinationValidationError == null &&
             feeRateValidationError == null &&
             reviewState == null
     val enterAmountLabel = stringResource(R.string.ark_enter_amount)
-    val belowMinBoardLabel =
-        minBoardAmountSats?.let { min ->
-            stringResource(
-                R.string.ark_transfer_below_min_board_format,
-                formatAmount(min.toULong(), useSats, includeUnit = true),
-            )
-        }
     val layer1AddressMissingLabel = stringResource(R.string.loc_a18fd453)
     val needsElectrumLabel = stringResource(R.string.ark_transfer_needs_electrum)
     val unableToPrepareSwapLabel = stringResource(R.string.swap_unable_to_prepare)
     val passphraseBoardUnavailableLabel =
         stringResource(R.string.ark_error_passphrase_board_unavailable)
     val depositAddressMissingLabel = stringResource(R.string.ark_deposit_address_missing)
+    val sentTxidMessageFormat = stringResource(R.string.ark_transfer_sent_txid_format)
+    val fundedTxidMessageFormat = stringResource(R.string.ark_transfer_funded_txid_format)
 
     LaunchedEffect(layer1Address) {
         if (layer1Address.isNullOrBlank()) onGenerateLayer1Address()
@@ -415,6 +428,7 @@ fun ArkTransferScreen(
                                     changeSats = dryRun.changeSats,
                                     hasChange = dryRun.hasChange,
                                     selectedUtxos = fundingUtxos.orEmpty(),
+                                    boardFeeSats = state.boardFeeSats,
                                 )
                             localError = null
                             // Keep busy flag until dialog is dismissible; drop after review is up.
@@ -422,6 +436,8 @@ fun ArkTransferScreen(
                         }
                     } else {
                         // No on-chain wallet address — still open review with Bark estimate/fallback.
+                        // Single fee row (legacy display): boardFeeSats stays null so the
+                        // Bark estimate in feeSats is not counted twice.
                         reviewState =
                             ArkTransferReview.Board(
                                 amountSats = state.amountSats,
@@ -432,6 +448,7 @@ fun ArkTransferScreen(
                                 feeRateSatPerVb = state.feeRateSatPerVb ?: fundingFeeRate,
                                 grossAmountSats = state.grossAmountSats,
                                 selectedUtxos = fundingUtxos.orEmpty(),
+                                boardFeeSats = null,
                             )
                         reviewError = null
                         localError = null
@@ -481,8 +498,17 @@ fun ArkTransferScreen(
                             } else {
                                 txid
                             }
+                        // BTC→Ark completion is L1 funding broadcast, not boarded:
+                        // say "funded, boarding pending" so users don't wipe cache
+                        // thinking funds already arrived in Ark.
+                        val messageFormat =
+                            if (isLayer1ToArk) {
+                                fundedTxidMessageFormat
+                            } else {
+                                sentTxidMessageFormat
+                            }
                         Toast
-                            .makeText(context, "Sent $short", Toast.LENGTH_LONG)
+                            .makeText(context, messageFormat.format(short), Toast.LENGTH_LONG)
                             .show()
                     }
                     reviewState = null
@@ -873,25 +899,25 @@ fun ArkTransferScreen(
                     }
                 }
 
-                if (isLayer1ToArk && minBoardAmountSats != null && !privacyMode) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text =
-                            stringResource(
-                                R.string.ark_transfer_min_board_format,
-                                formatAmount(minBoardAmountSats.toULong(), useSats, includeUnit = true),
-                            ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
-                    )
+                // ASP boarding minimum, same source as the Boarding tab. Always visible
+                // so users know the floor; turns red (and blocks Review) below it.
+                if (isLayer1ToArk) {
+                    minBoardText?.let {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (belowMinBoard) ErrorRed else TextSecondary,
+                        )
+                    }
                 }
 
+                // Below-min is already surfaced by the red minimum hint above, so it
+                // is intentionally absent here (avoids showing the same line twice).
                 val displayError =
                     localError
                         ?: (transferState as? ArkTransferState.Error)?.message
-                        ?: if (amountBelowMinBoard) {
-                            belowMinBoardLabel
-                        } else if (isLayer1ToArk && !arkOnchainBoardingAvailable) {
+                        ?: if (isLayer1ToArk && !arkOnchainBoardingAvailable && !arkSingleTxBoardingAvailable) {
                             stringResource(R.string.ark_error_passphrase_board_unavailable)
                         } else if (!isLayer1ToArk && !isElectrumConnected) {
                             needsElectrumLabel
@@ -964,14 +990,6 @@ fun ArkTransferScreen(
                                 if (transferState !is ArkTransferState.Idle) onReset()
                             },
                         )
-                        if (!customDestinationSupported) {
-                            Text(
-                                text = customDestinationUnavailableNote,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                                modifier = Modifier.padding(start = 12.dp, top = 4.dp),
-                            )
-                        }
                         AnimatedVisibility(
                             visible = customDestinationSupported && useCustomDestination,
                             enter = expandVertically(),
@@ -1139,12 +1157,8 @@ fun ArkTransferScreen(
                             localError = feeRateValidationError
                             return@Button
                         }
-                        if (isLayer1ToArk && !arkOnchainBoardingAvailable) {
+                        if (isLayer1ToArk && !arkOnchainBoardingAvailable && !arkSingleTxBoardingAvailable) {
                             localError = passphraseBoardUnavailableLabel
-                            return@Button
-                        }
-                        if (amountBelowMinBoard) {
-                            localError = belowMinBoardLabel
                             return@Button
                         }
                         if (isLayer1ToArk && requireCoinControl && selectedFundingSnapshot.isEmpty()) {
@@ -1377,9 +1391,15 @@ private fun ArkTransferReviewDialog(
     val totalFeeSats =
         review.feeSats?.takeIf { it >= 0L }
             ?: (sendAmount - receiveAmount).coerceAtLeast(0L)
+    // Single-tx board shows both fee components (L1 mining + Bark board fee).
+    val boardFeeRowSats =
+        (review as? ArkTransferReview.Board)?.boardFeeSats?.takeIf {
+            ArkBoardFeePolicy.hasBoardFeeBreakdown(it)
+        }
+    val combinedFeeSats = ArkBoardFeePolicy.combinedTotalFeeSats(totalFeeSats, boardFeeRowSats)
     val feeRateText =
         review.feeRateSatPerVb?.takeIf { it > 0.0 }?.let { rate ->
-            "≈ ${String.format(Locale.US, "%.1f", rate)} sat/vB"
+            stringResource(R.string.ark_transfer_fee_rate_approx_format, String.format(Locale.US, "%.1f", rate))
         }
     val boardChangeSats = (review as? ArkTransferReview.Board)?.changeSats ?: 0L
     val boardHasChange = (review as? ArkTransferReview.Board)?.hasChange == true
@@ -1704,13 +1724,13 @@ private fun ArkTransferReviewDialog(
                                         if (privacyMode) {
                                             ARK_HIDDEN_AMOUNT
                                         } else {
-                                            formatAmount(totalFeeSats.toULong(), useSats, includeUnit = true)
+                                            formatAmount(combinedFeeSats.toULong(), useSats, includeUnit = true)
                                         },
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = TextPrimary,
                                     fontWeight = FontWeight.Medium,
                                 )
-                                arkReviewUsdText(totalFeeSats, btcPrice, fiatCurrency, privacyMode)?.let {
+                                arkReviewUsdText(combinedFeeSats, btcPrice, fiatCurrency, privacyMode)?.let {
                                     Text(
                                         text = it,
                                         style = MaterialTheme.typography.bodySmall,
@@ -1732,7 +1752,7 @@ private fun ArkTransferReviewDialog(
                         )
                     }
                 }
-                AnimatedVisibility(feesExpanded) {
+                AnimatedVisibility(feesExpanded                ) {
                     Column(
                         modifier =
                             Modifier
@@ -1740,6 +1760,7 @@ private fun ArkTransferReviewDialog(
                                 .fillMaxWidth()
                                 .padding(top = 12.dp),
                     ) {
+                        // Single-tx board shows both fee components; legacy/offboard keeps one row.
                         FeeRowArk(
                             label =
                                 if (isBoard) {
@@ -1768,6 +1789,25 @@ private fun ArkTransferReviewDialog(
                                     privacyMode,
                                 ),
                         )
+                        if (isBoard && boardFeeRowSats != null) {
+                            FeeRowArk(
+                                label = stringResource(R.string.ark_transfer_board_fee),
+                                value =
+                                    if (privacyMode) {
+                                        ARK_HIDDEN_AMOUNT
+                                    } else {
+                                        formatAmount(boardFeeRowSats.toULong(), useSats, includeUnit = true)
+                                    },
+                                subtext = stringResource(R.string.ark_transfer_board_fee_note),
+                                valueSubtext =
+                                    arkReviewUsdText(
+                                        boardFeeRowSats,
+                                        btcPrice,
+                                        fiatCurrency,
+                                        privacyMode,
+                                    ),
+                            )
+                        }
                         if (isBoard && boardHasChange && boardChangeSats > 0L) {
                             FeeRowArk(
                                 label = changeLabel,
@@ -1796,9 +1836,9 @@ private fun ArkTransferReviewDialog(
                                 if (privacyMode) {
                                     ARK_HIDDEN_AMOUNT
                                 } else {
-                                    formatAmount(totalFeeSats.toULong(), useSats, includeUnit = true)
+                                    formatAmount(combinedFeeSats.toULong(), useSats, includeUnit = true)
                                 },
-                            valueSubtext = arkReviewUsdText(totalFeeSats, btcPrice, fiatCurrency, privacyMode),
+                            valueSubtext = arkReviewUsdText(combinedFeeSats, btcPrice, fiatCurrency, privacyMode),
                         )
                     }
                 }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,7 +26,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.Button
@@ -84,6 +87,7 @@ import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
+import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -114,7 +118,7 @@ fun SendScreen(
     preSelectedUtxo: UtxoInfo? = null,
     spendUnconfirmed: Boolean = true,
     requireCoinControl: Boolean = false,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
@@ -332,23 +336,35 @@ fun SendScreen(
         )
     }
 
-    // Convert input to sats based on denomination or USD mode
+    // Convert input to sats based on denomination or USD mode.
+    // Overflow/finite-guarded: dust like 0.000000001 BTC (0.1 sats) must not pass
+    // a `> 0` Double check then round to 0 sats; huge inputs must not saturate
+    // to Long.MAX. Callers use the rounded Long (null = invalid).
+    fun Double.toSafeSatsLong(): Long? {
+        if (!this.isFinite() || this <= 0.0 || this > Long.MAX_VALUE.toDouble()) return null
+        return this.roundToLong().takeIf { it > 0 }
+    }
     val amountSats =
         remember(amountInput, isUsdMode, btcPrice, useSats) {
             try {
                 when {
                     isUsdMode && btcPrice != null && btcPrice > 0 -> {
                         // Input is in USD, convert to sats: USD / price * 100_000_000
-                        val usdAmount = amountInput.toDoubleOrNull() ?: 0.0
-                        (usdAmount / btcPrice) * 100_000_000
+                        val usdAmount = amountInput.toDoubleOrNull() ?: return@remember 0.0
+                        if (!usdAmount.isFinite() || usdAmount <= 0.0) return@remember 0.0
+                        val sats = (usdAmount / btcPrice) * 100_000_000
+                        sats.toSafeSatsLong()?.toDouble() ?: 0.0
                     }
                     useSats -> {
                         // Input is already in sats
-                        amountInput.replace(",", "").toLongOrNull()?.toDouble() ?: 0.0
+                        val satsLong = amountInput.replace(",", "").toLongOrNull()
+                        if (satsLong == null || satsLong <= 0) 0.0 else satsLong.toDouble()
                     }
                     else -> {
                         // Input is in BTC, convert to sats
-                        (amountInput.toDoubleOrNull() ?: 0.0) * 100_000_000
+                        val btc = amountInput.toDoubleOrNull() ?: return@remember 0.0
+                        if (!btc.isFinite() || btc <= 0.0) return@remember 0.0
+                        (btc * 100_000_000).toSafeSatsLong()?.toDouble() ?: 0.0
                     }
                 }
             } catch (_: Exception) {
@@ -375,10 +391,25 @@ fun SendScreen(
                     val sats =
                         try {
                             when {
-                                isUsdMode && btcPrice != null && btcPrice > 0 ->
-                                    ((amt.toDoubleOrNull() ?: 0.0) / btcPrice * 100_000_000).roundToLong().toULong()
-                                useSats -> amt.replace(",", "").toLongOrNull()?.toULong() ?: 0UL
-                                else -> ((amt.toDoubleOrNull() ?: 0.0) * 100_000_000).roundToLong().toULong()
+                                isUsdMode && btcPrice != null && btcPrice > 0 -> {
+                                    val fiat = amt.toDoubleOrNull() ?: 0.0
+                                    if (!fiat.isFinite() || fiat <= 0.0) 0UL
+                                    else {
+                                        val raw = (fiat / btcPrice) * 100_000_000
+                                        if (!raw.isFinite() || raw <= 0.0 || raw > Long.MAX_VALUE.toDouble()) 0UL
+                                        else raw.roundToLong().takeIf { it > 0 }?.toULong() ?: 0UL
+                                    }
+                                }
+                                useSats -> amt.replace(",", "").toLongOrNull()?.takeIf { it > 0 }?.toULong() ?: 0UL
+                                else -> {
+                                    val btc = amt.toDoubleOrNull() ?: 0.0
+                                    if (!btc.isFinite() || btc <= 0.0) 0UL
+                                    else {
+                                        val raw = btc * 100_000_000
+                                        if (!raw.isFinite() || raw <= 0.0 || raw > Long.MAX_VALUE.toDouble()) 0UL
+                                        else raw.roundToLong().takeIf { it > 0 }?.toULong() ?: 0UL
+                                    }
+                                }
                             }
                         } catch (_: Exception) {
                             0UL
@@ -783,68 +814,40 @@ fun SendScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
-                    Card(
-                        modifier =
-                            Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = walletState.isInitialized) {
-                                    if (!isMultiMode) {
-                                        // Entering multi mode — seed from current single fields
-                                        isMultiMode = true
-                                        isMaxMode = false
-                                        multiRecipients.clear()
-                                        if (recipientAddress.isNotBlank() || amountInput.isNotBlank()) {
-                                            multiRecipients.add(Pair(recipientAddress, amountInput))
-                                        }
-                                        multiRecipients.add(Pair("", ""))
-                                        if (multiRecipients.size < 2) multiRecipients.add(Pair("", ""))
-                                        showMultiDialog = true
-                                    } else {
-                                        // Exiting multi mode
-                                        isMultiMode = false
-                                        multiRecipients.clear()
-                                    }
-                                },
-                        shape = RoundedCornerShape(8.dp),
-                        colors =
-                            CardDefaults.cardColors(
-                                containerColor = if (isMultiMode) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface,
-                            ),
-                        border = BorderStroke(1.dp, if (isMultiMode) BitcoinOrange else BorderColor),
-                    ) {
-                        Text(
-                            text =
-                                if (isMultiMode) {
-                                    "${stringResource(R.string.loc_fcc11f52)} (${multiRecipientList.size})"
-                                } else {
-                                    stringResource(R.string.loc_fcc11f52)
-                                },
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (isMultiMode) BitcoinOrange else TextSecondary,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        )
-                    }
+                    MultiRecipientToggleChip(
+                        isMultiMode = isMultiMode,
+                        enabled = walletState.isInitialized,
+                        accentColor = BitcoinOrange,
+                        onClick = {
+                            if (!isMultiMode) {
+                                isMultiMode = true
+                                isMaxMode = false
+                                multiRecipients.clear()
+                                if (recipientAddress.isNotBlank() || amountInput.isNotBlank()) {
+                                    multiRecipients.add(Pair(recipientAddress, amountInput))
+                                }
+                                multiRecipients.add(Pair("", ""))
+                                if (multiRecipients.size < 2) multiRecipients.add(Pair("", ""))
+                                showMultiDialog = true
+                            } else {
+                                isMultiMode = false
+                                multiRecipients.clear()
+                            }
+                        },
+                    )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
 
                 if (isMultiMode) {
-                    // Summary of recipients — tap to edit
-                    Card(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showMultiDialog = true },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        border = BorderStroke(1.dp, BorderColor),
+                    RecipientsSummaryCard(
+                        modifier = Modifier.clickable { showMultiDialog = true },
+                        accentColor = BitcoinOrange,
+                        borderColor = BorderColor,
+                        onAddRecipient = {
+                            multiRecipients.add(Pair("", ""))
+                            showMultiDialog = true
+                        },
                     ) {
-                        Column(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                        ) {
                             if (multiRecipientList.isEmpty()) {
                                 Text(
                                     text = stringResource(R.string.loc_2e7d2d6a),
@@ -897,7 +900,6 @@ fun SendScreen(
                                     )
                                 }
                             }
-                        }
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
@@ -1636,7 +1638,7 @@ internal fun CoinControlDialog(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean = false,
     spendUnconfirmed: Boolean = true,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     onUtxoToggle: (UtxoInfo) -> Unit,
     onSelectAll: () -> Unit,
     onClearAll: () -> Unit,
@@ -1807,6 +1809,23 @@ private fun SendConfirmationDialog(
     val changeAddress = dryRunResult?.changeAddress
     val hasChange = dryRunResult?.hasChange ?: false
     val totalSats = amountSats.toLong() + estimatedFeeSats
+    val feeRateSubtitle =
+        dryRunResult
+            ?.takeIf { !it.isError && it.effectiveFeeRate > 0.0 }
+            ?.let { result ->
+                if (result.txVBytes > 0.0) {
+                    stringResource(
+                        R.string.liquid_fee_rate_vbytes_format,
+                        formatFeeRate(result.effectiveFeeRate),
+                        formatVBytes(result.txVBytes),
+                    )
+                } else {
+                    stringResource(
+                        R.string.balance_fee_rate_format,
+                        formatFeeRate(result.effectiveFeeRate),
+                    )
+                }
+            }
 
     ScrollableDialogSurface(
         onDismissRequest = onDismiss,
@@ -2062,11 +2081,13 @@ private fun SendConfirmationDialog(
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = TextSecondary,
                                 )
-                                Text(
-                                    text = stringResource(R.string.loc_1dcfbd01),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TextSecondary.copy(alpha = 0.7f),
-                                )
+                                feeRateSubtitle?.let {
+                                    Text(
+                                        text = it,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextSecondary.copy(alpha = 0.7f),
+                                    )
+                                }
                             }
                             SendReviewValueColumn(
                                 primaryText =
@@ -2886,6 +2907,23 @@ private fun MultiRecipientConfirmationDialog(
     val hasChange = dryRunResult?.hasChange ?: false
     val totalRecipientSats = recipients.sumOf { it.amountSats.toLong() }
     val totalSats = totalRecipientSats + feeSats
+    val feeRateSubtitle =
+        dryRunResult
+            ?.takeIf { !it.isError && it.effectiveFeeRate > 0.0 }
+            ?.let { result ->
+                if (result.txVBytes > 0.0) {
+                    stringResource(
+                        R.string.liquid_fee_rate_vbytes_format,
+                        formatFeeRate(result.effectiveFeeRate),
+                        formatVBytes(result.txVBytes),
+                    )
+                } else {
+                    stringResource(
+                        R.string.balance_fee_rate_format,
+                        formatFeeRate(result.effectiveFeeRate),
+                    )
+                }
+            }
 
     ScrollableDialogSurface(
         onDismissRequest = onDismiss,
@@ -3140,11 +3178,13 @@ private fun MultiRecipientConfirmationDialog(
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = TextSecondary,
                                 )
-                                Text(
-                                    text = stringResource(R.string.loc_1dcfbd01),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary.copy(alpha = 0.7f),
-                                )
+                                feeRateSubtitle?.let {
+                                    Text(
+                                        text = it,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary.copy(alpha = 0.7f),
+                                    )
+                                }
                             }
                             SendReviewValueColumn(
                                 primaryText =
@@ -3213,5 +3253,107 @@ private fun MultiRecipientConfirmationDialog(
                         }
                     }
                 }
+    }
+}
+
+@Composable
+internal fun MultiRecipientToggleChip(
+    isMultiMode: Boolean,
+    enabled: Boolean,
+    accentColor: Color,
+    onClick: () -> Unit,
+    available: Boolean = true,
+) {
+    val interactive = enabled && available
+    Card(
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(enabled = interactive, onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        colors =
+            CardDefaults.cardColors(
+                containerColor =
+                    when {
+                        isMultiMode -> accentColor.copy(alpha = 0.15f)
+                        available -> DarkSurface
+                        else -> DarkSurface.copy(alpha = 0.6f)
+                    },
+            ),
+        border =
+            BorderStroke(
+                1.dp,
+                when {
+                    isMultiMode -> accentColor
+                    available -> BorderColor
+                    else -> BorderColor.copy(alpha = 0.5f)
+                },
+            ),
+    ) {
+        if (isMultiMode) {
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = stringResource(R.string.send_disable_multiple_recipients),
+                tint = accentColor,
+                modifier =
+                    Modifier
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                        .size(16.dp),
+            )
+        } else {
+            Text(
+                text = stringResource(R.string.loc_fcc11f52),
+                style = MaterialTheme.typography.labelMedium,
+                color = if (available) TextSecondary else TextSecondary.copy(alpha = 0.5f),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun RecipientsSummaryCard(
+    modifier: Modifier = Modifier,
+    accentColor: Color,
+    borderColor: Color = BorderColor,
+    addEnabled: Boolean = true,
+    onAddRecipient: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Card(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .then(modifier),
+            shape = RoundedCornerShape(8.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkSurface),
+            border = BorderStroke(1.dp, borderColor),
+        ) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(12.dp)
+                        .padding(bottom = 20.dp),
+                content = content,
+            )
+        }
+        IconButton(
+            onClick = onAddRecipient,
+            enabled = addEnabled,
+            modifier =
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(32.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = stringResource(R.string.send_add_recipient),
+                tint = if (addEnabled) accentColor else TextSecondary.copy(alpha = 0.5f),
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }

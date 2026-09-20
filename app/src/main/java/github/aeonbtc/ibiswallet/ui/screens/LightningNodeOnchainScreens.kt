@@ -121,6 +121,7 @@ import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.StatusBadge
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
@@ -159,7 +160,7 @@ fun LightningNodeOnchainBalanceScreen(
     historicalBtcPrices: Map<String, Double> = emptyMap(),
     showHistoricalTxPrices: Boolean = false,
     onShowHistoricalTxPricesChange: (Boolean) -> Unit = {},
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_DISABLED,
     isNodeConnected: Boolean = false,
@@ -1662,6 +1663,7 @@ fun LightningNodeOnchainReceiveScreen(
     isNodeConnected: Boolean = false,
     isNodeConnecting: Boolean = false,
     connectionTarget: String? = null,
+    walletId: String? = null,
     onGenerateAddress: () -> Unit = {},
     onShowAllAddresses: () -> Unit = {},
     onShowAllUtxos: () -> Unit = {},
@@ -1719,6 +1721,12 @@ fun LightningNodeOnchainReceiveScreen(
         }
     }
 
+    // Drop the previous wallet's QR immediately on switch so a stale address is
+    // never shown as the new wallet's. It repaints reactively from qrContent below.
+    LaunchedEffect(walletId) {
+        qrBitmap = null
+    }
+
     LaunchedEffect(qrContent) {
         qrContent?.let { content ->
             qrBitmap =
@@ -1759,6 +1767,7 @@ fun LightningNodeOnchainReceiveScreen(
 
     if (showEnlargedQr && qrBitmap != null) {
         Dialog(onDismissRequest = { showEnlargedQr = false }) {
+            SecureDialogSideEffect()
             Box(
                 modifier =
                     Modifier
@@ -2199,7 +2208,7 @@ fun LightningNodeOnchainSendScreen(
     preSelectedUtxo: UtxoInfo? = null,
     spendUnconfirmed: Boolean = true,
     requireCoinControl: Boolean = false,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     isNodeConnected: Boolean = false,
     isNodeConnecting: Boolean = false,
     connectionTarget: String? = null,
@@ -2713,70 +2722,39 @@ fun LightningNodeOnchainSendScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
-                    Card(
-                        modifier =
-                            Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = gatewayReady && !isSending) {
-                                    if (!isMultiMode) {
-                                        isMultiMode = true
-                                        isMaxMode = false
-                                        multiRecipients.clear()
-                                        if (recipientAddress.isNotBlank() || amountInput.isNotBlank()) {
-                                            multiRecipients.add(Pair(recipientAddress, amountInput))
-                                        }
-                                        multiRecipients.add(Pair("", ""))
-                                        if (multiRecipients.size < 2) multiRecipients.add(Pair("", ""))
-                                        showMultiDialog = true
-                                    } else {
-                                        isMultiMode = false
-                                        multiRecipients.clear()
-                                    }
-                                },
-                        shape = RoundedCornerShape(8.dp),
-                        colors =
-                            CardDefaults.cardColors(
-                                containerColor =
-                                    if (isMultiMode) BitcoinOrange.copy(alpha = 0.15f) else DarkSurface,
-                            ),
-                        border =
-                            BorderStroke(
-                                1.dp,
-                                if (isMultiMode) BitcoinOrange else BorderColor,
-                            ),
-                    ) {
-                        Text(
-                            text =
-                                if (isMultiMode) {
-                                    "${stringResource(R.string.loc_fcc11f52)} (${multiRecipientList.size})"
-                                } else {
-                                    stringResource(R.string.loc_fcc11f52)
-                                },
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (isMultiMode) BitcoinOrange else TextSecondary,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        )
-                    }
+                    MultiRecipientToggleChip(
+                        isMultiMode = isMultiMode,
+                        enabled = gatewayReady && !isSending,
+                        accentColor = BitcoinOrange,
+                        onClick = {
+                            if (!isMultiMode) {
+                                isMultiMode = true
+                                isMaxMode = false
+                                multiRecipients.clear()
+                                if (recipientAddress.isNotBlank() || amountInput.isNotBlank()) {
+                                    multiRecipients.add(Pair(recipientAddress, amountInput))
+                                }
+                                multiRecipients.add(Pair("", ""))
+                                if (multiRecipients.size < 2) multiRecipients.add(Pair("", ""))
+                                showMultiDialog = true
+                            } else {
+                                isMultiMode = false
+                                multiRecipients.clear()
+                            }
+                        },
+                    )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
 
                 if (isMultiMode) {
-                    Card(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showMultiDialog = true },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        border = BorderStroke(1.dp, BorderColor),
+                    RecipientsSummaryCard(
+                        modifier = Modifier.clickable { showMultiDialog = true },
+                        accentColor = BitcoinOrange,
+                        onAddRecipient = {
+                            multiRecipients.add(Pair("", ""))
+                            showMultiDialog = true
+                        },
                     ) {
-                        Column(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                        ) {
                             if (multiRecipientList.isEmpty()) {
                                 Text(
                                     text = stringResource(R.string.loc_d98e9517),
@@ -2843,7 +2821,6 @@ fun LightningNodeOnchainSendScreen(
                                     )
                                 }
                             }
-                        }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     AvailableBalanceMaxRow(

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -55,7 +56,10 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -99,10 +103,13 @@ import androidx.compose.ui.zIndex
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
+import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.MultisigWalletConfig
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.WalletResult
+import github.aeonbtc.ibiswallet.ui.components.CompactDropdownField
+import github.aeonbtc.ibiswallet.ui.components.DropdownOptionText
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
@@ -150,6 +157,7 @@ data class WalletInfo(
     val liquidGapLimit: Int = 20,
     val isLiquidWatchOnly: Boolean = false,
     val isLightningNode: Boolean = false,
+    val canEditDerivationPath: Boolean = false,
     /** Short connection type for Lightning Node wallets (e.g. LND, NWC). */
     val lightningTypeLabel: String? = null,
     /** Non-secret connection detail (host or NWC relay). */
@@ -193,7 +201,14 @@ fun ManageWalletsScreen(
         { _, _, _ -> WalletResult.Error("Message signing unavailable") },
     onVerifyMessage: (address: String, message: String, signature: String) -> WalletResult<Boolean> =
         { _, _, _ -> WalletResult.Error("Message verification unavailable") },
-    onEditWallet: (walletId: String, newName: String, newGapLimit: Int, newFingerprint: String?) -> Unit = { _, _, _, _ -> },
+    onEditWallet: (
+        walletId: String,
+        newName: String,
+        newGapLimit: Int,
+        newFingerprint: String?,
+        newDerivationPath: String?,
+        newAddressType: AddressType?,
+    ) -> Unit = { _, _, _, _, _, _ -> },
     onReorderWallets: (List<String>) -> Unit = {},
     onFullSync: (WalletInfo) -> Unit = {},
     syncingWalletId: String? = null,
@@ -222,7 +237,7 @@ fun ManageWalletsScreen(
     onEditLiquidGapLimit: (walletId: String, newGapLimit: Int) -> Unit = { _, _ -> },
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (walletId: String, Boolean) -> Unit = { _, _ -> },
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
 ) {
     var walletToDelete by remember { mutableStateOf<WalletInfo?>(null) }
     var walletToView by remember { mutableStateOf<WalletInfo?>(null) }
@@ -301,6 +316,16 @@ fun ManageWalletsScreen(
                             color = ErrorRed,
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        // Off-chain-only removes the exit escape hatch: deleting now
+                        // strands funds until the chain source recovers.
+                        if (arkRisk.isOffchainOnly && arkRisk.hasActivity && !arkRisk.blocksDelete) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.wallet_delete_ark_offchain_only),
+                                color = ErrorRed,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     if (!arkBlocksDelete) {
@@ -366,6 +391,35 @@ fun ManageWalletsScreen(
             (liquidGapLimitInt != null && liquidGapLimitInt in 1..StoredWallet.MAX_GAP_LIMIT)
 
         val isLightningNodeEdit = walletToEdit!!.isLightningNode
+        val showDerivationPath = walletToEdit!!.canEditDerivationPath
+        val currentAddressType =
+            when (walletToEdit!!.type) {
+                "legacy" -> AddressType.LEGACY
+                "taproot" -> AddressType.TAPROOT
+                else -> AddressType.SEGWIT
+            }
+        val matchingPresetType =
+            BitcoinUtils.matchingAddressTypeForPath(walletToEdit!!.derivationPath)
+        var selectedAddressType by remember(walletToEdit) {
+            mutableStateOf(matchingPresetType ?: currentAddressType)
+        }
+        var isCustomDerivationPath by remember(walletToEdit) {
+            mutableStateOf(matchingPresetType == null)
+        }
+        var derivationMenuExpanded by remember(walletToEdit) { mutableStateOf(false) }
+        var editDerivationPath by remember(walletToEdit) {
+            mutableStateOf(walletToEdit!!.derivationPath)
+        }
+        val defaultDerivationPath = selectedAddressType.defaultPath
+        val derivationPathValid =
+            !showDerivationPath ||
+                (
+                    !isCustomDerivationPath ||
+                        (
+                            editDerivationPath.isNotBlank() &&
+                                BitcoinUtils.isValidBip39DerivationPath(editDerivationPath)
+                        )
+                )
         val nameChanged = editName.trim().isNotBlank() && editName.trim() != walletToEdit?.name
         val gapLimitChanged =
             !isLightningNodeEdit && gapLimitValid && gapLimitInt != walletToEdit?.gapLimit
@@ -379,6 +433,26 @@ fun ManageWalletsScreen(
             !isLightningNodeEdit &&
                 showFingerprint &&
                 editFingerprint.trim().lowercase() != (walletToEdit?.masterFingerprint ?: "").lowercase()
+        val persistableEditPath =
+            if (showDerivationPath && derivationPathValid) {
+                if (!isCustomDerivationPath) {
+                    selectedAddressType.defaultPath
+                } else {
+                    BitcoinUtils.persistableDerivationPath(
+                        editDerivationPath,
+                        defaultDerivationPath,
+                        walletToEdit!!.derivationPath,
+                    )
+                }
+            } else {
+                null
+            }
+        val persistableAddressType =
+            if (showDerivationPath && derivationPathValid) selectedAddressType else null
+        val derivationPathChanged =
+            persistableEditPath != null && persistableEditPath != walletToEdit?.derivationPath
+        val addressTypeChanged =
+            persistableAddressType != null && persistableAddressType != currentAddressType
         val canSave =
             if (isLightningNodeEdit) {
                 nameChanged
@@ -387,7 +461,15 @@ fun ManageWalletsScreen(
                     gapLimitValid &&
                     fingerprintValid &&
                     liquidGapLimitValid &&
-                    (nameChanged || gapLimitChanged || liquidGapLimitChanged || fingerprintChanged)
+                    derivationPathValid &&
+                    (
+                        nameChanged ||
+                            gapLimitChanged ||
+                            liquidGapLimitChanged ||
+                            fingerprintChanged ||
+                            derivationPathChanged ||
+                            addressTypeChanged
+                    )
             }
 
         ScrollableAlertDialog(
@@ -441,6 +523,153 @@ fun ManageWalletsScreen(
                         }
                     } else {
                     Spacer(modifier = Modifier.height(12.dp))
+                    if (showDerivationPath) {
+                        val customLabel = stringResource(R.string.loc_f22813ad)
+                        val presetLabel =
+                            if (isCustomDerivationPath) {
+                                customLabel
+                            } else {
+                                when (selectedAddressType) {
+                                    AddressType.LEGACY ->
+                                        stringResource(R.string.wallet_address_type_legacy_title)
+                                    AddressType.SEGWIT ->
+                                        stringResource(R.string.wallet_address_type_segwit_title)
+                                    AddressType.TAPROOT ->
+                                        stringResource(R.string.wallet_address_type_taproot_title)
+                                }
+                            }
+                        Text(
+                            text = stringResource(R.string.wallet_settings_derivation_path),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        ExposedDropdownMenuBox(
+                            expanded = derivationMenuExpanded,
+                            onExpandedChange = { derivationMenuExpanded = it },
+                        ) {
+                            CompactDropdownField(
+                                value = presetLabel,
+                                expanded = derivationMenuExpanded,
+                                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+                            )
+                            ExposedDropdownMenu(
+                                expanded = derivationMenuExpanded,
+                                onDismissRequest = { derivationMenuExpanded = false },
+                                modifier =
+                                    Modifier
+                                        .exposedDropdownSize(true)
+                                        .background(DarkSurface),
+                            ) {
+                                AddressType.entries.forEach { type ->
+                                    val title =
+                                        when (type) {
+                                            AddressType.LEGACY ->
+                                                stringResource(R.string.wallet_address_type_legacy_title)
+                                            AddressType.SEGWIT ->
+                                                stringResource(R.string.wallet_address_type_segwit_title)
+                                            AddressType.TAPROOT ->
+                                                stringResource(R.string.wallet_address_type_taproot_title)
+                                        }
+                                    val selected = !isCustomDerivationPath && selectedAddressType == type
+                                    DropdownMenuItem(
+                                        text = {
+                                            DropdownOptionText(
+                                                title = title,
+                                                subtitle = type.defaultPath,
+                                                selected = selected,
+                                            )
+                                        },
+                                        onClick = {
+                                            selectedAddressType = type
+                                            isCustomDerivationPath = false
+                                            editDerivationPath = type.defaultPath
+                                            derivationMenuExpanded = false
+                                        },
+                                        leadingIcon = {
+                                            if (selected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Check,
+                                                    contentDescription = stringResource(R.string.common_selected),
+                                                    tint = BitcoinOrange,
+                                                )
+                                            }
+                                        },
+                                    )
+                                }
+                                val customSelected = isCustomDerivationPath
+                                DropdownMenuItem(
+                                    text = {
+                                        DropdownOptionText(
+                                            title = customLabel,
+                                            subtitle = "",
+                                            selected = customSelected,
+                                        )
+                                    },
+                                    onClick = {
+                                        isCustomDerivationPath = true
+                                        derivationMenuExpanded = false
+                                    },
+                                    leadingIcon = {
+                                        if (customSelected) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = stringResource(R.string.common_selected),
+                                                tint = BitcoinOrange,
+                                            )
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                        if (isCustomDerivationPath) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = editDerivationPath,
+                                onValueChange = { editDerivationPath = it },
+                                placeholder = {
+                                    Text(
+                                        defaultDerivationPath,
+                                        color = TextSecondary.copy(alpha = 0.4f),
+                                    )
+                                },
+                                singleLine = true,
+                                isError = editDerivationPath.isNotBlank() && !derivationPathValid,
+                                supportingText = {
+                                    if (editDerivationPath.isNotBlank() && !derivationPathValid) {
+                                        Text(
+                                            stringResource(R.string.wallet_settings_derivation_path_invalid),
+                                            color = ErrorRed,
+                                        )
+                                    } else {
+                                        Text(
+                                            stringResource(
+                                                R.string.common_default_format,
+                                                defaultDerivationPath,
+                                            ),
+                                            color = TextSecondary.copy(alpha = 0.5f),
+                                        )
+                                    }
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                colors =
+                                    OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = BitcoinOrange,
+                                        unfocusedBorderColor = BorderColor,
+                                        cursorColor = BitcoinOrange,
+                                    ),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = selectedAddressType.defaultPath,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary.copy(alpha = 0.7f),
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
                     // Gap Limit
                     OutlinedTextField(
                         value = editGapLimit,
@@ -536,6 +765,8 @@ fun ManageWalletsScreen(
                                         trimmedName,
                                         it.gapLimit,
                                         null,
+                                        null,
+                                        null,
                                     )
                                 }
                             }
@@ -545,12 +776,21 @@ fun ManageWalletsScreen(
                         val newGap = gapLimitInt ?: walletToEdit!!.gapLimit
                         val trimmedFp = if (showFingerprint) editFingerprint.trim().lowercase() else null
                         if (trimmedName.isNotBlank() && gapLimitValid) {
-                            walletToEdit?.let { onEditWallet(it.id, trimmedName, newGap, trimmedFp) }
+                            walletToEdit?.let {
+                                onEditWallet(
+                                    it.id,
+                                    trimmedName,
+                                    newGap,
+                                    trimmedFp,
+                                    persistableEditPath,
+                                    persistableAddressType,
+                                )
+                            }
                         }
                         if (liquidGapLimitChanged) {
                             walletToEdit?.let { onEditLiquidGapLimit(it.id, liquidGapLimitInt) }
                         }
-                        if (gapLimitChanged || liquidGapLimitChanged) {
+                        if (gapLimitChanged || liquidGapLimitChanged || derivationPathChanged || addressTypeChanged) {
                             walletToEdit?.let { onFullSync(it) }
                         }
                         walletToEdit = null
@@ -2622,7 +2862,7 @@ private fun WalletCard(
     onSetLightningNodeEnabled: (Boolean) -> Unit = {},
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (Boolean) -> Unit = {},
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
 ) {
     val cardColor =
         if (wallet.isActive) {
@@ -3166,4 +3406,5 @@ data class ArkDeleteRiskUi(
     val hasActivity: Boolean,
     val blocksDelete: Boolean,
     val warnsDelete: Boolean,
+    val isOffchainOnly: Boolean = false,
 )

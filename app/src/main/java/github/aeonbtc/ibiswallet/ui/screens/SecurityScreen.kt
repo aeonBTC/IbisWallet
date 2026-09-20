@@ -116,6 +116,7 @@ import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
+import github.aeonbtc.ibiswallet.util.Bip39ChecksumHelper
 import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
 import github.aeonbtc.ibiswallet.util.QrFormatParser
 import github.aeonbtc.ibiswallet.util.SecureClipboard
@@ -390,7 +391,10 @@ fun SecurityScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // App lock
+            // App lock is hidden in duress mode: disabling it from a decoy session
+            // would migrate every wallet under the duress master and brick the
+            // real wallet. SecureStorage refuses it as a backstop.
+            if (!isDuressMode) {
             SecuritySectionCard(title = stringResource(R.string.loc_a06704d8)) {
                 Row(
                     modifier =
@@ -614,6 +618,7 @@ fun SecurityScreen(
                         )
                     }
                 }
+            }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -1425,7 +1430,9 @@ private fun WipePinSetupScreen(
                             if (pin.length >= MIN_PIN_LENGTH) {
                                 {
                                     when {
-                                        currentSecurityMethod == SecureStorage.SecurityMethod.PIN &&
+                                        // The PIN hash survives switching to biometric
+                                        // (it is the fallback), so check existence, not method.
+                                        secureStorage.hasPinCode() &&
                                             secureStorage.pinMatchesCurrent(pin) -> {
                                             error = mustDifferUnlock
                                             pin = ""
@@ -1851,8 +1858,37 @@ private fun DuressSetupScreen(
     val manualSeedPhrase = manualSeedPhraseField.text
     var generatedSeedPhrase by remember { mutableStateOf<String?>(null) }
     var selectedWordCount by remember { mutableStateOf(WordCount.WORDS12) }
+    var duressDiceText by remember { mutableStateOf("") }
+    var showDuressDice by remember { mutableStateOf(false) }
+    val duressMinDiceRolls =
+        remember(selectedWordCount) {
+            Bip39ChecksumHelper.minGenerateDiceRolls(
+                if (selectedWordCount == WordCount.WORDS12) 12 else 24,
+            )
+        }
+    val duressDiceValid =
+        remember(duressDiceText, duressMinDiceRolls) {
+            duressDiceText.isBlank() ||
+                Bip39ChecksumHelper.isValidDiceRolls(duressDiceText, duressMinDiceRolls)
+        }
     var backedUpGeneratedSeed by remember { mutableStateOf(false) }
     var copiedGeneratedSeed by remember { mutableStateOf(false) }
+
+    fun generateDuressSeed() {
+        val entropy =
+            Bip39ChecksumHelper.diceEntropyOrNull(
+                duressDiceText,
+                if (selectedWordCount == WordCount.WORDS12) 12 else 24,
+            )
+        generatedSeedPhrase =
+            if (entropy == null) {
+                Mnemonic(selectedWordCount).toString()
+            } else {
+                Mnemonic.fromEntropy(entropy).toString()
+            }
+        backedUpGeneratedSeed = false
+        copiedGeneratedSeed = false
+    }
     var showAdvancedOptions by remember { mutableStateOf(false) }
     // Advanced options (matching ImportWalletScreen pattern)
     var usePassphrase by remember { mutableStateOf(false) }
@@ -2285,9 +2321,11 @@ private fun DuressSetupScreen(
                                 if (pin.length >= MIN_PIN_LENGTH) {
                                     {
                                         // Validate duress PIN != unlock / wipe PINs
-                                        // Use non-mutating match helpers to avoid lockout counters
+                                        // Use non-mutating match helpers to avoid lockout counters.
+                                        // The PIN hash survives switching to biometric (it is the
+                                        // fallback), so check existence, not current method.
                                         when {
-                                            currentSecurityMethod == SecureStorage.SecurityMethod.PIN &&
+                                            secureStorage.hasPinCode() &&
                                                 secureStorage.pinMatchesCurrent(pin) -> {
                                                 error = "Must differ from your unlock PIN"
                                                 pin = ""
@@ -2511,14 +2549,84 @@ private fun DuressSetupScreen(
                                 )
                             }
                         }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HorizontalDivider(color = BorderColor)
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { showDuressDice = !showDuressDice }
+                                    .padding(vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = stringResource(R.string.loc_4b7e2c19),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                            Icon(
+                                imageVector =
+                                    if (showDuressDice) {
+                                        Icons.Default.KeyboardArrowUp
+                                    } else {
+                                        Icons.Default.KeyboardArrowDown
+                                    },
+                                contentDescription = null,
+                                tint = TextSecondary,
+                            )
+                        }
+                        AnimatedVisibility(
+                            visible = showDuressDice,
+                            enter = expandVertically(),
+                            exit = shrinkVertically(),
+                        ) {
+                            Column {
+                                Text(
+                                    text = stringResource(R.string.loc_8f1d6a33, duressMinDiceRolls),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TextSecondary,
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = duressDiceText,
+                                    onValueChange = { duressDiceText = it.filter { char -> char in '0'..'9' } },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    placeholder = {
+                                        Text(
+                                            stringResource(R.string.loc_71aa30d4),
+                                            color = TextSecondary.copy(alpha = 0.5f),
+                                        )
+                                    },
+                                    singleLine = true,
+                                    isError = !duressDiceValid,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors =
+                                        OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = BitcoinOrange,
+                                            unfocusedBorderColor = BorderColor,
+                                            focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                            unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                            cursorColor = BitcoinOrange,
+                                        ),
+                                )
+                                if (!duressDiceValid) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = stringResource(R.string.loc_2e9c5f07, duressMinDiceRolls),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = ErrorRed,
+                                    )
+                                }
+                            }
+                        }
                         if (generatedSeedPhrase == null) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Button(
-                                onClick = {
-                                    generatedSeedPhrase = Mnemonic(selectedWordCount).toString()
-                                    backedUpGeneratedSeed = false
-                                    copiedGeneratedSeed = false
-                                },
+                                onClick = { generateDuressSeed() },
+                                enabled = duressDiceValid,
                                 modifier =
                                     Modifier
                                         .fillMaxWidth()
@@ -2602,11 +2710,8 @@ private fun DuressSetupScreen(
                                         Spacer(modifier = Modifier.width(8.dp))
 
                                         OutlinedIconButton(
-                                            onClick = {
-                                                generatedSeedPhrase = Mnemonic(selectedWordCount).toString()
-                                                backedUpGeneratedSeed = false
-                                                copiedGeneratedSeed = false
-                                            },
+                                            onClick = { generateDuressSeed() },
+                                            enabled = duressDiceValid,
                                             modifier = Modifier.size(40.dp),
                                             shape = RoundedCornerShape(8.dp),
                                             border = BorderStroke(1.dp, BorderColor),

@@ -54,7 +54,7 @@ fun BalanceDateFormatDropdown(
         )
     val selectedOption =
         options.find { it.id == currentFormat }
-            ?: options.first { it.id == SecureStorage.DATE_FORMAT_MONTH_DD_YYYY }
+            ?: options.first { it.id == SecureStorage.DATE_FORMAT_MM_DD_YY }
 
     ExposedDropdownMenuBox(
         expanded = expanded,

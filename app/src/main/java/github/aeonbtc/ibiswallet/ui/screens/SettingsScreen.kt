@@ -141,7 +141,7 @@ fun SettingsScreen(
     onCustomMempoolUrlSave: (String) -> Unit = {},
     currentSwipeMode: String = SecureStorage.SWIPE_MODE_DISABLED,
     onSwipeModeChange: (String) -> Unit = {},
-    currentBalanceDateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    currentBalanceDateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     onBalanceDateFormatChange: (String) -> Unit = {},
     currentThemeMode: String = SecureStorage.THEME_MODE_DARK,
     onThemeModeChange: (String) -> Unit = {},
@@ -917,6 +917,8 @@ fun Layer2OptionsScreen(
             onLiquidEnabledChange = onLiquidEnabledChange,
             sparkEnabled = sparkEnabled,
             onSparkEnabledChange = onSparkEnabledChange,
+            arkEnabled = arkEnabled,
+            onArkEnabledChange = onArkEnabledChange,
             lightningNodeEnabled = lightningNodeEnabled,
             onLightningNodeEnabledChange = onLightningNodeEnabledChange,
         )
@@ -986,6 +988,8 @@ private fun Layer2OptionsCard(
     onLiquidEnabledChange: (Boolean) -> Unit,
     sparkEnabled: Boolean,
     onSparkEnabledChange: (Boolean) -> Unit,
+    arkEnabled: Boolean,
+    onArkEnabledChange: (Boolean) -> Unit,
     lightningNodeEnabled: Boolean,
     onLightningNodeEnabledChange: (Boolean) -> Unit,
 ) {
@@ -1006,6 +1010,27 @@ private fun Layer2OptionsCard(
                 checked = lightningNodeEnabled,
                 onCheckedChange = onLightningNodeEnabledChange,
                 checkedColor = LightningYellow,
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ToggleOptionText(
+                title = stringResource(R.string.ark_title),
+                subtitle = stringResource(R.string.settings_ark_subtitle),
+                titleColor = TextPrimary,
+                subtitleColor = TextSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            SquareToggle(
+                checked = arkEnabled,
+                onCheckedChange = onArkEnabledChange,
+                checkedColor = ArkRust,
             )
         }
 
@@ -1152,6 +1177,12 @@ private fun ArkExternalServicesCard(
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = stringResource(R.string.ark_esplora_picker_subtitle),
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = stringResource(R.string.ark_tor_asp_direct_note),
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
         )

@@ -66,13 +66,13 @@ enum class BalanceDateFormat(
 
     companion object {
         fun fromStorageValue(value: String?): BalanceDateFormat =
-            entries.find { it.storageValue == value } ?: MONTH_DD_YYYY
+            entries.find { it.storageValue == value } ?: MM_DD_YY
     }
 }
 
 fun formatBalanceTimestamp(
     timestamp: Long,
-    dateFormatStorageValue: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormatStorageValue: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
 ): String {
     if (timestamp <= 0L) return ""
     return formatTimestamp(
@@ -85,7 +85,7 @@ fun formatBalanceTimestamp(
 /** Date only (no time), using the user's balance date-format setting. */
 fun formatBalanceDate(
     timestamp: Long,
-    dateFormatStorageValue: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormatStorageValue: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
 ): String {
     if (timestamp <= 0L) return ""
     val date = Date(normalizeTimestampMillis(timestamp))
@@ -95,7 +95,7 @@ fun formatBalanceDate(
 
 fun formatFullTimestamp(
     timestamp: Long,
-    dateFormatStorageValue: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormatStorageValue: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
 ): String {
     if (timestamp <= 0L) return ""
     return formatTimestamp(
@@ -130,10 +130,34 @@ fun formatVBytes(vBytes: Double): String {
 /**
  * Display formatting for addresses/invoices: groups of 7 chars.
  * Short (SegWit) → 2 lines; Taproot → 3 lines.
+ * Silent Payment (`sp1`) → 2 chunked lines with a middle ellipsis.
  * Long (Liquid confidential / invoices) → single-line head...tail.
  */
 fun formatChunkedAddress(address: String?): String {
     if (address.isNullOrBlank()) return ""
+    val isSilentPayment =
+        address.startsWith("sp1", ignoreCase = true) ||
+            address.startsWith("tsp1", ignoreCase = true)
+    if (isSilentPayment) {
+        val chunks = address.chunked(7)
+        val perLine = 3
+        if (chunks.size <= perLine * 2) {
+            return chunks
+                .chunked(perLine)
+                .joinToString("\n") { it.joinToString(" ") }
+        }
+        val head = chunks.take(perLine).joinToString(" ")
+        val tailRaw = chunks.takeLast(perLine)
+        val last = tailRaw.last()
+        val prefix =
+            if (last.length >= 4) {
+                last.take(4)
+            } else {
+                (tailRaw.getOrNull(tailRaw.lastIndex - 1).orEmpty() + last).takeLast(4)
+            }
+        val tail = (tailRaw.dropLast(1) + "$prefix...").joinToString(" ")
+        return "$head\n$tail"
+    }
     // Confidential Liquid (~90+) and long APIs overwhelm the popup; one-line edges only.
     if (address.length > 62) {
         val edge = 12

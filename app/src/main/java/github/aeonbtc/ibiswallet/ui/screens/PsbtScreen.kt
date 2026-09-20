@@ -93,7 +93,9 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.Bbqr
 import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.SecureClipboard
+import github.aeonbtc.ibiswallet.util.detectedNetwork
 import github.aeonbtc.ibiswallet.util.parseTxFileBytes
+import github.aeonbtc.ibiswallet.util.requiresRejection
 import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import github.aeonbtc.ibiswallet.viewmodel.PsbtState
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
@@ -189,8 +191,12 @@ fun PsbtScreen(
                 try {
                     context.contentResolver.openInputStream(uri)?.use { stream ->
                         val result = parseTxFileBytes(stream.readBytesWithLimit(InputLimits.TX_FILE_BYTES))
-                        if (result != null) {
+                        if (result != null && !result.requiresRejection() &&
+                            result.detectedNetwork() != github.aeonbtc.ibiswallet.util.TxFileNetwork.LIQUID
+                        ) {
                             onSignedDataReceived(result.data)
+                        } else {
+                            Toast.makeText(context, "Rejected ambiguous or non-Bitcoin file", Toast.LENGTH_SHORT).show()
                         }
                     }
                 } catch (_: Exception) {
@@ -559,7 +565,24 @@ fun PsbtScreen(
                                     PsbtDetailRow(
                                         label = "Change",
                                         value = formatPsbtAmount(psbtState.changeAmountSats),
+                                        valueColor = if (!psbtState.changeIsMine) ErrorRed else MaterialTheme.colorScheme.onBackground,
                                     )
+                                    if (!psbtState.changeAddress.isNullOrBlank()) {
+                                        PsbtDetailRow(
+                                            label = stringResource(R.string.psbt_change_address_label),
+                                            value =
+                                                psbtState.changeAddress.take(12) + "..." +
+                                                    psbtState.changeAddress.takeLast(8),
+                                            valueColor = if (!psbtState.changeIsMine) ErrorRed else MaterialTheme.colorScheme.onBackground,
+                                        )
+                                    }
+                                    if (!psbtState.changeIsMine) {
+                                        Text(
+                                            text = stringResource(R.string.psbt_change_not_mine_warning),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = ErrorRed,
+                                        )
+                                    }
                                 }
 
                                 // Fee
@@ -831,7 +854,24 @@ private fun BroadcastConfirmation(
                 PsbtDetailRow(
                     label = "Change",
                     value = formatPsbtAmount(psbtState.changeAmountSats),
+                    valueColor = if (!psbtState.changeIsMine) ErrorRed else MaterialTheme.colorScheme.onBackground,
                 )
+                if (!psbtState.changeAddress.isNullOrBlank()) {
+                    PsbtDetailRow(
+                        label = stringResource(R.string.psbt_change_address_label),
+                        value =
+                            psbtState.changeAddress.take(12) + "..." +
+                                psbtState.changeAddress.takeLast(8),
+                        valueColor = if (!psbtState.changeIsMine) ErrorRed else MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+                if (!psbtState.changeIsMine) {
+                    Text(
+                        text = stringResource(R.string.psbt_change_not_mine_warning),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ErrorRed,
+                    )
+                }
             }
 
             if (psbtState.actualFeeSats > 0UL) {

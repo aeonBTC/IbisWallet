@@ -40,7 +40,9 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -63,12 +65,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveState
+import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.theme.ArkRust
@@ -83,15 +91,17 @@ import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
+import github.aeonbtc.ibiswallet.util.ArkAmountUtils
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
+import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 import java.text.NumberFormat
 import java.util.Locale
-import kotlin.math.roundToLong
 
 @Composable
 fun ArkReceiveScreen(
@@ -101,8 +111,7 @@ fun ArkReceiveScreen(
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean,
-    /** ASP min board amount (sats); shown on on-chain receive when known. */
-    minBoardAmountSats: Long? = null,
+    walletId: String? = null,
     /** True once Bark wallet handle is open (not merely paint-from-cache). */
     walletReady: Boolean = true,
     /** Initial tab (e.g. on-chain when opened from Boarding top-up). */
@@ -115,6 +124,8 @@ fun ArkReceiveScreen(
     onSaveAddressLabel: (String, String) -> Unit = { _, _ -> },
     onResetReceive: () -> Unit,
     onToggleDenomination: () -> Unit,
+    /** False for BIP39-passphrase wallets: on-chain deposit can never board. */
+    isOnchainDepositAvailable: Boolean = true,
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -139,29 +150,25 @@ fun ArkReceiveScreen(
     val amountBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showAmountField, "ark_receive_amount")
     val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "ark_receive_label")
 
+    androidx.compose.runtime.LaunchedEffect(isOnchainDepositAvailable) {
+        if (!isOnchainDepositAvailable && receiveTab == 2) {
+            receiveTab = 0
+        }
+    }
     val activeKind =
         when (receiveTab) {
             1 -> ArkReceiveKind.BOLT11_INVOICE
-            2 -> ArkReceiveKind.BITCOIN_ADDRESS
+            2 -> if (isOnchainDepositAvailable) ArkReceiveKind.BITCOIN_ADDRESS else ArkReceiveKind.ARK_ADDRESS
             else -> ArkReceiveKind.ARK_ADDRESS
         }
-    val minBoardSats = minBoardAmountSats?.takeIf { it > 0L }
-    val isOnchainReceive = activeKind == ArkReceiveKind.BITCOIN_ADDRESS
     val amountSats =
         remember(amountText, useSats, isUsdMode, btcPrice) {
-            if (amountText.isEmpty()) {
-                null
-            } else if (isUsdMode && btcPrice != null && btcPrice > 0) {
-                amountText.toDoubleOrNull()?.let { usd ->
-                    ((usd / btcPrice) * 100_000_000).roundToLong()
-                }
-            } else if (useSats) {
-                amountText.filter { it.isDigit() }.toLongOrNull()
-            } else {
-                amountText.toDoubleOrNull()?.let { btc ->
-                    (btc * 100_000_000).roundToLong()
-                }
-            }
+            ArkAmountUtils.parseAmountToSats(
+                input = amountText,
+                useSats = useSats,
+                isUsdMode = isUsdMode,
+                btcPrice = btcPrice,
+            )
         }
     val requestedAmountSats = amountSats?.takeIf { showAmountField && it > 0 }
     val embeddedLabel = descriptionText.trim().takeIf { showLabelField && embedLabelInQr && it.isNotBlank() }
@@ -173,6 +180,12 @@ fun ArkReceiveScreen(
         when (activeKind) {
             ArkReceiveKind.BITCOIN_ADDRESS ->
                 buildArkBitcoinRequest(
+                    address = baseRequestText,
+                    amountSats = requestedAmountSats,
+                    label = embeddedLabel,
+                )
+            ArkReceiveKind.ARK_ADDRESS ->
+                buildArkAddressRequest(
                     address = baseRequestText,
                     amountSats = requestedAmountSats,
                     label = embeddedLabel,
@@ -192,12 +205,12 @@ fun ArkReceiveScreen(
                 when {
                     privacyMode && requestText != null -> "****"
                     requestText != null -> formatArkReceiveText(requestText)
-                    else -> "No request generated"
+                    else -> stringResource(R.string.ark_receive_no_request)
                 }
         }
     val screenTitle =
         when (activeKind) {
-            ArkReceiveKind.ARK_ADDRESS -> "Receive Ark"
+            ArkReceiveKind.ARK_ADDRESS -> stringResource(R.string.ark_receive_title)
             ArkReceiveKind.BOLT11_INVOICE -> stringResource(R.string.loc_869ffe29)
             ArkReceiveKind.BITCOIN_ADDRESS -> stringResource(R.string.loc_4126d5db)
         }
@@ -208,15 +221,35 @@ fun ArkReceiveScreen(
         isLightningMode &&
             paid != null &&
             paid.kind == ArkReceiveKind.BOLT11_INVOICE
+    // A paid invoice is shown briefly for confirmation, then cleared like a
+    // manual reset: a settled invoice can never be paid again, so leaving its
+    // QR up only invites confusion. Guarded to the same payment request so a
+    // manually started new invoice is never wiped.
+    val paidRequest = paid?.takeIf { isLightningPaid }?.paymentRequest
+    LaunchedEffect(paidRequest) {
+        if (paidRequest.isNullOrBlank()) return@LaunchedEffect
+        delay(LIGHTNING_PAID_AUTO_CLEAR_MS)
+        if ((receiveState as? ArkReceiveState.Paid)?.paymentRequest != paidRequest) {
+            return@LaunchedEffect
+        }
+        amountText = ""
+        descriptionText = ""
+        showLabelField = false
+        embedLabelInQr = false
+        isUsdMode = false
+        onResetReceive()
+    }
     val isLightningReady = isLightningMode && requestText != null && !isLightningPaid
     val isLightningLoading = isLightningMode && receiveState is ArkReceiveState.Loading
     val lightningError = if (isLightningMode && receiveState is ArkReceiveState.Error) receiveState.message else null
     val canGenerateNewRequest =
         receiveState !is ArkReceiveState.Loading && walletReady
+    val requestCopiedMessage = stringResource(R.string.ark_receive_request_copied)
+    val labelSavedMessage = stringResource(R.string.ark_receive_label_saved)
     val copyArkRequest: () -> Unit = {
         requestText?.let {
             SecureClipboard.copyAndScheduleClear(context, it)
-            Toast.makeText(context, "Request copied", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, requestCopiedMessage, Toast.LENGTH_SHORT).show()
         }
     }
     val shareRequestChooserTitle = stringResource(R.string.loc_ebbd9745)
@@ -230,12 +263,19 @@ fun ArkReceiveScreen(
                 ?.let { arkAddressLabels[it] }
                 .orEmpty()
         }
+    // Drop the previous wallet's QR immediately on switch so a stale address is
+    // never shown as the new wallet's. The prime/request effects below repaint it.
+    LaunchedEffect(walletId) {
+        qrBitmap = null
+    }
     // Instant paint from prefs; confirm with Bark once ready.
-    LaunchedEffect(Unit) {
+    // Keyed on walletId so switching wallets while staying on this screen
+    // reprimes for the new wallet instead of stranding the QR in Idle.
+    LaunchedEffect(walletId) {
         onPrimeCachedReceive()
     }
     // Tab switch: paint that kind from cache immediately (don't wait on mutex/refresh).
-    LaunchedEffect(requestKind) {
+    LaunchedEffect(walletId, requestKind) {
         when (requestKind) {
             ArkReceiveKind.BOLT11_INVOICE -> Unit
             ArkReceiveKind.BITCOIN_ADDRESS,
@@ -243,12 +283,17 @@ fun ArkReceiveScreen(
             -> onPrimeCachedReceiveKind(requestKind)
         }
     }
-    LaunchedEffect(requestKind, walletReady) {
+    // receiveState is a key so a stale Ready from the previous wallet (read before
+    // the switch reset lands) is followed by an Idle-triggered re-request for the
+    // new wallet instead of stranding its QR. The Loading guard keeps the
+    // Loading -> Ready transitions from firing duplicate receives.
+    LaunchedEffect(walletId, requestKind, walletReady, receiveState) {
         when (requestKind) {
             ArkReceiveKind.BOLT11_INVOICE -> Unit
             ArkReceiveKind.BITCOIN_ADDRESS,
             ArkReceiveKind.ARK_ADDRESS,
             -> {
+                if (receiveState is ArkReceiveState.Loading) return@LaunchedEffect
                 val readyForKind =
                     (receiveState as? ArkReceiveState.Ready)?.takeIf { it.kind == requestKind }
                 if (readyForKind != null) return@LaunchedEffect
@@ -268,6 +313,34 @@ fun ArkReceiveScreen(
         }
     }
 
+    val savedArkAddressLabel =
+        remember(baseRequestText, activeKind, arkAddressLabels) {
+            if (activeKind != ArkReceiveKind.ARK_ADDRESS) {
+                ""
+            } else {
+                baseRequestText
+                    ?.let(::normalizeSparkAddressLabelRef)
+                    ?.let { arkAddressLabels[it] }
+                    .orEmpty()
+            }
+        }
+
+    LaunchedEffect(activeKind, baseRequestText, savedArkAddressLabel) {
+        if (activeKind == ArkReceiveKind.ARK_ADDRESS && savedArkAddressLabel.isNotBlank()) {
+            descriptionText = savedArkAddressLabel
+            showLabelField = true
+        }
+    }
+
+    // Local-only lightning labels (embed toggle off) are not in the invoice payload, so attach
+    // them to the generated invoice here — otherwise they would be silently dropped.
+    LaunchedEffect(requestText, isLightningReady, descriptionText, showLabelField, embedLabelInQr) {
+        if (!isLightningReady || requestText.isNullOrBlank()) return@LaunchedEffect
+        val typedLabel = descriptionText.trim().takeIf { showLabelField && it.isNotBlank() } ?: return@LaunchedEffect
+        if (embedLabelInQr) return@LaunchedEffect
+        onSaveAddressLabel(normalizeSparkAddressLabelRef(requestText), typedLabel)
+    }
+
     LaunchedEffect(requestText, privacyMode) {
         if (requestText == null || privacyMode) {
             qrBitmap = null
@@ -279,15 +352,26 @@ fun ArkReceiveScreen(
             }
     }
 
-    // Clear the paid invoice so the next Lightning receive starts from a blank form.
-    LaunchedEffect(isLightningPaid) {
-        if (isLightningPaid) {
-            amountText = ""
-            descriptionText = ""
-            showLabelField = false
-            embedLabelInQr = false
-            isUsdMode = false
-            onResetReceive()
+    val mainActivity = context as? MainActivity
+    val nfcShareOwner = remember { Any() }
+    val nfcAvailable = context.getNfcAvailability().canBroadcast
+    val hasNfcSharePayload = nfcAvailable && requestText != null && !isLightningPaid
+    val nfcShareState by NfcRuntimeStatus.shareState.collectAsState()
+    DisposableEffect(mainActivity, hasNfcSharePayload) {
+        if (mainActivity != null && hasNfcSharePayload) {
+            mainActivity.requestPreferredHceService(nfcShareOwner)
+        }
+        onDispose {
+            mainActivity?.releasePreferredHceService(nfcShareOwner)
+        }
+    }
+    val isNfcBroadcasting = hasNfcSharePayload && mainActivity?.isPreferredHceServiceActive == true
+    DisposableEffect(requestText, nfcAvailable, isLightningPaid) {
+        if (hasNfcSharePayload) {
+            NdefHostApduService.setNdefPayload(requestText)
+        }
+        onDispose {
+            NdefHostApduService.setNdefPayload(null)
         }
     }
 
@@ -295,6 +379,7 @@ fun ArkReceiveScreen(
         Dialog(
             onDismissRequest = { showEnlargedQr = false },
         ) {
+            SecureDialogSideEffect()
             Box(
                 modifier =
                     Modifier
@@ -314,7 +399,7 @@ fun ArkReceiveScreen(
                     ) {
                         Image(
                             bitmap = qrBitmap!!.asImageBitmap(),
-                            contentDescription = "Enlarged QR Code",
+                            contentDescription = stringResource(R.string.loc_ef73e5ab),
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit,
                         )
@@ -356,6 +441,30 @@ fun ArkReceiveScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (isNfcBroadcasting) {
+                    val nfcStatusLabel =
+                        when (nfcShareState) {
+                            NfcShareUiState.Inactive,
+                            NfcShareUiState.Ready,
+                            -> stringResource(R.string.nfc_status_share_ready)
+                            NfcShareUiState.Sharing -> stringResource(R.string.nfc_status_sharing)
+                        }
+                    val nfcStatusColor =
+                        if (nfcShareState == NfcShareUiState.Sharing) {
+                            ArkRust
+                        } else {
+                            SuccessGreen
+                        }
+                    NfcStatusIndicator(
+                        label = nfcStatusLabel,
+                        contentDescription = nfcStatusLabel,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(top = 2.dp),
+                        color = nfcStatusColor,
+                    )
+                }
                 Spacer(modifier = Modifier.height(12.dp))
 
                 Row(
@@ -368,47 +477,9 @@ fun ArkReceiveScreen(
                     ArkReceiveTab(stringResource(R.string.ark_movement_lightning), receiveTab == 1, LightningYellow, Modifier.weight(1f)) {
                         receiveTab = 1
                     }
-                    ArkReceiveTab(stringResource(R.string.ark_receive_tab_onchain), receiveTab == 2, BitcoinOrange, Modifier.weight(1f)) {
-                        receiveTab = 2
-                    }
-                }
-
-                if (isOnchainReceive && minBoardSats != null) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors =
-                            CardDefaults.cardColors(
-                                containerColor = BitcoinOrange.copy(alpha = 0.12f),
-                            ),
-                        border = BorderStroke(1.dp, BitcoinOrange.copy(alpha = 0.55f)),
-                    ) {
-                        Column(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text(
-                                text = stringResource(R.string.ark_receive_onchain_min_label),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = BitcoinOrange,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text =
-                                    if (privacyMode) {
-                                        "****"
-                                    } else {
-                                        "${formatArkAmountForReceive(minBoardSats, useSats)} ${arkDisplayUnit(useSats)}"
-                                    },
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onBackground,
-                                fontWeight = FontWeight.Bold,
-                            )
+                    if (isOnchainDepositAvailable) {
+                        ArkReceiveTab(stringResource(R.string.ark_receive_tab_onchain), receiveTab == 2, BitcoinOrange, Modifier.weight(1f)) {
+                            receiveTab = 2
                         }
                     }
                 }
@@ -486,6 +557,8 @@ fun ArkReceiveScreen(
                                 labelText = descriptionText,
                                 showLabelField = showLabelField,
                                 embedLabelInInvoice = embedLabelInQr,
+                                invoiceText = requestText,
+                                onSaveInvoiceLabel = onSaveAddressLabel,
                                 onAmountTextChange = { amountText = it },
                                 onUsdModeChange = {
                                     amountText =
@@ -662,7 +735,7 @@ fun ArkReceiveScreen(
                         if (qrBitmap != null) {
                             Image(
                                 bitmap = qrBitmap!!.asImageBitmap(),
-                                contentDescription = "Receive QR",
+                                contentDescription = stringResource(R.string.ark_receive_qr_cd),
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Fit,
                             )
@@ -674,7 +747,7 @@ fun ArkReceiveScreen(
                             )
                         } else {
                             Text(
-                                text = "Hidden",
+                                text = stringResource(R.string.ark_receive_hidden),
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,
                             )
@@ -694,9 +767,10 @@ fun ArkReceiveScreen(
                             Text(
                                 text =
                                     when {
-                                        privacyMode -> "Hidden"
-                                        activeKind == ArkReceiveKind.BOLT11_INVOICE -> "Generate request"
-                                        else -> "Generating..."
+                                        privacyMode -> stringResource(R.string.ark_receive_hidden)
+                                        activeKind == ArkReceiveKind.BOLT11_INVOICE ->
+                                            stringResource(R.string.ark_receive_generate_request)
+                                        else -> stringResource(R.string.ark_receive_generating)
                                     },
                                 color = TextSecondary,
                                 textAlign = TextAlign.Center,
@@ -712,7 +786,7 @@ fun ArkReceiveScreen(
                         text = displayText,
                         style = MaterialTheme.typography.bodyMedium,
                         fontFamily = FontFamily.Monospace,
-                        color = if (displayText != "No request generated") MaterialTheme.colorScheme.onBackground else TextSecondary,
+                        color = if (requestText != null) MaterialTheme.colorScheme.onBackground else TextSecondary,
                         maxLines = if (activeKind == ArkReceiveKind.BOLT11_INVOICE) 1 else 2,
                         overflow = if (activeKind == ArkReceiveKind.BOLT11_INVOICE) TextOverflow.Ellipsis else TextOverflow.Clip,
                         modifier = Modifier
@@ -972,7 +1046,7 @@ fun ArkReceiveScreen(
                                         TextButton(
                                             onClick = {
                                                 onSaveAddressLabel(labelTargetRequest, descriptionText)
-                                                Toast.makeText(context, "Label saved", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(context, labelSavedMessage, Toast.LENGTH_SHORT).show()
                                             },
                                         ) {
                                             Text(stringResource(R.string.loc_f55495e0), color = ArkRust)
@@ -1127,6 +1201,8 @@ private fun ArkLightningInvoiceForm(
     labelText: String,
     showLabelField: Boolean,
     embedLabelInInvoice: Boolean,
+    invoiceText: String? = null,
+    onSaveInvoiceLabel: (String, String) -> Unit = { _, _ -> },
     onAmountTextChange: (String) -> Unit,
     onUsdModeChange: (Boolean) -> Unit,
     onShowLabelFieldChange: (Boolean) -> Unit,
@@ -1135,6 +1211,7 @@ private fun ArkLightningInvoiceForm(
     onToggleDenomination: () -> Unit,
 ) {
     val context = LocalContext.current
+    val labelSavedMessage = stringResource(R.string.ark_receive_label_saved)
     val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "ark_lightning_invoice_label")
 
     Card(
@@ -1303,11 +1380,14 @@ private fun ArkLightningInvoiceForm(
                             cursorColor = LightningYellow,
                         ),
                         trailingIcon = {
-                            if (labelText.isNotBlank()) {
+                            if (labelText.isNotBlank() && invoiceText != null) {
                                 TextButton(
                                     onClick = {
-                                        onLabelTextChange(labelText.trim())
-                                        Toast.makeText(context, "Label will be saved with invoice", Toast.LENGTH_SHORT).show()
+                                        onSaveInvoiceLabel(
+                                            normalizeSparkAddressLabelRef(invoiceText),
+                                            labelText.trim(),
+                                        )
+                                        Toast.makeText(context, labelSavedMessage, Toast.LENGTH_SHORT).show()
                                     },
                                 ) {
                                     Text(stringResource(R.string.loc_f55495e0), color = LightningYellow)
@@ -1377,7 +1457,13 @@ private fun formatArkAmountForReceive(
     }
 }
 
-private fun arkDisplayUnit(useSats: Boolean): String = if (useSats) "sats" else "BTC"
+@Composable
+private fun arkDisplayUnit(useSats: Boolean): String =
+    if (useSats) {
+        stringResource(R.string.loc_9384ed0d)
+    } else {
+        "BTC"
+    }
 
 private fun formatArkFiat(
     amount: Double,
@@ -1385,7 +1471,7 @@ private fun formatArkFiat(
 ): String = "${fiatCurrency.uppercase(Locale.US)} ${String.format(Locale.US, "%.2f", amount)}"
 
 private fun formatArkReceiveText(requestText: String?): String {
-    if (requestText == null) return "No request generated"
+    if (requestText == null) return ""
     val edgeCharacters = 10
     val minimumLengthToShorten = edgeCharacters * 2
     if (requestText.length <= minimumLengthToShorten) return requestText
@@ -1393,7 +1479,7 @@ private fun formatArkReceiveText(requestText: String?): String {
 }
 
 private fun formatArkInvoicePreview(invoice: String?): String {
-    if (invoice == null) return "No request generated"
+    if (invoice == null) return ""
     val edgeCharacters = 8
     val minimumLengthToShorten = edgeCharacters * 2
     if (invoice.length <= minimumLengthToShorten) return invoice
@@ -1419,5 +1505,26 @@ private fun buildArkBitcoinRequest(
     return "bitcoin:$baseAddress?${params.joinToString("&")}"
 }
 
+private fun buildArkAddressRequest(
+    address: String?,
+    amountSats: Long?,
+    label: String?,
+): String? {
+    val baseAddress = address ?: return null
+    if (amountSats == null && label == null) return baseAddress
+    val params = mutableListOf<String>()
+    amountSats?.let {
+        val btcAmount = it.toDouble() / 100_000_000.0
+        params += "amount=${String.format(Locale.US, "%.8f", btcAmount)}"
+    }
+    label?.let {
+        params += "label=${URLEncoder.encode(it, "UTF-8")}"
+    }
+    return "$baseAddress?${params.joinToString("&")}"
+}
+
 private fun ArkReceiveState.errorMessage(): String? =
     (this as? ArkReceiveState.Error)?.message
+
+/** Confirmation beat before a paid Lightning invoice auto-clears. */
+private const val LIGHTNING_PAID_AUTO_CLEAR_MS = 2_500L

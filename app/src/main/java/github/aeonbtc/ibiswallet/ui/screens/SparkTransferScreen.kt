@@ -120,6 +120,9 @@ private sealed interface SparkTransferReview {
         override val amountSats: Long,
         override val destinationAddress: String,
         val preview: SparkSendState.Preview,
+        val requestedAmountSats: Long?,
+        val feeSpeed: SparkOnchainFeeSpeed,
+        val isMaxSend: Boolean,
     ) : SparkTransferReview
 }
 
@@ -146,7 +149,7 @@ fun SparkTransferScreen(
     onExecuteLayer1ToSpark: suspend (String, Long, Double, Boolean, List<UtxoInfo>?, Long?) -> Unit,
     onPreviewSparkToLayer1: suspend (String, Long, SparkOnchainFeeSpeed, Boolean) -> SparkSendState.Preview,
     onLoadSparkWithdrawalFeeQuotes: suspend (String, Long, Boolean) -> List<SparkOnchainFeeQuote>,
-    onExecuteSparkToLayer1: suspend () -> Unit,
+    onExecuteSparkToLayer1: suspend (String, Long?, SparkOnchainFeeSpeed, Boolean) -> Unit,
     onResetSparkSend: () -> Unit,
     onToggleDenomination: () -> Unit,
     isElectrumConnected: Boolean = false,
@@ -244,7 +247,7 @@ fun SparkTransferScreen(
                     amountInput.toDoubleOrNull()?.takeIf { it > 0 }?.let {
                         kotlin.math.round((it / btcPrice) * 100_000_000.0).toLong()
                     }
-                useSats -> amountInput.replace(",", "").toLongOrNull()?.takeIf { it > 0 }
+                useSats -> amountInput.trim().toLongOrNull()?.takeIf { it > 0 }
                 else ->
                     amountInput.toDoubleOrNull()?.takeIf { it > 0 }?.let {
                         kotlin.math.round(it * 100_000_000.0).toLong()
@@ -451,8 +454,12 @@ fun SparkTransferScreen(
             privacyMode = privacyMode,
             isExecuting = isExecutingReview,
             onConfirm = {
+                // Synchronous guard like the quote button: the dialog's
+                // confirm enables on !isExecuting, which only flips inside
+                // the launched coroutine.
+                if (isExecutingReview) return@SparkTransferReviewDialog
+                isExecutingReview = true
                 scope.launch {
-                    isExecutingReview = true
                     reviewError = null
                     try {
                         when (review) {
@@ -467,7 +474,12 @@ fun SparkTransferScreen(
                                     review.dryRun.feeSats.takeIf { it > 0L },
                                 )
                             is SparkTransferReview.Withdrawal ->
-                                onExecuteSparkToLayer1()
+                                onExecuteSparkToLayer1(
+                                    review.destinationAddress,
+                                    review.requestedAmountSats,
+                                    review.feeSpeed,
+                                    review.isMaxSend,
+                                )
                         }
                         reviewState = null
                         amountInput = ""
@@ -1055,8 +1067,13 @@ fun SparkTransferScreen(
                             showCoinControl = true
                             return@Button
                         }
+                        // Set synchronously (not inside launch): the button's
+                        // enabled state derives from isPreparingReview, and a
+                        // double-tap before the first coroutine runs would
+                        // otherwise launch two preview coroutines.
+                        if (isPreparingReview) return@Button
+                        isPreparingReview = true
                         scope.launch {
-                            isPreparingReview = true
                             reviewError = null
                             try {
                                 if (isLayer1ToSpark) {
@@ -1100,6 +1117,9 @@ fun SparkTransferScreen(
                                         amountSats = preview.amountSats ?: amountSats,
                                         destinationAddress = address,
                                         preview = preview,
+                                        requestedAmountSats = amountSats,
+                                        feeSpeed = withdrawalFeeSpeed,
+                                        isMaxSend = isMaxMode,
                                     )
                                 }
                             } catch (e: Exception) {

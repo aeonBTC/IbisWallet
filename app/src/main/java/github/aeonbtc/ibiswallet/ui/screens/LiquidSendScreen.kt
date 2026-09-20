@@ -152,7 +152,7 @@ fun LiquidSendScreen(
     liquidUtxos: List<UtxoInfo> = emptyList(),
     spendUnconfirmed: Boolean = true,
     requireCoinControl: Boolean = false,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     draft: SendScreenDraft = SendScreenDraft(),
     liquidSendState: LiquidSendState = LiquidSendState.Idle,
     onUpdateDraft: (SendScreenDraft) -> Unit = {},
@@ -1023,91 +1023,50 @@ fun LiquidSendScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
-                    Card(
-                        modifier =
-                            Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable(enabled = liquidState.isInitialized && isMultiAvailable) {
-                                    if (!isMultiMode) {
-                                        isMultiMode = true
-                                        isMaxMode = false
-                                        if (multiRecipients.isEmpty()) {
-                                            if (liquidRecipient != null || amountInput.isNotBlank()) {
-                                                multiRecipients.add(
-                                                    Pair(
-                                                        liquidRecipient?.address ?: recipientAddress.trim(),
-                                                        amountInput,
-                                                    ),
-                                                )
-                                            }
-                                            if (multiRecipients.isEmpty()) {
-                                                multiRecipients.add("" to "")
-                                            }
-                                            if (multiRecipients.size < 2) {
-                                                multiRecipients.add("" to "")
-                                            }
-                                        }
-                                        showMultiDialog = true
-                                    } else {
-                                        isMultiMode = false
-                                        onResetSend()
+                    MultiRecipientToggleChip(
+                        isMultiMode = isMultiMode,
+                        enabled = liquidState.isInitialized,
+                        available = isMultiAvailable,
+                        accentColor = LiquidTeal,
+                        onClick = {
+                            if (!isMultiMode) {
+                                isMultiMode = true
+                                isMaxMode = false
+                                if (multiRecipients.isEmpty()) {
+                                    if (liquidRecipient != null || amountInput.isNotBlank()) {
+                                        multiRecipients.add(
+                                            Pair(
+                                                liquidRecipient?.address ?: recipientAddress.trim(),
+                                                amountInput,
+                                            ),
+                                        )
                                     }
-                                },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor =
-                                when {
-                                    isMultiMode -> LiquidTeal.copy(alpha = 0.15f)
-                                    isMultiAvailable -> DarkSurface
-                                    else -> DarkSurface.copy(alpha = 0.6f)
-                                },
-                        ),
-                        border = BorderStroke(
-                            1.dp,
-                            when {
-                                isMultiMode -> LiquidTeal
-                                isMultiAvailable -> BorderColor
-                                else -> BorderColor.copy(alpha = 0.5f)
-                            },
-                        ),
-                    ) {
-                        Text(
-                            text =
-                                if (isMultiMode) {
-                                    "${stringResource(R.string.loc_fcc11f52)} (${multiRecipientList.size})"
-                                } else {
-                                    stringResource(R.string.loc_fcc11f52)
-                                },
-                            style = MaterialTheme.typography.labelMedium,
-                            color =
-                                when {
-                                    isMultiMode -> LiquidTeal
-                                    isMultiAvailable -> TextSecondary
-                                    else -> TextSecondary.copy(alpha = 0.5f)
-                                },
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                        )
-                    }
+                                    if (multiRecipients.isEmpty()) {
+                                        multiRecipients.add("" to "")
+                                    }
+                                    if (multiRecipients.size < 2) {
+                                        multiRecipients.add("" to "")
+                                    }
+                                }
+                                showMultiDialog = true
+                            } else {
+                                isMultiMode = false
+                                onResetSend()
+                            }
+                        },
+                    )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
 
                 if (isMultiMode) {
-                    Card(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { showMultiDialog = true },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        border = BorderStroke(1.dp, BorderColor),
+                    RecipientsSummaryCard(
+                        modifier = Modifier.clickable { showMultiDialog = true },
+                        accentColor = LiquidTeal,
+                        onAddRecipient = {
+                            multiRecipients.add("" to "")
+                            showMultiDialog = true
+                        },
                     ) {
-                        Column(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(12.dp),
-                        ) {
                             if (multiRecipientList.isEmpty()) {
                                 Text(
                                     text = stringResource(R.string.loc_8a1057a2),
@@ -1156,7 +1115,6 @@ fun LiquidSendScreen(
                                     )
                                 }
                             }
-                        }
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
@@ -2073,7 +2031,10 @@ private fun LiquidSendReviewContent(
             preview.recipientDisplay.let { it.take(8) + "..." + it.takeLast(8) }
         }
     val feeSubtitle =
-        preview.txVBytes?.let { "${formatFeeRate(preview.feeRate)} sat/vB • ${formatVBytes(it)} vB" }
+        preview.txVBytes
+            ?.takeIf { it > 0.0 }
+            ?.let { "${formatFeeRate(preview.feeRate)} sat/vB • ${formatVBytes(it)} vB" }
+            ?: "${formatFeeRate(preview.feeRate)} sat/vB"
 
     if (preview.recipients.size > 1) {
         Text(
@@ -2338,9 +2299,13 @@ private fun AssetSendReviewContent(
     }
 
     preview.feeSats?.let { feeSats ->
-        val feeRateInfo = preview.txVBytes?.let {
-            "${formatFeeRate(preview.feeRate)} sat/vB • ${formatVBytes(it)} vB"
-        }
+        val feeRateInfo =
+            preview.txVBytes
+                ?.takeIf { it > 0.0 }
+                ?.let {
+                    "${formatFeeRate(preview.feeRate)} sat/vB • ${formatVBytes(it)} vB"
+                }
+                ?: "${formatFeeRate(preview.feeRate)} sat/vB"
         LiquidReviewFeeRow(
             label = "Liquid Network Fee:",
             valueText = liquidReviewAmountText(feeSats, useSats, privacyMode, "-"),
@@ -2413,7 +2378,10 @@ private fun LightningSendReviewContent(
             }
         }
     val feeRateInfo =
-        preview.txVBytes?.let { "${formatFeeRate(preview.feeRate)} sat/vB • ${formatVBytes(it)} vB" }
+        preview.txVBytes
+            ?.takeIf { it > 0.0 }
+            ?.let { "${formatFeeRate(preview.feeRate)} sat/vB • ${formatVBytes(it)} vB" }
+            ?: "${formatFeeRate(preview.feeRate)} sat/vB"
     val feeLines =
         buildList {
             boltzFeeSats?.takeIf { it > 0L }?.let { fee ->
@@ -2716,7 +2684,7 @@ private fun LiquidCoinControlDialog(
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean,
     spendUnconfirmed: Boolean,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     onUtxoToggle: (UtxoInfo) -> Unit,
     onSelectAll: () -> Unit,
     onClearAll: () -> Unit,

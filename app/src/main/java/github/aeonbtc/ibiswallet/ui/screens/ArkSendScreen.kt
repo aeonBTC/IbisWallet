@@ -126,6 +126,10 @@ fun ArkSendScreen(
     var isMaxMode by remember { mutableStateOf(draft.isMaxSend) }
     var isMultiMode by remember { mutableStateOf(false) }
     var showMultiDialog by remember { mutableStateOf(false) }
+    // Sync Review-click lock (same pattern as Transfer isPreparingReview): repo
+    // preview has no sendInFlight guard, so a double-tap would fire duplicate
+    // prepareSend quotes with last-wins. Cleared when Preview/Error lands.
+    var isPreparingReview by remember { mutableStateOf(false) }
     val multiRecipients = remember { mutableStateListOf<Pair<String, String>>() }
 
     val nfcReaderOwner = remember { Any() }
@@ -178,7 +182,7 @@ fun ArkSendScreen(
                 layer2RecipientValidationError(parsedRecipient, Layer2Provider.ARK, context = context)
             }
         }
-    val recipientBadges = remember(parsedRecipient) { arkRecipientModeBadges(parsedRecipient) }
+    val recipientBadges = arkRecipientModeBadges(parsedRecipient)
     val busy =
         sendState is ArkSendState.Preparing ||
             sendState is ArkSendState.Sending ||
@@ -191,18 +195,24 @@ fun ArkSendScreen(
         }
 
     fun parseMultiAmountToSats(raw: String): Long? {
-        val t = raw.trim()
+        val t = raw.trim().replace(",", "").replace(" ", "")
         if (t.isEmpty()) return null
         return when {
             isUsdMode -> {
                 val usd = t.toDoubleOrNull() ?: return null
+                if (!usd.isFinite() || usd <= 0.0) return null
                 if (btcPrice == null || btcPrice <= 0) return null
-                ((usd / btcPrice) * 100_000_000.0).roundToLong().takeIf { it > 0L }
+                val sats = (usd / btcPrice) * 100_000_000.0
+                if (!sats.isFinite() || sats <= 0.0 || sats > Long.MAX_VALUE.toDouble()) return null
+                sats.roundToLong().takeIf { it > 0L }
             }
             useSats -> t.toLongOrNull()?.takeIf { it > 0L }
             else -> {
                 val btc = t.toDoubleOrNull() ?: return null
-                (btc * 100_000_000.0).roundToLong().takeIf { it > 0L }
+                if (!btc.isFinite() || btc <= 0.0) return null
+                val sats = btc * 100_000_000.0
+                if (!sats.isFinite() || sats <= 0.0 || sats > Long.MAX_VALUE.toDouble()) return null
+                sats.roundToLong().takeIf { it > 0L }
             }
         }
     }
@@ -295,7 +305,8 @@ fun ArkSendScreen(
                 stringResource(
                     R.string.balance_insufficient_funds_available_format,
                     formatAmount(availableSats.toULong(), useSats, includeUnit = false),
-                    if (useSats) "sats" else "BTC",
+                    // BTC ticker + sats unit are protocol tokens (untranslatable per AGENTS).
+                    if (useSats) stringResource(R.string.loc_9384ed0d) else "BTC",
                 )
             } else {
                 null
@@ -306,15 +317,27 @@ fun ArkSendScreen(
                 multiTotalSats > 0L &&
                 multiTotalSats <= availableSats &&
                 !busy &&
+                !isPreparingReview &&
                 prepareError == null
         } else {
             paymentRequest.isNotBlank() &&
                 recipientValidationError == null &&
                 !busy &&
+                !isPreparingReview &&
                 prepareError == null &&
                 !arkClientOverBalance &&
                 hasUsableSendAmount
         }
+
+    // Release the sync Review lock once the async preview settles.
+    LaunchedEffect(sendState) {
+        if (sendState is ArkSendState.Preview ||
+            sendState is ArkSendState.MultiPreview ||
+            sendState is ArkSendState.Error
+        ) {
+            isPreparingReview = false
+        }
+    }
 
     fun applyParsedRecipient(parsed: ParsedSendRecipient) {
         when (parsed) {
@@ -411,21 +434,26 @@ fun ArkSendScreen(
             useSats = useSats,
             btcPrice = btcPrice,
             fiatCurrency = fiatCurrency,
-            privacyMode = privacyMode,
+            // Confirm dialog always shows real amounts (privacy mode is ambient-only).
+            // The user must verify exact values before authorizing — same as Transfer.
+            privacyMode = false,
             onConfirm = {
                 when (sendState) {
                     is ArkSendState.MultiPreview -> onSendPreparedMany()
+                    is ArkSendState.MultiSent ->
+                        if (sendState.failed > 0) onSendPreparedMany() else onSendPrepared()
                     else -> onSendPrepared()
                 }
             },
             onDismiss = {
                 showConfirmDialog = false
                 when (sendState) {
-                    is ArkSendState.Sent,
-                    is ArkSendState.MultiSent,
-                    -> clearSuccessfulSendDraft()
+                    is ArkSendState.Sent -> clearSuccessfulSendDraft()
+                    is ArkSendState.MultiSent ->
+                        if (sendState.failed == 0) clearSuccessfulSendDraft()
                     is ArkSendState.Error -> {
                         prepareError = sendState.message
+                        isPreparingReview = false
                         onResetSend()
                     }
                     is ArkSendState.Sending,
@@ -433,11 +461,18 @@ fun ArkSendScreen(
                     -> {
                         // Allow closing while pay is in flight; result lands in history.
                     }
-                    else -> onResetSend()
+                    is ArkSendState.Preparing -> {
+                        // Keep the sync lock until Preview/Error lands.
+                    }
+                    else -> {
+                        isPreparingReview = false
+                        onResetSend()
+                    }
                 }
             },
             onDone = {
                 showConfirmDialog = false
+                isPreparingReview = false
                 clearSuccessfulSendDraft()
             },
         )
@@ -535,15 +570,10 @@ fun ArkSendScreen(
                         style = MaterialTheme.typography.labelLarge,
                         color = TextSecondary,
                     )
-                    ArkChipButton(
-                        text =
-                            if (isMultiMode) {
-                                "${stringResource(R.string.loc_fcc11f52)} (${multiRecipientPairs.size})"
-                            } else {
-                                stringResource(R.string.loc_fcc11f52)
-                            },
-                        selected = isMultiMode,
+                    MultiRecipientToggleChip(
+                        isMultiMode = isMultiMode,
                         enabled = !busy,
+                        accentColor = ArkRust,
                         onClick = {
                             if (!isMultiMode) {
                                 isMultiMode = true
@@ -564,16 +594,16 @@ fun ArkSendScreen(
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 if (isMultiMode) {
-                    Card(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !busy) { showMultiDialog = true },
-                        shape = RoundedCornerShape(8.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurface),
-                        border = BorderStroke(1.dp, ArkRust),
+                    RecipientsSummaryCard(
+                        modifier = Modifier.clickable(enabled = !busy) { showMultiDialog = true },
+                        accentColor = ArkRust,
+                        borderColor = ArkRust,
+                        addEnabled = !busy,
+                        onAddRecipient = {
+                            multiRecipients.add("" to "")
+                            showMultiDialog = true
+                        },
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
                             Text(
                                 text = stringResource(R.string.send_recipients_title_format, multiRecipientPairs.size),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -599,7 +629,6 @@ fun ArkSendScreen(
                                     color = ArkRust,
                                 )
                             }
-                        }
                     }
                 } else {
                     OutlinedTextField(
@@ -869,6 +898,7 @@ fun ArkSendScreen(
         Button(
             onClick = {
                 val label = labelText.trim().takeIf { it.isNotBlank() }
+                isPreparingReview = true
                 showConfirmDialog = true
                 if (isMultiMode) {
                     onPrepareSendMany(multiRecipientPairs, label)
@@ -978,16 +1008,17 @@ private fun ArkRecipientModeBadgeChip(
     }
 }
 
+@Composable
 private fun arkRecipientModeBadges(parsed: ParsedSendRecipient): List<Pair<String, Color>> =
     when (parsed) {
-        is ParsedSendRecipient.Bitcoin -> listOf("Bitcoin" to BitcoinOrange)
-        is ParsedSendRecipient.Ark -> listOf("Ark" to ArkRust)
+        is ParsedSendRecipient.Bitcoin -> listOf(stringResource(R.string.loc_197cebf2) to BitcoinOrange)
+        is ParsedSendRecipient.Ark -> listOf(stringResource(R.string.ark_title) to ArkRust)
         is ParsedSendRecipient.Lightning ->
             when {
-                isLightningAddressPayment(parsed) -> listOf("LN Address" to LightningYellow)
+                isLightningAddressPayment(parsed) -> listOf(stringResource(R.string.ark_send_badge_ln_address) to LightningYellow)
                 parsed.kind == LightningKind.LNURL -> listOf("LNURL" to LightningYellow)
                 parsed.kind == LightningKind.BOLT12 -> listOf("BOLT12" to LightningYellow)
-                else -> listOf("Lightning" to LightningYellow)
+                else -> listOf(stringResource(R.string.ark_movement_lightning) to LightningYellow)
             }
         else -> emptyList()
     }
@@ -1138,12 +1169,37 @@ private fun ArkSendConfirmationDialog(
                 is ArkSendState.Sent,
                 is ArkSendState.MultiSent,
                     -> {
+                    val canRetryRemainder =
+                        sendState is ArkSendState.MultiSent && sendState.failed > 0
+                    if (canRetryRemainder) {
+                        Button(
+                            onClick = onConfirm,
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            colors =
+                                ButtonDefaults.buttonColors(
+                                    containerColor = ArkRust,
+                                    contentColor = DarkBackground,
+                                ),
+                        ) {
+                            Text(
+                                stringResource(R.string.ark_send_multi_retry),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
                     Spacer(modifier = Modifier.height(10.dp))
                     HorizontalDivider(color = BorderColor)
                     Spacer(modifier = Modifier.height(8.dp))
                     IbisButton(
                         onClick =
-                            if (sendState is ArkSendState.Sent || sendState is ArkSendState.MultiSent) {
+                            if (sendState is ArkSendState.Sent ||
+                                (sendState is ArkSendState.MultiSent && sendState.failed == 0)
+                            ) {
                                 onDone
                             } else {
                                 onDismiss
@@ -1233,6 +1289,17 @@ private fun ArkSendConfirmationDialog(
                             formatAmount(sendState.totalAmountSats.toULong(), useSats, includeUnit = true),
                     style = MaterialTheme.typography.bodyMedium,
                     color = TextPrimary,
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text =
+                        stringResource(
+                            R.string.balance_fee_amount_format,
+                            formatAmount(sendState.totalFeeSats.toULong(), useSats, includeUnit = false),
+                            if (useSats) stringResource(R.string.loc_9384ed0d) else "BTC",
+                        ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
                 )
             }
             ArkSendState.Sending -> ArkSendProgressContent()
@@ -1578,7 +1645,11 @@ private fun ArkReviewDivider() {
 private fun arkReviewAmountText(
     value: Long,
     useSats: Boolean,
-): String = "-${formatAmount(value.toULong(), useSats, includeUnit = true)}"
+): String {
+    // Zero is not a debit — never render "-0 sats".
+    val formatted = formatAmount(value.coerceAtLeast(0L).toULong(), useSats, includeUnit = true)
+    return if (value > 0L) "-$formatted" else formatted
+}
 
 private fun arkReviewUsdSubtext(
     value: Long,
@@ -1657,14 +1728,27 @@ private fun parseArkSendAmount(
     isUsdMode: Boolean,
     btcPrice: Double?,
 ): Long? {
-    val trimmed = input.trim()
+    val trimmed = input.trim().replace(",", "").replace(" ", "")
     if (trimmed.isBlank()) return null
+    // USD mode without a price must never fall through to BTC parsing ($10 -> 10 BTC).
+    if (isUsdMode) {
+        if (btcPrice == null || btcPrice <= 0) return null
+        val fiat = trimmed.toDoubleOrNull() ?: return null
+        if (!fiat.isFinite() || fiat <= 0.0) return null
+        val sats = (fiat / btcPrice) * 100_000_000.0
+        if (!sats.isFinite() || sats <= 0.0 || sats > Long.MAX_VALUE.toDouble()) return null
+        return sats.roundToLong().takeIf { it > 0 }
+    }
     return when {
-        isUsdMode && btcPrice != null && btcPrice > 0 ->
-            trimmed.toDoubleOrNull()?.let { ((it / btcPrice) * 100_000_000).roundToLong() }
-        useSats -> trimmed.toLongOrNull()
-        else -> trimmed.toDoubleOrNull()?.let { (it * 100_000_000).roundToLong() }
-    }?.takeIf { it > 0 }
+        useSats -> trimmed.toLongOrNull()?.takeIf { it > 0 }
+        else -> {
+            val btc = trimmed.toDoubleOrNull() ?: return null
+            if (!btc.isFinite() || btc <= 0.0) return null
+            val sats = btc * 100_000_000.0
+            if (!sats.isFinite() || sats <= 0.0 || sats > Long.MAX_VALUE.toDouble()) return null
+            sats.roundToLong().takeIf { it > 0 }
+        }
+    }
 }
 
 private fun convertArkAmountInput(

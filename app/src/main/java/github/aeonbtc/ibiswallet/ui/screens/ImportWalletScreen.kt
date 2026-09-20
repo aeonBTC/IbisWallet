@@ -2,9 +2,7 @@
 
 package github.aeonbtc.ibiswallet.ui.screens
 
-import android.content.Context
 import android.net.Uri
-import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -39,7 +37,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -127,17 +124,17 @@ import org.bitcoindevkit.KeychainKind
 import org.bitcoindevkit.Mnemonic
 import org.bitcoindevkit.Network
 import org.bitcoindevkit.NetworkKind
-import org.json.JSONObject
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ImportWalletScreen(
     onImport: (config: WalletImportConfig) -> Unit,
     onImportLiquidWatchOnly: (name: String, ctDescriptor: String, gapLimit: Int) -> Unit = { _, _, _ -> },
-    onImportFromBackup: (backupJson: JSONObject, importServerSettings: Boolean) -> Unit = { _, _ -> },
-    onParseBackupFile: suspend (uri: Uri, password: String?) -> JSONObject = { _, _ -> JSONObject() },
     onBack: () -> Unit,
     onSweepPrivateKey: () -> Unit = {},
+    onOpenChecksumHelper: () -> Unit = {},
+    prefillResult: String? = null,
+    onChecksumResultConsumed: () -> Unit = {},
     existingWalletNames: List<String> = emptyList(),
     isLoading: Boolean = false,
     error: String? = null,
@@ -156,66 +153,35 @@ fun ImportWalletScreen(
     var multisigLocalCosignerPassphrase by remember { mutableStateOf("") }
     var showMultisigLocalCosignerPassphrase by remember { mutableStateOf(false) }
 
-    // Backup restore state
-    var backupFileUri by remember { mutableStateOf<Uri?>(null) }
-    var backupFileName by remember { mutableStateOf<String?>(null) }
-    var backupPassword by remember { mutableStateOf("") }
-    var showBackupPassword by remember { mutableStateOf(false) }
-    var backupIsEncrypted by remember { mutableStateOf<Boolean?>(null) }
-    var backupError by remember { mutableStateOf<String?>(null) }
-    var backupParsedJson by remember { mutableStateOf<JSONObject?>(null) }
-    var isParsingBackup by remember { mutableStateOf(false) }
-    var importServerSettings by remember { mutableStateOf(true) }
-    var showBackupRestoreDialog by remember { mutableStateOf(false) }
-    val backupCoroutineScope = rememberCoroutineScope()
+    // Prefill from the checksum helper screen (consumed once applied)
+    LaunchedEffect(prefillResult) {
+        val result = prefillResult?.trim().orEmpty()
+        if (result.isNotEmpty() && result != keyMaterialField.text.trim()) {
+            keyMaterialField =
+                TextFieldValue(
+                    text = result,
+                    selection = TextRange(result.length),
+                )
+            manualMultisigLocalCosignerMaterial = null
+            multisigLocalCosignerField = ""
+            multisigLocalCosignerPassphrase = ""
+            scannerError = null
+            onChecksumResultConsumed()
+        }
+    }
+
+    // File picker state (multisig config import)
+    val filePickerScope = rememberCoroutineScope()
     val context = LocalContext.current
     val mainActivity = context as? MainActivity
-    val backupParseFallbackError = stringResource(R.string.loc_53017e88)
     val walletConfigFileReadError = stringResource(R.string.loc_e61e3fea)
-    val backupDecryptPasswordError = stringResource(R.string.loc_94b6dca8)
-    val backupDecryptFallbackError = stringResource(R.string.loc_20968582)
-
-    val backupFilePickerLauncher =
-        rememberLauncherForActivityResult(
-            contract = ActivityResultContracts.OpenDocument(),
-        ) { uri: Uri? ->
-            if (uri != null) {
-                backupFileUri = uri
-                backupFileName = getDisplayNameFromUri(context, uri) ?: "backup.json"
-                backupIsEncrypted = null
-                backupError = null
-                backupParsedJson = null
-                backupPassword = ""
-                showBackupRestoreDialog = true
-
-                // Try to parse without password first to check if encrypted
-                backupCoroutineScope.launch {
-                    isParsingBackup = true
-                    try {
-                        val json = onParseBackupFile(uri, null)
-                        backupIsEncrypted = false
-                        backupParsedJson = json
-                        backupError = null
-                    } catch (e: Exception) {
-                        if (e.message?.contains("encrypted", ignoreCase = true) == true) {
-                            backupIsEncrypted = true
-                            backupError = null
-                        } else {
-                            backupError = e.message ?: backupParseFallbackError
-                        }
-                    } finally {
-                        isParsingBackup = false
-                    }
-                }
-            }
-        }
 
     val walletConfigFilePickerLauncher =
         rememberLauncherForActivityResult(
             contract = ActivityResultContracts.OpenDocument(),
         ) { uri: Uri? ->
             if (uri != null) {
-                backupCoroutineScope.launch {
+                filePickerScope.launch {
                     try {
                         val content =
                             withContext(Dispatchers.IO) {
@@ -313,6 +279,12 @@ fun ImportWalletScreen(
             }
         }
     val isMultisigConfig = multisigConfig != null
+    val isMultisigMismatch =
+        remember(keyMaterial) {
+            multisigConfig == null &&
+                MultisigWalletParser.looksLikeMultisig(trimmedInput) &&
+                trimmedInput.contains("multi(", ignoreCase = true)
+        }
     val importedMultisigLocalCosignerMaterial =
         remember(multisigConfig, multisigLocalCosignerField, multisigLocalCosignerPassphrase) {
             multisigConfig?.let {
@@ -341,11 +313,7 @@ fun ImportWalletScreen(
             looksLikeLiquidDescriptorInput || isMultisigConfig
     val isWatchOnly =
         isWatchOnlyKey &&
-            !trimmedInput.let {
-                it.startsWith("xprv") || it.startsWith("yprv") ||
-                    it.startsWith("zprv") ||
-                    it.contains("xprv")
-            }
+            !BitcoinUtils.isExtendedPrivateKeyMaterial(trimmedInput)
 
     // Detect WIF private key (K/L/5 for mainnet)
     val isWifKey =
@@ -531,6 +499,7 @@ fun ImportWalletScreen(
         unsupportedNonMainnetReason == null &&
             unsupportedNestedSegwitReason == null &&
             multisigLocalCosignerValid &&
+            !isMultisigMismatch &&
             (isWatchOnlyKey || isExtendedKey || isValidMnemonic || isWifKey || isBitcoinAddress || isLiquidCtDescriptor || isMultisigConfig)
 
     // Auto-generate wallet name based on input type with incremental suffix
@@ -645,58 +614,6 @@ fun ImportWalletScreen(
                 }
             },
             onDismiss = { showQrScanner = false },
-        )
-    }
-
-    if (showBackupRestoreDialog && backupFileUri != null) {
-        BackupRestoreDialog(
-            fileName = backupFileName ?: "backup.json",
-            backupParsedJson = backupParsedJson,
-            backupIsEncrypted = backupIsEncrypted,
-            backupPassword = backupPassword,
-            onBackupPasswordChange = { backupPassword = it },
-            showBackupPassword = showBackupPassword,
-            onToggleShowBackupPassword = { showBackupPassword = !showBackupPassword },
-            backupError = backupError,
-            isParsingBackup = isParsingBackup,
-            importServerSettings = importServerSettings,
-            onImportServerSettingsChange = { importServerSettings = it },
-            isLoading = isLoading,
-            onDecrypt = {
-                backupCoroutineScope.launch {
-                    isParsingBackup = true
-                    backupError = null
-                    try {
-                        val json = onParseBackupFile(backupFileUri!!, backupPassword)
-                        backupParsedJson = json
-                        backupError = null
-                    } catch (e: Exception) {
-                        backupError =
-                            if (e.message?.contains("mac", ignoreCase = true) == true ||
-                                e.message?.contains("tag", ignoreCase = true) == true ||
-                                e.message?.contains("AEADBadTagException", ignoreCase = true) == true
-                            ) {
-                                backupDecryptPasswordError
-                            } else {
-                                e.message ?: backupDecryptFallbackError
-                            }
-                        backupParsedJson = null
-                    } finally {
-                        isParsingBackup = false
-                    }
-                }
-            },
-            onConfirmRestore = {
-                backupParsedJson?.let { json ->
-                    onImportFromBackup(json, importServerSettings)
-                }
-            },
-            onChooseDifferentFile = {
-                showBackupRestoreDialog = false
-                mainActivity?.skipNextBackgroundLockForActivityResult()
-                backupFilePickerLauncher.launch(arrayOf("application/json", "*/*"))
-            },
-            onDismiss = { showBackupRestoreDialog = false },
         )
     }
 
@@ -989,6 +906,13 @@ fun ImportWalletScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         when {
+                            isMultisigMismatch -> {
+                                Text(
+                                    text = stringResource(R.string.import_multisig_mismatch),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ErrorRed,
+                                )
+                            }
                             isMultisigConfig -> {
                                 val multisig = requireNotNull(multisigConfig)
                                 Column {
@@ -1007,6 +931,11 @@ fun ImportWalletScreen(
                                                 R.string.import_wallet_cosigners_line,
                                                 multisig.totalCosigners,
                                             ),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary,
+                                    )
+                                    Text(
+                                        text = multisig.cosigners.joinToString(" ") { it.fingerprint },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = TextSecondary,
                                     )
@@ -1166,7 +1095,7 @@ fun ImportWalletScreen(
                             val attached =
                                 manualMultisigLocalCosignerMaterial != null ||
                                     importedMultisigLocalCosignerMaterial != null ||
-                                    keyMaterial.contains("prv", ignoreCase = true)
+                                    BitcoinUtils.isExtendedPrivateKeyMaterial(keyMaterial)
                             Text(
                                 text =
                                     when {
@@ -1709,7 +1638,7 @@ fun ImportWalletScreen(
                         localCosignerKeyMaterial =
                             manualMultisigLocalCosignerMaterial
                                 ?: importedMultisigLocalCosignerMaterial
-                                ?: if (isMultisigConfig && keyMaterial.contains("prv", ignoreCase = true)) {
+                                ?: if (isMultisigConfig && BitcoinUtils.isExtendedPrivateKeyMaterial(keyMaterial)) {
                                 keyMaterial.trim()
                             } else {
                                 null
@@ -1839,64 +1768,32 @@ fun ImportWalletScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Restore from Backup Section
+        // Sweep Section
         Text(
-            text = stringResource(R.string.loc_0e42bd4f),
+            text = stringResource(R.string.loc_380cec3b),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        Text(
-            text = stringResource(R.string.loc_0eeb7864),
-            style = MaterialTheme.typography.bodySmall,
-            color = TextSecondary,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
         IbisButton(
-            onClick = {
-                mainActivity?.skipNextBackgroundLockForActivityResult()
-                backupFilePickerLauncher.launch(arrayOf("application/json", "*/*"))
-            },
+            onClick = onSweepPrivateKey,
             modifier =
                 Modifier
                     .fillMaxWidth()
                     .height(48.dp),
         ) {
             Icon(
-                imageVector = Icons.Default.FolderOpen,
+                imageVector = Icons.Default.Key,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = backupFileName ?: stringResource(R.string.loc_e4783294),
+                text = stringResource(R.string.loc_ba4c3466),
                 style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
-        }
-
-        if (backupFileUri != null) {
-            Spacer(modifier = Modifier.height(8.dp))
-            TextButton(
-                onClick = { showBackupRestoreDialog = true },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = !isParsingBackup,
-            ) {
-                Text(
-                    text =
-                        if (isParsingBackup) {
-                            stringResource(R.string.loc_5bc64b9b)
-                        } else {
-                            stringResource(R.string.loc_ab6580da)
-                        },
-                    color = BitcoinOrange,
-                )
-            }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
@@ -1924,17 +1821,25 @@ fun ImportWalletScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Sweep Section
+        // Checksum Helper Section
         Text(
-            text = stringResource(R.string.loc_380cec3b),
+            text = stringResource(R.string.loc_7f2c91aa),
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        Text(
+            text = stringResource(R.string.loc_3d8b44f1),
+            style = MaterialTheme.typography.bodySmall,
+            color = TextSecondary,
         )
 
         Spacer(modifier = Modifier.height(8.dp))
 
         IbisButton(
-            onClick = onSweepPrivateKey,
+            onClick = onOpenChecksumHelper,
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -1947,7 +1852,7 @@ fun ImportWalletScreen(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = stringResource(R.string.loc_ba4c3466),
+                text = stringResource(R.string.loc_9a1e70c4),
                 style = MaterialTheme.typography.titleMedium,
             )
         }
@@ -2005,461 +1910,6 @@ private fun AddressTypeButton(
 }
 
 @Composable
-private fun BackupRestoreDialog(
-    fileName: String,
-    backupParsedJson: JSONObject?,
-    backupIsEncrypted: Boolean?,
-    backupPassword: String,
-    onBackupPasswordChange: (String) -> Unit,
-    showBackupPassword: Boolean,
-    onToggleShowBackupPassword: () -> Unit,
-    backupError: String?,
-    isParsingBackup: Boolean,
-    importServerSettings: Boolean,
-    onImportServerSettingsChange: (Boolean) -> Unit,
-    isLoading: Boolean,
-    onDecrypt: () -> Unit,
-    onChooseDifferentFile: () -> Unit,
-    onConfirmRestore: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val canDismiss = !isParsingBackup && !isLoading
-    val scrollState = rememberScrollState()
-    val walletObj = backupParsedJson?.optJSONObject("wallet")
-    val labelsObj = backupParsedJson?.optJSONObject("labels")
-    val serverSettingsObj = backupParsedJson?.optJSONObject("serverSettings")
-    val hasServerSettings = serverSettingsObj != null
-    val unknownName = stringResource(R.string.loc_629b9e5b)
-    val watchOnlySuffix = stringResource(R.string.loc_25d748f3)
-
-    Dialog(
-        onDismissRequest = {
-            if (canDismiss) {
-                onDismiss()
-            }
-        },
-        properties =
-            DialogProperties(
-                usePlatformDefaultWidth = false,
-                dismissOnBackPress = canDismiss,
-                dismissOnClickOutside = canDismiss,
-            ),
-    ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = DarkCard,
-        ) {
-            Column(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                        .verticalScroll(scrollState),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = stringResource(R.string.loc_0e42bd4f),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
-                    IconButton(
-                        onClick = onDismiss,
-                        enabled = canDismiss,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.loc_d2c0aec0),
-                            tint = if (canDismiss) TextSecondary else TextSecondary.copy(alpha = 0.4f),
-                        )
-                    }
-                }
-
-                Text(
-                    text = fileName,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                when {
-                    isParsingBackup -> {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                color = BitcoinOrange,
-                                strokeWidth = 2.dp,
-                            )
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text(
-                                text = stringResource(R.string.loc_5bc64b9b),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = TextSecondary,
-                            )
-                        }
-                    }
-
-                    backupParsedJson != null -> {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                CardDefaults.cardColors(
-                                    containerColor = SuccessGreen.copy(alpha = 0.1f),
-                                ),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp),
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.loc_3de64ebf),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = SuccessGreen,
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text =
-                                        stringResource(
-                                            R.string.loc_a422f393,
-                                            walletObj?.optString("name")?.takeIf { it.isNotBlank() }
-                                                ?: unknownName,
-                                        ),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary,
-                                )
-                                val addressType = walletObj?.optString("addressType", "") ?: ""
-                                val isWatchOnly = walletObj?.optBoolean("isWatchOnly", false) == true
-                                val resolvedAddressType =
-                                    addressType.takeIf { it.isNotBlank() } ?: unknownName
-                                Text(
-                                    text =
-                                        if (isWatchOnly) {
-                                            stringResource(
-                                                R.string.import_wallet_address_line_watch,
-                                                resolvedAddressType,
-                                                watchOnlySuffix,
-                                            )
-                                        } else {
-                                            resolvedAddressType
-                                        },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary,
-                                )
-
-                                labelsObj?.let {
-                                    val addressCount = it.optJSONObject("addresses")?.length() ?: 0
-                                    val transactionCount = it.optJSONObject("transactions")?.length() ?: 0
-                                    val addrPart =
-                                        pluralStringResource(
-                                            R.plurals.import_backup_label_address_count,
-                                            addressCount,
-                                            addressCount,
-                                        )
-                                    val txPart =
-                                        pluralStringResource(
-                                            R.plurals.import_backup_label_transaction_count,
-                                            transactionCount,
-                                            transactionCount,
-                                        )
-                                    Text(
-                                        text =
-                                            stringResource(
-                                                R.string.import_backup_labels_line,
-                                                addrPart,
-                                                txPart,
-                                            ),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = TextSecondary,
-                                    )
-                                }
-
-                                serverSettingsObj?.let {
-                                    val serverCount = it.optJSONArray("electrumServers")?.length() ?: 0
-                                    val liquidServerCount = it.optJSONArray("liquidServers")?.length() ?: 0
-                                    val hasExplorerUrl =
-                                        !it.optJSONObject("blockExplorer")?.optString("customUrl", "").isNullOrBlank()
-                                    val hasFeeUrl =
-                                        !it.optJSONObject("feeSource")?.optString("customUrl", "").isNullOrBlank()
-                                    val hasLiquidExplorer =
-                                        it.optString("liquidExplorer", "").isNotBlank() ||
-                                            !it.optString("liquidExplorerCustomUrl", "").isNullOrBlank()
-                                    val hasLiquidConnectivity =
-                                        it.has("liquidTorEnabled") ||
-                                            it.has("liquidAutoSwitch") ||
-                                            it.has("liquidServerSelectedByUser")
-                                    val blockExplorerLabel = stringResource(R.string.loc_929a5c05)
-                                    val feeSourceLabel = stringResource(R.string.loc_90799139)
-                                    val liquidExplorerLabel = stringResource(R.string.loc_52640f61)
-                                    val liquidConnectivityLabel = stringResource(R.string.loc_b61cfdd3)
-                                    val parts = mutableListOf<String>()
-                                    if (serverCount > 0) {
-                                        parts.add(
-                                            pluralStringResource(
-                                                R.plurals.import_backup_electrum_servers,
-                                                serverCount,
-                                                serverCount,
-                                            ),
-                                        )
-                                    }
-                                    if (liquidServerCount > 0) {
-                                        parts.add(
-                                            pluralStringResource(
-                                                R.plurals.import_backup_liquid_servers,
-                                                liquidServerCount,
-                                                liquidServerCount,
-                                            ),
-                                        )
-                                    }
-                                    if (hasExplorerUrl) {
-                                        parts.add(blockExplorerLabel)
-                                    }
-                                    if (hasFeeUrl) {
-                                        parts.add(feeSourceLabel)
-                                    }
-                                    if (hasLiquidExplorer) {
-                                        parts.add(liquidExplorerLabel)
-                                    }
-                                    if (hasLiquidConnectivity) {
-                                        parts.add(liquidConnectivityLabel)
-                                    }
-                                    Text(
-                                        text =
-                                            stringResource(
-                                                R.string.import_backup_server_settings_line,
-                                                parts.joinToString(", "),
-                                            ),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = TextSecondary,
-                                    )
-                                }
-                            }
-                        }
-
-                        if (hasServerSettings) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Row(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { onImportServerSettingsChange(!importServerSettings) }
-                                        .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = stringResource(R.string.loc_82807e0f),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onBackground,
-                                    )
-                                    Text(
-                                        text = stringResource(R.string.loc_997e26df),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = TextSecondary,
-                                    )
-                                }
-                                SquareToggle(
-                                    checked = importServerSettings,
-                                    onCheckedChange = onImportServerSettingsChange,
-                                )
-                            }
-                        }
-                    }
-
-                    backupIsEncrypted == true -> {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = stringResource(R.string.loc_867cb15f),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = BitcoinOrange,
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = stringResource(R.string.loc_bf01e3a2),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        OutlinedTextField(
-                            value = backupPassword,
-                            onValueChange = onBackupPasswordChange,
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text(stringResource(R.string.loc_1cdedba2), color = TextSecondary) },
-                            singleLine = true,
-                            visualTransformation =
-                                if (showBackupPassword) {
-                                    VisualTransformation.None
-                                } else {
-                                    PasswordVisualTransformation()
-                                },
-                            keyboardOptions =
-                                KeyboardOptions(
-                                    autoCorrectEnabled = false,
-                                    keyboardType = KeyboardType.Password,
-                                ),
-                            trailingIcon = {
-                                IconButton(onClick = onToggleShowBackupPassword) {
-                                    Icon(
-                                        imageVector =
-                                            if (showBackupPassword) {
-                                                Icons.Default.Visibility
-                                            } else {
-                                                Icons.Default.VisibilityOff
-                                            },
-                                        contentDescription = null,
-                                        tint = TextSecondary,
-                                    )
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = BitcoinOrange,
-                                    unfocusedBorderColor = BorderColor,
-                                    cursorColor = BitcoinOrange,
-                                ),
-                        )
-                    }
-
-                    backupError != null -> {
-                        Text(
-                            text = backupError,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = ErrorRed,
-                        )
-                    }
-                }
-
-                if (backupError != null && (backupParsedJson != null || backupIsEncrypted == true)) {
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        text = backupError,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ErrorRed,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                when {
-                    backupParsedJson != null -> {
-                        IbisButton(
-                            onClick = onConfirmRestore,
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp),
-                            enabled = !isLoading,
-                        ) {
-                            if (isLoading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    strokeWidth = 2.dp,
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Default.Upload,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = stringResource(R.string.loc_7a2478a8),
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                            }
-                        }
-                    }
-
-                    backupIsEncrypted == true -> {
-                        IbisButton(
-                            onClick = onDecrypt,
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(48.dp),
-                            enabled = backupPassword.isNotEmpty(),
-                        ) {
-                            Text(
-                                text = stringResource(R.string.loc_f73683e2),
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                TextButton(
-                    onClick = onChooseDifferentFile,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !isLoading && !isParsingBackup,
-                ) {
-                    Text(
-                        text = stringResource(R.string.loc_e18f112a),
-                        color = BitcoinOrange,
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-                HorizontalDivider(color = BorderColor)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                IbisButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    enabled = canDismiss,
-                ) {
-                    Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
-                }
-            }
-        }
-    }
-}
-
-private fun getDisplayNameFromUri(
-    context: Context,
-    uri: Uri,
-): String? {
-    return runCatching {
-        context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-            val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-            if (nameIndex >= 0 && cursor.moveToFirst()) {
-                cursor.getString(nameIndex)
-            } else {
-                null
-            }
-        }
-    }.getOrNull()
-}
-
-@Composable
 private fun ManualMultisigDialog(
     existingWalletName: String,
     onDismiss: () -> Unit,
@@ -2493,7 +1943,7 @@ private fun ManualMultisigDialog(
             .filter(String::isNotBlank)
             .toList()
     val thresholdInt = threshold.toIntOrNull()
-    val fingerprintRegex = Regex("""^[0-9a-fA-F]{8}\s*:\s*[xyz]pub.+""")
+    val fingerprintRegex = Regex("""^[0-9a-fA-F]{8}\s*:\s*[xyzXYZ]pub.+""")
     val hasValidCosigners = cosignerLines.size >= 2 && cosignerLines.all { it.matches(fingerprintRegex) }
     val localCosignerMaterial =
         remember(threshold, derivationPath, localCosignerKey, localCosignerPassphrase, cosigners) {
@@ -2644,20 +2094,6 @@ private fun ManualMultisigDialog(
                         placeholder = { Text(stringResource(R.string.loc_2a428c88), color = TextSecondary.copy(alpha = 0.5f)) },
                         minLines = 4,
                         isError = cosigners.isNotBlank() && !hasValidCosigners,
-                        supportingText = {
-                            Column {
-                                Text(
-                                    text = stringResource(R.string.loc_810fe008),
-                                    color = if (hasValidCosigners) TextSecondary else ErrorRed,
-                                )
-                                cosignerScanError?.let { error ->
-                                    Text(
-                                        text = error,
-                                        color = ErrorRed,
-                                    )
-                                }
-                            }
-                        },
                         shape = RoundedCornerShape(8.dp),
                         colors =
                             OutlinedTextFieldDefaults.colors(
@@ -2665,10 +2101,7 @@ private fun ManualMultisigDialog(
                                 unfocusedBorderColor = BorderColor,
                                 cursorColor = BitcoinOrange,
                             ),
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(end = 4.dp, bottom = 4.dp),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     Box(
                         contentAlignment = Alignment.Center,
@@ -2691,6 +2124,19 @@ private fun ManualMultisigDialog(
                             modifier = Modifier.size(24.dp),
                         )
                     }
+                }
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.loc_810fe008),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (hasValidCosigners) TextSecondary else ErrorRed,
+                )
+                cosignerScanError?.let { error ->
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ErrorRed,
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -2897,13 +2343,16 @@ private fun buildManualMultisigLocalCosignerMaterial(
                 return null
             }
         }
-    val cosignerRegex = Regex("""^\s*([0-9a-fA-F]{8})\s*:\s*([xyz]pub[1-9A-HJ-NP-Za-km-z]+)\s*$""")
+    val cosignerRegex = Regex("""^\s*([0-9a-fA-F]{8})\s*:\s*([xyzXYZ]pub[1-9A-HJ-NP-Za-km-z]+)\s*$""")
     val parsedCosigners =
         cosignerLines.map { line ->
             val match = cosignerRegex.find(line) ?: return null
             match.groupValues[1].lowercase() to match.groupValues[2]
         }
-    if (parsedCosigners.none { it.first == localKey.fingerprint }) return null
+    val listedKey = parsedCosigners.firstOrNull { it.first == localKey.fingerprint } ?: return null
+    // The xprv must derive to the listed xpub — a matching fingerprint alone
+    // does not prove the key belongs to this quorum.
+    if (!MultisigWalletParser.localXprvMatchesCosigner(localKey.xprv, listedKey.second)) return null
 
     fun keyExpression(
         fingerprint: String,
@@ -2968,6 +2417,11 @@ private fun buildMultisigLocalCosignerMaterial(
             }
         }
     if (config.cosigners.none { it.fingerprint.equals(localKey.fingerprint, ignoreCase = true) }) return null
+    // The xprv must derive to the listed xpub — a matching fingerprint alone
+    // does not prove the key belongs to this quorum.
+    val matchedCosigner =
+        config.cosigners.first { it.fingerprint.equals(localKey.fingerprint, ignoreCase = true) }
+    if (!MultisigWalletParser.localXprvMatchesCosigner(localKey.xprv, matchedCosigner.xpub)) return null
 
     fun keyExpression(
         fingerprint: String,
@@ -3007,13 +2461,12 @@ private fun privateMultisigDescriptorMatchesConfig(
     descriptor: String,
     config: MultisigWalletConfig,
 ): Boolean {
-    val localConfig = MultisigWalletParser.parse(descriptor) ?: return false
-    if (localConfig.threshold != config.threshold) return false
-    if (localConfig.totalCosigners != config.totalCosigners) return false
-    if (localConfig.scriptType != config.scriptType) return false
-    val expectedFingerprints = config.cosigners.map { it.fingerprint.lowercase() }.toSet()
-    val localFingerprints = localConfig.cosigners.map { it.fingerprint.lowercase() }.toSet()
-    return expectedFingerprints == localFingerprints
+    // Normalize private keys to public form, then require the full quorum
+    // binding (threshold, key set, script, sort order) — fingerprint-only
+    // matching would accept a substituted xpub under a known fingerprint.
+    val normalized = MultisigWalletParser.normalizePrivateKeysToPublic(descriptor) ?: return false
+    val pair = MultisigWalletParser.normalizeDescriptorPair(normalized) ?: return false
+    return MultisigWalletParser.overrideMatchesConfig(pair.first, pair.second, config)
 }
 
 private data class ManualMultisigLocalKey(

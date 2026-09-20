@@ -117,6 +117,7 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodeSendState
 import github.aeonbtc.ibiswallet.data.model.LightningNodeWalletState
 import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
@@ -127,6 +128,7 @@ import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.StatusBadge
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
@@ -175,7 +177,7 @@ fun LightningNodeBalanceScreen(
     showHistoricalTxPrices: Boolean = false,
     onShowHistoricalTxPricesChange: (Boolean) -> Unit = {},
     privacyMode: Boolean,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     onTogglePrivacy: () -> Unit,
     onRefresh: () -> Unit,
     onToggleDenomination: () -> Unit,
@@ -190,6 +192,20 @@ fun LightningNodeBalanceScreen(
 
     var isPullRefreshing by remember { mutableStateOf(false) }
     val pullToRefreshState = rememberPullToRefreshState()
+    // NFC reader mode: tapping a tag routes through pendingSendInput.
+    val mainActivity = context as? MainActivity
+    val nfcReaderOwner = remember { Any() }
+    val nfcAvailable = context.getNfcAvailability().canRead
+    DisposableEffect(mainActivity, nfcAvailable) {
+        if (mainActivity != null && nfcAvailable) {
+            mainActivity.requestNfcReaderMode(nfcReaderOwner)
+        }
+        onDispose {
+            mainActivity?.releaseNfcReaderMode(nfcReaderOwner)
+        }
+    }
+    val isNfcReaderActive = nfcAvailable && mainActivity?.isNfcReaderModeActive == true
+    val nfcReaderState by NfcRuntimeStatus.readerState.collectAsState()
     LaunchedEffect(state.isSyncing) {
         if (!state.isSyncing) isPullRefreshing = false
     }
@@ -457,6 +473,32 @@ fun LightningNodeBalanceScreen(
                                 modifier = Modifier.size(24.dp),
                             )
                         }
+
+                        if (isNfcReaderActive) {
+                            val nfcStatusLabel =
+                                when (nfcReaderState) {
+                                    NfcReaderUiState.Inactive,
+                                    NfcReaderUiState.Ready,
+                                    -> stringResource(R.string.nfc_status_ready)
+                                    NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                                    NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                                }
+                            val nfcStatusColor =
+                                if (nfcReaderState == NfcReaderUiState.Detecting) {
+                                    accent
+                                } else {
+                                    SuccessGreen
+                                }
+                            NfcStatusIndicator(
+                                label = nfcStatusLabel,
+                                contentDescription = nfcStatusLabel,
+                                modifier =
+                                    Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(bottom = 2.dp),
+                                color = nfcStatusColor,
+                            )
+                        }
                     }
                 }
             }
@@ -652,7 +694,7 @@ private fun LightningPaymentRow(
     btcPrice: Double? = null,
     historicalBtcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     onClick: () -> Unit = {},
 ) {
     val isReceive = payment.direction == LightningNodePaymentDirection.INCOMING
@@ -1515,6 +1557,7 @@ fun LightningNodeReceiveScreen(
     isConnected: Boolean,
     isConnecting: Boolean = false,
     connectionTarget: String? = null,
+    walletId: String? = null,
     denomination: String,
     privacyMode: Boolean,
     btcPrice: Double? = null,
@@ -1588,6 +1631,13 @@ fun LightningNodeReceiveScreen(
         }
     val activeSharePayload = if (isAddressTab) addressSharePayload else invoicePayload
     val activeEnlargedQr = if (isAddressTab) addressQrBitmap else qrBitmap
+
+    // Drop the previous wallet's QRs immediately on switch so a stale invoice or
+    // address is never shown as the new wallet's. Both repaint reactively below.
+    LaunchedEffect(walletId) {
+        qrBitmap = null
+        addressQrBitmap = null
+    }
 
     LaunchedEffect(ready?.paymentRequest, privacyMode) {
         qrBitmap =
@@ -1678,6 +1728,7 @@ fun LightningNodeReceiveScreen(
 
     if (showEnlargedQr && activeEnlargedQr != null) {
         Dialog(onDismissRequest = { showEnlargedQr = false }) {
+            SecureDialogSideEffect()
             Box(
                 modifier =
                     Modifier
@@ -2533,6 +2584,21 @@ fun LightningNodeSendScreen(
     var showConfirmDialog by remember { mutableStateOf(false) }
     var prepareError by remember { mutableStateOf<String?>(null) }
 
+    // NFC reader mode: tapping a tag fills the recipient via pendingSendInput.
+    val mainActivity = context as? MainActivity
+    val nfcReaderOwner = remember { Any() }
+    val nfcAvailable = context.getNfcAvailability().canRead
+    DisposableEffect(mainActivity, nfcAvailable) {
+        if (mainActivity != null && nfcAvailable) {
+            mainActivity.requestNfcReaderMode(nfcReaderOwner)
+        }
+        onDispose {
+            mainActivity?.releaseNfcReaderMode(nfcReaderOwner)
+        }
+    }
+    val isNfcReaderActive = nfcAvailable && mainActivity?.isNfcReaderModeActive == true
+    val nfcReaderState by NfcRuntimeStatus.readerState.collectAsState()
+
     LaunchedEffect(sendDraft) {
         if (showConfirmDialog) return@LaunchedEffect
         if (sendDraft.recipientAddress.isNotBlank()) paymentRequest = sendDraft.recipientAddress
@@ -2742,11 +2808,35 @@ fun LightningNodeSendScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.Top,
                 ) {
-                    Text(
-                        text = stringResource(R.string.ln_node_send_lightning),
-                        style = MaterialTheme.typography.titleLarge,
-                        color = TextPrimary,
-                    )
+                    Column {
+                        Text(
+                            text = stringResource(R.string.ln_node_send_lightning),
+                            style = MaterialTheme.typography.titleLarge,
+                            color = TextPrimary,
+                        )
+                        if (isNfcReaderActive) {
+                            val nfcStatusLabel =
+                                when (nfcReaderState) {
+                                    NfcReaderUiState.Inactive,
+                                    NfcReaderUiState.Ready,
+                                    -> stringResource(R.string.nfc_status_receive_ready)
+                                    NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                                    NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                                }
+                            val nfcStatusColor =
+                                if (nfcReaderState == NfcReaderUiState.Detecting) {
+                                    LightningYellow
+                                } else {
+                                    SuccessGreen
+                                }
+                            NfcStatusIndicator(
+                                label = nfcStatusLabel,
+                                contentDescription = nfcStatusLabel,
+                                modifier = Modifier.padding(top = 2.dp),
+                                color = nfcStatusColor,
+                            )
+                        }
+                    }
                 }
                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -3923,6 +4013,25 @@ fun LightningNodeConnectionScreen(
     var tlsEnabled by remember {
         mutableStateOf(initialConfig.useTls)
     }
+    var acknowledgeInsecure by remember {
+        mutableStateOf(initialConfig.acknowledgedInsecure)
+    }
+    // Tracks explicit user choice so host auto-detection (clearnet → TLS on,
+    // .onion/empty → TLS off) never overrides a manual toggle or an import.
+    var tlsTouched by remember { mutableStateOf(false) }
+
+    fun isOnionHostInput(value: String): Boolean =
+        value.trim().endsWith(".onion", ignoreCase = true)
+
+    fun onHostChanged(value: String) {
+        host = value
+        useTor = value.contains(".onion", ignoreCase = true)
+        if (!tlsTouched) {
+            tlsEnabled =
+                value.isNotBlank() && !isOnionHostInput(value)
+        }
+        onClearTest()
+    }
     var showQrScanner by remember { mutableStateOf(false) }
     var showSuccessSaveDialog by remember { mutableStateOf(false) }
     var successDialogPayload by remember {
@@ -3967,6 +4076,8 @@ fun LightningNodeConnectionScreen(
         nwcUri = imported.nwcUri
         useTor = imported.withOnionOnlyTor().useTor
         tlsEnabled = imported.useTls
+        acknowledgeInsecure = imported.acknowledgedInsecure
+        tlsTouched = true
         onClearTest()
     }
 
@@ -3978,6 +4089,8 @@ fun LightningNodeConnectionScreen(
                 .removePrefix("http://")
                 .substringBefore('/')
                 .substringBefore(':')
+        // Legacy alias mirrors the explicit acknowledgment; auth decisions use
+        // acknowledgedInsecure (fail closed unless Tor onion or explicit ack).
         return LightningNodeConfig(
             type = type,
             host = cleanedHost,
@@ -3986,7 +4099,8 @@ fun LightningNodeConnectionScreen(
             macaroonHex = macaroon.trim(),
             tlsCertPem = if (tlsEnabled) tlsCert.trim() else "",
             useTls = tlsEnabled,
-            allowInsecureTls = false,
+            allowInsecureTls = acknowledgeInsecure,
+            acknowledgedInsecure = acknowledgeInsecure,
             // Carry over after a successful test so LAN reconnects skip dead HTTP.
             preferSessionTls = successDialogPayload?.preferSessionTls == true ||
                 initialConfig.preferSessionTls,
@@ -3998,14 +4112,12 @@ fun LightningNodeConnectionScreen(
     fun canSubmitConfig(): Boolean {
         val config = currentConfig()
         if (!config.isConfigured) return false
-        val needsCert =
-            tlsEnabled &&
-                (
-                    type == LightningNodeConnectionType.LND_REST ||
-                        type == LightningNodeConnectionType.CLN_REST ||
-                        type == LightningNodeConnectionType.NONE
-                )
-        return !needsCert || tlsCert.trim().isNotBlank()
+        if (type == LightningNodeConnectionType.NWC) return true
+        // Tor onion authenticates the endpoint — no cert or ack needed.
+        if (config.isOnionHost()) return true
+        if (tlsEnabled) return tlsCert.trim().isNotBlank()
+        // Cleartext clearnet requires explicit acknowledgment.
+        return acknowledgeInsecure
     }
 
     if (showQrScanner) {
@@ -4333,9 +4445,7 @@ fun LightningNodeConnectionScreen(
                         LnField(
                             host,
                             {
-                                host = it
-                                useTor = it.contains(".onion", ignoreCase = true)
-                                onClearTest()
+                                onHostChanged(it)
                             },
                             stringResource(R.string.ln_node_host),
                             trailingIcon = {
@@ -4376,6 +4486,7 @@ fun LightningNodeConnectionScreen(
                                 checked = tlsEnabled,
                                 onCheckedChange = {
                                     tlsEnabled = it
+                                    tlsTouched = true
                                     if (!it) {
                                         tlsCert = ""
                                     }
@@ -4395,6 +4506,33 @@ fun LightningNodeConnectionScreen(
                                 minLines = 3,
                             )
                         }
+                        if (!tlsEnabled && host.isNotBlank() && !isOnionHostInput(host)) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(R.string.ln_node_insecure_ack_title),
+                                        color = TextPrimary,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.ln_node_insecure_ack_desc),
+                                        color = TextSecondary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                SquareToggle(
+                                    checked = acknowledgeInsecure,
+                                    onCheckedChange = {
+                                        acknowledgeInsecure = it
+                                        onClearTest()
+                                    },
+                                )
+                            }
+                        }
                     }
                     LightningNodeConnectionType.CLN_REST -> {
                         Text(
@@ -4406,9 +4544,7 @@ fun LightningNodeConnectionScreen(
                         LnField(
                             host,
                             {
-                                host = it
-                                useTor = it.contains(".onion", ignoreCase = true)
-                                onClearTest()
+                                onHostChanged(it)
                             },
                             stringResource(R.string.ln_node_host),
                             trailingIcon = {
@@ -4454,6 +4590,7 @@ fun LightningNodeConnectionScreen(
                                 checked = tlsEnabled,
                                 onCheckedChange = {
                                     tlsEnabled = it
+                                    tlsTouched = true
                                     if (!it) {
                                         tlsCert = ""
                                     }
@@ -4472,6 +4609,33 @@ fun LightningNodeConnectionScreen(
                                 stringResource(R.string.ln_node_cln_tls_cert),
                                 minLines = 3,
                             )
+                        }
+                        if (!tlsEnabled && host.isNotBlank() && !isOnionHostInput(host)) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = stringResource(R.string.ln_node_insecure_ack_title),
+                                        color = TextPrimary,
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.ln_node_insecure_ack_desc),
+                                        color = TextSecondary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                SquareToggle(
+                                    checked = acknowledgeInsecure,
+                                    onCheckedChange = {
+                                        acknowledgeInsecure = it
+                                        onClearTest()
+                                    },
+                                )
+                            }
                         }
                     }
                     LightningNodeConnectionType.NWC -> {

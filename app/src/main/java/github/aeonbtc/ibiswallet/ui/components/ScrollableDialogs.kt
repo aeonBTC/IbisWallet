@@ -43,6 +43,25 @@ import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 
+/**
+ * One-line hardening for plain `Dialog{}` call sites (enlarged QR, seed views,
+ * certificate approvals): enables tapjacking protection and propagates
+ * FLAG_SECURE from the host activity window. Call as the first child of any
+ * `Dialog { ... }` content.
+ */
+@Composable
+fun SecureDialogSideEffect() {
+    val view = LocalView.current
+    SideEffect {
+        val window = (view.parent as? DialogWindowProvider)?.window ?: return@SideEffect
+        window.decorView.filterTouchesWhenObscured = true
+        val activityFlags = (view.context as? android.app.Activity)?.window?.attributes?.flags ?: 0
+        if (activityFlags and WindowManager.LayoutParams.FLAG_SECURE != 0) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+    }
+}
+
 @Composable
 fun ScrollableDialogSurface(
     onDismissRequest: () -> Unit,

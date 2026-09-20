@@ -52,6 +52,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -86,6 +87,7 @@ import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -113,6 +115,7 @@ import kotlin.math.roundToLong
 @Composable
 fun LiquidReceiveScreen(
     liquidAddress: String? = null,
+    walletId: String? = null,
     currentAddressLabel: String? = null,
     denomination: String = SecureStorage.DENOMINATION_BTC,
     btcPrice: Double? = null,
@@ -271,6 +274,12 @@ fun LiquidReceiveScreen(
         }
     }
 
+    // Drop the previous wallet's QR immediately on switch so a stale address is
+    // never shown as the new wallet's.
+    LaunchedEffect(walletId) {
+        liquidQrBitmap = null
+    }
+
     LaunchedEffect(activeQrContent) {
         liquidQrBitmap =
             activeQrContent?.let { content ->
@@ -339,6 +348,7 @@ fun LiquidReceiveScreen(
 
     if (showEnlargedQr && liquidQrBitmap != null) {
         Dialog(onDismissRequest = { showEnlargedQr = false }) {
+            SecureDialogSideEffect()
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1221,7 +1231,7 @@ private fun LightningInvoiceExpiryText(
     style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodySmall,
     textAlign: TextAlign? = null,
 ) {
-    var nowMs by remember(expiresAtMs) { mutableStateOf(System.currentTimeMillis()) }
+    var nowMs by remember(expiresAtMs) { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(expiresAtMs) {
         while (isActive) {
             nowMs = System.currentTimeMillis()
@@ -1392,6 +1402,7 @@ private fun PendingLightningInvoiceRow(
 
     if (showEnlargedPendingQr && invoiceQrBitmap != null) {
         Dialog(onDismissRequest = { showEnlargedPendingQr = false }) {
+            SecureDialogSideEffect()
             Box(
                 modifier = Modifier
                     .fillMaxSize()

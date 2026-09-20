@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,6 +26,7 @@ import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -35,6 +35,7 @@ import androidx.compose.material.icons.automirrored.filled.CallReceived
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CurrencyBitcoin
@@ -48,8 +49,6 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Undo
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -59,7 +58,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -68,7 +66,9 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -97,18 +97,22 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
+import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.ArkMovement
-import github.aeonbtc.ibiswallet.data.repository.ArkDepositPolicy
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveState
 import github.aeonbtc.ibiswallet.data.model.ArkWalletState
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
+import github.aeonbtc.ibiswallet.data.repository.ArkDepositPolicy
 import github.aeonbtc.ibiswallet.localization.ProvideLocalizedResources
+import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
+import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.ui.components.BalanceAmountText
 import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
+import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.TransactionHistoryHideAllDialog
@@ -123,10 +127,12 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
+import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import github.aeonbtc.ibiswallet.util.SecureClipboard
+import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.startActivityWithTaskFallback
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -148,12 +154,14 @@ fun ArkBalanceScreen(
     showHistoricalTxPrices: Boolean = false,
     onShowHistoricalTxPricesChange: (Boolean) -> Unit = {},
     privacyMode: Boolean,
-    dateFormat: String = SecureStorage.DATE_FORMAT_MONTH_DD_YYYY,
+    dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
     layer1Transactions: List<TransactionDetails> = emptyList(),
     layer1BlockHeight: UInt? = null,
     mempoolUrl: String = "https://mempool.space",
     mempoolServer: String = SecureStorage.MEMPOOL_SPACE,
     movementLabels: Map<String, String>,
+    /** Labels saved on the receive screen, keyed by address/invoice. Shown when no movement label exists. */
+    addressLabels: Map<String, String> = emptyMap(),
     onTogglePrivacy: () -> Unit,
     onRefresh: () -> Unit,
     onToggleDenomination: () -> Unit,
@@ -169,10 +177,12 @@ fun ArkBalanceScreen(
     /** Process-lifetime dismiss (survives leaving Balance); clears on app restart. */
     backupAlertDismissed: Boolean = false,
     onDismissBackupAlert: () -> Unit = {},
+    /** Process-lifetime snooze (lapses after 30 min, unlike backup dismiss). */
+    refreshAlertSnoozed: Boolean = false,
+    onSnoozeRefreshAlert: () -> Unit = {},
     autoRefreshEnabled: Boolean = false,
-    /** Sweep stuck Bark on-chain deposit back to Layer 1. */
-    onRecoverBelowMinBoard: () -> Unit = {},
-    isRecoveringBelowMinBoard: Boolean = false,
+    /** True while a mailbox rescan is running — the Manage cog shows a spinner. */
+    isMailboxRescanning: Boolean = false,
     /** Open Manage → Boarding tab for unboarded on-chain funds. */
     onOpenBoarding: () -> Unit = onOpenLifecycle,
 ) {
@@ -191,13 +201,31 @@ fun ArkBalanceScreen(
     var showLightningTransactions by remember { mutableStateOf(false) }
     var showBitcoinTransactions by remember { mutableStateOf(false) }
     val pullToRefreshState = rememberPullToRefreshState()
+    // NFC reader mode: tapping a tag routes through pendingSendInput.
+    val arkBalanceNfcContext = LocalContext.current
+    val mainActivity = arkBalanceNfcContext as? MainActivity
+    val nfcReaderOwner = remember { Any() }
+    val nfcAvailable = arkBalanceNfcContext.getNfcAvailability().canRead
+    DisposableEffect(mainActivity, nfcAvailable) {
+        if (mainActivity != null && nfcAvailable) {
+            mainActivity.requestNfcReaderMode(nfcReaderOwner)
+        }
+        onDispose {
+            mainActivity?.releaseNfcReaderMode(nfcReaderOwner)
+        }
+    }
+    val isNfcReaderActive = nfcAvailable && mainActivity?.isNfcReaderModeActive == true
+    val nfcReaderState by NfcRuntimeStatus.readerState.collectAsState()
     val needsBackupAlert =
         arkState.isInitialized &&
             arkState.hasVtxoActivity &&
             !isDbBackupProtected
     // Checkbox is local; dismiss flag is process-lifetime from ViewModel (app restart only).
     var backupRiskAcknowledged by remember(arkState.walletId) { mutableStateOf(false) }
-    val showBackupRequiredDialog = needsBackupAlert && !backupAlertDismissed
+    // Local session guard: hides synchronously on Later/Back up so the popup only spawns
+    // once per walletId per session, even if the parent dismiss flag lags a frame.
+    var backupDismissedLocally by remember(arkState.walletId) { mutableStateOf(false) }
+    val showBackupRequiredDialog = needsBackupAlert && !backupAlertDismissed && !backupDismissedLocally
     // Recommended (not yet due) can be dismissed this session; due / near-expiry cannot.
     var refreshAlertDismissed by remember(arkState.walletId) { mutableStateOf(false) }
     val refreshDueCount =
@@ -211,15 +239,29 @@ fun ArkBalanceScreen(
     val refreshIsBlocking =
         arkState.needsRefresh ||
             (blocksUntilRefresh != null && blocksUntilRefresh <= ARK_REFRESH_BLOCKING_BLOCKS)
+    // A refresh submitted for the next ASP round already covers the due VTXOs —
+    // don't keep nagging with the optional heads-up. When the soon signal comes
+    // only from blocksUntilRequiredRefresh (due lists empty), any tracked pending
+    // refresh means the user already acted.
+    val pendingRefreshIds = arkState.pendingRefreshVtxoIds.toSet()
+    val dueRefreshIds =
+        (arkState.vtxosToRefresh.asSequence().map { it.id } +
+            arkState.expiringSoonVtxos.asSequence().map { it.id }).toSet()
+    val refreshAlreadyScheduled =
+        pendingRefreshIds.isNotEmpty() &&
+            (dueRefreshIds.isEmpty() || dueRefreshIds.all { it in pendingRefreshIds })
     val needsRefreshAlert =
         arkState.isInitialized &&
-            !autoRefreshEnabled &&
+            arkState.aspHydrated &&
+            (!autoRefreshEnabled || arkState.autoRefreshNeedsAttention) &&
             !arkState.isAutoRefreshing &&
+            !refreshAlreadyScheduled &&
             (arkState.needsRefresh || arkState.refreshSoon) &&
             refreshDueCount > 0
     val showRefreshRequiredDialog =
         needsRefreshAlert &&
             !showBackupRequiredDialog &&
+            !refreshAlertSnoozed &&
             (refreshIsBlocking || !refreshAlertDismissed)
 
     LaunchedEffect(arkState.isSyncing) {
@@ -230,7 +272,13 @@ fun ArkBalanceScreen(
             backupRiskAcknowledged = false
         }
     }
-    LaunchedEffect(arkState.walletId, arkState.needsRefresh, arkState.refreshSoon, refreshDueCount) {
+    LaunchedEffect(
+        arkState.walletId,
+        arkState.needsRefresh,
+        arkState.refreshSoon,
+        refreshDueCount,
+        arkState.pendingRefreshVtxoIds,
+    ) {
         if (!needsRefreshAlert) {
             refreshAlertDismissed = false
         }
@@ -267,14 +315,14 @@ fun ArkBalanceScreen(
             }
         }
     val filteredMovements =
-        remember(railFilteredMovements, movementLabels, searchQuery) {
+        remember(railFilteredMovements, movementLabels, addressLabels, searchQuery) {
             val q = searchQuery.trim().lowercase(Locale.US)
             if (q.isBlank()) {
                 railFilteredMovements
             } else {
                 railFilteredMovements.filter { movement ->
                     val label =
-                        (movementLabels[movement.id.toString()] ?: movement.label).orEmpty()
+                        arkMovementDisplayLabel(movement, movementLabels, addressLabels).orEmpty()
                     val rail = arkMovementRail(movement).name
                     label.lowercase(Locale.US).contains(q) ||
                         movement.status.lowercase(Locale.US).contains(q) ||
@@ -290,7 +338,13 @@ fun ArkBalanceScreen(
                 }
             }
         }
-    val visibleMovements = filteredMovements.take(displayLimit)
+    // Fatal-proofing: LazyColumn keys throw on duplicates, so collapse here
+    // regardless of upstream guarantees (cached/journaled paints, Bark dupes).
+    val paintSafeMovements =
+        remember(filteredMovements) {
+            ArkDepositPolicy.distinctPaintedMovements(filteredMovements)
+        }
+    val visibleMovements = paintSafeMovements.take(displayLimit)
 
     val quickReceiveRequest =
         (receiveState as? ArkReceiveState.Ready)
@@ -323,6 +377,7 @@ fun ArkBalanceScreen(
         IbisConfirmDialog(
             onDismissRequest = {
                 if (backupRiskAcknowledged) {
+                    backupDismissedLocally = true
                     onDismissBackupAlert()
                 }
             },
@@ -345,11 +400,13 @@ fun ArkBalanceScreen(
                     dismissOnClickOutside = backupRiskAcknowledged,
                 ),
             onConfirm = {
+                backupDismissedLocally = true
                 onDismissBackupAlert()
                 onOpenArkBackup()
             },
             onDismissAction = {
                 if (backupRiskAcknowledged) {
+                    backupDismissedLocally = true
                     onDismissBackupAlert()
                 }
             },
@@ -414,15 +471,17 @@ fun ArkBalanceScreen(
             }
         IbisConfirmDialog(
             onDismissRequest = {
-                if (!refreshIsBlocking) {
+                if (refreshIsBlocking) {
+                    onSnoozeRefreshAlert()
+                } else {
                     refreshAlertDismissed = true
                 }
             },
             title = stringResource(R.string.ark_refresh_required_title),
             confirmText = stringResource(R.string.ark_refresh_required_confirm),
             dismissText = stringResource(R.string.ark_refresh_required_dismiss),
-            showDismissButton = !refreshIsBlocking,
-            dismissEnabled = !refreshIsBlocking,
+            showDismissButton = true,
+            dismissEnabled = true,
             confirmColor = ArkRust,
             maxWidth = 720.dp,
             contentPadding = PaddingValues(horizontal = 24.dp, vertical = 22.dp),
@@ -433,15 +492,17 @@ fun ArkBalanceScreen(
             properties =
                 DialogProperties(
                     usePlatformDefaultWidth = false,
-                    dismissOnBackPress = !refreshIsBlocking,
-                    dismissOnClickOutside = !refreshIsBlocking,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = true,
                 ),
             onConfirm = {
                 refreshAlertDismissed = true
                 onOpenLifecycle()
             },
             onDismissAction = {
-                if (!refreshIsBlocking) {
+                if (refreshIsBlocking) {
+                    onSnoozeRefreshAlert()
+                } else {
                     refreshAlertDismissed = true
                 }
             },
@@ -523,7 +584,7 @@ fun ArkBalanceScreen(
             }
         ArkMovementDetailSheet(
             movement = movement,
-            label = movementLabels[movement.id.toString()] ?: movement.label,
+            label = arkMovementDisplayLabel(movement, movementLabels, addressLabels),
             privacyMode = privacyMode,
             useSats = useSats,
             btcPrice = btcPrice,
@@ -587,69 +648,46 @@ fun ArkBalanceScreen(
                         onQuickReceive()
                     },
                     onScan = { showQrScanner = true },
+                    isNfcReaderActive = isNfcReaderActive,
+                    nfcReaderState = nfcReaderState,
                 )
             }
 
             val hasUnboardedOnchain =
                 arkState.onchainTotalSats > 0L || arkState.onchainUtxos.isNotEmpty()
-            val stuckBelowMin =
-                ArkDepositPolicy.isStuckBelowMinBoard(
-                    onchainConfirmedSats = arkState.onchainConfirmedSats,
-                    pendingBoardSats = arkState.pendingBoardSats,
-                    minBoardAmountSats = arkState.minBoardAmountSats,
-                )
             if (hasUnboardedOnchain) {
                 item {
                     Spacer(modifier = Modifier.height(8.dp))
-                    val bannerBorder =
-                        if (stuckBelowMin) {
-                            WarningYellow.copy(alpha = 0.45f)
-                        } else {
-                            ArkRust.copy(alpha = 0.45f)
-                        }
-                    val bannerColor = if (stuckBelowMin) WarningYellow else ArkRust
                     Card(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
                                 .clickable(onClick = onOpenBoarding),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(8.dp),
                         colors = CardDefaults.cardColors(containerColor = DarkCard),
-                        border = BorderStroke(1.dp, bannerBorder),
                     ) {
-                        Column(
+                        Row(
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .padding(16.dp),
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
+                            Box(
+                                modifier =
+                                    Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(ArkRust),
+                            )
                             Text(
                                 text =
                                     when {
-                                        privacyMode && stuckBelowMin ->
-                                            stringResource(
-                                                R.string.ark_boarding_balance_banner_below_min_format,
-                                                "****",
-                                                "****",
-                                            )
                                         privacyMode ->
                                             stringResource(
                                                 R.string.ark_boarding_balance_banner_format,
                                                 "****",
-                                            )
-                                        stuckBelowMin && arkState.minBoardAmountSats != null ->
-                                            stringResource(
-                                                R.string.ark_boarding_balance_banner_below_min_format,
-                                                formatAmount(
-                                                    arkState.onchainTotalSats.toULong(),
-                                                    useSats,
-                                                    includeUnit = true,
-                                                ),
-                                                formatAmount(
-                                                    arkState.minBoardAmountSats.toULong(),
-                                                    useSats,
-                                                    includeUnit = true,
-                                                ),
                                             )
                                         else ->
                                             stringResource(
@@ -661,24 +699,18 @@ fun ArkBalanceScreen(
                                                 ),
                                             )
                                     },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = bannerColor,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                                modifier = Modifier.weight(1f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Button(
-                                onClick = onOpenBoarding,
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 48.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors =
-                                    ButtonDefaults.buttonColors(
-                                        containerColor = BitcoinOrange,
-                                    ),
-                            ) {
-                                Text(stringResource(R.string.ark_boarding_balance_banner_action))
-                            }
+                            Icon(
+                                imageVector = Icons.Filled.ChevronRight,
+                                contentDescription = null,
+                                tint = ArkRust,
+                                modifier = Modifier.size(20.dp),
+                            )
                         }
                     }
                 }
@@ -751,7 +783,7 @@ fun ArkBalanceScreen(
                                         onOpenLifecycle()
                                     },
                         ) {
-                            if (arkState.isAutoRefreshing) {
+                            if (arkState.isAutoRefreshing || isMailboxRescanning) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(14.dp),
                                     color = manageVtxosColor,
@@ -901,14 +933,18 @@ fun ArkBalanceScreen(
                     }
                 }
             } else {
-                items(visibleMovements, key = { it.id }) { movement ->
+                items(visibleMovements, key = { ArkDepositPolicy.movementUnionKey(it) }) { movement ->
                     val layer1Tx =
-                        remember(movement.id, movement.onchainTxids, layer1Transactions) {
+                        remember(
+                            ArkDepositPolicy.movementUnionKey(movement),
+                            movement.onchainTxids,
+                            layer1Transactions,
+                        ) {
                             arkResolveLayer1Transaction(movement, layer1Transactions)
                         }
                     ArkMovementRow(
                         movement = movement,
-                        label = movementLabels[movement.id.toString()] ?: movement.label,
+                        label = arkMovementDisplayLabel(movement, movementLabels, addressLabels),
                         privacyMode = privacyMode,
                         useSats = useSats,
                         btcPrice = btcPrice,
@@ -920,7 +956,8 @@ fun ArkBalanceScreen(
                                 null
                             },
                         dateFormat = dateFormat,
-                        // Board deposits clear pending via conf depth in the row; other Bitcoin
+                        // Boarding-phase deposits clear pending via board conf depth;
+                        // pre-board funding clears like a regular L1 tx. Other Bitcoin
                         // rails clear once the linked L1 tx confirms.
                         layer1Confirmed = layer1Tx?.isConfirmed == true,
                         layer1Transaction = layer1Tx,
@@ -961,6 +998,8 @@ private fun ArkBalanceCard(
     onToggleDenomination: () -> Unit,
     onQuickReceive: () -> Unit,
     onScan: () -> Unit,
+    isNfcReaderActive: Boolean = false,
+    nfcReaderState: NfcReaderUiState = NfcReaderUiState.Inactive,
 ) {
     Card(
         modifier =
@@ -1053,6 +1092,14 @@ private fun ArkBalanceCard(
                 }
             }
 
+            // In-flight funds are not spendable yet but are not lost: surface
+            // the total so a mid-refresh/exit/board header never reads as
+            // missing money.
+            val pendingTotal =
+                arkState.pendingInRoundSats.coerceAtLeast(0L) +
+                    arkState.pendingBoardSats.coerceAtLeast(0L) +
+                    arkState.pendingExitSats.coerceAtLeast(0L)
+
             Column(
                 modifier =
                     Modifier
@@ -1088,6 +1135,13 @@ private fun ArkBalanceCard(
                         color = TextSecondary,
                     )
                 }
+                // In-flight funds are not spendable yet but are not lost: surface
+                // the total so a mid-refresh/exit/board header never reads as
+                // missing money.
+                val pendingTotal =
+                    arkState.pendingInRoundSats.coerceAtLeast(0L) +
+                        arkState.pendingBoardSats.coerceAtLeast(0L) +
+                        arkState.pendingExitSats.coerceAtLeast(0L)
             }
 
             // Bottom control strip: QR corners only.
@@ -1114,6 +1168,51 @@ private fun ArkBalanceCard(
                         contentDescription = stringResource(R.string.loc_a397da3c),
                         tint = ArkRust,
                         modifier = Modifier.size(24.dp),
+                    )
+                }
+
+                if (pendingTotal > 0L) {
+                    Text(
+                        text =
+                            if (privacyMode) {
+                                stringResource(R.string.ark_balance_pending_refresh_format, "****")
+                            } else {
+                                stringResource(
+                                    R.string.ark_balance_pending_refresh_format,
+                                    formatAmount(pendingTotal.toULong(), useSats, includeUnit = true),
+                                )
+                            },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ArkRust,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .padding(top = 4.dp, start = 8.dp, end = 8.dp),
+                    )
+                }
+
+                if (isNfcReaderActive) {
+                    val nfcStatusLabel =
+                        when (nfcReaderState) {
+                            NfcReaderUiState.Inactive,
+                            NfcReaderUiState.Ready,
+                            -> stringResource(R.string.nfc_status_ready)
+                            NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                            NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                        }
+                    val nfcStatusColor =
+                        if (nfcReaderState == NfcReaderUiState.Detecting) {
+                            ArkRust
+                        } else {
+                            SuccessGreen
+                        }
+                    NfcStatusIndicator(
+                        label = nfcStatusLabel,
+                        contentDescription = nfcStatusLabel,
+                        color = nfcStatusColor,
                     )
                 }
 
@@ -1160,18 +1259,32 @@ private fun ArkMovementRow(
 ) {
     val amount = movement.displayBalanceSats()
     val isRecoveredL1 = ArkDepositPolicy.isRecoveredOnchainMovement(movement)
-    val isBelowMin = ArkDepositPolicy.isBelowMinOnchainMovement(movement)
     val isReceive = amount >= 0 && !isRecoveredL1
     val absAmount = abs(amount).toULong()
     val isFailed = arkMovementIsFailed(movement.status)
     val isBoardDeposit = arkMovementIsBoardDeposit(movement)
     val isRefresh = arkMovementIsRefresh(movement)
+    val isUnfinishedBoard = arkMovementIsUnfinishedBoardDeposit(movement)
+    // Boarding only starts once Bark has a board tx for the funding. Before that
+    // the funding is a plain L1 UTXO — never hold it to the ASP board threshold.
+    val hasBoardTx = !movement.boardTxid.isNullOrBlank()
+    val boardingStarted =
+        hasBoardTx || movement.status.equals("boarding", ignoreCase = true)
+    val isPreBoardRow =
+        isBoardDeposit &&
+            isReceive &&
+            !boardingStarted
+    // Pre-board funding follows regular L1 rules: a linked confirmed L1 tx or
+    // 1+ Esplora funding confs counts as confirmed (external deposits have no
+    // linked L1 row, only funding depth).
+    val preBoardRowConfirmed =
+        isPreBoardRow && (layer1Confirmed || (movement.fundingConfirmations ?: 0) > 0)
     val requiredConfs =
-        movement.requiredBoardConfirmations?.takeIf { it > 0 }
-            ?: requiredBoardConfirmations.takeIf { it > 0 }
+        movement.requiredBoardConfirmations?.takeIf { it >= 0 }
+            ?: requiredBoardConfirmations.takeIf { it >= 0 }
             ?: ARK_BOARD_REQUIRED_CONFIRMATIONS
-    // Board deposits stay pending until a board tx exists and hits ASP confs.
-    // Funding confs alone never clear the badge (board may not have run yet).
+    // Boarding-phase deposits stay pending until the board tx hits ASP confs.
+    // Pre-board funding follows regular L1 rules (see isPreBoardRow above).
     val boardDepositConfsMet =
         isBoardDeposit &&
             isReceive &&
@@ -1181,19 +1294,22 @@ private fun ArkMovementRow(
                 requiredBoardConfirmations = requiredConfs,
             )
     val isPending =
-        !isRecoveredL1 &&
-            !isBelowMin &&
-            !boardDepositConfsMet &&
-            (
-                arkMovementIsPending(movement) ||
-                    (isBoardDeposit && isReceive && movement.boardTxid.isNullOrBlank())
-            ) &&
-            !isFailed &&
-            !(
-                !isBoardDeposit &&
-                    layer1Confirmed &&
-                    arkMovementRail(movement) == ArkHistoryRail.BITCOIN
-            )
+        if (isPreBoardRow) {
+            !isRecoveredL1 && !isFailed && !preBoardRowConfirmed
+        } else {
+            !isRecoveredL1 &&
+                !boardDepositConfsMet &&
+                (
+                    arkMovementIsPending(movement) ||
+                        (isBoardDeposit && isReceive && movement.boardTxid.isNullOrBlank())
+                ) &&
+                !isFailed &&
+                !(
+                    !isBoardDeposit &&
+                        layer1Confirmed &&
+                        arkMovementRail(movement) == ArkHistoryRail.BITCOIN
+                )
+        }
     val icon =
         when {
             isRefresh -> Icons.Default.Sync
@@ -1205,7 +1321,7 @@ private fun ArkMovementRow(
         when {
             isRefresh -> ArkRust
             isRecoveredL1 -> BitcoinOrange
-            isBelowMin || isReceive -> AccentGreen
+            isReceive -> AccentGreen
             else -> AccentRed
         }
     val iconBackground = iconTint.copy(alpha = 0.1f)
@@ -1213,7 +1329,7 @@ private fun ArkMovementRow(
         when {
             isFailed || isRecoveredL1 -> TextSecondary
             isRefresh -> ArkRust
-            isBelowMin || isReceive -> AccentGreen
+            isReceive -> AccentGreen
             else -> AccentRed
         }
     val rail = remember(movement.subsystemName, movement.subsystemKind) { arkMovementRail(movement) }
@@ -1310,7 +1426,7 @@ private fun ArkMovementRow(
                         } else if (isFailed || isRecoveredL1) {
                             formatAmount(absAmount, useSats, includeUnit = true)
                         } else {
-                            "${if (isReceive || isBelowMin) "+" else "-"}${formatAmount(absAmount, useSats, includeUnit = true)}"
+                            "${if (isReceive) "+" else "-"}${formatAmount(absAmount, useSats, includeUnit = true)}"
                         },
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                     fontWeight = FontWeight.SemiBold,
@@ -1329,16 +1445,6 @@ private fun ArkMovementRow(
                         ArkPendingBadge(
                             text = arkMovementDisplayStatus(movement.status),
                             color = ErrorRed,
-                        )
-                    isBelowMin ->
-                        ArkPendingBadge(
-                            text = stringResource(R.string.ark_history_badge_below_min),
-                            color = WarningYellow,
-                        )
-                    isRecoveredL1 ->
-                        ArkPendingBadge(
-                            text = stringResource(R.string.ark_history_badge_recovered_l1),
-                            color = BitcoinOrange,
                         )
                     isPending ->
                         ArkPendingBadge(text = stringResource(R.string.loc_1b684325))
@@ -1670,13 +1776,41 @@ private fun arkMovementDisplayTitle(
     }
 }
 
+/**
+ * History label: per-movement label first, then receive-screen address/invoice labels.
+ * Address labels are keyed by bare address/invoice, so match movement counterparties
+ * (received-on, sent-to, lightning invoice) exactly, then case-insensitively.
+ */
+private fun arkMovementDisplayLabel(
+    movement: ArkMovement,
+    movementLabels: Map<String, String>,
+    addressLabels: Map<String, String>,
+): String? {
+    movementLabels[movement.id.toString()]?.takeIf { it.isNotBlank() }?.let { return it }
+    movement.label?.takeIf { it.isNotBlank() }?.let { return it }
+    if (addressLabels.isEmpty()) return null
+    val candidates =
+        movement.receivedOnAddresses + movement.sentToAddresses +
+            listOfNotNull(movement.lightningInvoice?.takeIf { it.isNotBlank() })
+    for (candidate in candidates) {
+        val trimmed = candidate.trim()
+        if (trimmed.isEmpty()) continue
+        addressLabels[trimmed]?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+    for (candidate in candidates) {
+        val trimmed = candidate.trim()
+        if (trimmed.isEmpty()) continue
+        addressLabels.entries.firstOrNull { it.key.equals(trimmed, ignoreCase = true) }
+            ?.value?.takeIf { it.isNotBlank() }?.let { return it }
+    }
+    return null
+}
+
 @Composable
 private fun arkMovementDisplayStatus(status: String): String {
     val normalized = status.trim().lowercase(Locale.US)
     return when {
         normalized.isBlank() -> stringResource(R.string.loc_1b684325)
-        normalized == ArkDepositPolicy.STATUS_BELOW_MIN ->
-            stringResource(R.string.ark_history_status_below_min)
         normalized == ArkDepositPolicy.STATUS_RECOVERED_L1 ->
             stringResource(R.string.ark_history_badge_recovered_l1)
         normalized in setOf("pending", "inprogress", "in_progress", "confirming") ->
@@ -1712,10 +1846,7 @@ private fun arkMovementStatusIsTerminalComplete(status: String): Boolean {
 private fun arkMovementStatusIsExplicitPending(status: String): Boolean {
     val n = status.trim().lowercase(Locale.US)
     if (arkMovementStatusIsTerminalComplete(n) || arkMovementIsFailed(n)) return false
-    if (
-        n == ArkDepositPolicy.STATUS_BELOW_MIN ||
-        n == ArkDepositPolicy.STATUS_RECOVERED_L1
-    ) {
+    if (n == ArkDepositPolicy.STATUS_RECOVERED_L1) {
         return false
     }
     // Status-only — do not use subsystem names like "board" (those never go away after boarding).
@@ -1751,7 +1882,6 @@ private fun arkMovementHasCompletedAt(movement: ArkMovement): Boolean =
 private fun arkMovementIsUnfinishedBoardDeposit(movement: ArkMovement): Boolean {
     if (arkMovementIsFailed(movement.status)) return false
     if (ArkDepositPolicy.isRecoveredOnchainMovement(movement)) return false
-    if (ArkDepositPolicy.isBelowMinOnchainMovement(movement)) return false
     if (arkMovementHasCompletedAt(movement)) return false
     if (arkMovementStatusIsTerminalComplete(movement.status)) return false
     val kindBlob =
@@ -1771,9 +1901,10 @@ private fun arkMovementIsPending(movement: ArkMovement): Boolean {
     if (arkMovementHasCompletedAt(movement)) return false
     if (arkMovementStatusIsTerminalComplete(movement.status)) return false
     // Refresh rounds often keep status="pending" after the round tx is known — treat settled.
+    // NOTE: outputVtxoIds alone is NOT completion evidence: delegated/scheduled
+    // rounds publish expected outputs at submit time, long before execution.
     if (arkMovementIsRefresh(movement)) {
         if (movement.onchainTxids.any { it.isNotBlank() }) return false
-        if (movement.outputVtxoIds.any { it.isNotBlank() }) return false
         return arkMovementStatusIsExplicitPending(movement.status) || movement.status.isBlank()
     }
     if (arkMovementStatusIsExplicitPending(movement.status)) return true
@@ -1802,17 +1933,18 @@ private fun arkLooksLikeRawStatus(value: String): Boolean {
     return n in setOf("pending", "complete", "completed", "failed", "error")
 }
 
+@Composable
 private fun humanizeArkJargon(value: String): String {
     if (value.isBlank()) return value
     return value
-        .replace(Regex("(?i)bark\\.board"), "Deposit")
-        .replace(Regex("(?i)bark\\.offboard"), "Withdrawal")
-        .replace(Regex("(?i)board\\s*all"), "deposit all")
-        .replace(Regex("(?i)offboard\\s*all"), "withdraw all")
-        .replace(Regex("(?i)\\bboarding\\b"), "deposit")
-        .replace(Regex("(?i)\\boffboarding\\b"), "withdrawal")
-        .replace(Regex("(?i)\\boffboard\\b"), "withdraw")
-        .replace(Regex("(?i)\\bboard\\b"), "deposit")
+        .replace(Regex("(?i)bark\\.board"), stringResource(R.string.ark_balance_jargon_deposit))
+        .replace(Regex("(?i)bark\\.offboard"), stringResource(R.string.ark_balance_jargon_withdrawal))
+        .replace(Regex("(?i)board\\s*all"), stringResource(R.string.ark_balance_jargon_deposit_all))
+        .replace(Regex("(?i)offboard\\s*all"), stringResource(R.string.ark_balance_jargon_withdraw_all))
+        .replace(Regex("(?i)\\bboarding\\b"), stringResource(R.string.ark_balance_jargon_boarding))
+        .replace(Regex("(?i)\\boffboarding\\b"), stringResource(R.string.ark_balance_jargon_offboarding))
+        .replace(Regex("(?i)\\boffboard\\b"), stringResource(R.string.ark_balance_jargon_offboard))
+        .replace(Regex("(?i)\\bboard\\b"), stringResource(R.string.ark_balance_jargon_board))
         .replace(Regex("(?i)^bark\\."), "")
         .replace('.', ' ')
         .trim()
@@ -1936,12 +2068,17 @@ private fun ArkMovementDetailSheet(
     val isBitcoinRail = rail == ArkHistoryRail.BITCOIN
     val isLightningRail = rail == ArkHistoryRail.LIGHTNING
     val isFailed = arkMovementIsFailed(movement.status)
-    val isBelowMin = ArkDepositPolicy.isBelowMinOnchainMovement(movement)
     val isBoardDeposit = arkMovementIsBoardDeposit(movement)
     val isUnfinishedBoard = arkMovementIsUnfinishedBoardDeposit(movement)
+    // Boarding only starts once Bark has a board tx for the funding. Before that
+    // the funding is a plain L1 UTXO — never hold it to the ASP board threshold.
+    val boardingStarted =
+        !movement.boardTxid.isNullOrBlank() ||
+            movement.status.equals("boarding", ignoreCase = true)
+    val isPreBoardDeposit = isBoardDeposit && isReceive && !boardingStarted
     val resolvedRequiredBoardConfirmations =
-        movement.requiredBoardConfirmations?.takeIf { it > 0 }
-            ?: requiredBoardConfirmations.takeIf { it > 0 }
+        movement.requiredBoardConfirmations?.takeIf { it >= 0 }
+            ?: requiredBoardConfirmations.takeIf { it >= 0 }
             ?: ARK_BOARD_REQUIRED_CONFIRMATIONS
     // Prefer positive funding over board=0 (Kotlin `0 ?: funding` stays 0).
     val actualDepositConfirmations =
@@ -1974,7 +2111,7 @@ private fun ArkMovementDetailSheet(
             else -> null
         }
     val boardConfProgress =
-        if (isBoardDeposit && isReceive) {
+        if (isBoardDeposit && isReceive && boardingStarted) {
             ArkDepositPolicy.boardProgressLabel(
                 progressConfirmations,
                 resolvedRequiredBoardConfirmations,
@@ -1995,11 +2132,20 @@ private fun ArkMovementDetailSheet(
                 requiredBoardConfirmations = resolvedRequiredBoardConfirmations,
             )
     val layer1Confirmed = layer1Transaction?.isConfirmed == true
-    // Board deposits are pending X/required until the board tx reaches the ASP threshold,
-    // then show confirmed (Bark flips the movement shortly after via syncPendingBoards).
+    // Pre-board funding follows regular L1 rules: a linked confirmed L1 tx or
+    // 1+ Esplora funding confs counts as confirmed (external deposits have no
+    // linked L1 row, only funding depth).
+    val preBoardConfirmed =
+        isPreBoardDeposit &&
+            (layer1Confirmed || (movement.fundingConfirmations ?: 0) > 0)
+    // Boarding-phase deposits are pending X/required until the board tx reaches
+    // the ASP threshold, then show confirmed (Bark flips the movement shortly
+    // after via syncPendingBoards). Pre-board funding is pending/confirmed like
+    // any regular L1 tx.
     val isPending =
         when {
-            isFailed || isBelowMin || isRecoveredL1 -> false
+            isFailed || isRecoveredL1 -> false
+            isPreBoardDeposit -> arkMovementIsPending(movement) && !preBoardConfirmed
             isUnfinishedBoard -> !boardConfsMet
             else ->
                 arkMovementIsPending(movement) &&
@@ -2007,8 +2153,9 @@ private fun ArkMovementDetailSheet(
         }
     val isConfirmed =
         when {
-            isFailed || isBelowMin -> false
+            isFailed -> false
             isRecoveredL1 -> true
+            isPreBoardDeposit -> preBoardConfirmed
             isUnfinishedBoard -> boardConfsMet
             isPending -> false
             layer1Confirmed && isBitcoinRail -> true
@@ -2018,7 +2165,6 @@ private fun ArkMovementDetailSheet(
     val statusColor =
         when {
             isFailed -> ErrorRed
-            isBelowMin -> WarningYellow
             isRecoveredL1 -> BitcoinOrange
             isConfirmed -> AccentGreen
             else -> BitcoinOrange
@@ -2027,9 +2173,10 @@ private fun ArkMovementDetailSheet(
     val statusLabel =
         when {
             isFailed -> arkMovementDisplayStatus(movement.status)
-            isBelowMin -> stringResource(R.string.ark_history_status_below_min)
             isRecoveredL1 -> stringResource(R.string.ark_history_badge_recovered_l1)
             isUnfinishedBoard && boardConfsMet ->
+                stringResource(R.string.loc_4ab75d7f)
+            isPreBoardDeposit && preBoardConfirmed ->
                 stringResource(R.string.loc_4ab75d7f)
             (isUnfinishedBoard || (isBoardDeposit && isPending)) && boardConfProgress != null ->
                 "$pendingLabel $boardConfProgress"
@@ -2293,7 +2440,7 @@ private fun ArkMovementDetailSheet(
                         Box(
                             modifier =
                                 Modifier
-                                    .align(Alignment.TopEnd)
+                                    .align(Alignment.TopStart)
                                     .size(28.dp)
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(DarkCard.copy(alpha = 0.72f))
@@ -2642,6 +2789,11 @@ private fun ArkMovementDetailSheet(
                                                 boardConfsMet && isUnfinishedBoard ->
                                                     stringResource(
                                                         R.string.ark_deposit_note_confirmed_format,
+                                                        resolvedRequiredBoardConfirmations,
+                                                    )
+                                                isPreBoardDeposit && preBoardConfirmed ->
+                                                    stringResource(
+                                                        R.string.ark_deposit_note_preboard_format,
                                                         resolvedRequiredBoardConfirmations,
                                                     )
                                                 else ->

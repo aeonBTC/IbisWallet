@@ -694,6 +694,16 @@ private fun FullBackupExportConfirmationDialog(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Ark DBs are intentionally excluded from full backups (seed+ASP
+                // rebuild; durable copies live on the external SAF folder).
+                Text(
+                    text = stringResource(R.string.full_backup_excludes_ark_db),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+
                 Spacer(modifier = Modifier.height(20.dp))
 
                 Row(
