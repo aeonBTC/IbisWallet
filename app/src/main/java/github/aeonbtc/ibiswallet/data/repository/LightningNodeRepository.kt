@@ -279,6 +279,7 @@ class LightningNodeRepository(
                         sessionConfig.copy(
                             useTls = config.useTls,
                             allowInsecureTls = config.allowInsecureTls,
+                            acknowledgedInsecure = config.acknowledgedInsecure,
                             preferSessionTls = preferSessionTls,
                             macaroonHex = config.macaroonHex,
                             tlsCertPem = config.tlsCertPem,
@@ -673,17 +674,13 @@ class LightningNodeRepository(
                 val info = client.connect(connectConfig)
                 onPhase(LightningNodeConnectionTestPhase.FETCHING_BALANCE)
                 val balance = client.getBalance()
-                val sessionConfig =
-                    (client as? LndRestClient)?.sessionConfig
-                        ?: (client as? ClnRestClient)?.sessionConfig
-                        ?: connectConfig
                 client.disconnect()
-                // Hint for Save without flipping the TLS toggle.
-                val preferSessionTls = !config.useTls && sessionConfig.tlsEnabled
+                // No transport auto-upgrade exists anymore (single candidate);
+                // the hint is always false. Kept for state compat.
                 LightningNodeConnectionTestResult.Success(
                     info = info,
                     balance = balance,
-                    preferSessionTls = preferSessionTls,
+                    preferSessionTls = false,
                 )
             } catch (e: Exception) {
                 // TimeoutCancellationException is a CancellationException; convert before it
@@ -720,7 +717,8 @@ class LightningNodeRepository(
             existing.type == config.type &&
                 existing.host.equals(config.host.trim(), ignoreCase = true) &&
                 existing.port == config.port &&
-                existing.useTls == config.useTls
+                existing.useTls == config.useTls &&
+                existing.acknowledgedInsecure == config.acknowledgedInsecure
         // Keep the LAN speed hint across edit/save; drop it when host/port/TLS change.
         val toSave =
             config.copy(
@@ -786,6 +784,8 @@ class LightningNodeRepository(
                     description = decoded.description,
                     destination = decoded.destination,
                     maxFeePercent = maxFeePercent ?: DEFAULT_MAX_FEE_PERCENT,
+                    expirySeconds = decoded.expirySeconds,
+                    preparedAtMs = System.currentTimeMillis(),
                 )
         } catch (e: Exception) {
             _sendState.value =
@@ -895,6 +895,12 @@ class LightningNodeRepository(
             _sendState.value = LightningNodeSendState.Error("Nothing to send")
             return
         }
+        // Re-check expiry at pay time: a preview left open past the invoice
+        // expiry must not be broadcast (replay of a stale invoice).
+        if (isPreviewInvoiceExpired(preview)) {
+            _sendState.value = LightningNodeSendState.Error("Invoice expired — request a new one")
+            return
+        }
         val client = backend
         if (client == null) {
             _sendState.value = LightningNodeSendState.Error("Not connected")
@@ -939,6 +945,17 @@ class LightningNodeRepository(
                     e.message?.takeIf { it.isNotBlank() } ?: "Payment failed",
                 )
         }
+    }
+
+    private fun isPreviewInvoiceExpired(preview: LightningNodeSendState.Preview): Boolean {
+        // Absolute expiry from the BOLT11 timestamp is authoritative when parseable.
+        runCatching { github.aeonbtc.ibiswallet.util.bolt11InvoiceExpiresAtMs(preview.paymentRequest) }
+            .getOrNull()
+            ?.let { return System.currentTimeMillis() >= it }
+        // Fallback: relative expiry from decode time when the absolute path is unavailable.
+        val expiry = preview.expirySeconds ?: return false
+        if (expiry <= 0) return false
+        return System.currentTimeMillis() - preview.preparedAtMs >= expiry * 1000L
     }
 
     fun resetSendState() {

@@ -13,6 +13,8 @@ enum class AppLocale(
     SPANISH("es", "es"),
     BRAZILIAN_PORTUGUESE("pt-BR", "pt-BR"),
     RUSSIAN("ru", "ru"),
+    FRENCH("fr", "fr"),
+    GERMAN("de", "de"),
     ;
 
     companion object {

@@ -6971,6 +6971,9 @@ class LiquidRepository(
     ): Pset {
         require(recipients.isNotEmpty()) { "At least one recipient is required" }
         require(recipients.all { it.amountSats > 0UL }) { "Recipient amounts must be positive" }
+        require(recipients.all { BitcoinUtils.isLiquidMainnetAddress(it.address) }) {
+            BitcoinUtils.UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
+        }
 
         val hasNonLbtcRecipient = recipients.any { recipient ->
             val assetId = recipient.assetId
@@ -6993,7 +6996,12 @@ class LiquidRepository(
                     txBuilder.addLbtcRecipient(Address(recipient.address), recipient.amountSats)
                 }
             }
-            txBuilder.feeRate((feeRateSatPerVb.coerceIn(DEFAULT_LIQUID_SWAP_FEE_RATE, MAX_SIDESWAP_LIQUID_FEE_RATE) * 1000.0).toFloat())
+            // Fail closed instead of silently raising a user-reviewed fee:
+            // a below-minimum rate must be re-confirmed, not coerced.
+            require(feeRateSatPerVb in DEFAULT_LIQUID_SWAP_FEE_RATE..MAX_SIDESWAP_LIQUID_FEE_RATE) {
+                "Fee rate ${feeRateSatPerVb}sat/vB outside $DEFAULT_LIQUID_SWAP_FEE_RATE..$MAX_SIDESWAP_LIQUID_FEE_RATE — review again"
+            }
+            txBuilder.feeRate((feeRateSatPerVb * 1000.0).toFloat())
             txBuilder.finish(wollet)
         }
     }
@@ -7010,12 +7018,18 @@ class LiquidRepository(
         feeRateSatPerVb: Double,
         selectedUtxos: List<UtxoInfo>? = null,
     ): Pset {
+        require(BitcoinUtils.isLiquidMainnetAddress(address)) {
+            BitcoinUtils.UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
+        }
         // Drain intentionally is not change-only — spend the full balance.
         val txBuilder = network.txBuilder()
         applyUtxoSelection(txBuilder, wollet, selectedUtxos, preferChangeOnly = false)
         txBuilder.drainLbtcWallet()
         txBuilder.drainLbtcTo(Address(address))
-        txBuilder.feeRate((feeRateSatPerVb.coerceIn(DEFAULT_LIQUID_SWAP_FEE_RATE, MAX_SIDESWAP_LIQUID_FEE_RATE) * 1000.0).toFloat())
+        require(feeRateSatPerVb in DEFAULT_LIQUID_SWAP_FEE_RATE..MAX_SIDESWAP_LIQUID_FEE_RATE) {
+            "Fee rate ${feeRateSatPerVb}sat/vB outside $DEFAULT_LIQUID_SWAP_FEE_RATE..$MAX_SIDESWAP_LIQUID_FEE_RATE — review again"
+        }
+        txBuilder.feeRate((feeRateSatPerVb * 1000.0).toFloat())
         return txBuilder.finish(wollet)
     }
 
@@ -7028,6 +7042,16 @@ class LiquidRepository(
         selectedUtxos
             ?.takeIf { it.isNotEmpty() }
             ?.let { requestedUtxos ->
+                // Fail closed: manual coin control must not bypass the frozen
+                // do-not-spend flag. The automatic path below filters frozen;
+                // the manual path returns early so check explicitly here.
+                val frozenOutpoints = currentWalletId?.let { secureStorage.getFrozenUtxos(it) }.orEmpty()
+                if (frozenOutpoints.isNotEmpty()) {
+                    val frozenSelected = requestedUtxos.map { it.outpoint }.filter { it in frozenOutpoints }
+                    require(frozenSelected.isEmpty()) {
+                        "Cannot send using frozen UTXOs — unfreeze coins or change selection"
+                    }
+                }
                 val selectedOutpoints = requestedUtxos.map { it.outpoint }.toSet()
                 val walletUtxos =
                     wollet.utxos().filter { utxo ->

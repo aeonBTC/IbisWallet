@@ -87,9 +87,12 @@ object TlsCertMaterial {
 
     fun shouldSkipHostnameVerification(hostname: String): Boolean {
         val host = hostname.trim().trim('[', ']')
+        // Only .onion skips: the onion address itself is the authentication.
+        // localhost / IP literals keep HTTPS hostname verification so a pasted
+        // CA cert cannot be replayed for a different host (pin-only would allow
+        // any cert from that CA).
         if (host.endsWith(".onion", ignoreCase = true)) return true
-        if (host.equals("localhost", ignoreCase = true)) return true
-        return host.matches(IPV4_LITERAL) || host.contains(':')
+        return false
     }
 
     fun applyInsecureTrust(

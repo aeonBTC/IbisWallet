@@ -13,6 +13,19 @@ enum class SparkOnchainFeeSpeed {
     FAST,
 }
 
+/**
+ * Pending (unpaid) BOLT11 invoice kept visible on the Spark Receive screen until
+ * it is paid or the user generates a new one. Cached per wallet in SecureStorage
+ * so it survives navigation, wallet reloads, and process death. The invoice is
+ * public-by-design (it is shown as a QR for payers).
+ */
+data class SparkPendingLnInvoice(
+    val paymentRequest: String,
+    val amountSats: Long?,
+    val description: String = "",
+    val createdAtMs: Long = 0L,
+)
+
 data class SparkOnchainFeeQuote(
     val speed: SparkOnchainFeeSpeed,
     val feeSats: Long,
@@ -56,6 +69,33 @@ data class SparkUnclaimedDeposit(
     val timestamp: Long? = null,
     val address: String? = null,
     val claimError: String? = null,
+    /**
+     * True when this deposit is our own center-Swap L1→Spark peg (recorded by
+     * [SparkRepository.addLocalPendingDeposit], the only producer). The linked
+     * L1 funding tx is not in wallet state yet at creation time, so history
+     * titles key off this flag instead of waiting for the L1 link — otherwise
+     * the row flickers Received → Swap on the next sync.
+     */
+    val isSwapDeposit: Boolean = false,
+)
+
+/**
+ * Instant (0-conf) claim quote for a pending deposit (Breez 0.25+). The
+ * provider may decline to offer one ([SparkRepository.fetchDepositClaimQuote]
+ * returns null) — the deposit then simply matures normally.
+ */
+data class SparkDepositClaimQuote(
+    val txid: String,
+    val vout: UInt,
+    val amountSats: Long,
+    val confirmations: Long,
+    /** What reaches the balance if claimed now. */
+    val creditSats: Long,
+    /** Spread fee taken from the deposit value. */
+    val feeSats: Long,
+    val feeRateSatPerVb: Long,
+    /** True when the fee was derived from on-chain estimates, not quoted. */
+    val isEstimate: Boolean,
 )
 
 sealed interface SparkSendState {

@@ -293,17 +293,26 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
      */
     fun getRawTx(txid: String): String? {
         return try {
-            readableDatabase.query(
-                TABLE_TX_RAW,
-                arrayOf(COL_HEX),
-                "$COL_TXID = ?",
-                arrayOf(txid),
-                null,
-                null,
-                null,
-            ).use { cursor ->
-                if (cursor.moveToFirst()) cursor.getString(0) else null
+            val hex =
+                readableDatabase.query(
+                    TABLE_TX_RAW,
+                    arrayOf(COL_HEX),
+                    "$COL_TXID = ?",
+                    arrayOf(txid),
+                    null,
+                    null,
+                    null,
+                ).use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                } ?: return null
+            // Poisoning guard: a malicious server must not be able to plant hex
+            // under the wrong txid. Evict mismatches instead of serving them.
+            if (!txidMatchesHex(txid, hex)) {
+                runCatching { writableDatabase.delete(TABLE_TX_RAW, "$COL_TXID = ?", arrayOf(txid)) }
+                if (BuildConfig.DEBUG) Log.w(TAG, "Evicted tx cache mismatch for $txid")
+                return null
             }
+            hex
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to read tx cache for $txid: ${e.message}")
             null
@@ -350,6 +359,12 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         txid: String,
         hex: String,
     ) {
+        // Validate before storing so a single malicious response cannot poison
+        // the shared cache for every wallet.
+        if (!txidMatchesHex(txid, hex)) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "Refused to cache mismatched tx $txid")
+            return
+        }
         try {
             val values =
                 ContentValues().apply {
@@ -376,12 +391,46 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun deleteHistory(scriptHash: String) {
+    fun deleteHistory(
+        scriptHash: String,
+        walletId: String = "",
+    ) {
         try {
-            writableDatabase.delete(TABLE_SCRIPT_HASH_HISTORY, "$COL_SCRIPT_HASH = ?", arrayOf(scriptHash))
+            val key = namespacedScriptHash(walletId, scriptHash)
+            writableDatabase.delete(TABLE_SCRIPT_HASH_HISTORY, "$COL_SCRIPT_HASH = ?", arrayOf(key))
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to delete history cache for $scriptHash: ${e.message}")
         }
+    }
+
+    private fun namespacedScriptHash(
+        walletId: String,
+        scriptHash: String,
+    ): String = if (walletId.isBlank()) scriptHash else "${sanitizeNamespace(walletId)}:$scriptHash"
+
+    private fun sanitizeNamespace(walletId: String): String = walletId.replace(":", "_").take(128)
+
+    private fun txidMatchesHex(
+        txid: String,
+        hex: String,
+    ): Boolean {
+        return try {
+            val clean = hex.trim().lowercase()
+            if (clean.length < 20 || clean.length % 2 != 0) return false
+            if (!clean.all { it in '0'..'9' || it in 'a'..'f' }) return false
+            val raw = ByteArray(clean.length / 2) { i -> clean.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val once = digest.digest(raw)
+            val twice = digest.digest(once)
+            val computed = twice.reversedArray().joinToString("") { "%02x".format(it) }
+            computed.equals(txid.lowercase(), ignoreCase = true)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun deleteHistory(scriptHash: String) {
+        deleteHistory(scriptHash, "")
     }
 
     fun deleteTransactionCache(
@@ -468,16 +517,24 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
     /**
      * Persist script hash statuses to survive app restarts.
      * Updates only changed entries and removes hashes that disappeared.
+     *
+     * Statuses are namespaced per [walletId] so one wallet's server cannot
+     * poison or link another wallet's pre-check baseline. Callers without a
+     * wallet id keep the legacy global namespace.
      */
-    fun saveScriptHashStatuses(statuses: Map<String, String?>) {
+    fun saveScriptHashStatuses(
+        statuses: Map<String, String?>,
+        walletId: String = "",
+    ) {
         if (statuses.isEmpty()) {
-            clearScriptHashStatuses()
+            clearScriptHashStatuses(walletId)
             return
         }
         try {
             writableDatabase.transaction {
-                val existing = loadScriptHashStatuses(this)
-                val removedHashes = existing.keys - statuses.keys
+                val namespaced = statuses.mapKeys { (k, _) -> namespacedScriptHash(walletId, k) }
+                val existing = loadScriptHashStatuses(this, walletId)
+                val removedHashes = existing.keys - namespaced.keys
                 val now = System.currentTimeMillis()
                 removedHashes.chunked(SQLITE_DELETE_CHUNK_SIZE).forEach { chunk ->
                     val placeholders = List(chunk.size) { "?" }.joinToString(",")
@@ -487,7 +544,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                         chunk.toTypedArray(),
                     )
                 }
-                for ((scriptHash, status) in statuses) {
+                for ((scriptHash, status) in namespaced) {
                     if (existing[scriptHash] == status) continue
                     val values =
                         ContentValues().apply {
@@ -513,9 +570,9 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
      * Load persisted script hash statuses from the previous session.
      * @return Map of scriptHash -> status (null for unused addresses), or empty map.
      */
-    fun loadScriptHashStatuses(): Map<String, String?> {
+    fun loadScriptHashStatuses(walletId: String = ""): Map<String, String?> {
         return try {
-            loadScriptHashStatuses(readableDatabase)
+            loadScriptHashStatuses(readableDatabase, walletId)
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to load script hash statuses: ${e.message}")
             emptyMap()
@@ -524,29 +581,43 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
 
     /**
      * Clear persisted script hash statuses.
-     * Called on wallet switch or server change.
+     * Called on wallet switch or server change. When [walletId] is supplied,
+     * only that wallet's namespace is cleared.
      */
-    fun clearScriptHashStatuses() {
+    fun clearScriptHashStatuses(walletId: String = "") {
         try {
-            writableDatabase.delete(TABLE_SCRIPT_HASH_STATUSES, null, null)
+            if (walletId.isBlank()) {
+                writableDatabase.delete(TABLE_SCRIPT_HASH_STATUSES, null, null)
+            } else {
+                writableDatabase.delete(
+                    TABLE_SCRIPT_HASH_STATUSES,
+                    "$COL_SCRIPT_HASH LIKE ?",
+                    arrayOf("${sanitizeNamespace(walletId)}:%"),
+                )
+            }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Failed to clear script hash statuses: ${e.message}")
         }
     }
 
-    private fun loadScriptHashStatuses(db: SQLiteDatabase): Map<String, String?> {
+    private fun loadScriptHashStatuses(
+        db: SQLiteDatabase,
+        walletId: String = "",
+    ): Map<String, String?> {
         val result = mutableMapOf<String, String?>()
+        val prefix = if (walletId.isBlank()) null else "${sanitizeNamespace(walletId)}:"
         db.query(
             TABLE_SCRIPT_HASH_STATUSES,
             arrayOf(COL_SCRIPT_HASH, COL_STATUS),
-            null,
-            null,
+            if (prefix == null) null else "$COL_SCRIPT_HASH LIKE ?",
+            if (prefix == null) null else arrayOf("$prefix%"),
             null,
             null,
             null,
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                val scriptHash = cursor.getString(0)
+                val storedKey = cursor.getString(0)
+                val scriptHash = storedKey.removePrefix(prefix ?: "")
                 val status = if (cursor.isNull(1)) null else cursor.getString(1)
                 result[scriptHash] = status
             }
@@ -563,13 +634,15 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
     fun getHistory(
         scriptHash: String,
         currentStatus: String,
+        walletId: String = "",
     ): String? {
         return try {
+            val key = namespacedScriptHash(walletId, scriptHash)
             readableDatabase.query(
                 TABLE_SCRIPT_HASH_HISTORY,
                 arrayOf(COL_STATUS, COL_HISTORY_JSON),
                 "$COL_SCRIPT_HASH = ?",
-                arrayOf(scriptHash),
+                arrayOf(key),
                 null,
                 null,
                 null,
@@ -589,11 +662,12 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         scriptHash: String,
         status: String,
         historyJson: String,
+        walletId: String = "",
     ) {
         try {
             val values =
                 ContentValues().apply {
-                    put(COL_SCRIPT_HASH, scriptHash)
+                    put(COL_SCRIPT_HASH, namespacedScriptHash(walletId, scriptHash))
                     put(COL_STATUS, status)
                     put(COL_HISTORY_JSON, historyJson)
                     put(COL_CACHED_AT, System.currentTimeMillis())

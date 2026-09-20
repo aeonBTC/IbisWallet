@@ -37,6 +37,15 @@ internal object ArkBarkMappers {
     fun isSpendableLabel(state: String): Boolean =
         state.equals(VTXO_SPENDABLE, ignoreCase = true)
 
+    /**
+     * Live for balance/drift/scan decisions: Spendable plus Locked (in-round /
+     * in-exit). Anything else (Spent, Exited) is mailbox-settled history and must
+     * never justify trusting local state over the mailbox.
+     */
+    fun isLiveVtxoLabel(state: String): Boolean =
+        state.equals(VTXO_SPENDABLE, ignoreCase = true) ||
+            state.equals(VTXO_LOCKED, ignoreCase = true)
+
     fun exitStateLabel(state: ExitState): String =
         when (state) {
             is ExitState.Start -> EXIT_START
@@ -77,6 +86,32 @@ internal object ArkBarkMappers {
             state.contains("awaiting-cpfp-broadcast", ignoreCase = true) ||
             state.equals(EXIT_PROCESSING, ignoreCase = true) ||
             state.startsWith("$EXIT_PROCESSING(", ignoreCase = true)
+
+    fun isCanceled(state: ExitState): Boolean = state is ExitState.Canceled
+
+    fun isCanceledLabel(state: String): Boolean =
+        state.equals(EXIT_CANCELED, ignoreCase = true) ||
+            state.contains(EXIT_CANCELED, ignoreCase = true)
+
+    fun isAlreadySpentLabel(state: String): Boolean =
+        state.equals(EXIT_VTXO_ALREADY_SPENT, ignoreCase = true) ||
+            state.contains(EXIT_VTXO_ALREADY_SPENT, ignoreCase = true)
+
+    /** Claimed, canceled, or already spent — not an in-flight unilateral exit. */
+    fun isTerminalExitLabel(state: String): Boolean =
+        isClaimedLabel(state) || isCanceledLabel(state) || isAlreadySpentLabel(state)
+
+    fun canCancelLabel(state: String): Boolean =
+        !isCanceledLabel(state) &&
+            !isClaimedLabel(state) &&
+            !state.contains(EXIT_CLAIMABLE, ignoreCase = true) &&
+            !state.contains(EXIT_AWAITING_DELTA, ignoreCase = true) &&
+            !state.contains(EXIT_CLAIM_IN_PROGRESS, ignoreCase = true) &&
+            (
+                state.equals(EXIT_START, ignoreCase = true) ||
+                    state.equals(EXIT_PROCESSING, ignoreCase = true) ||
+                    state.startsWith("$EXIT_PROCESSING(", ignoreCase = true)
+                )
 
     private fun processingNeedsCpfp(state: ExitState.Processing): Boolean =
         state.transactions.any { it.status is ExitTxStatus.AwaitingCpfpBroadcast }

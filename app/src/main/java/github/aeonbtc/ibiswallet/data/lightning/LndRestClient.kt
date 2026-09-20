@@ -75,6 +75,11 @@ class LndRestClient : LightningNodeBackend {
             val hostIsOnion = host.endsWith(".onion", ignoreCase = true)
             val normalized = config.copy(useTor = hostIsOnion, host = host)
 
+            // Fail closed before any socket or credential use on clearnet.
+            require(normalized.isCredentialTransportAuthorized()) {
+                "Enable TLS with a pinned certificate or explicitly allow insecure transport"
+            }
+
             connectWithRetries(normalized)
         }
 
@@ -121,10 +126,13 @@ class LndRestClient : LightningNodeBackend {
                         continue
                     }
                     if (isDefinitiveHttpFailure(e)) throw e
+                    // Auto-upgrade HTTP→HTTPS only where Tor authenticates the
+                    // endpoint; never silently upgrade clearnet with credentials.
                     if (
                         isHttpsRequiredFailure(e) &&
                         !candidate.tlsEnabled &&
-                        httpsCandidate != null
+                        httpsCandidate != null &&
+                        candidate.isOnionHost()
                     ) {
                         closeClientQuietly()
                         openSession(httpsCandidate, probeTimeouts = false)
@@ -1485,11 +1493,15 @@ class LndRestClient : LightningNodeBackend {
             when {
                 config.tlsCertPem.isNotBlank() ->
                     TlsCertMaterial.applyToOkHttp(builder, config.tlsCertPem, config.host)
-                config.allowInsecureTls || viaTor ->
+                // Trust-all only with explicit acknowledgment, or via Tor where
+                // the onion authenticates the endpoint. Never by silent probing.
+                config.acknowledgedInsecure || viaTor ->
                     TlsCertMaterial.applyInsecureTrust(builder, config.host)
                 else ->
                     throw IllegalStateException("TLS requires a certificate or an explicit insecure-TLS opt-in")
             }
+        } else if (!viaTor && !config.acknowledgedInsecure) {
+            throw IllegalStateException("Enable TLS with a pinned certificate or explicitly allow insecure transport")
         }
 
         return builder.build()

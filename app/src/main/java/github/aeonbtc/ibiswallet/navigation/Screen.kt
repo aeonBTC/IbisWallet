@@ -23,6 +23,8 @@ sealed class Screen(val route: String) {
 
     data object ImportWallet : Screen("import_wallet")
 
+    data object ChecksumHelper : Screen("checksum_helper")
+
     data object GenerateWallet : Screen("generate_wallet")
 
     data object ElectrumConfig : Screen("electrum_config")
@@ -60,6 +62,8 @@ sealed class Screen(val route: String) {
     data object Swap : Screen("swap")
 
     data object SparkTransfer : Screen("spark_transfer")
+
+    data object SparkExit : Screen("spark_exit")
 
     data object ArkTransfer : Screen("ark_transfer")
 

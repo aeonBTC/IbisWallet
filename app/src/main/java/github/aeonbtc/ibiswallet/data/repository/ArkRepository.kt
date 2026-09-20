@@ -2,19 +2,23 @@ package github.aeonbtc.ibiswallet.data.repository
 
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import androidx.core.net.toUri
+import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.ArkAutoDbBackupInfo
 import github.aeonbtc.ibiswallet.data.model.ArkDefaults
 import github.aeonbtc.ibiswallet.data.model.ArkEvent
+import github.aeonbtc.ibiswallet.data.model.ArkEmergencyExitFeeQuote
 import github.aeonbtc.ibiswallet.data.model.ArkExitClaimHistory
 import github.aeonbtc.ibiswallet.data.model.ArkExitProgress
 import github.aeonbtc.ibiswallet.data.model.ArkExitVtxo
 import github.aeonbtc.ibiswallet.data.model.ArkLifecycleState
 import github.aeonbtc.ibiswallet.data.model.ArkMovement
 import github.aeonbtc.ibiswallet.data.model.ArkOnchainUtxo
+import github.aeonbtc.ibiswallet.data.model.ArkPendingClaim
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveState
 import github.aeonbtc.ibiswallet.data.model.ArkRecoveredOnchainDeposit
@@ -69,13 +73,17 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import tech.second.bark.notificationsFlow
 import uniffi.bark.Config
+import uniffi.bark.ExitCancelFailure
 import uniffi.bark.FeeEstimate
 import uniffi.bark.LightningSendStatus
 import uniffi.bark.Movement
 import uniffi.bark.Network
 import uniffi.bark.OnchainWallet
 import uniffi.bark.RecoveryReport
+import uniffi.bark.RecoveryStatus
+import uniffi.bark.RoundFlowKind
 import uniffi.bark.Vtxo
+import uniffi.bark.VtxoLockHolder
 import uniffi.bark.VtxoState
 import uniffi.bark.Wallet
 import uniffi.bark.WalletNotification
@@ -136,6 +144,7 @@ class ArkRepository(
 
     private val _sendState = MutableStateFlow<ArkSendState>(ArkSendState.Idle)
     val sendState: StateFlow<ArkSendState> = _sendState.asStateFlow()
+    private val sendInFlight = AtomicBoolean(false)
 
     private val _receiveState = MutableStateFlow<ArkReceiveState>(ArkReceiveState.Idle)
     val receiveState: StateFlow<ArkReceiveState> = _receiveState.asStateFlow()
@@ -145,6 +154,18 @@ class ArkRepository(
 
     private val _lifecycleState = MutableStateFlow<ArkLifecycleState>(ArkLifecycleState.Idle)
     val lifecycleState: StateFlow<ArkLifecycleState> = _lifecycleState.asStateFlow()
+
+    /**
+     * True while a session-DB wipe + mailbox rescan could strand in-flight
+     * activity (pending refresh round, exits, boards, Lightning). The manual
+     * Rescan button honors this, and [loadWallet] refuses the wipe while set.
+     */
+    private val _mailboxRescanBlocked = MutableStateFlow(false)
+    val mailboxRescanBlocked: StateFlow<Boolean> = _mailboxRescanBlocked.asStateFlow()
+
+    private val _emergencyExitFeeQuote = MutableStateFlow<ArkEmergencyExitFeeQuote?>(null)
+    val emergencyExitFeeQuote: StateFlow<ArkEmergencyExitFeeQuote?> = _emergencyExitFeeQuote.asStateFlow()
+    private var emergencyExitFeeQuoteJob: Job? = null
 
     private val _events = MutableSharedFlow<ArkEvent>(extraBufferCapacity = 8)
     val events: SharedFlow<ArkEvent> = _events.asSharedFlow()
@@ -168,11 +189,14 @@ class ArkRepository(
     private val _isConnecting = MutableStateFlow(false)
     val isConnecting: StateFlow<Boolean> = _isConnecting.asStateFlow()
 
+    @Volatile
     private var wallet: Wallet? = null
     /** Bark bundled on-chain wallet used for BTC→Ark boarding (Bitcoin deposit address). */
+    @Volatile
     private var onchainWallet: OnchainWallet? = null
     private var notificationJob: Job? = null
     /** Bark wallet [notificationJob] collects on — used to join that job before disposing its handle. */
+    @Volatile
     private var notificationWallet: Wallet? = null
     /** Retroactive / deferred board attempts after L1→Ark funding. */
     private var deferredBoardJob: Job? = null
@@ -181,10 +205,23 @@ class ArkRepository(
     private var trackedRefreshScheduledHeight: Int? = null
     private var trackedRefreshAutomatic: Boolean = false
     private var trackedRefreshVtxoIds: List<String> = emptyList()
+
+    /**
+     * VTXO ids currently locked by a submitted refresh round (tracker + published
+     * state). Unilateral exit must refuse these — same rule as re-refresh.
+     */
+    private fun pendingRefreshVtxoIdsSnapshot(): Set<String> =
+        (trackedRefreshVtxoIds + _arkState.value.pendingRefreshVtxoIds)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+
     private var autoDbBackupJob: Job? = null
     /** Post-open ASP/chain sync — cancelled+joined on unload so DB import is not blocked. */
     private var postOpenSyncJob: Job? = null
     private var manualRefreshJob: Job? = null
+    /** Exited ids from the last seed-mailbox report; reconciled against live exits every refresh. */
+    private var lastMailboxExitedIds: List<String> = emptyList()
     private val autoDbBackupRunning = AtomicBoolean(false)
     /** Nested user-visible hydrates (load / pull-to-refresh). Background paints must not touch this. */
     private val syncSpinner = ArkSyncSpinner()
@@ -204,6 +241,25 @@ class ArkRepository(
     private var pendingSendDestination: String? = null
     private var pendingSendAmountSats: Long? = null
     private var pendingSendKind: ArkPayKind? = null
+    /**
+     * Failed-send tombstones: Bark can leave a pending movement row behind even
+     * when a send throws (e.g. bad/stale VTXO input rejected as "not spendable").
+     * Without this, the post-failure `refreshStateLocked(sync = true)` paints the
+     * phantom as Pending and the movement journal preserves it forever. Timeout /
+     * unknown-settlement Lightning paths never record here (the pay may still
+     * settle) — only the generic catch for definitive failures does. Entries
+     * live in memory + encrypted prefs (purged from journal/cache on record) and
+     * expire after [FAILED_SEND_TOMBSTONE_TTL_MS].
+     */
+    private data class FailedArkSend(
+        val walletId: String,
+        val dest: String,
+        val amountSats: Long?,
+        val timestampMs: Long,
+        /** BOLT11 payment hash when the failed send was a Lightning pay. */
+        val paymentHash: String? = null,
+    )
+    private val failedArkSends = mutableListOf<FailedArkSend>()
     /** Baseline [ArkWalletState.claimableLightningReceiveSats] when a BOLT11 invoice was last created; -1L means no active tracking. */
     private var receiveLightningBaselineSats: Long = -1L
     /** Polls open BOLT11 receive until paid or cancelled. */
@@ -211,9 +267,29 @@ class ArkRepository(
     /** Prevents spamming NeedsRefresh / RefreshSoon in-app banners across ticks. */
     private var lastNeedsRefreshEmitMs: Long = 0L
     private var lastRefreshSoonEmitMs: Long = 0L
+    /**
+     * Consecutive Bark transport failures (sync/hydrate). Bark has no liveness
+     * callback and every call site swallows errors, so this streak is the only
+     * disconnect detector — see [noteTransportResult].
+     */
+    private var arkTransportFailureStreak: Int = 0
+    /** Wallet id that already ran a cross-device drift rescan this session (one-shot). */
+    private var crossDeviceDriftRescanWalletId: String? = null
+    /**
+     * Wallet id owed a mailbox rescan: a wipe was due but blocked by in-flight
+     * activity, so the skeleton DB stayed live with an ineffective scan.
+     * Retried via forceMailbox reopen once activity settles (see hydrate tail).
+     */
+    private var mailboxRescanOwedWalletId: String? = null
+    private var mailboxRescanOwedAtMs: Long = 0L
+    /** Consecutive stale-input send failures (server rejects our inputs as spent). */
+    private var staleInputFailureStreak: Int = 0
+    /** Monotonic ms of the last automatic mailbox rescan (cooldown-gated). */
+    private var lastForcedRescanElapsedMs: Long = 0L
     private var lastAutoRefreshAttemptMs: Long = 0L
     /** When true, next auto-refresh wait uses [AUTO_REFRESH_FAILURE_RETRY_MS] instead of full cooldown. */
     private var lastAutoRefreshFailed: Boolean = false
+    private var lastExitFeeRateSatPerVb: Long = 0L
     private var lastKnownChainTipHeight: Int? = null
     private var lastTipFetchMs: Long = 0L
     /** Monotonic generation so a timed-out prior load cannot overwrite a newer wallet. */
@@ -238,18 +314,38 @@ class ArkRepository(
      * The next open/dispose must close these first — otherwise the datadir stays locked
      * until process death.
      */
+    @Volatile
     private var unattachedBarkHandles: OpenedArkWallet? = null
     /** Last leftover wallet already closed under [nativeHandleMutex]; skip a second close. */
+    @Volatile
     private var closedUnattachedWallet: Wallet? = null
+    /**
+     * Reaper for [unattachedBarkHandles] parked by [unloadLocked] when native code is
+     * still in flight. The next open consumes the leftover, but when the user leaves
+     * Ark (other wallet / provider / delete) there is no next open — without this the
+     * previous wallet's Bark daemon would stay alive indefinitely.
+     */
+    private var parkedHandlesReapJob: Job? = null
     /** Delayed reopen after a datadir-lock failure so the UI recovers without an app restart. */
     private var datadirLockReopenJob: Job? = null
     private var datadirLockReopenAttempts: Int = 0
+    /** Delayed reopen after cache-evicted / unreadable Bark SQLite. */
+    private var sessionDbReopenJob: Job? = null
+    private var sessionDbReopenAttempts: Int = 0
+    /** Skip the already-live hydrate path so loadWallet disposes the dead native handle. */
+    private var pendingForcedSessionReopen: Boolean = false
     /**
      * Disaster import: pre-installed session dir consumed by the next [loadWallet].
      * Not durable across process death beyond the cache dir itself.
      */
     private var pendingImportSessionDir: File? = null
     private var pendingImportWalletId: String? = null
+    /**
+     * True when the staged import could not be bound to this wallet (legacy zip
+     * without a manifest). The next open must run the seed-mailbox scan instead
+     * of trusting the imported DB, even if it looks funded.
+     */
+    private var pendingImportForceMailboxScan: Boolean = false
     /**
      * Session dirs queued for delete after native dispose (failed opens / superseded loads).
      * Normal unload keeps the wallet dir for fast reopen.
@@ -260,10 +356,8 @@ class ArkRepository(
     private var lastOnchainReopenAttemptMs: Long = 0L
     /** Cooldown for the on-chain-unavailable snackbar. */
     private var lastOnchainUnavailableEmitMs: Long = 0L
-    /** Cooldown for below-min board snackbar (stuck on-chain deposit). */
-    private var lastBoardBelowMinEmitMs: Long = 0L
     /**
-     * After L1 recover of a stuck below-min deposit, do not re-paint prior on-chain
+     * After L1 recover of a stuck deposit, do not re-paint prior on-chain
      * totals from cache/Esplora bridge while Bark briefly reports 0.
      */
     private var suppressStaleOnchainPaint: Boolean = false
@@ -348,42 +442,83 @@ class ArkRepository(
 
     private fun cachedArkHasFunds(walletId: String): Boolean {
         val cache = secureStorage.getArkWalletStateCache(walletId) ?: return false
-        return cache.spendableSats > 0L ||
-            cache.pendingInRoundSats > 0L ||
-            cache.pendingBoardSats > 0L ||
-            cache.pendingExitSats > 0L ||
-            cache.claimableLightningReceiveSats > 0L ||
-            cache.vtxos.isNotEmpty() ||
-            cache.movements.isNotEmpty()
+        // Mailbox authority: a cache holding only Spent/Exited VTXOs (stale paint
+        // or a poisoned save) proves nothing — it must never justify skipping the
+        // mailbox scan. Live buckets pass through unchanged.
+        val liveVtxoCount =
+            cache.vtxos.count { ArkBarkMappers.isLiveVtxoLabel(it.state) }
+        return ArkMailboxRecoveryPolicy.cachedHasRecoverableFunds(
+            spendableSats = if (liveVtxoCount > 0) cache.spendableSats else 0L,
+            pendingInRoundSats = cache.pendingInRoundSats,
+            pendingBoardSats = cache.pendingBoardSats,
+            pendingExitSats = cache.pendingExitSats,
+            claimableLightningReceiveSats = cache.claimableLightningReceiveSats,
+            vtxoCount = liveVtxoCount,
+        )
     }
 
     private fun prepareSessionDirForOpen(
         walletId: String,
         generation: Long,
+        forceMailbox: Boolean = false,
+        rescanBlockedAtEntry: Boolean = false,
     ): Pair<File, Boolean> {
-        var sessionDir = takeSessionDataDirForOpen(walletId, generation)
+        val (preparedDir, importForceScan) = takeSessionDataDirForOpen(walletId, generation)
+        var sessionDir = preparedDir
         val reusable = hasReusableBarkDb(sessionDir)
         val marker = hasMailboxScannedMarker(sessionDir)
         val funds = cachedArkHasFunds(walletId)
-        if (
-            ArkMailboxRecoveryPolicy.shouldWipeForMailboxRescan(
-                hasReusableDb = reusable,
-                hasScannedMarker = marker,
-                cachedHasFunds = funds,
+        var wipe =
+            if (forceMailbox) {
+                ArkMailboxRecoveryPolicy.shouldWipeForForcedMailboxRescan(reusable)
+            } else {
+                ArkMailboxRecoveryPolicy.shouldWipeForMailboxRescan(
+                    hasReusableDb = reusable,
+                    hasScannedMarker = marker,
+                    cachedHasFunds = funds,
+                )
+            }
+        if (wipe && rescanBlockedAtEntry) {
+            // A refresh round, exit, board, or Lightning flow is in flight: wiping
+            // the session DB would strand it and blind the UI until it settles.
+            // Open the skeleton as-is (skipRecovery=false is ineffective on an
+            // existing DB — Bark only scans on creation) and owe a real rescan
+            // once activity settles. Funds stay safe; visibility is deferred.
+            SecureLog.w(TAG, "Ark mailbox rescan blocked by in-flight activity — opening without wipe")
+            _events.tryEmit(
+                ArkEvent.MailboxRescanBlocked(
+                    message = localizedString(R.string.ark_mailbox_rescan_blocked),
+                ),
             )
-        ) {
-            SecureLog.w(TAG, "Ark wiping unmarked/empty session for mailbox recovery")
+            wipe = false
+            mailboxRescanOwedWalletId = walletId
+            mailboxRescanOwedAtMs = System.currentTimeMillis()
+        }
+        if (wipe) {
+            SecureLog.w(TAG, "Ark wiping session for mailbox recovery")
             sessionDir = recreateEmptySessionDataDir(walletId)
             sessionDataDir = sessionDir
             sessionWalletId = walletId
+            if (mailboxRescanOwedWalletId == walletId) mailboxRescanOwedWalletId = null
         }
-        val skipRecovery =
+        var skipRecovery =
             ArkMailboxRecoveryPolicy.canSkipMailboxRecovery(
                 hasReusableDb = hasReusableBarkDb(sessionDir),
                 hasScannedMarker = hasMailboxScannedMarker(sessionDir),
                 cachedHasFunds = funds,
-                forceMailbox = false,
+                forceMailbox = forceMailbox,
             )
+        // Unbound (legacy) imports always rescan: the DB may belong to another
+        // wallet, so its contents must never suppress mailbox recovery.
+        if (importForceScan) {
+            skipRecovery = false
+        }
+        SecureLog.d(
+            TAG,
+            "Ark mailbox decision reusable=$reusable marker=$marker cachedFunds=$funds " +
+                "forceMailbox=$forceMailbox importForceScan=$importForceScan " +
+                "wipe=$wipe skipRecovery=$skipRecovery",
+        )
         return sessionDir to skipRecovery
     }
 
@@ -402,17 +537,67 @@ class ArkRepository(
     }
 
     /** Wipe and recreate the stable session dir (corrupt open / forced fresh recovery). */
-    private fun recreateEmptySessionDataDir(walletId: String): File {
+    private fun recreateEmptySessionDataDir(
+        walletId: String,
+        reason: String = SESSION_BACKUP_REASON_RESCAN,
+    ): File {
         val dir = sessionDataDirForWallet(walletId)
+        backupSessionDirBeforeWipe(walletId, dir, reason)
         deleteSessionDataDir(dir)
         dir.mkdirs()
         return dir
     }
 
-    @Suppress("UNUSED_PARAMETER")
-    private fun createEmptySessionDataDir(walletId: String, generation: Long): File {
-        // [generation] kept for call-site compatibility; path is stable per wallet.
-        return recreateEmptySessionDataDir(walletId)
+    /**
+     * Peter's rule (Second): never wipe a Bark session without backing it up
+     * first. Only real DBs are kept (skeletons/empties are worthless), pruned
+     * to the last [SESSION_BACKUP_KEEP_COUNT] per wallet. Backups live under
+     * cache (never in Android backup) and are purged on wallet delete and
+     * full auto-wipe, so they never outlive the wallet itself.
+     */
+    private fun backupSessionDirBeforeWipe(
+        walletId: String,
+        dir: File?,
+        reason: String,
+    ) {
+        if (walletId.isBlank() || dir == null || !dir.isDirectory) return
+        if (!hasReusableBarkDb(dir)) return
+        runCatching {
+            val root = arkSessionBackupRootDir()
+            val stamp =
+                java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US)
+                    .format(java.util.Date())
+            val dest = File(root, "$walletId-$stamp-$reason")
+            if (dest.exists()) dest.deleteRecursively()
+            dir.copyRecursively(dest, overwrite = false)
+            pruneSessionDirBackups(walletId)
+        }.onFailure {
+            SecureLog.w(TAG, "Ark session backup before wipe failed: ${publicError(it)}")
+        }
+    }
+
+    private fun arkSessionBackupRootDir(): File =
+        File(context.cacheDir, ARK_SESSION_BACKUP_ROOT).also { it.mkdirs() }
+
+    private fun pruneSessionDirBackups(walletId: String) {
+        runCatching {
+            arkSessionBackupRootDir()
+                .listFiles()
+                ?.filter { it.isDirectory && it.name.startsWith("$walletId-") }
+                ?.sortedByDescending { it.name }
+                ?.drop(SESSION_BACKUP_KEEP_COUNT)
+                ?.forEach { it.deleteRecursively() }
+        }
+    }
+
+    private fun purgeSessionDirBackups(walletId: String) {
+        if (walletId.isBlank()) return
+        runCatching {
+            arkSessionBackupRootDir()
+                .listFiles()
+                ?.filter { it.isDirectory && it.name.startsWith("$walletId-") }
+                ?.forEach { it.deleteRecursively() }
+        }
     }
 
     private fun deleteSessionDataDir(dir: File?) {
@@ -458,20 +643,25 @@ class ArkRepository(
      * Resolve the working Bark datadir for this open.
      * Reuses `cacheDir/ark-session/<walletId>` when present so cold start skips mailbox recovery.
      * Post-import: consume [pendingImportSessionDir] once.
+     *
+     * @return the dir plus true when the consumed import requires a mailbox scan.
      */
-    private fun takeSessionDataDirForOpen(walletId: String, generation: Long): File {
+    private fun takeSessionDataDirForOpen(walletId: String, generation: Long): Pair<File, Boolean> {
         purgeLegacyDurableArkDirsOnce()
         val pending = pendingImportSessionDir
         val pendingId = pendingImportWalletId
         if (pending != null && pendingId == walletId && pending.isDirectory) {
+            val forceScan = pendingImportForceMailboxScan
             pendingImportSessionDir = null
             pendingImportWalletId = null
+            pendingImportForceMailboxScan = false
             // Normalize import into the stable wallet path when the install used a temp dir.
             val stable = sessionDataDirForWallet(walletId)
             val dir =
                 if (pending.absolutePath == stable.absolutePath) {
                     pending
                 } else {
+                    backupSessionDirBeforeWipe(walletId, stable, SESSION_BACKUP_REASON_IMPORT)
                     deleteSessionDataDir(stable)
                     if (pending.renameTo(stable)) {
                         stable
@@ -488,12 +678,13 @@ class ArkRepository(
                 }
             sessionDataDir = dir
             sessionWalletId = walletId
-            return dir
+            return dir to forceScan
         }
         // Drop a stale pending import for another wallet / failed prior open.
         if (pending != null) {
             pendingImportSessionDir = null
             pendingImportWalletId = null
+            pendingImportForceMailboxScan = false
             // Only delete if it is not another wallet's stable cache dir.
             if (pendingId.isNullOrBlank() || pending != sessionDataDirForWallet(pendingId)) {
                 deleteSessionDataDir(pending)
@@ -502,7 +693,7 @@ class ArkRepository(
         val dir = ensureSessionDataDir(walletId)
         sessionDataDir = dir
         sessionWalletId = walletId
-        return dir
+        return dir to false
     }
 
     /** Active session dir for [walletId], if any (export/auto-backup while loaded). */
@@ -528,24 +719,49 @@ class ArkRepository(
         forceMailbox: Boolean = false,
     ) =
         withContext(Dispatchers.IO) {
+            // Single-session invariant: only the selected wallet may be loaded. Direct
+            // repository callers (refresh reopen, delayed reopen timers) must never
+            // resurrect a wallet that is no longer selected. Check before touching
+            // [loadGeneration] so a refused load cannot abort a legitimate one.
+            if (walletId != secureStorage.getActiveWalletId()) {
+                SecureLog.w(TAG, "Ark load refused: not the active wallet")
+                return@withContext
+            }
             // Capture generation before any suspend so a timed-out prior load is discarded.
             val generation = loadGeneration.incrementAndGet()
+            // Fresh session attempt — prior transport failures belong to the old one.
+            arkTransportFailureStreak = 0
 
             // Fast path: already live — always re-hydrate from ASP (not local-DB-only).
             // Force-mailbox still reopens when the session DB looks like an unscanned skeleton.
+            // A skeleton (reusable DB, no scan marker, no cached funds) must never take
+            // the fast path even when already connected — hydrate alone cannot invent
+            // mailbox VTXOs, so fall through to a full reopen with mailbox scan.
+            val sessionDirForCheck = sessionDataDirForWallet(walletId)
+            val isSkeletonDb =
+                ArkMailboxRecoveryPolicy.shouldWipeForMailboxRescan(
+                    hasReusableDb = hasReusableBarkDb(sessionDirForCheck),
+                    hasScannedMarker = hasMailboxScannedMarker(sessionDirForCheck),
+                    cachedHasFunds = cachedArkHasFunds(walletId),
+                )
             val needsMailboxReopen =
-                forceMailbox &&
-                    ArkMailboxRecoveryPolicy.shouldWipeForMailboxRescan(
-                        hasReusableDb = hasReusableBarkDb(sessionDataDirForWallet(walletId)),
-                        hasScannedMarker = hasMailboxScannedMarker(sessionDataDirForWallet(walletId)),
-                        cachedHasFunds = cachedArkHasFunds(walletId),
-                    )
+                (forceMailbox &&
+                    ArkMailboxRecoveryPolicy.shouldWipeForForcedMailboxRescan(
+                        hasReusableDb = hasReusableBarkDb(sessionDirForCheck),
+                    )) || isSkeletonDb
+            val forceReopen = pendingForcedSessionReopen
             val alreadyLive =
-                !needsMailboxReopen &&
+                !forceReopen &&
+                    !needsMailboxReopen &&
+                    hasReusableBarkDb(sessionDataDirForWallet(walletId)) &&
                     mutex.withLock {
                         if (generation != loadGeneration.get()) return@withLock true
                         _loadedWalletId.value == walletId && wallet != null && _isConnected.value
                     }
+            // Consume the forced-reopen request only once this load commits to a
+            // full reopen or an already-live hydrate. Generation bails above leave
+            // it armed so a dead handle is still retried.
+            if (!alreadyLive) pendingForcedSessionReopen = false
             if (alreadyLive && !shouldRetryOnchainReopen(walletId)) {
                 val snap =
                     mutex.withLock {
@@ -582,12 +798,24 @@ class ArkRepository(
                 return@withContext
             }
 
-            // Unload previous wallet; dispose native handles outside the mutex so the next
-            // open is not blocked on slow Bark close.
+            // Unload previous wallet; detach + join background work outside the mutex
+            // (exit ops lock in the opposite order), dispose native handles outside
+            // it too so the next open is not blocked on slow Bark close.
+            // Capture rescan-blocking activity BEFORE unload clears tracking: a
+            // session-DB wipe below must not strand an in-flight refresh/exit.
+            var rescanBlockedAtEntry = false
+            val detached =
+                mutex.withLock {
+                    if (generation != loadGeneration.get()) return@withContext
+                    rescanBlockedAtEntry = hasMailboxRescanBlockingActivity(_arkState.value)
+                    detachBackgroundJobsLocked()
+                }
+            val backgroundBusy = joinDetachedJobs(detached)
+            if (generation != loadGeneration.get()) return@withContext
             val staleHandles =
                 mutex.withLock {
                     if (generation != loadGeneration.get()) return@withLock null
-                    unloadLocked(disposeHandles = false)
+                    unloadLocked(disposeHandles = false, backgroundBusy = backgroundBusy)
                 }
             if (staleHandles != null) {
                 disposeBarkHandles(staleHandles.first, staleHandles.second)
@@ -618,7 +846,12 @@ class ArkRepository(
                 }
             // Stable session dir (or post-import). Reused across cold starts when cache survives.
             val (sessionDir, reuseLocalDb) =
-                prepareSessionDirForOpen(walletId, generation)
+                prepareSessionDirForOpen(
+                    walletId,
+                    generation,
+                    forceMailbox = forceMailbox,
+                    rescanBlockedAtEntry = rescanBlockedAtEntry,
+                )
             lastOpenExpectedMailbox = !reuseLocalDb
             val datadir = sessionDir.absolutePath
             val openEndpoints = probeArkOpenEndpoints()
@@ -673,7 +906,7 @@ class ArkRepository(
                                 TAG,
                                 "Ark local DB unusable; recreating session: ${publicError(e2)}",
                             )
-                            val fresh = recreateEmptySessionDataDir(walletId)
+                            val fresh = recreateEmptySessionDataDir(walletId, SESSION_BACKUP_REASON_CORRUPT)
                             sessionDataDir = fresh
                             sessionWalletId = walletId
                             openBarkWalletWithFallbacks(
@@ -752,14 +985,43 @@ class ArkRepository(
                         job.cancel()
                         withTimeoutOrNull(ARK_JOB_JOIN_TIMEOUT_MS) { job.join() }
                     }
-                    disposeBarkHandles(drop.first, drop.second)
+                    // Cancel cannot interrupt blocking Bark FFI: if the collector is
+                    // still inside notificationsFlow, closing now SIGABRTs. Park and
+                    // let the reaper dispose once native goes quiet (same as unload).
+                    val collectorStillActive = drop.third?.isActive == true
+                    if (collectorStillActive) {
+                        SecureLog.w(
+                            TAG,
+                            "Ark superseded attach: collector still active — parking handles",
+                        )
+                        mutex.withLock {
+                            val stale = unattachedBarkHandles
+                            if (stale != null && stale.wallet !== drop.first) {
+                                unattachedBarkHandles = null
+                                eventScope.launch {
+                                    nativeHandleMutex.withLock {
+                                        disposeOpenedArkWalletLocked(stale)
+                                    }
+                                }
+                            }
+                            unattachedBarkHandles = OpenedArkWallet(drop.first, drop.second)
+                            scheduleParkedHandlesReap()
+                            if (sessionDataDir == sessionDir) detachSessionDataDirLocked()
+                        }
+                    } else {
+                        disposeBarkHandles(drop.first, drop.second)
+                        mutex.withLock {
+                            if (sessionDataDir == sessionDir) detachSessionDataDirLocked()
+                        }
+                    }
                     openedHandles = null
-                    if (sessionDataDir == sessionDir) detachSessionDataDirLocked()
                     return@withContext
                 }
                 openedHandles = null
                 datadirLockReopenAttempts = 0
+                sessionDbReopenAttempts = 0
                 cancelDatadirLockReopen()
+                cancelSessionDbReopen()
                 // Session Bark paint only — ASP/mailbox hydrate runs in post-open.
                 mutex.withLock {
                     if (generation != loadGeneration.get() || wallet !== opened.wallet) return@withLock
@@ -785,8 +1047,11 @@ class ArkRepository(
                 val msg = publicError(e)
                 SecureLog.w(TAG, "Ark load failed for wallet: $msg")
                 markLoadFailed(walletId, msg)
-                if (isDatadirLockError(e) && generation == loadGeneration.get()) {
-                    scheduleDatadirLockReopen(walletId)
+                if (generation == loadGeneration.get()) {
+                    when {
+                        isDatadirLockError(e) -> scheduleDatadirLockReopen(walletId)
+                        isSessionDbError(e) -> scheduleSessionDbReopen(walletId)
+                    }
                 }
             }
             } finally {
@@ -796,8 +1061,78 @@ class ArkRepository(
 
     suspend fun unloadWallet() =
         withContext(Dispatchers.IO) {
-            mutex.withLock { unloadLocked() }
+            // Invalidate any in-flight Wallet.open so a timed-out prior load
+            // can never attach/resurrect after this explicit unload.
+            loadGeneration.incrementAndGet()
+            val detached = mutex.withLock { detachBackgroundJobsLocked() }
+            val backgroundBusy = joinDetachedJobs(detached)
+            mutex.withLock { unloadLocked(backgroundBusy = backgroundBusy) }
         }
+
+    /** Background job refs detached under [mutex] for [joinDetachedJobs]. */
+    private data class DetachedArkJobs(
+        val postOpen: Job?,
+        val stale: List<Job>,
+        val quotes: List<Job>,
+    )
+
+    /**
+     * Caller holds [mutex]. Cancels background jobs and detaches their refs so
+     * [joinDetachedJobs] can wait outside [mutex].
+     */
+    private fun detachBackgroundJobsLocked(): DetachedArkJobs {
+        val postOpen = postOpenSyncJob
+        postOpenSyncJob = null
+        lightningReceiveWatchJob?.cancel()
+        val watch = lightningReceiveWatchJob
+        lightningReceiveWatchJob = null
+        receiveLightningBaselineSats = -1L
+        val staleJobs =
+            listOfNotNull(
+                notificationJob,
+                deferredBoardJob,
+                autoRefreshJob,
+                autoDbBackupJob,
+                manualRefreshJob,
+            )
+        notificationJob = null
+        notificationWallet = null
+        deferredBoardJob = null
+        autoRefreshJob = null
+        autoDbBackupJob = null
+        manualRefreshJob = null
+        emergencyExitFeeQuoteJob?.cancel()
+        val quotes = listOfNotNull(emergencyExitFeeQuoteJob, watch)
+        emergencyExitFeeQuoteJob = null
+        postOpen?.cancel()
+        staleJobs.forEach { it.cancel() }
+        return DetachedArkJobs(postOpen, staleJobs, quotes)
+    }
+
+    /**
+     * Joins detached jobs WITHOUT holding [mutex], then reports whether native
+     * code may still be in flight. Never wait here under [mutex]: exit ops take
+     * locks in the opposite order (exitOperationMutex → mutex), so joining
+     * while holding [mutex] wedges unload against an in-flight exit, and
+     * cancellation cannot interrupt a blocking Bark FFI call anyway — closing
+     * while a job is inside the native lib aborts the process.
+     */
+    private suspend fun joinDetachedJobs(detached: DetachedArkJobs): Boolean {
+        // Post-open ASP sync can run longer than notification collectors; give it
+        // more time so DB import does not dispose mid-sync (SIGABRT).
+        withTimeoutOrNull(ARK_POST_OPEN_JOIN_TIMEOUT_MS) { detached.postOpen?.join() }
+        withTimeoutOrNull(ARK_JOB_JOIN_TIMEOUT_MS) { detached.stale.joinAll() }
+        // Fee quotes and the receive watch run blocking Bark FFI — join before
+        // any close/dispose below.
+        withTimeoutOrNull(ARK_JOB_JOIN_TIMEOUT_MS) { detached.quotes.joinAll() }
+        withTimeoutOrNull(ARK_POST_OPEN_JOIN_TIMEOUT_MS) {
+            exitOperationMutex.withLock { }
+        }
+        return detached.postOpen?.isActive == true ||
+            detached.stale.any { it.isActive } ||
+            detached.quotes.any { it.isActive } ||
+            exitOperationMutex.isLocked
+    }
 
     suspend fun refreshState(indicateSync: Boolean = true) =
         withContext(Dispatchers.IO) {
@@ -925,10 +1260,14 @@ class ArkRepository(
                         w = snapshot.wallet,
                         onchain = snapshot.onchain,
                     )
+                // A failed scan with zero failedIds (transport/ASP error before IDs)
+                // must force a real rescan: otherwise tapping Full Sync again repeats
+                // the error without ever reopening the session DB.
                 val needsForcedMailbox =
-                    recovery == null &&
+                    (recovery.report == null || recovery.scanFailed) &&
                         (
                             lastOpenExpectedMailbox ||
+                                recovery.scanFailed ||
                                 ArkMailboxRecoveryPolicy.shouldWipeForMailboxRescan(
                                     hasReusableDb =
                                         hasReusableBarkDb(sessionDataDirForWallet(snapshot.walletId)),
@@ -960,26 +1299,76 @@ class ArkRepository(
                     attemptBoard = false,
                     indicateSync = true,
                 )
+                // Finish rounds this session didn't submit (restored backup):
+                // re-attach tracking and drive forfeit/claim to completion.
+                resumePendingRefreshRounds()
                 maybeMarkMailboxScanned(recovery)
-                val recoveredCount = recovery?.recovered?.vtxoIds?.size ?: 0
-                val notApplied =
+                var recoveredCount = recovery.report?.recovered?.vtxoIds?.size ?: 0
+                var notApplied =
                     ArkMailboxRecoveryPolicy.recoveredButNotApplied(
                         recoveredCount = recoveredCount,
                         liveSpendableSats = _arkState.value.spendableSats,
                         liveVtxoCount = _arkState.value.vtxos.size,
+                        livePendingSats =
+                            _arkState.value.pendingInRoundSats +
+                                _arkState.value.pendingBoardSats +
+                                _arkState.value.pendingExitSats,
+                        livePendingCount = _arkState.value.vtxosToRefresh.size,
+                        liveClaimableCount = _arkState.value.claimableExitVtxos.size,
                     )
+                if (notApplied) {
+                    SecureLog.w(TAG, "Ark mailbox recovered but not applied — reopening with mailbox scan")
+                    loadWallet(snapshot.walletId, forceMailbox = true)
+                    snapshot = currentSnapOrNull()
+                    if (snapshot == null) {
+                        throw Exception(localizedString(R.string.ark_error_wallet_not_loaded))
+                    }
+                    recovery =
+                        runMailboxRecoverySteps(
+                            w = snapshot.wallet,
+                            onchain = snapshot.onchain,
+                        )
+                    if (snapshot.generation != loadGeneration.get()) return@withContext
+                    hydrateFromAspOutsideLock(
+                        reason = "mailbox-full-sync-reapply",
+                        expectedWallet = snapshot.wallet,
+                        onchain = snapshot.onchain,
+                        generation = snapshot.generation,
+                        walletId = snapshot.walletId,
+                        attemptBoard = false,
+                        indicateSync = true,
+                    )
+                    maybeMarkMailboxScanned(recovery)
+                    recoveredCount = recovery.report?.recovered?.vtxoIds?.size ?: 0
+                    notApplied =
+                        ArkMailboxRecoveryPolicy.recoveredButNotApplied(
+                            recoveredCount = recoveredCount,
+                            liveSpendableSats = _arkState.value.spendableSats,
+                            liveVtxoCount = _arkState.value.vtxos.size,
+                            livePendingSats =
+                                _arkState.value.pendingInRoundSats +
+                                    _arkState.value.pendingBoardSats +
+                                    _arkState.value.pendingExitSats,
+                            livePendingCount = _arkState.value.vtxosToRefresh.size,
+                            liveClaimableCount = _arkState.value.claimableExitVtxos.size,
+                        )
+                }
+                val report = recovery.report
                 val success =
                     !notApplied &&
                         ArkMailboxRecoveryPolicy.isSuccessfulMailboxReport(
-                            reportPresent = recovery != null,
-                            isComplete = recovery?.isComplete == true,
+                            reportPresent = report != null,
+                            isComplete = report?.isComplete == true,
                             scanWasExpected = lastOpenExpectedMailbox || needsForcedMailbox,
+                            scanFailed = recovery.scanFailed,
                         )
                 val detail =
                     when {
                         notApplied ->
                             localizedString(R.string.ark_mailbox_recovery_not_applied)
-                        recovery != null -> recovery.toLocalizedSummary()
+                        recovery.scanFailed ->
+                            localizedString(R.string.ark_mailbox_recovery_scan_failed)
+                        report != null -> report.toLocalizedSummary()
                         !success -> localizedString(R.string.ark_mailbox_recovery_no_report)
                         else -> localizedString(R.string.ark_mailbox_recovery_completed)
                     }
@@ -1014,6 +1403,170 @@ class ArkRepository(
             }
         }
 
+    /**
+     * Non-destructive mailbox rescan ("sidecar"): opens a throwaway Bark
+     * session in a temp dir — the seed scan runs because that DB is freshly
+     * created — then merges anything it finds into the LIVE session via
+     * [importVtxos]. The live session (round participations, locks, tracking
+     * included) is never unloaded or wiped, so this is safe mid-round, unlike
+     * a wipe-first [loadWallet] rescan. When the Bark release containing the
+     * delegated-refresh recovery fix lands, this same path picks those outputs
+     * up with no Ibis changes: server announces → scan finds → import merges.
+     */
+    data class SidecarRescanResult(
+        val recovered: Int,
+        val skipped: Int,
+        val failed: Int,
+        val detail: String,
+    )
+
+    suspend fun sidecarMailboxRescan(walletId: String): SidecarRescanResult =
+        withContext(Dispatchers.IO) {
+            fun fail(message: String): SidecarRescanResult {
+                _lifecycleState.value = ArkLifecycleState.Error(message)
+                _events.tryEmit(
+                    ArkEvent.MailboxRecoveryFailed(message = message, supported = true),
+                )
+                return SidecarRescanResult(0, 0, 0, message)
+            }
+            val live = mutex.withLock { wallet }
+            if (live == null || _loadedWalletId.value != walletId) {
+                return@withContext fail(localizedString(R.string.ark_error_wallet_not_loaded))
+            }
+            // No MailboxRescanStarted here: nothing stale was detected, the user
+            // just tapped Rescan. The button's own progress + result UI covers
+            // feedback; the toast is reserved for the automatic stale-input path.
+            val credentials =
+                try {
+                    resolveBarkCredentials(walletId)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    return@withContext fail(publicError(e))
+                }
+            val endpoints = probeArkOpenEndpoints()
+            if (!endpoints.aspReachable) {
+                return@withContext fail(localizedString(R.string.ark_error_asp_unreachable))
+            }
+            if (endpoints.esploraOrder.isEmpty()) {
+                return@withContext fail(localizedString(R.string.ark_error_chain_source))
+            }
+            // Must not collide with the stable dir or the "$walletId-" orphans
+            // scrubbed on open; always removed in finally, even on failure.
+            val tempDir = File(arkSessionRootDir(), "tmp-rescan-$walletId")
+            runCatching {
+                if (tempDir.exists()) tempDir.deleteRecursively()
+            }
+            tempDir.mkdirs()
+            var temp: Wallet? = null
+            try {
+                temp =
+                    try {
+                        // Phase-2 equivalent (off-chain-only): VTXO recovery
+                        // needs no on-chain wallet. Never parked in
+                        // unattachedBarkHandles and never daemon-run, so the
+                        // live session cannot confuse it for its own.
+                        val config = buildConfig(activeEsploraHttpBase())
+                        nativeHandleMutex.withLock {
+                            openBarkWallet(
+                                mnemonicOrSeed = credentials.mnemonicOrSeed,
+                                config = config,
+                                datadir = tempDir.absolutePath,
+                                onchain = null,
+                                skipRecovery = false,
+                                runDaemon = false,
+                            )
+                        }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        return@withContext fail(publicError(e))
+                    }
+                val outcome = runMailboxRecoverySteps(temp, null)
+                val report = outcome.report
+                val recoveredIds =
+                    report?.recovered?.vtxoIds.orEmpty()
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .distinct()
+                var sidecarImportFailed = false
+                if (recoveredIds.isNotEmpty()) {
+                    val encodeds =
+                        recoveredIds.mapNotNull { id ->
+                            runCatching { temp.vtxoEncoded(id) }.getOrNull()
+                        }
+                    // Import into LIVE only if the user hasn't switched wallets
+                    // mid-scan; FFI stays outside mutex like other Bark calls.
+                    val current = mutex.withLock { wallet }
+                    if (encodeds.isNotEmpty() &&
+                        current === live &&
+                        _loadedWalletId.value == walletId
+                    ) {
+                        runCatching { live.importVtxos(encodeds, null) }
+                            .onFailure {
+                                sidecarImportFailed = true
+                                SecureLog.w(TAG, "Ark sidecar import failed: ${publicError(it)}")
+                            }
+                    } else {
+                        // Recovered IDs but nothing importable (encode failed or
+                        // wallet switched): must not report success with balance 0.
+                        sidecarImportFailed = true
+                        SecureLog.w(
+                            TAG,
+                            "Ark sidecar import skipped: encodeds=${encodeds.size} " +
+                                "recovered=${recoveredIds.size}",
+                        )
+                    }
+                }
+                mutex.withLock {
+                    if (wallet === live && _loadedWalletId.value == walletId) {
+                        refreshStateLocked(sync = true, attemptBoard = false)
+                    }
+                }
+                val detail =
+                    when {
+                        outcome.scanFailed ->
+                            localizedString(R.string.ark_mailbox_recovery_scan_failed)
+                        report != null -> report.toLocalizedSummary()
+                        else -> localizedString(R.string.ark_mailbox_recovery_no_report)
+                    }
+                if (!outcome.scanFailed && report != null && !sidecarImportFailed) {
+                    _lifecycleState.value = ArkLifecycleState.Completed(detail = detail)
+                    _events.tryEmit(
+                        ArkEvent.MailboxRecoveryCompleted(supported = true, detail = detail),
+                    )
+                } else {
+                    _lifecycleState.value = ArkLifecycleState.Error(detail)
+                    _events.tryEmit(
+                        ArkEvent.MailboxRecoveryFailed(message = detail, supported = true),
+                    )
+                }
+                SidecarRescanResult(
+                    recovered = report?.recovered?.vtxoIds?.size ?: 0,
+                    skipped = report?.skipped?.vtxoIds?.size ?: 0,
+                    failed = report?.failed?.vtxoIds?.size ?: 0,
+                    detail = detail,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = publicError(e)
+                _lifecycleState.value = ArkLifecycleState.Error(message)
+                _events.tryEmit(
+                    ArkEvent.MailboxRecoveryFailed(message = message, supported = true),
+                )
+                SidecarRescanResult(0, 0, 0, message)
+            } finally {
+                val t = temp
+                if (t != null) {
+                    runCatching { disposeBarkHandles(t, null) }
+                }
+                runCatching {
+                    if (tempDir.exists()) tempDir.deleteRecursively()
+                }
+            }
+        }
+
     fun isMailboxRecoverySupported(): Boolean = wallet != null
 
     private fun RecoveryReport.toLocalizedSummary(): String =
@@ -1028,13 +1581,25 @@ class ArkRepository(
 
     /**
      * Open-time seed-mailbox report + failed-id retry. Bark only produces a report on the
-     * open that creates the local DB; subsequent opens return null — ASP hydrate still runs.
+     * open that creates the local DB; subsequent opens return NotRun — ASP hydrate still runs.
+     * A Failed status (bark-ffi 0.23+/bark 0.7.0 `recoveryStatus()`) means the scan errored
+     * before producing a report, so funds may be missing until a retry.
      */
+    private data class MailboxRecoveryOutcome(
+        val report: RecoveryReport?,
+        val scanFailed: Boolean,
+    )
+
     private suspend fun runMailboxRecoverySteps(
         w: Wallet,
         onchain: OnchainWallet?,
-    ): RecoveryReport? {
+    ): MailboxRecoveryOutcome {
         runCatching { w.runDaemon() }
+        val status = runCatching { w.recoveryStatus() }.getOrNull()
+        val scanFailed = status is RecoveryStatus.Failed
+        if (scanFailed) {
+            SecureLog.w(TAG, "Ark seed recovery scan failed: ${(status as RecoveryStatus.Failed).message}")
+        }
         var recovery = runCatching { w.recoveryReport() }.getOrNull()
         val failedIds =
             recovery
@@ -1050,18 +1615,34 @@ class ArkRepository(
                     SecureLog.w(TAG, "Ark recoverVtxos retry failed: ${publicError(it)}")
                 }
         }
+        // Remember exited ids for the unrecovered-exit warning: mailbox recovery
+        // restores spendable VTXOs only, never in-flight exits.
+        lastMailboxExitedIds =
+            recovery?.exited?.vtxoIds
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                ?.distinct()
+                .orEmpty()
         // Keep onchain reference warm; full ASP path continues in hydrateFromAspOutsideLock.
         runCatching { onchain?.sync() }
-        return recovery
+        return MailboxRecoveryOutcome(report = recovery, scanFailed = scanFailed)
+    }
+
+    private fun maybeMarkMailboxScanned(outcome: MailboxRecoveryOutcome) {
+        maybeMarkMailboxScanned(outcome.report)
     }
 
     private fun maybeMarkMailboxScanned(recovery: RecoveryReport?) {
+        // Never mark scanned without a successful hydrate: recovered==0 with no
+        // live state would permanently suppress future rescans.
+        if (aspHydratedWalletId != _loadedWalletId.value) return
         val mark =
             ArkMailboxRecoveryPolicy.shouldMarkMailboxScanned(
                 reportPresent = recovery != null,
                 recoveredCount = recovery?.recovered?.vtxoIds?.size ?: 0,
                 liveSpendableSats = _arkState.value.spendableSats,
                 liveVtxoCount = _arkState.value.vtxos.size,
+                isComplete = recovery?.isComplete == true,
             )
         if (mark) markMailboxScanned(sessionDataDir)
     }
@@ -1094,7 +1675,20 @@ class ArkRepository(
                         attemptBoard = false,
                         indicateSync = false,
                     )
-                    maybeMarkMailboxScanned(recovery)
+                    // Pick up rounds submitted before a restore/rescan wiped
+                    // Ibis-side tracking; silent unless a round needs driving.
+                    resumePendingRefreshRounds()
+                    if (recovery.scanFailed && generation == loadGeneration.get()) {
+                        // Cold-start scan failure must not paint silently: funds may
+                        // be missing until a retry succeeds. Never mark scanned here.
+                        val msg = localizedString(R.string.ark_mailbox_recovery_scan_failed)
+                        _lifecycleState.value = ArkLifecycleState.Error(msg)
+                        _events.tryEmit(
+                            ArkEvent.MailboxRecoveryFailed(message = msg, supported = true),
+                        )
+                    } else {
+                        maybeMarkMailboxScanned(recovery)
+                    }
                     // Opt-in auto-board only (default off).
                     if (
                         onchainSnapshot != null &&
@@ -1116,6 +1710,45 @@ class ArkRepository(
     }
 
     /**
+     * Cross-device drift probe. Caller holds [mutex]. Compares the pre-hydrate
+     * cache paint against post-sync live state; returns the unexplained-vanished
+     * VTXO count, or 0 when everything is accounted for (or a rescan already ran
+     * this session). Pure decision lives in [ArkMailboxRecoveryPolicy].
+     */
+    private fun checkCrossDeviceDriftLocked(
+        cachedIds: Collection<String>,
+        cachedSats: Long,
+        cachedNegMovementIds: Set<Int>,
+    ): Int {
+        val live = _arkState.value
+        val id = live.walletId
+        if (id.isNullOrBlank() || crossDeviceDriftRescanWalletId == id) return 0
+        val liveIds = live.vtxos.map { it.id }
+        val exitIds = live.exitVtxos.map { it.vtxoId }
+        val claimIds = live.claimableExitVtxos.map { it.vtxoId }
+        val consumedIds = live.movements.flatMap { it.inputVtxoIds }
+        val newOutgoing =
+            live.movements.any { it.effectiveBalanceSats < 0L && it.id !in cachedNegMovementIds }
+        val should =
+            ArkMailboxRecoveryPolicy.shouldRescanForCrossDeviceDrift(
+                cachedSpendableIds = cachedIds,
+                cachedSpendableSats = cachedSats,
+                liveSpendableIds = liveIds,
+                liveSpendableSats = live.spendableSats,
+                activeExitIds = exitIds,
+                claimableIds = claimIds,
+                locallyConsumedIds = consumedIds,
+                hasNewOutgoingMovements = newOutgoing,
+                hasInflightActivity = hasMailboxRescanBlockingActivity(live),
+            )
+        if (!should) return 0
+        val vanished =
+            cachedIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet() -
+                liveIds.toSet() - exitIds.toSet() - claimIds.toSet() - consumedIds.toSet()
+        return vanished.size.coerceAtLeast(1)
+    }
+
+    /**
      * Source of truth for normal operation: ASP via refreshServer + sync (+ boards/exits/LN).
      * Local SQLite is updated as a working cache; SecureStorage snapshot is paint-only.
      * Bails when [generation] is superseded (import/unload).
@@ -1132,9 +1765,14 @@ class ArkRepository(
         if (generation != loadGeneration.get()) return
         SecureLog.w(TAG, "Ark ASP hydrate ($reason) for $walletId")
         if (indicateSync) beginSyncSpinner()
+        // Pre-hydrate cache paint: the cross-device drift check at the end compares
+        // this against post-sync live state. Captured before refreshStateLocked
+        // overwrites the SecureStorage cache below.
+        val preHydrateCache = secureStorage.getArkWalletStateCache(walletId)
         try {
             runCatching { expectedWallet.runDaemon() }
             var lastError: String? = null
+            var lastSessionDbError = false
             var networkOk = false
         // Fresh enable is usually empty; one refreshServer+sync is enough. Retry only
         // when the first pass failed or a known-nonempty wallet still looks empty.
@@ -1148,11 +1786,14 @@ class ArkRepository(
             } else {
                 2
             }
+        // Cross-device drift rescan decision for this hydrate (set under mutex below).
+        var driftVanished = 0
         repeat(maxAttempts) { attempt ->
             if (generation != loadGeneration.get()) return
             val refreshOk =
                 runCatching { expectedWallet.refreshServer() }
                     .onFailure {
+                        if (ArkSessionDbErrorPolicy.isSessionDbError(it)) lastSessionDbError = true
                         lastError = publicError(it)
                         SecureLog.w(TAG, "Ark hydrate refreshServer[$attempt]: $lastError")
                     }
@@ -1161,11 +1802,14 @@ class ArkRepository(
             val syncOk =
                 runCatching { expectedWallet.sync() }
                     .onFailure {
+                        if (ArkSessionDbErrorPolicy.isSessionDbError(it)) lastSessionDbError = true
                         lastError = publicError(it)
                         SecureLog.w(TAG, "Ark hydrate sync[$attempt]: $lastError")
                     }
                     .isSuccess
-            if (refreshOk || syncOk) networkOk = true
+            // Both legs must succeed to heal: sync-only success masks
+            // refreshServer degradation and pins the pill connected.
+            if (refreshOk && syncOk) networkOk = true
             if (generation != loadGeneration.get()) return
             runCatching { onchain?.sync() }
             runCatching { expectedWallet.progressPendingRounds() }
@@ -1181,6 +1825,7 @@ class ArkRepository(
                 refreshStateLocked(sync = false, attemptBoard = false)
                 if (networkOk) {
                     markAspHydratedLocked(walletId)
+                    noteTransportResult(true)
                     SecureLog.w(
                         TAG,
                         "Ark hydrate ok ($reason#$attempt) " +
@@ -1189,9 +1834,67 @@ class ArkRepository(
                             "movements=${_arkState.value.movements.size} " +
                             "mailbox=${runCatching { expectedWallet.mailboxIdentifier() }.getOrNull()}",
                     )
+                    // Another device may have moved this seed's funds (e.g. refreshed):
+                    // vanished outputs are neither spent-locally nor discoverable here.
+                    driftVanished =
+                        checkCrossDeviceDriftLocked(
+                            cachedIds =
+                                preHydrateCache?.vtxos.orEmpty()
+                                    .filter { ArkBarkMappers.isLiveVtxoLabel(it.state) }
+                                    .map { it.id },
+                            cachedSats = preHydrateCache?.spendableSats ?: 0L,
+                            cachedNegMovementIds =
+                                preHydrateCache?.movements.orEmpty()
+                                    .filter { it.effectiveBalanceSats < 0L }
+                                    .map { it.id }
+                                    .toSet(),
+                        )
                 }
             }
-            if (networkOk && !isArkStateVisiblyEmptyForWallet(walletId)) return
+            if (driftVanished > 0) {
+                if (generation != loadGeneration.get()) return
+                _events.tryEmit(ArkEvent.CrossDeviceDriftRescan(vanishedCount = driftVanished))
+                SecureLog.w(
+                    TAG,
+                    "Ark cross-device drift: $driftVanished vanished VTXO(s), rescanning mailbox",
+                )
+                loadWallet(walletId, forceMailbox = true)
+                // One-shot marker only when the rescan actually ran: a blocked
+                // wipe (in-flight refresh/exit/board) leaves the skeleton live and
+                // must retry on the next hydrate instead of suppressing drift.
+                if (_mailboxRescanBlocked.value) {
+                    SecureLog.w(TAG, "Ark drift rescan blocked — will retry on next hydrate")
+                } else {
+                    crossDeviceDriftRescanWalletId = walletId
+                }
+                return
+            }
+            if (networkOk) {
+                // Deferred rescan owed from a blocked wipe: retry once activity
+                // settles instead of leaving the skeleton live until manual rescan.
+                // Runs even when visibly empty — an empty live view is exactly what
+                // a missed mailbox scan looks like, so gating on non-empty would
+                // arm the flag and then skip it on every hydrate forever.
+                if (mailboxRescanOwedWalletId == walletId &&
+                    System.currentTimeMillis() - mailboxRescanOwedAtMs > 60_000L &&
+                    generation == loadGeneration.get()
+                ) {
+                    val blocking =
+                        mutex.withLock { hasMailboxRescanBlockingActivity(_arkState.value) }
+                    if (!blocking && generation == loadGeneration.get()) {
+                        mailboxRescanOwedWalletId = null
+                        SecureLog.w(TAG, "Ark owed mailbox rescan — reopening with mailbox scan")
+                        loadWallet(walletId, forceMailbox = true)
+                        return
+                    }
+                    // Owed but still blocked: fall through to the retry loop below
+                    // so a later hydrate re-checks instead of stalling. Only return
+                    // early (hydrate succeeded) when the wallet is visibly funded.
+                    if (!isArkStateVisiblyEmptyForWallet(walletId)) return
+                } else if (!isArkStateVisiblyEmptyForWallet(walletId)) {
+                    return
+                }
+            }
             if (attempt == 0 && maxAttempts > 1) delay(750L)
         }
         if (generation != loadGeneration.get()) return
@@ -1200,12 +1903,16 @@ class ArkRepository(
             if (generation != loadGeneration.get() || wallet !== expectedWallet) return@withLock
             if (!networkOk) {
                 refreshStateLocked(sync = false, attemptBoard = false)
+                noteTransportResult(false)
                 _arkState.value =
                     _arkState.value.copy(
                         isSyncing = isSyncSpinnerHeld(),
                         aspHydrated = false,
                         error = lastError ?: _arkState.value.error,
                     )
+                if (lastSessionDbError || ArkSessionDbErrorPolicy.isSessionDbError(lastError)) {
+                    scheduleSessionDbReopen(walletId)
+                }
             } else if (aspHydratedWalletId != walletId) {
                 markAspHydratedLocked(walletId)
             }
@@ -1294,6 +2001,7 @@ class ArkRepository(
         val hasPendingExits: Boolean,
         val hasClaimableExits: Boolean,
         val isBackupProtected: Boolean,
+        val isOffchainOnly: Boolean,
     ) {
         val blocksDelete: Boolean
             get() = hasPendingExits || hasClaimableExits
@@ -1310,34 +2018,96 @@ class ArkRepository(
                 hasPendingExits = false,
                 hasClaimableExits = false,
                 isBackupProtected = false,
+                isOffchainOnly = false,
             )
         }
+        // Prefer live in-memory state when this wallet is loaded; otherwise cache.
+        // Warn-only (no hard block): also treat an on-disk session DB as activity
+        // so risk is still surfaced when Ark is disabled or the cache is empty.
         val state =
-            _arkState.value.takeIf { it.walletId == walletId }
+            _arkState.value.takeIf { it.walletId == walletId && _loadedWalletId.value == walletId }
+                ?: _arkState.value.takeIf { it.walletId == walletId }
                 ?: secureStorage.getArkWalletStateCache(walletId)
         val total = state?.totalSats ?: 0L
-        val pending = state?.hasPendingExits == true || (state?.exitVtxos?.isNotEmpty() == true)
+        val pending =
+            ArkUnilateralExitPolicy.computeHasPendingExits(
+                barkHasPending = state?.hasPendingExits == true,
+                exitStates = state?.exitVtxos.orEmpty().map { it.state },
+            )
         val claimable = state?.hasClaimableExits == true || (state?.claimableExitVtxos?.isNotEmpty() == true)
-        val activity = state?.hasVtxoActivity == true || total > 0L || pending || claimable
+        val hasSessionDb = runCatching { hasReusableBarkDb(sessionDataDirForWallet(walletId)) }.getOrDefault(false)
+        val activity = state?.hasVtxoActivity == true || total > 0L || pending || claimable || hasSessionDb
+        // Off-chain-only (no Bark on-chain wallet) disables boarding AND unilateral
+        // exit — the two escape hatches. Only flag on a known state (live or cache);
+        // with no state at all the on-chain status is unknown, not degraded.
+        val offchainOnly = state != null && !state.onchainWalletOpen
         return ArkDeleteRisk(
             hasActivity = activity,
             totalSats = total,
             hasPendingExits = pending,
             hasClaimableExits = claimable,
             isBackupProtected = secureStorage.isArkDbBackupProtected(walletId),
+            isOffchainOnly = offchainOnly,
         )
     }
 
     suspend fun deleteWalletData(walletId: String) =
         withContext(Dispatchers.IO) {
-            mutex.withLock {
-                if (_loadedWalletId.value == walletId) {
-                    unloadLocked()
+            // Fail-closed: a delete mid-exit destroys the exit registration and the
+            // claim ledger; the seed alone cannot recover in-progress exits. The UI
+            // blocks this (assessDeleteRisk), but direct callers must not bypass it.
+            // Check live Bark state when loaded, else cached state.
+            val liveExitRisk =
+                mutex.withLock {
+                    val w = wallet.takeIf { _loadedWalletId.value == walletId }
+                    if (w != null) {
+                        runCatching {
+                            val barkPending = w.hasPendingExits()
+                            val liveStates =
+                                runCatching {
+                                    w.getExitVtxos().map { ArkBarkMappers.exitStateLabel(it.state) }
+                                }.getOrDefault(emptyList())
+                            val liveClaimable =
+                                runCatching {
+                                    w.getExitVtxos().any {
+                                        ArkBarkMappers.exitStateLabel(it.state).contains(
+                                            ArkBarkMappers.EXIT_CLAIMABLE,
+                                            ignoreCase = true,
+                                        )
+                                    }
+                                }.getOrDefault(false)
+                            ArkUnilateralExitPolicy.computeHasPendingExits(barkPending, liveStates) ||
+                                liveClaimable ||
+                                _arkState.value.claimableExitVtxos.isNotEmpty()
+                        }.getOrDefault(true)
+                    } else {
+                        null
+                    }
                 }
+            if (liveExitRisk == true || assessDeleteRisk(walletId).blocksDelete) {
+                throw Exception(localizedString(R.string.wallet_delete_ark_pending_exit))
+            }
+            // Invalidate in-flight opens/timers so delete cannot be resurrected.
+            loadGeneration.incrementAndGet()
+            // Detach + join outside [mutex] (exit ops lock in the opposite order);
+            // re-check under the final lock so a wallet attached in between is
+            // left for its owner instead of being torn down here.
+            val loaded = mutex.withLock { _loadedWalletId.value == walletId }
+            if (loaded) {
+                val detached = mutex.withLock { detachBackgroundJobsLocked() }
+                val backgroundBusy = joinDetachedJobs(detached)
+                mutex.withLock {
+                    if (_loadedWalletId.value == walletId) {
+                        unloadLocked(backgroundBusy = backgroundBusy)
+                    }
+                }
+            }
+            mutex.withLock {
                 if (pendingImportWalletId == walletId) {
                     deleteSessionDataDir(pendingImportSessionDir)
                     pendingImportSessionDir = null
                     pendingImportWalletId = null
+                    pendingImportForceMailboxScan = false
                 }
             }
             // Scrub any residue (legacy durable + stable/orphan session dirs for this wallet).
@@ -1354,6 +2124,24 @@ class ArkRepository(
                     ?.forEach { it.deleteRecursively() }
             }
             secureStorage.clearArkWalletStateCache(walletId)
+            secureStorage.clearArkMovementJournal(walletId)
+            secureStorage.clearArkFailedSends(walletId)
+            synchronized(failedArkSends) {
+                failedArkSends.removeAll { it.walletId == walletId }
+            }
+            // Stale signed claims/destinations must not resurrect on a same-ID wallet.
+            secureStorage.clearArkPendingClaim(walletId)
+            secureStorage.clearArkMovementDestinations(walletId)
+            secureStorage.setArkFundingTxids(walletId, emptyList())
+            // Authoritative scrub: claim ledger, backup markers, labels, addresses,
+            // recovered deposits, suppress flags — stale residue must not survive.
+            secureStorage.clearArkExitClaimHistory(walletId)
+            secureStorage.clearArkAutoDbBackupLastInfo(walletId)
+            secureStorage.clearAllArkWalletData(walletId)
+            // Safety-copy session backups must not outlive the wallet itself.
+            runCatching {
+                purgeSessionDirBackups(walletId)
+            }
             // External auto-backup folder is user-owned; leave it on wallet delete.
             secureStorage.setArkEnabledForWallet(walletId, false)
         }
@@ -1365,23 +2153,38 @@ class ArkRepository(
      */
     suspend fun prepareForFullWipe() =
         withContext(Dispatchers.IO) {
+            // Invalidate in-flight opens/timers before tearing down native handles.
+            loadGeneration.incrementAndGet()
             val unloaded =
                 withTimeoutOrNull(FULL_WIPE_UNLOAD_TIMEOUT_MS) {
-                    mutex.withLock { unloadLocked() }
+                    // Detach + join outside [mutex] (exit ops lock in the opposite
+                    // order); the timeout still bounds a hung native call.
+                    val detached = mutex.withLock { detachBackgroundJobsLocked() }
+                    val backgroundBusy = joinDetachedJobs(detached)
+                    mutex.withLock { unloadLocked(backgroundBusy = backgroundBusy) }
                     true
                 } ?: false
             if (!unloaded) {
-                SecureLog.w(TAG, "Ark wipe unload timed out; forcing handle drop + delete")
-                // Drop handles without waiting on native close so file delete can proceed.
+                SecureLog.w(TAG, "Ark wipe unload timed out; parking handles for reaper + delete")
+                // Park instead of dropping: closing while Bark FFI is in flight
+                // aborts the process; the reaper disposes once native goes quiet.
                 runCatching {
-                    wallet = null
-                    onchainWallet = null
-                    _loadedWalletId.value = null
-                    sessionDataDir = null
-                    sessionWalletId = null
-                    pendingImportSessionDir = null
-                    pendingImportWalletId = null
-                    aspHydratedWalletId = null
+                    mutex.withLock {
+                        val current = wallet
+                        val currentOnchain = onchainWallet
+                        wallet = null
+                        onchainWallet = null
+                        if (current != null) {
+                            unattachedBarkHandles = OpenedArkWallet(current, currentOnchain)
+                            scheduleParkedHandlesReap()
+                        }
+                        _loadedWalletId.value = null
+                        detachSessionDataDirLocked()
+                        pendingImportSessionDir = null
+                        pendingImportWalletId = null
+                        pendingImportForceMailboxScan = false
+                        aspHydratedWalletId = null
+                    }
                 }
             }
             runCatching {
@@ -1394,6 +2197,10 @@ class ArkRepository(
             runCatching {
                 File(context.filesDir, LEGACY_AUTO_BACKUP_DIR).takeIf { it.exists() }?.deleteRecursively()
             }
+            // Pre-wipe session safety copies must never survive auto-wipe.
+            runCatching {
+                File(context.cacheDir, ARK_SESSION_BACKUP_ROOT).takeIf { it.exists() }?.deleteRecursively()
+            }.onFailure { SecureLog.w(TAG, "Ark wipe session backup dir delete failed") }
         }
 
     suspend fun receive(
@@ -1658,30 +2465,39 @@ class ArkRepository(
                         return
                     }
                     val desc = description?.takeIf { it.isNotBlank() }
+                    // Claim must stay bound to this wallet's Ark address so delivery
+                    // can complete offline. Fail closed instead of issuing an
+                    // unbound invoice that needs an online claim.
                     val arkAddress =
                         resolveUnusedArkAddressLocked(w, walletId, forceNew = false)
                             ?: runCatching { w.newAddress() }.getOrNull()
+                    if (arkAddress.isNullOrBlank()) {
+                        throw IllegalStateException(
+                            localizedString(R.string.ark_error_wallet_not_loaded),
+                        )
+                    }
                     val feeSats =
                         runCatching {
                             w.estimateLightningReceiveFee(sats.toULong()).feeSats.toLong()
-                        }.getOrDefault(0L)
-                    // Bind claim to this wallet's Ark address so delivery can complete offline.
-                    val invoice =
-                        if (!arkAddress.isNullOrBlank()) {
-                            w.bolt11InvoiceForAddress(
-                                amountSats = sats.toULong(),
-                                claimDestination = arkAddress,
-                                description = desc,
-                                token = null,
-                            )
-                        } else {
-                            w.bolt11Invoice(
-                                amountSats = sats.toULong(),
-                                description = desc,
-                                token = null,
+                        }.getOrElse {
+                            throw IllegalStateException(
+                                localizedString(R.string.ark_error_fee_unavailable),
+                                it,
                             )
                         }
+                    val invoice =
+                        w.bolt11InvoiceForAddress(
+                            amountSats = sats.toULong(),
+                            claimDestination = arkAddress,
+                            description = desc,
+                            token = null,
+                        )
                     receiveLightningBaselineSats = _arkState.value.claimableLightningReceiveSats
+                    SecureLog.d(
+                        TAG,
+                        "Ark LN invoice created hash=${invoice.paymentHash.take(8)} " +
+                            "baseline=$receiveLightningBaselineSats claimable=${_arkState.value.claimableLightningReceiveSats}",
+                    )
                     _receiveState.value =
                         ArkReceiveState.Ready(
                             kind = ArkReceiveKind.BOLT11_INVOICE,
@@ -1719,7 +2535,9 @@ class ArkRepository(
         val current = _receiveState.value
         if (current !is ArkReceiveState.Ready || current.kind != ArkReceiveKind.BOLT11_INVOICE) return
         val w = wallet
-        val hash = current.paymentHash?.trim().orEmpty()
+        // Payment hashes are 64-hex: normalize case before the native paid query so a
+        // differently-cased binding return can never silently wedge the invoice open.
+        val hash = current.paymentHash?.trim()?.lowercase(Locale.US).orEmpty()
         val paidByHash =
             if (w != null && hash.isNotEmpty()) {
                 runCatching { w.isInvoicePaid(hash) }.getOrDefault(false)
@@ -1729,7 +2547,27 @@ class ArkRepository(
         val paidByBalance =
             receiveLightningBaselineSats >= 0L &&
                 _arkState.value.claimableLightningReceiveSats > receiveLightningBaselineSats
-        if (!paidByHash && !paidByBalance) return
+        // A landed LN payment also surfaces as an inbound movement carrying the invoice's
+        // payment hash (or the invoice itself) — catch it even when the native paid query
+        // and the claimable-balance heuristic both miss, so the invoice always clears.
+        val paidByMovement =
+            _arkState.value.movements.any { m ->
+                m.effectiveBalanceSats > 0L &&
+                    ((hash.isNotEmpty() && m.paymentHash?.equals(hash, ignoreCase = true) == true) ||
+                        (current.paymentRequest.isNotBlank() &&
+                            m.lightningInvoice?.equals(current.paymentRequest, ignoreCase = true) == true))
+            }
+        // paidByBalance alone is not authoritative: an unrelated concurrent inbound
+        // credit could prematurely clear the invoice. Require the native paid query
+        // or a matching inbound movement; balance is only supporting evidence.
+        if (!paidByHash && !paidByMovement) return
+        SecureLog.d(
+            TAG,
+            "Ark LN invoice marked paid hash=${hash.take(8)} paidByHash=$paidByHash " +
+                "paidByBalance=$paidByBalance paidByMovement=$paidByMovement " +
+                "baseline=$receiveLightningBaselineSats " +
+                "claimable=${_arkState.value.claimableLightningReceiveSats}",
+        )
         markLightningReceivePaidLocked(current)
     }
 
@@ -1781,6 +2619,7 @@ class ArkRepository(
     private var preparedMultiLabel: String? = null
 
     fun resetSendState() {
+        if (sendInFlight.get()) return
         preparedDestination = null
         preparedAmountSats = null
         preparedMethod = null
@@ -1803,6 +2642,7 @@ class ArkRepository(
         label: String? = null,
     ) =
         withContext(Dispatchers.IO) {
+            if (sendInFlight.get()) return@withContext
             // Paint Preparing immediately so review dialog is not stuck on Idle while
             // waiting for heartbeat/maintenance mutex or a slow fee quote.
             _sendState.value = ArkSendState.Preparing
@@ -1910,7 +2750,17 @@ class ArkRepository(
         when (resolved.kind) {
             ArkPayKind.ARKOOR -> {
                 if (!w.validateArkoorAddress(resolved.payTarget)) {
-                    return SendPreviewQuote.Failure(localizedString(R.string.ark_error_different_server))
+                    // validateArkoorAddress is server-aware: it rejects both a
+                    // typo'd address (bad checksum) and a valid address for a
+                    // different ASP. Distinguish so a typo doesn't misdirect the
+                    // user into switching servers.
+                    val failureRes =
+                        if (isArkAddress(resolved.payTarget)) {
+                            R.string.ark_error_different_server
+                        } else {
+                            R.string.ark_error_unsupported_destination
+                        }
+                    return SendPreviewQuote.Failure(localizedString(failureRes))
                 }
                 val amount =
                     when {
@@ -1974,12 +2824,15 @@ class ArkRepository(
                     runCatching {
                         w.estimateLightningSendFee(amount.toULong()).feeSats.toLong()
                     }.getOrNull()
+                        ?: return SendPreviewQuote.Failure(
+                            localizedString(R.string.ark_error_generic),
+                        )
                 method = "BOLT12"
                 feeSats = fee
                 previewAmount = amount
                 net = amount
                 payAmount = amount
-                gross = if (fee != null) amount + fee else amount
+                gross = amount + fee
                 if (gross > spendable) {
                     return SendPreviewQuote.Failure(
                         localizedString(
@@ -2095,6 +2948,7 @@ class ArkRepository(
         recipients: List<Pair<String, Long>>,
         label: String? = null,
     ) = withContext(Dispatchers.IO) {
+        if (sendInFlight.get()) return@withContext
         _sendState.value = ArkSendState.Preparing
         try {
             if (recipients.size < 2) {
@@ -2204,45 +3058,78 @@ class ArkRepository(
 
     suspend fun sendPreparedMany() =
         withContext(Dispatchers.IO) {
-            // Paint progress before mutex so UI leaves MultiPreview immediately.
-            val initialTotal = preparedMultiItems.size
-            if (initialTotal >= 2) {
-                _sendState.value =
-                    ArkSendState.MultiSending(completed = 0, total = initialTotal)
-            }
-            mutex.withLock {
-                val w = wallet
-                val items = preparedMultiItems
-                if (w == null || items.size < 2) {
-                    _sendState.value =
-                        ArkSendState.Error(localizedString(R.string.ark_error_nothing_prepared))
-                    return@withLock
+            if (!sendInFlight.compareAndSet(false, true)) return@withContext
+            data class PreparedMulti(
+                val wallet: Wallet,
+                val items: List<ArkSendState.MultiPreview.MultiItem>,
+                val label: String?,
+                val walletId: String?,
+            )
+            val prepared =
+                mutex.withLock {
+                    val w = wallet
+                    val items = preparedMultiItems
+                    if (w == null || items.size < 2) {
+                        null
+                    } else {
+                        PreparedMulti(
+                            wallet = w,
+                            items = items.toList(),
+                            label = preparedMultiLabel,
+                            walletId = _loadedWalletId.value,
+                        )
+                    }
                 }
-                var succeeded = 0
-                var failed = 0
-                var skipped = 0
-                var lastError: String? = null
-                val remaining = items.toMutableList()
-                try {
-                    while (remaining.isNotEmpty()) {
-                        val index = succeeded + failed
-                        val item = remaining.first()
-                        _sendState.value =
-                            ArkSendState.MultiSending(
-                                completed = index,
-                                total = items.size,
-                            )
-                        try {
-                            w.sendArkoorPayment(item.destination, item.amountSats.toULong())
+            if (prepared == null) {
+                sendInFlight.set(false)
+                _sendState.value =
+                    ArkSendState.Error(localizedString(R.string.ark_error_nothing_prepared))
+                return@withContext
+            }
+            val w = prepared.wallet
+            val items = prepared.items
+            _sendState.value = ArkSendState.MultiSending(completed = 0, total = items.size)
+            // Narrow the race with an in-flight exit start/progress critical section:
+            // wait briefly for it to finish so Bark input selection does not run
+            // against exiting VTXOs. Fail-open on timeout — Bark native locks
+            // remain the final guard and surface a spend error, never a double-spend.
+            runCatching {
+                withTimeoutOrNull(5_000L) { exitOperationMutex.withLock { } }
+            }
+            // Same staleness guard as single sends: later items re-sync after each success.
+            try {
+                w.sync()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                SecureLog.w(TAG, "Ark pre-send sync failed: ${publicError(e)}")
+            }
+            var succeeded = 0
+            var failed = 0
+            var skipped = 0
+            var lastError: String? = null
+            val remaining = items.toMutableList()
+            try {
+                while (remaining.isNotEmpty()) {
+                    val item = remaining.first()
+                    _sendState.value =
+                        ArkSendState.MultiSending(
+                            completed = succeeded,
+                            total = items.size,
+                        )
+                    try {
+                        w.sendArkoorPayment(item.destination, item.amountSats.toULong())
+                        mutex.withLock {
+                            if (wallet !== w) return@withLock
                             pendingSendDestination = item.destination
                             pendingSendAmountSats = item.amountSats
                             pendingSendKind = ArkPayKind.ARKOOR
-                            val walletId = _loadedWalletId.value
                             runCatching {
                                 refreshStateLocked(sync = true)
+                                val walletId = prepared.walletId
                                 if (walletId != null) {
                                     attachPendingSendDestinationLocked(walletId)
-                                    val label = preparedMultiLabel
+                                    val label = prepared.label
                                     if (!label.isNullOrBlank()) {
                                         val labeled =
                                             _arkState.value.movements
@@ -2260,60 +3147,72 @@ class ArkRepository(
                                     }
                                 }
                             }
-                            remaining.removeAt(0)
-                            succeeded++
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            failed = 1
-                            skipped = remaining.size - 1
-                            lastError = publicError(e)
-                            // Keep unsent remainder (including the failed item) for retry.
-                            preparedMultiItems = remaining.toList()
-                            break
                         }
+                        remaining.removeAt(0)
+                        succeeded++
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        failed = 1
+                        skipped = remaining.size - 1
+                        val failure = publicError(e)
+                        lastError = failure
+                        // Suppress the Bark pending ghost for this item (bad VTXO).
+                        recordFailedArkSend(prepared.walletId, item.destination, item.amountSats)
+                        if (isStaleInputError(failure)) {
+                            lastError = localizedString(R.string.ark_send_input_not_spendable)
+                            staleInputFailureStreak++
+                            reconcileStaleSendInput(w, prepared.walletId)
+                        }
+                        mutex.withLock { preparedMultiItems = remaining.toList() }
+                        break
                     }
-                    if (failed == 0) {
+                }
+                if (failed == 0) {
+                    staleInputFailureStreak = 0
+                    mutex.withLock {
                         preparedMultiItems = emptyList()
                         preparedMultiLabel = null
-                        _sendState.value =
-                            ArkSendState.MultiSent(
-                                succeeded = succeeded,
-                                failed = 0,
-                                detail = null,
-                            )
-                    } else {
-                        // Remainder stays in preparedMultiItems for a retry of unsent only.
-                        _sendState.value =
-                            ArkSendState.MultiSent(
-                                succeeded = succeeded,
-                                failed = failed + skipped.coerceAtLeast(0),
-                                detail =
-                                    buildString {
-                                        append(lastError.orEmpty())
-                                        if (remaining.isNotEmpty()) {
-                                            if (isNotEmpty()) append(" · ")
-                                            append(
-                                                localizedString(
-                                                    R.string.ark_send_multi_remainder_format,
-                                                    remaining.size,
-                                                ),
-                                            )
-                                        }
-                                    }.ifBlank { lastError },
-                            )
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    clearPreparedSendStateLocked()
-                    _sendState.value = ArkSendState.Error(publicError(e))
+                    _sendState.value =
+                        ArkSendState.MultiSent(
+                            succeeded = succeeded,
+                            failed = 0,
+                            detail = null,
+                        )
+                } else {
+                    _sendState.value =
+                        ArkSendState.MultiSent(
+                            succeeded = succeeded,
+                            failed = failed + skipped.coerceAtLeast(0),
+                            detail =
+                                buildString {
+                                    append(lastError.orEmpty())
+                                    if (remaining.isNotEmpty()) {
+                                        if (isNotEmpty()) append(" · ")
+                                        append(
+                                            localizedString(
+                                                R.string.ark_send_multi_remainder_format,
+                                                remaining.size,
+                                            ),
+                                        )
+                                    }
+                                }.ifBlank { lastError },
+                        )
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                mutex.withLock { clearPreparedSendStateLocked() }
+                _sendState.value = ArkSendState.Error(publicError(e))
+            } finally {
+                sendInFlight.set(false)
             }
         }
 
     suspend fun sendPrepared() =
         withContext(Dispatchers.IO) {
+            if (!sendInFlight.compareAndSet(false, true)) return@withContext
             // Paint Sending before mutex wait so confirm dialog does not sit on Preview.
             _sendState.value = ArkSendState.Sending
             // Snapshot prepared fields under lock, then pay outside so heartbeat can proceed.
@@ -2350,6 +3249,7 @@ class ArkRepository(
                     }
                 }
             if (prepared == null) {
+                sendInFlight.set(false)
                 _sendState.value =
                     ArkSendState.Error(localizedString(R.string.ark_error_nothing_prepared))
                 return@withContext
@@ -2359,156 +3259,576 @@ class ArkRepository(
             val kind = prepared.kind
             val amount = prepared.amount
             val comment = prepared.comment
-            // True once a network pay call has been entered — timeouts after dispatch
-            // must not invite a blind retry of the same payment.
-            var paymentMayHaveCompleted = false
+            val isLightning =
+                kind == ArkPayKind.BOLT11 ||
+                    kind == ArkPayKind.BOLT12 ||
+                    kind == ArkPayKind.LN_ADDRESS ||
+                    kind == ArkPayKind.LNURL
+            val lightningInvoiceHash = if (isLightning) extractLightningPaymentHash(dest) else null
             try {
-                val detail =
+                // Fail closed when a unilateral exit holds the critical section:
+                // concurrent VTXO selection vs exit lock burns fees / double-attempts.
+                val exitFree =
+                    withTimeoutOrNull(5_000L) {
+                        exitOperationMutex.withLock { true }
+                    } ?: false
+                if (!exitFree) {
+                    sendInFlight.set(false)
+                    _sendState.value =
+                        ArkSendState.Error(localizedString(R.string.ark_error_exit_in_progress))
+                    return@withContext
+                }
+                // Refresh local VTXO statuses from the server right before paying:
+                // Bark picks inputs locally and the ASP rejects stale ones ("is not
+                // spendable") — typically funds moved by another device on this seed.
+                // Fail-open: a sync failure still attempts the pay.
+                try {
+                    w.sync()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    SecureLog.w(TAG, "Ark pre-send sync failed: ${publicError(e)}")
+                }
+                val payStatus: LightningSendStatus? =
                     when (kind) {
                         ArkPayKind.ARKOOR -> {
                             val sats = amount ?: error(localizedString(R.string.ark_error_amount_required))
-                            paymentMayHaveCompleted = true
                             w.sendArkoorPayment(dest, sats.toULong())
-                            dest
+                            null
                         }
-                        ArkPayKind.BOLT11 -> {
-                            paymentMayHaveCompleted = true
-                            val status =
-                                withTimeout(LIGHTNING_PAY_TIMEOUT_MS) {
-                                    w.payLightningInvoice(
-                                        invoice = dest,
-                                        amountSats = amount?.toULong(),
-                                        wait = true,
-                                    )
-                                }
-                            lightningSendDetail(status)
-                        }
-                        ArkPayKind.BOLT12 -> {
-                            paymentMayHaveCompleted = true
-                            val status =
-                                withTimeout(LIGHTNING_PAY_TIMEOUT_MS) {
-                                    w.payLightningOffer(
-                                        offer = dest,
-                                        amountSats = amount?.toULong(),
-                                        wait = true,
-                                    )
-                                }
-                            lightningSendDetail(status)
-                        }
+                        ArkPayKind.BOLT11 ->
+                            awaitLightningSendStatus(w, lightningInvoiceHash) {
+                                w.payLightningInvoice(
+                                    invoice = dest,
+                                    amountSats = amount?.toULong(),
+                                    wait = true,
+                                )
+                            }
+                        ArkPayKind.BOLT12 ->
+                            awaitLightningSendStatus(w, lightningInvoiceHash) {
+                                w.payLightningOffer(
+                                    offer = dest,
+                                    amountSats = amount?.toULong(),
+                                    wait = true,
+                                )
+                            }
                         ArkPayKind.LN_ADDRESS -> {
                             val sats = amount ?: error(localizedString(R.string.ark_error_amount_required))
-                            paymentMayHaveCompleted = true
-                            val status =
-                                withTimeout(LIGHTNING_PAY_TIMEOUT_MS) {
-                                    w.payLightningAddress(
-                                        lightningAddress = dest,
-                                        amountSats = sats.toULong(),
-                                        comment = comment,
-                                        wait = true,
-                                    )
-                                }
-                            lightningSendDetail(status)
+                            awaitLightningSendStatus(w, lightningInvoiceHash) {
+                                w.payLightningAddress(
+                                    lightningAddress = dest,
+                                    amountSats = sats.toULong(),
+                                    comment = comment,
+                                    wait = true,
+                                )
+                            }
                         }
                         ArkPayKind.LNURL -> {
                             val sats = amount ?: error(localizedString(R.string.ark_error_amount_required))
-                            paymentMayHaveCompleted = true
-                            val status =
-                                withTimeout(LIGHTNING_PAY_TIMEOUT_MS) {
-                                    w.payLnurl(
-                                        lnurl = dest,
-                                        amountSats = sats.toULong(),
-                                        comment = comment,
-                                        wait = true,
-                                    )
-                                }
-                            lightningSendDetail(status)
+                            awaitLightningSendStatus(w, lightningInvoiceHash) {
+                                w.payLnurl(
+                                    lnurl = dest,
+                                    amountSats = sats.toULong(),
+                                    comment = comment,
+                                    wait = true,
+                                )
+                            }
                         }
                         ArkPayKind.ONCHAIN -> {
                             val sats = amount ?: error(localizedString(R.string.ark_error_amount_required))
-                            paymentMayHaveCompleted = true
                             w.sendOnchain(dest, sats.toULong())
+                            null
                         }
                     }
-                val walletId = prepared.walletId
-                val label = prepared.label
-                val sentKind = kind
-                val sentDest = dest
-                val sentAmount = amount
-                mutex.withLock {
-                    if (wallet !== w) return@withLock
-                    // Hold until attach succeeds across refresh/notification races.
-                    if (sentDest.isNotBlank() &&
-                        (sentKind == ArkPayKind.ARKOOR || sentKind == ArkPayKind.ONCHAIN)
-                    ) {
-                        pendingSendDestination = sentDest
-                        pendingSendAmountSats = sentAmount
-                        pendingSendKind = sentKind
-                    }
-                    runCatching {
-                        refreshStateLocked(sync = true)
-                        if (walletId != null) {
-                            attachPendingSendDestinationLocked(walletId)
-                            if (!label.isNullOrBlank()) {
-                                val labeled =
-                                    _arkState.value.movements
-                                        .asReversed()
-                                        .firstOrNull { m ->
-                                            m.effectiveBalanceSats < 0L &&
-                                                m.sentToAddresses.any { it.equals(sentDest, ignoreCase = true) } &&
-                                                m.label.isNullOrBlank()
-                                        }
-                                if (labeled != null) {
-                                    saveMovementLabel(walletId, labeled.id, label)
-                                }
-                            }
-                        }
-                    }
-                }
-                _sendState.value =
-                    ArkSendState.Sent(
-                        detail =
-                            detail?.takeIf { it.isNotBlank() }
-                                ?: sentDest.takeIf {
-                                    sentKind == ArkPayKind.ARKOOR || sentKind == ArkPayKind.ONCHAIN
-                                },
+                if (payStatus is LightningSendStatus.InProgress || payStatus is LightningSendStatus.Unknown) {
+                    SecureLog.d(
+                        TAG,
+                        "Ark LN send entering settlement poll hash=${lightningInvoiceHash?.take(8)} " +
+                            "initial=${payStatus::class.simpleName}",
                     )
-            } catch (e: CancellationException) {
-                // TimeoutCancellationException is a CancellationException — convert to Error
-                // so the UI does not stay stuck on Sending forever.
-                if (e is TimeoutCancellationException) {
-                    mutex.withLock {
-                        if (wallet === w) {
-                            runCatching { refreshStateLocked(sync = true) }
+                    _sendState.value = ArkSendState.Sending
+                    val settled = awaitLightningSettlement(w, lightningInvoiceHash)
+                    if (settled !is LightningSendStatus.Paid) {
+                        mutex.withLock {
+                            if (wallet === w) runCatching { refreshStateLocked(sync = true) }
                         }
+                        // Anti-double-pay: the pay may still settle via Bark pending sends.
+                        // Pin the hash in the error so the UI warns against blind retry.
+                        val stillPending =
+                            runCatching { w.pendingLightningSends().isNotEmpty() }
+                                .getOrDefault(false)
+                        val base = localizedString(R.string.ark_send_lightning_unknown)
+                        val hashSuffix =
+                            lightningInvoiceHash?.take(8)?.takeIf { it.isNotBlank() }
+                                ?.let { " · $it" }.orEmpty()
+                        val pendingSuffix = if (stillPending) " · pending" else ""
+                        _sendState.value = ArkSendState.Error(base + hashSuffix + pendingSuffix)
+                        return@withContext
                     }
-                    val base = localizedString(R.string.ark_send_lightning_timeout)
-                    _sendState.value =
-                        ArkSendState.Error(
-                            if (paymentMayHaveCompleted) {
-                                localizedString(R.string.ark_send_may_have_completed_format, base)
-                            } else {
-                                base
-                            },
+                    finishSuccessfulSend(
+                        w = w,
+                        kind = kind,
+                        dest = dest,
+                        amount = amount,
+                        label = prepared.label,
+                        walletId = prepared.walletId,
+                        detail = lightningSendDetail(settled),
+                    )
+                    return@withContext
+                }
+                finishSuccessfulSend(
+                    w = w,
+                    kind = kind,
+                    dest = dest,
+                    amount = amount,
+                    label = prepared.label,
+                    walletId = prepared.walletId,
+                    detail = payStatus?.let { lightningSendDetail(it) },
+                )
+            } catch (e: CancellationException) {
+                if (e is TimeoutCancellationException && isLightning) {
+                    val settled = awaitLightningSettlement(w, lightningInvoiceHash)
+                    if (settled is LightningSendStatus.Paid) {
+                        finishSuccessfulSend(
+                            w = w,
+                            kind = kind,
+                            dest = dest,
+                            amount = amount,
+                            label = prepared.label,
+                            walletId = prepared.walletId,
+                            detail = lightningSendDetail(settled),
                         )
+                        return@withContext
+                    }
+                    mutex.withLock {
+                        if (wallet === w) runCatching { refreshStateLocked(sync = true) }
+                    }
+                    val base = localizedString(R.string.ark_send_lightning_unknown)
+                    val hashSuffix =
+                        lightningInvoiceHash?.take(8)?.takeIf { it.isNotBlank() }
+                            ?.let { " · $it" }.orEmpty()
+                    _sendState.value = ArkSendState.Error(base + hashSuffix + " · pending")
                     return@withContext
                 }
                 throw e
             } catch (e: Exception) {
+                // Record BEFORE refresh: the post-failure sync is what paints the
+                // Bark pending ghost for a send that already threw (bad VTXO).
+                // This catch only sees definitive failures — Lightning timeouts /
+                // unknown-settlement take the branches above (the pay may still
+                // settle), so recording here never hides a live payment.
+                recordFailedArkSend(prepared.walletId, dest, amount, lightningInvoiceHash)
                 mutex.withLock {
                     if (wallet === w) {
                         runCatching { refreshStateLocked(sync = true) }
                     }
                 }
-                val base = publicError(e)
-                val message =
-                    if (paymentMayHaveCompleted) {
-                        localizedString(R.string.ark_send_may_have_completed_format, base)
-                    } else {
-                        base
-                    }
-                _sendState.value = ArkSendState.Error(message)
+                val failure = publicError(e)
+                if (isStaleInputError(failure)) {
+                    _sendState.value =
+                        ArkSendState.Error(localizedString(R.string.ark_send_input_not_spendable))
+                    staleInputFailureStreak++
+                    reconcileStaleSendInput(w, prepared.walletId)
+                } else {
+                    _sendState.value = ArkSendState.Error(failure)
+                }
+            } finally {
+                sendInFlight.set(false)
             }
         }
+
+    /**
+     * Server rejected our inputs as already spent — almost always a stale local
+     * DB (e.g. another device on this seed moved the funds). Never matches blank.
+     */
+    private fun isStaleInputError(message: String): Boolean =
+        message.isNotBlank() && message.contains("is not spendable", ignoreCase = true)
+
+    /** BDK coin selection could not fund amount + fee (dust-size balance vs fee pad). */
+    private fun isInsufficientFundsError(message: String): Boolean =
+        message.isNotBlank() && message.contains("insufficient", ignoreCase = true)
+
+    /**
+     * Record a failed send so its Bark pending ghost never paints as Pending.
+     * Must run BEFORE the post-failure refresh (which is what paints the ghost).
+     * Immediately purges any already-painted/journaled/cached copy.
+     */
+    private suspend fun recordFailedArkSend(
+        walletId: String?,
+        dest: String,
+        amountSats: Long?,
+        paymentHash: String? = null,
+    ) {
+        if (walletId.isNullOrBlank() || dest.isBlank()) return
+        val now = System.currentTimeMillis()
+        val hash = paymentHash?.trim()?.takeIf { it.isNotBlank() }?.lowercase(java.util.Locale.US)
+        synchronized(failedArkSends) {
+            failedArkSends.removeAll { now - it.timestampMs > FAILED_SEND_TOMBSTONE_TTL_MS }
+            failedArkSends.removeAll { it.walletId == walletId && it.dest.equals(dest, ignoreCase = true) && it.amountSats == amountSats }
+            failedArkSends.add(FailedArkSend(walletId, dest.trim(), amountSats, now, hash))
+            while (failedArkSends.size > MAX_FAILED_SEND_TOMBSTONES) {
+                failedArkSends.removeAt(0)
+            }
+        }
+        runCatching { secureStorage.addArkFailedSend(walletId, dest.trim(), amountSats) }
+        mutex.withLock {
+            if (_loadedWalletId.value != walletId && _arkState.value.walletId != walletId) return@withLock
+            val filtered = filterFailedSendPhantoms(walletId, _arkState.value.movements)
+            if (filtered.size != _arkState.value.movements.size) {
+                _arkState.value = _arkState.value.copy(movements = filtered)
+                secureStorage.saveArkWalletStateCache(walletId, _arkState.value)
+            }
+        }
+        runCatching {
+            val journal = secureStorage.getArkMovementJournal(walletId)
+            if (journal.isNotEmpty()) {
+                val filtered = filterFailedSendPhantoms(walletId, journal)
+                if (filtered.size != journal.size) {
+                    secureStorage.saveArkMovementJournal(walletId, filtered)
+                }
+            }
+        }
+    }
+
+    private fun activeFailedArkSends(walletId: String): List<FailedArkSend> {
+        val now = System.currentTimeMillis()
+        val inMemory =
+            synchronized(failedArkSends) {
+                failedArkSends.removeAll { now - it.timestampMs > FAILED_SEND_TOMBSTONE_TTL_MS }
+                failedArkSends.filter { it.walletId == walletId }
+            }
+        val persisted =
+            runCatching { secureStorage.getArkFailedSends(walletId) }.getOrDefault(emptyList())
+                .mapNotNull { (dest, amount, timestamp) ->
+                    if (now - timestamp > FAILED_SEND_TOMBSTONE_TTL_MS) return@mapNotNull null
+                    FailedArkSend(walletId, dest, amount?.takeIf { it >= 0L }, timestamp)
+                }
+        if (persisted.isEmpty()) return inMemory
+        // Backfill memory so later filters stay cheap; dedupe on dest+amount.
+        synchronized(failedArkSends) {
+            persisted.forEach { tombstone ->
+                if (failedArkSends.none { it.walletId == walletId && it.dest.equals(tombstone.dest, ignoreCase = true) && it.amountSats == tombstone.amountSats }) {
+                    failedArkSends.add(tombstone)
+                }
+            }
+            while (failedArkSends.size > MAX_FAILED_SEND_TOMBSTONES) {
+                failedArkSends.removeAt(0)
+            }
+        }
+        return (inMemory + persisted)
+            .distinctBy { it.dest.lowercase(java.util.Locale.US) + "|" + it.amountSats }
+    }
+
+    /** True when [movement] looks like the pending ghost of a send that already threw. */
+    private fun isFailedSendPhantom(
+        movement: ArkMovement,
+        tombstones: List<FailedArkSend>,
+        nowMs: Long,
+    ): Boolean {
+        if (tombstones.isEmpty()) return false
+        if (movement.effectiveBalanceSats >= 0L) return false
+        if (!movement.completedAt.isNullOrBlank()) return false
+        if (isMovementTerminalComplete(movement.status) || isMovementFailed(movement.status)) return false
+        if (!isMovementExplicitPending(movement.status)) return false
+        val isLightningMovement =
+            !movement.paymentHash.isNullOrBlank() || !movement.lightningInvoice.isNullOrBlank() ||
+                !movement.lightningOffer.isNullOrBlank()
+        for (tombstone in tombstones) {
+            if (nowMs - tombstone.timestampMs > FAILED_SEND_TOMBSTONE_TTL_MS) continue
+            if (isLightningMovement) {
+                // A Lightning ghost is only suppressed by the tombstone of that
+                // same payment: matching payment hash, or the exact invoice /
+                // offer that was attempted. ARKOOR/ONCHAIN tombstones must never
+                // hide a real Lightning payment (and vice versa).
+                val hashMatch =
+                    !tombstone.paymentHash.isNullOrBlank() &&
+                        movement.paymentHash.equals(tombstone.paymentHash, ignoreCase = true)
+                val invoiceMatch =
+                    movement.lightningInvoice?.equals(tombstone.dest, ignoreCase = true) == true ||
+                        movement.lightningOffer?.equals(tombstone.dest, ignoreCase = true) == true
+                if (!hashMatch && !invoiceMatch) continue
+            } else {
+                if (!tombstone.paymentHash.isNullOrBlank()) continue
+                val amount = tombstone.amountSats
+                if (amount != null && amount > 0L) {
+                    val outflow = kotlin.math.abs(movement.effectiveBalanceSats)
+                    val intended = kotlin.math.abs(movement.intendedBalanceSats)
+                    if (outflow != amount && intended != amount &&
+                        kotlin.math.abs(outflow - amount) > FAILED_SEND_AMOUNT_TOLERANCE_SATS &&
+                        kotlin.math.abs(intended - amount) > FAILED_SEND_AMOUNT_TOLERANCE_SATS
+                    ) {
+                        continue
+                    }
+                }
+                val destMatch =
+                    movement.sentToAddresses.any { it.equals(tombstone.dest, ignoreCase = true) } ||
+                        // Bark omits ARKOOR peers — an empty peer list + matching amount +
+                        // recent creation is the phantom signature.
+                        (movement.sentToAddresses.isEmpty() && movement.onchainTxids.isEmpty())
+                if (!destMatch) continue
+            }
+            val createdMs = parseArkMovementMillis(movement.createdAt)
+            if (createdMs != null) {
+                // Ghost is created at send time; ignore older legit pendings.
+                if (kotlin.math.abs(tombstone.timestampMs - createdMs) > FAILED_SEND_CREATE_WINDOW_MS) continue
+            } else if (nowMs - tombstone.timestampMs > FAILED_SEND_UNKNOWN_TIME_MATCH_MS) {
+                continue
+            }
+            return true
+        }
+        return false
+    }
+
+    private fun filterFailedSendPhantoms(
+        walletId: String,
+        movements: List<ArkMovement>,
+    ): List<ArkMovement> {
+        if (movements.isEmpty()) return movements
+        val tombstones = activeFailedArkSends(walletId)
+        if (tombstones.isEmpty()) return movements
+        val now = System.currentTimeMillis()
+        return movements.filterNot { isFailedSendPhantom(it, tombstones, now) }
+    }
+
+    private fun isMovementTerminalComplete(status: String): Boolean {
+        val n = status.trim().lowercase(java.util.Locale.US)
+        return n in setOf("complete", "completed", "confirmed", "settled", "success", "finished", "done", "ok", "finalized") ||
+            n.contains("complete") || n.contains("settled") || n.contains("finish")
+    }
+
+    private fun isMovementFailed(status: String): Boolean {
+        val n = status.trim().lowercase(java.util.Locale.US)
+        return n in setOf("failed", "error", "cancelled", "canceled") ||
+            n.contains("fail") || n.contains("error")
+    }
+
+    private fun isMovementExplicitPending(status: String): Boolean {
+        val n = status.trim().lowercase(java.util.Locale.US)
+        if (n.isBlank()) return true
+        if (isMovementTerminalComplete(n) || isMovementFailed(n)) return false
+        return n in setOf("pending", "inprogress", "in_progress", "confirming", "unconfirmed", "boarding", "mempool", "broadcast", "broadcasted") ||
+            n.contains("pending") || n.contains("boarding") || n.contains("unconfirm") ||
+            n.contains("in_progress") || n.contains("inprogress") ||
+            (n.contains("confirming") && !n.contains("confirmed"))
+    }
+
+    private fun parseArkMovementMillis(raw: String): Long? {
+        val value = raw.trim()
+        if (value.isEmpty()) return null
+        value.toLongOrNull()?.takeIf { it > 0L }?.let { epoch ->
+            return if (epoch > 10_000_000_000L) epoch else epoch * 1000L
+        }
+        runCatching { return java.time.Instant.parse(value).toEpochMilli() }
+        runCatching { return java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli() }
+        runCatching { return java.time.Instant.parse(value.replace(' ', 'T')).toEpochMilli() }
+        return null
+    }
+
+    /**
+     * After a stale-input failure, run a full hydrate (no spinner) so the
+     * cross-device drift check can rescan the mailbox when replacements are
+     * missing. On repeated consecutive proof the local DB disagrees with the
+     * server, skip straight to a mailbox rescan. Bails internally when the
+     * session moved on.
+     */
+    private fun reconcileStaleSendInput(expectedWallet: Wallet, walletId: String?) {
+        if (walletId.isNullOrBlank()) return
+        eventScope.launch {
+            if (tryClaimStaleInputRescanSlot(walletId)) {
+                _events.tryEmit(ArkEvent.MailboxRescanStarted)
+                loadWallet(walletId, forceMailbox = true)
+                return@launch
+            }
+            val onchain =
+                mutex.withLock { if (wallet === expectedWallet) onchainWallet else null }
+            hydrateFromAspOutsideLock(
+                reason = "send-stale-input",
+                expectedWallet = expectedWallet,
+                onchain = onchain,
+                generation = loadGeneration.get(),
+                walletId = walletId,
+                attemptBoard = false,
+                indicateSync = false,
+            )
+        }
+    }
+
+    /**
+     * Claims the one-shot automatic mailbox rescan for persistent stale-input
+     * divergence. Returns false (caller falls back to hydrate) on cooldown,
+     * wallet mismatch, or any in-flight activity a session wipe could strand.
+     */
+    private suspend fun tryClaimStaleInputRescanSlot(walletId: String): Boolean {
+        val blocking =
+            mutex.withLock {
+                hasMailboxRescanBlockingActivity(_arkState.value) ||
+                    _loadedWalletId.value != walletId
+            }
+        if (
+            !ArkMailboxRecoveryPolicy.shouldAutoRescanStaleSession(
+                staleStreak = staleInputFailureStreak,
+                cooldownElapsedMs = SystemClock.elapsedRealtime() - lastForcedRescanElapsedMs,
+                hasBlockingActivity = blocking,
+            )
+        ) {
+            return false
+        }
+        lastForcedRescanElapsedMs = SystemClock.elapsedRealtime()
+        SecureLog.w(TAG, "Ark persistent stale inputs — forcing mailbox rescan")
+        return true
+    }
+
+    /** Anything in flight that a session-DB wipe + mailbox rescan could strand. */
+    private fun hasMailboxRescanBlockingActivity(state: ArkWalletState): Boolean =
+        state.hasPendingExits || state.claimableExitVtxos.isNotEmpty() ||
+            state.pendingBoardSats > 0L ||
+            state.pendingRefreshVtxoIds.isNotEmpty() ||
+            trackedRefreshVtxoIds.isNotEmpty() || trackedRefreshRoundId != null ||
+            state.claimableLightningReceiveSats > 0L || state.pendingLightningSendSats > 0L
+
+    private suspend fun finishSuccessfulSend(
+        w: Wallet,
+        kind: ArkPayKind,
+        dest: String,
+        amount: Long?,
+        label: String?,
+        walletId: String?,
+        detail: String?,
+    ) {
+        staleInputFailureStreak = 0
+        if (!walletId.isNullOrBlank() && dest.isNotBlank()) {
+            // A retry that now succeeds must un-suppress this payment.
+            synchronized(failedArkSends) {
+                failedArkSends.removeAll {
+                    it.walletId == walletId && it.dest.equals(dest, ignoreCase = true) && it.amountSats == amount
+                }
+            }
+            runCatching { secureStorage.removeArkFailedSend(walletId, dest, amount) }
+        }
+        mutex.withLock {
+            if (wallet !== w) return@withLock
+            if (dest.isNotBlank() &&
+                (kind == ArkPayKind.ARKOOR || kind == ArkPayKind.ONCHAIN)
+            ) {
+                pendingSendDestination = dest
+                pendingSendAmountSats = amount
+                pendingSendKind = kind
+            }
+            runCatching {
+                refreshStateLocked(sync = true)
+                if (walletId != null) {
+                    attachPendingSendDestinationLocked(walletId)
+                    if (!label.isNullOrBlank()) {
+                        val labeled =
+                            _arkState.value.movements
+                                .asReversed()
+                                .firstOrNull { m ->
+                                    m.effectiveBalanceSats < 0L &&
+                                        (
+                                            m.sentToAddresses.any { it.equals(dest, ignoreCase = true) } ||
+                                                // Lightning sends often carry no sent-to address —
+                                                // match the resolved invoice instead.
+                                                m.lightningInvoice?.equals(dest, ignoreCase = true) == true
+                                        ) &&
+                                        m.label.isNullOrBlank()
+                                }
+                        if (labeled != null) {
+                            saveMovementLabel(walletId, labeled.id, label)
+                        }
+                    }
+                }
+            }
+        }
+        _sendState.value =
+            ArkSendState.Sent(
+                detail =
+                    detail?.takeIf { it.isNotBlank() }
+                        ?: dest.takeIf { kind == ArkPayKind.ARKOOR || kind == ArkPayKind.ONCHAIN },
+            )
+    }
+
+    private suspend fun awaitLightningSendStatus(
+        wallet: Wallet,
+        paymentHash: String?,
+        pay: suspend () -> LightningSendStatus,
+    ): LightningSendStatus =
+        try {
+            withTimeout(LIGHTNING_PAY_TIMEOUT_MS) { pay() }
+        } catch (e: TimeoutCancellationException) {
+            pollLightningSendStatus(wallet, paymentHash) ?: throw e
+        }
+
+    private suspend fun awaitLightningSettlement(
+        wallet: Wallet,
+        paymentHash: String?,
+    ): LightningSendStatus {
+        val shortHash = paymentHash?.takeIf { it.isNotBlank() }?.take(8)
+        repeat(LIGHTNING_SETTLE_POLL_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(LIGHTNING_SETTLE_POLL_INTERVAL_MS)
+            val status = pollLightningSendStatus(wallet, paymentHash)
+            when (status) {
+                is LightningSendStatus.Paid -> {
+                    SecureLog.d(TAG, "Ark LN send settled Paid hash=$shortHash")
+                    return status
+                }
+                is LightningSendStatus.InProgress, LightningSendStatus.Unknown, null -> Unit
+            }
+        }
+        val final =
+            pollLightningSendStatus(wallet, paymentHash)
+                ?: LightningSendStatus.Unknown
+        SecureLog.d(TAG, "Ark LN send settlement gave up hash=$shortHash status=${final::class.simpleName}")
+        return final
+    }
+
+    private suspend fun pollLightningSendStatus(
+        wallet: Wallet,
+        paymentHash: String?,
+    ): LightningSendStatus? {
+        // Truncated hash only: full hashes correlate payments in log captures.
+        val shortHash = paymentHash?.takeIf { it.isNotBlank() }?.take(8)
+        if (!paymentHash.isNullOrBlank()) {
+            runCatching { wallet.checkLightningPayment(paymentHash, wait = false) }
+                .getOrNull()
+                ?.let {
+                    SecureLog.d(
+                        TAG,
+                        "Ark LN send status via checkLightningPayment hash=$shortHash " +
+                            "status=${it::class.simpleName}",
+                    )
+                    return it
+                }
+            runCatching { wallet.lightningSendState(paymentHash) }
+                .getOrNull()
+                ?.let {
+                    SecureLog.d(
+                        TAG,
+                        "Ark LN send status via lightningSendState hash=$shortHash " +
+                            "status=${it::class.simpleName}",
+                    )
+                    return it
+                }
+        }
+        // No hash (BOLT12/LNURL/LN-address) or hash lookup missed: never coerce
+        // an unrelated pending send — return Unknown so the UI does not mark the
+        // wrong payment Paid. Hash-scoped queries above already covered BOLT11.
+        val pendingCount = runCatching { wallet.pendingLightningSends().size }.getOrNull()
+        SecureLog.d(
+            TAG,
+            "Ark LN send status unknown hash=$shortHash pendingCount=$pendingCount",
+        )
+        return null
+    }
+
+    private fun extractLightningPaymentHash(invoiceOrOffer: String): String? =
+        runCatching {
+            val bolt11 = lwk.Bolt11Invoice(stripLightningScheme(invoiceOrOffer))
+            try {
+                bolt11.paymentHash().lowercase().takeIf { it.isNotBlank() }
+            } finally {
+                runCatching { bolt11.destroy() }
+            }
+        }.getOrNull()
 
     private fun clearPreparedSendStateLocked() {
         preparedDestination = null
@@ -2529,6 +3849,8 @@ class ArkRepository(
                     _transferState.value = ArkTransferState.Error(localizedString(R.string.ark_error_wallet_not_loaded))
                     return@withLock
                 }
+                val walletId = _loadedWalletId.value
+                val hasPassphrase = !walletId.isNullOrBlank() && !secureStorage.getPassphrase(walletId).isNullOrEmpty()
                 _transferState.value = ArkTransferState.Preparing
                 try {
                     // Always estimate with a concrete amount. boardAll still uses the
@@ -2538,34 +3860,75 @@ class ArkRepository(
                         _transferState.value = ArkTransferState.Error(localizedString(R.string.ark_enter_amount))
                         return@withLock
                     }
-                    val minBoard =
-                        runCatching { w.arkInfo()?.minBoardAmountSats?.toLong() }
-                            .getOrNull()
-                            ?.takeIf { it > 0L }
-                            ?: _arkState.value.minBoardAmountSats?.takeIf { it > 0L }
-                    if (ArkDepositPolicy.isBelowMinBoardAmount(estimateAmount, minBoard) && minBoard != null) {
+                    val minBoard = _arkState.value.minBoardAmountSats
+                    if (!boardAll && minBoard != null && minBoard > 0L && estimateAmount < minBoard) {
                         _transferState.value =
                             ArkTransferState.Error(
                                 localizedString(
-                                    R.string.ark_transfer_below_min_board_format,
-                                    "$minBoard sats",
+                                    R.string.ark_boarding_min_format,
+                                    "%,d".format(java.util.Locale.US, minBoard),
                                 ),
                             )
                         return@withLock
                     }
                     val estimate = w.estimateBoardFee(estimateAmount.toULong())
+                    val boardFeeSats = estimate.feeSats.toLong()
+                    // Single-tx self-board (default): mint a Bark funding destination and
+                    // build the funding tx in the L1 wallet against it. No PDK involved —
+                    // Bark only needs the PSBT. Passphrase wallets can use this path
+                    // because funding comes from L1 (passphrase-capable), not Bark's
+                    // bundled on-chain wallet (which stays null for passphrase wallets).
+                    val funding =
+                        runCatching { w.boardFundingAddress() }.getOrNull()?.let {
+                            ArkTransferState.BoardFundingInfo(
+                                address = it.address,
+                                keypairIndex = it.keypairIndex,
+                                expiryHeight = it.expiryHeight,
+                            )
+                        }
+                    if (funding != null) {
+                        _transferState.value =
+                            ArkTransferState.BoardPreview(
+                                amountSats = amountSats,
+                                feeSats = boardFeeSats,
+                                netAmountSats = estimate.netAmountSats.toLong(),
+                                boardAll = boardAll,
+                                bitcoinDepositAddress = funding.address,
+                                feeRateSatPerVb = feeRateFromEstimate(estimate),
+                                grossAmountSats = estimate.grossAmountSats.toLong(),
+                                boardFunding = funding,
+                                boardFeeSats = boardFeeSats,
+                            )
+                        return@withLock
+                    }
+                    // Funding-address mint failed: fall back to legacy 2-tx preview.
+                    if (hasPassphrase || onchainWallet == null) {
+                        _transferState.value =
+                            ArkTransferState.Error(
+                                localizedString(
+                                    if (hasPassphrase) {
+                                        R.string.ark_error_passphrase_board_unavailable
+                                    } else {
+                                        R.string.ark_error_onchain_wallet_unavailable
+                                    },
+                                ),
+                            )
+                        return@withLock
+                    }
                     // BTC→Ark boards from Bark's bundled on-chain wallet; show that Bitcoin address.
                     val bitcoinDepositAddress =
                         resolveUnusedBitcoinDepositAddressLocked(forceNew = false)
                     _transferState.value =
                         ArkTransferState.BoardPreview(
                             amountSats = amountSats,
-                            feeSats = estimate.feeSats.toLong(),
+                            feeSats = boardFeeSats,
                             netAmountSats = estimate.netAmountSats.toLong(),
                             boardAll = boardAll,
                             bitcoinDepositAddress = bitcoinDepositAddress,
                             feeRateSatPerVb = feeRateFromEstimate(estimate),
                             grossAmountSats = estimate.grossAmountSats.toLong(),
+                            boardFunding = null,
+                            boardFeeSats = boardFeeSats,
                         )
                 } catch (e: CancellationException) {
                     throw e
@@ -2577,31 +3940,17 @@ class ArkRepository(
 
     /**
      * Finish BTC→Ark after Ibis L1 funding broadcast. Completes immediately with the L1
-     * txid — do not block on Bark Esplora sync / board (that hung Confirm for ~1 min).
-     * Auto-board only when the user opted in; otherwise funds stay on-chain until Boarding tab.
+     * funding txid — this is "funding broadcast", not "boarded" (board success is
+     * reported separately via BoardSucceeded). Do not block on Bark Esplora sync /
+     * board (that hung Confirm for ~1 min). Auto-board only when the user opted in;
+     * otherwise funds stay on-chain until the Boarding tab.
      */
     fun completeLayer1Funding(fundingTxid: String) {
         val txid = fundingTxid.trim()
         _transferState.value =
             ArkTransferState.Completed(detail = txid.takeIf { it.isNotBlank() })
         if (txid.isNotBlank()) {
-            val walletId = _loadedWalletId.value
-            if (walletId != null) {
-                secureStorage.addArkFundingTxid(walletId, txid)
-            }
-            // Immediately resurface funding txid on any board movements missing metadata.
-            runCatching {
-                val current = _arkState.value
-                if (current.movements.isNotEmpty()) {
-                    _arkState.value =
-                        current.copy(
-                            movements =
-                                current.movements.map { movement ->
-                                    injectFundingTxid(movement, listOf(txid.lowercase()))
-                                },
-                        )
-                }
-            }
+            recordBoardFundingTxid(txid)
         }
         if (secureStorage.isArkAutoBoardEnabled()) {
             scheduleDeferredBoardAttempts()
@@ -2609,6 +3958,97 @@ class ArkRepository(
             // Paint on-chain deposit without boarding.
             eventScope.launch {
                 runCatching { refreshState(indicateSync = false) }
+            }
+        }
+    }
+
+    /**
+     * Resolve Bark's on-chain deposit address for legacy-fallback sends.
+     * Null when the bundled on-chain wallet is unavailable (e.g. passphrase
+     * wallets) — those have no 2-tx path to fall back to.
+     */
+    suspend fun legacyDepositAddressForFallback(): String? =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                if (wallet == null || onchainWallet == null) return@withLock null
+                runCatching { resolveUnusedBitcoinDepositAddressLocked(forceNew = false) }.getOrNull()
+            }
+        }
+
+    /**
+     * Register a fully-signed single-tx board funding PSBT with Bark (`boardPsbt`).
+     * Bark cosigns the board against this exact transaction — the PSBT must already
+     * carry final signatures (see `buildSignedBoardFundingTx`), and [funding] must
+     * be the destination minted by [prepareBoard], echoed back unchanged.
+     *
+     * Returns the board funding txid. No transfer-state or event side effects:
+     * the caller falls back to the legacy 2-tx path on failure, so a Bark
+     * rejection stays transparent.
+     */
+    suspend fun boardSingleTxFunding(
+        signedPsbtBase64: String,
+        funding: ArkTransferState.BoardFundingInfo,
+    ): Result<String> =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val w = wallet
+                    ?: return@withLock Result.failure(
+                        IllegalStateException(localizedString(R.string.ark_error_wallet_not_loaded)),
+                    )
+                try {
+                    val pending = w.boardPsbt(signedPsbtBase64, funding.keypairIndex, funding.expiryHeight)
+                    runCatching { w.syncPendingBoards() }
+                    Result.success(pending.txid)
+                } catch (e: CancellationException) {
+                    // Never swallow cancellation into a fallback: the board may have
+                    // registered server-side, and falling back would broadcast a
+                    // second, different funding tx.
+                    throw e
+                } catch (e: Exception) {
+                    Result.failure(IllegalStateException(publicError(e), e))
+                }
+            }
+        }
+
+    /**
+     * Finish BTC→Ark after a single-tx board funding broadcast. The board is
+     * already registered with Bark via [boardSingleTxFunding], so — unlike
+     * [completeLayer1Funding] — no deferred board attempts are scheduled;
+     * normal refresh/sync tracks the pending board to confirmation.
+     *
+     * No BoardSucceeded event here: like the legacy swap path, completion is
+     * "funding broadcast, boarding pending" (surfaced by the transfer toast),
+     * not "boarded".
+     */
+    fun completeSingleTxBoard(fundingTxid: String) {
+        val txid = fundingTxid.trim()
+        _transferState.value =
+            ArkTransferState.Completed(detail = txid.takeIf { it.isNotBlank() })
+        if (txid.isNotBlank()) {
+            recordBoardFundingTxid(txid)
+        }
+        eventScope.launch {
+            runCatching { refreshState(indicateSync = false) }
+        }
+    }
+
+    /** Persist a board funding txid and resurface it on movements missing metadata. */
+    private fun recordBoardFundingTxid(txid: String) {
+        val walletId = _loadedWalletId.value
+        if (walletId != null) {
+            secureStorage.addArkFundingTxid(walletId, txid)
+        }
+        // Immediately resurface funding txid on any board movements missing metadata.
+        runCatching {
+            val current = _arkState.value
+            if (current.movements.isNotEmpty()) {
+                _arkState.value =
+                    current.copy(
+                        movements =
+                            current.movements.map { movement ->
+                                injectFundingTxid(movement, listOf(txid.lowercase()))
+                            },
+                    )
             }
         }
     }
@@ -2707,6 +4147,17 @@ class ArkRepository(
                     IllegalArgumentException(localizedString(R.string.ark_board_failed_generic)),
                 )
             }
+            val minBoard = _arkState.value.minBoardAmountSats
+            if (minBoard != null && minBoard > 0L && amount < minBoard) {
+                return@withContext Result.failure(
+                    IllegalArgumentException(
+                        localizedString(
+                            R.string.ark_boarding_min_format,
+                            "%,d".format(java.util.Locale.US, minBoard),
+                        ),
+                    ),
+                )
+            }
             mutex.withLock {
                 val ok = boardPendingOnchainFundsLocked(force = true, amountSats = amount)
                 runCatching { refreshStateLocked(sync = true, attemptBoard = false) }
@@ -2746,13 +4197,13 @@ class ArkRepository(
      * address Ibis handed out in previous sessions is revealed again. Without this the
      * wallet's sync scans nothing and confirmed deposits can never board.
      */
-    private suspend fun catchUpOnchainDepositRevelationLocked(onchain: OnchainWallet) {
-        val walletId = _loadedWalletId.value ?: return
+    private suspend fun catchUpOnchainDepositRevelationLocked(onchain: OnchainWallet): Int {
+        val walletId = _loadedWalletId.value ?: return 0
         val known =
             secureStorage.getArkOnchainDepositAddressHistory(walletId)
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }
-        if (known.isEmpty()) return
+        if (known.isEmpty()) return 0
         val remaining = known.toMutableSet()
         var revealed = 0
         var consecutiveFailures = 0
@@ -2765,7 +4216,7 @@ class ArkRepository(
                     .orEmpty()
             if (addr.isEmpty()) {
                 consecutiveFailures++
-                if (consecutiveFailures >= 2) return
+                if (consecutiveFailures >= 2) return remaining.size
                 return@repeat
             }
             consecutiveFailures = 0
@@ -2781,6 +4232,7 @@ class ArkRepository(
         } else if (revealed > 0) {
             SecureLog.w(TAG, "Ark on-chain reveal catch-up: $revealed address(es) re-revealed")
         }
+        return remaining.size
     }
 
     /**
@@ -2813,20 +4265,41 @@ class ArkRepository(
             }
             return false
         }
+        val pendingExitsQuery = runCatching { w.hasPendingExits() }
         val hasPendingExits =
-            runCatching { w.hasPendingExits() }.getOrDefault(_arkState.value.hasPendingExits)
-        if (!ArkUnilateralExitPolicy.shouldAutoBoardOnchainFunds(hasPendingExits)) {
+            ArkUnilateralExitPolicy.computeHasPendingExits(
+                barkHasPending = pendingExitsQuery.getOrDefault(false),
+                exitStates =
+                    runCatching {
+                        w.getExitVtxos().map { ArkBarkMappers.exitStateLabel(it.state) }
+                    }.getOrDefault(_arkState.value.exitVtxos.map { it.state }),
+            )
+        // Fail closed: an unreadable exit set may hide in-flight exits whose CPFP
+        // fee UTXOs boarding would compete for, stalling the exit.
+        val exitsUnknown = pendingExitsQuery.isFailure
+        if (!ArkUnilateralExitPolicy.shouldAutoBoardOnchainFunds(hasPendingExits) || exitsUnknown) {
             runCatching { w.syncPendingBoards() }
             if (force) {
                 _events.tryEmit(
-                    ArkEvent.BoardFailed(localizedString(R.string.ark_board_disabled_exit)),
+                    ArkEvent.BoardFailed(
+                        localizedString(
+                            if (hasPendingExits) {
+                                R.string.ark_board_disabled_exit
+                            } else {
+                                R.string.ark_board_failed_generic
+                            },
+                        ),
+                    ),
                 )
             }
             return false
         }
         if (!onchainRevealCatchUpDone) {
-            onchainRevealCatchUpDone = true
-            catchUpOnchainDepositRevelationLocked(onchain)
+            val remaining =
+                catchUpOnchainDepositRevelationLocked(onchain)
+            if (remaining == 0) {
+                onchainRevealCatchUpDone = true
+            }
         }
         runCatching { onchain.sync() }
             .onFailure { SecureLog.w(TAG, "Ark on-chain sync failed: ${publicError(it)}") }
@@ -2870,50 +4343,6 @@ class ArkRepository(
             return false
         }
         blindBoardAttempts = 0
-        val minBoard =
-            runCatching { w.arkInfo()?.minBoardAmountSats?.toLong() }
-                .getOrNull()
-                ?.takeIf { it > 0L }
-                ?: _arkState.value.minBoardAmountSats?.takeIf { it > 0L }
-        val boardTarget = amountSats?.takeIf { it > 0L } ?: confirmed
-        if (
-            minBoard != null &&
-            boardTarget > 0L &&
-            boardTarget < minBoard
-        ) {
-            emitBoardBelowMinimumThrottled(
-                onchainConfirmedSats = confirmed.coerceAtLeast(boardTarget),
-                minBoardAmountSats = minBoard,
-            )
-            if (force) {
-                _events.tryEmit(
-                    ArkEvent.BoardFailed(
-                        localizedString(
-                            R.string.ark_transfer_below_min_board_format,
-                            formatBoardMinLabel(minBoard),
-                        ),
-                    ),
-                )
-            }
-            runCatching { w.syncPendingBoards() }
-            return false
-        }
-        if (
-            amountSats == null &&
-            ArkDepositPolicy.isStuckBelowMinBoard(
-                onchainConfirmedSats = confirmed,
-                pendingBoardSats = _arkState.value.pendingBoardSats,
-                minBoardAmountSats = minBoard,
-            ) &&
-            minBoard != null
-        ) {
-            emitBoardBelowMinimumThrottled(
-                onchainConfirmedSats = confirmed,
-                minBoardAmountSats = minBoard,
-            )
-            runCatching { w.syncPendingBoards() }
-            return false
-        }
         val boardResult =
             runCatching {
                 if (amountSats != null && amountSats > 0L) {
@@ -2928,19 +4357,6 @@ class ArkRepository(
                     "Ark board deferred (onchain total=$total conf=$confirmed pend=$pending " +
                         "amount=$amountSats force=$force): $msg",
                 )
-                if (
-                    minBoard != null &&
-                    (
-                        msg.contains("minimum", ignoreCase = true) ||
-                            msg.contains("min board", ignoreCase = true) ||
-                            msg.contains("does not meet", ignoreCase = true)
-                    )
-                ) {
-                    emitBoardBelowMinimumThrottled(
-                        onchainConfirmedSats = confirmed.coerceAtLeast(total),
-                        minBoardAmountSats = minBoard,
-                    )
-                }
                 if (force) {
                     _events.tryEmit(ArkEvent.BoardFailed(msg))
                 }
@@ -2949,10 +4365,8 @@ class ArkRepository(
         return boardResult.isSuccess
     }
 
-    private fun formatBoardMinLabel(minBoard: Long): String = "$minBoard sats"
-
     /**
-     * Sweep confirmed Bark on-chain funds (stuck below ASP min board) to a Layer 1 address.
+     * Sweep confirmed Bark on-chain funds (stuck unboarded deposit) to a Layer 1 address.
      * Uses Bark [OnchainWallet.send] — not board.
      *
      * Native send/sync run **outside** [mutex] so a hung Esplora/send cannot brick Ark UI.
@@ -2967,6 +4381,25 @@ class ArkRepository(
             if (dest.isBlank()) {
                 return@withContext emitRecoverResult(
                     Result.failure(Exception(localizedString(R.string.loc_9f80cab8))),
+                )
+            }
+            if (!ArkUnilateralExitPolicy.isUsableBitcoinClaimAddress(dest)) {
+                return@withContext emitRecoverResult(
+                    Result.failure(Exception(localizedString(R.string.loc_9f80cab8))),
+                )
+            }
+            // Fail-closed like boarding: never sweep Bark on-chain while exits may
+            // need those UTXOs for CPFP (AwaitingCpfpBroadcast stalls otherwise).
+            val recoverBlockedByExits =
+                _arkState.value.hasPendingExits ||
+                    runCatching {
+                        mutex.withLock { wallet }
+                            ?.let { runCatching { it.hasPendingExits() }.getOrDefault(false) }
+                            ?: false
+                    }.getOrDefault(false)
+            if (recoverBlockedByExits) {
+                return@withContext emitRecoverResult(
+                    Result.failure(Exception(localizedString(R.string.ark_board_disabled_exit))),
                 )
             }
             val snapshot =
@@ -3025,23 +4458,43 @@ class ArkRepository(
             }
 
             val rate = feeRateSatPerVb.coerceIn(1L, 200L)
-            // 1-in-1-out P2TR is ~110 vB; keep a small pad so change is not dust.
-            val feePad = (rate * 140L).coerceAtLeast(200L)
-            val sendAmount = (confirmed - feePad).coerceAtLeast(546L)
-            if (sendAmount >= confirmed) {
-                return@withContext emitRecoverResult(
-                    Result.failure(Exception(localizedString(R.string.ark_recover_onchain_fee_too_high))),
-                )
-            }
-
-            val txid =
+            // 1-in-1-out P2TR is ~110 vB, but multi-input wallets need more; keep a
+            // small pad so change is not dust. Under-estimation fails at build time
+            // (nothing broadcast) — back the pad off and retry so small balances can
+            // still sweep instead of failing a few sats short of the fee.
+            var feePadVb = 140L
+            var finalTxid: String? = null
+            var finalSendAmount: Long = 0L
+            var lastBuildError: Exception? = null
+            var attempt = 0
+            while (attempt < 3 && finalTxid == null) {
+                attempt++
+                val feePad = (rate * feePadVb).coerceAtLeast(200L)
+                val sendAmount = (confirmed - feePad).coerceAtLeast(546L)
+                if (sendAmount >= confirmed) {
+                    lastBuildError =
+                        Exception(localizedString(R.string.ark_recover_onchain_fee_too_high))
+                    break
+                }
                 try {
-                    onchain.send(dest, sendAmount.toULong(), rate.toULong())
+                    finalTxid = onchain.send(dest, sendAmount.toULong(), rate.toULong())
+                    if (finalTxid != null) finalSendAmount = sendAmount
                 } catch (err: CancellationException) {
                     throw err
                 } catch (err: Exception) {
-                    return@withContext emitRecoverResult(Result.failure(Exception(publicError(err))))
+                    lastBuildError = err as? Exception ?: Exception(publicError(err))
+                    if (!isInsufficientFundsError(publicError(err))) break
+                    feePadVb *= 2
                 }
+            }
+            val txid =
+                finalTxid
+                    ?: return@withContext emitRecoverResult(
+                        Result.failure(
+                            lastBuildError
+                                ?: Exception(localizedString(R.string.ark_recover_onchain_fee_too_high)),
+                        ),
+                    )
 
             val persisted =
                 withMutexTimeout(RECOVER_MUTEX_WAIT_MS) {
@@ -3050,7 +4503,7 @@ class ArkRepository(
                         destinationAddress = dest,
                         recoverTxid = txid,
                         snapshot = depositSnapshot,
-                        amountSats = confirmed,
+                        amountSats = finalSendAmount.takeIf { it > 0L } ?: confirmed,
                         paintedUtxos = snapshot.paintedUtxos,
                     )
                     applyRecoverOnchainPaintClearedLocked(walletId)
@@ -3062,7 +4515,7 @@ class ArkRepository(
                     destinationAddress = dest,
                     recoverTxid = txid,
                     snapshot = depositSnapshot,
-                    amountSats = confirmed,
+                    amountSats = finalSendAmount.takeIf { it > 0L } ?: confirmed,
                     paintedUtxos = snapshot.paintedUtxos,
                 )
                 applyRecoverOnchainPaintClearedLocked(walletId)
@@ -3138,6 +4591,25 @@ class ArkRepository(
                             ArkTransferState.Error(localizedString(R.string.loc_9f80cab8))
                         return@withLock
                     }
+                    if (!ArkUnilateralExitPolicy.isUsableBitcoinClaimAddress(dest)) {
+                        _transferState.value =
+                            ArkTransferState.Error(localizedString(R.string.loc_9f80cab8))
+                        return@withLock
+                    }
+                    val spendable = runCatching { w.balance().spendableSats.toLong() }.getOrDefault(0L)
+                    if (!offboardAll) {
+                        val amount = amountSats ?: 0L
+                        if (amount > spendable) {
+                            _transferState.value =
+                                ArkTransferState.Error(
+                                    localizedString(
+                                        R.string.ark_error_insufficient_available_format,
+                                        "%,d".format(java.util.Locale.US, spendable),
+                                    ),
+                                )
+                            return@withLock
+                        }
+                    }
                     val estimate: FeeEstimate =
                         if (offboardAll) {
                             w.estimateOffboardAllFee(dest)
@@ -3181,7 +4653,7 @@ class ArkRepository(
                 try {
                     val detail =
                         if (preview.offboardAll) {
-                            w.offboardAll(preview.destinationAddress).roundId
+                            w.offboardAll(preview.destinationAddress).txid
                         } else {
                             val amount = preview.amountSats ?: error(localizedString(R.string.ark_error_amount_required))
                             w.sendOnchain(preview.destinationAddress, amount.toULong())
@@ -3200,12 +4672,57 @@ class ArkRepository(
         withContext(Dispatchers.IO) {
             // Native maintenance can block for a long time — never hold [mutex] across it
             // or send review waits forever behind the 5-minute tick.
-            val w = mutex.withLock { wallet } ?: return@withContext
-            val feeRate = resolveExitProgressFeeRateSatPerVbLocked()
+            // Snapshot handles under mutex so unload cannot close them mid-FFI.
+            data class MaintenanceSnap(
+                val wallet: Wallet,
+                val onchain: OnchainWallet?,
+            )
+            val snap =
+                mutex.withLock {
+                    val current = wallet ?: return@withLock null
+                    MaintenanceSnap(current, onchainWallet)
+                } ?: return@withContext
+            val w = snap.wallet
+            val feeRate = resolveExitProgressFeeRateSatPerVbLocked(onchainSnapshot = snap.onchain)
             runCatching { w.progressPendingRounds() }
+            val onchain =
+                mutex.withLock {
+                    if (wallet !== w) return@withContext
+                    onchainWallet
+                }
+            runCatching { onchain?.sync() }
             runCatching {
                 exitOperationMutex.withLock {
-                    if (w.hasPendingExits()) {
+                    if (mutex.withLock { wallet !== w }) return@withLock
+                    val pending =
+                        runCatching { w.hasPendingExits() }.getOrDefault(false) ||
+                            runCatching {
+                                w.getExitVtxos().any {
+                                    ArkUnilateralExitPolicy.isActiveExitState(
+                                        ArkBarkMappers.exitStateLabel(it.state),
+                                    )
+                                }
+                            }.getOrDefault(_arkState.value.hasPendingExits)
+                    if (pending) {
+                        // Same authoritative unfundable gate as the manual path
+                        // (uncapped by user choice — only known-unfundable skips).
+                        val activeIds =
+                            runCatching {
+                                w.getExitVtxos()
+                                    .filter {
+                                        ArkUnilateralExitPolicy.isActiveExitState(
+                                            ArkBarkMappers.exitStateLabel(it.state),
+                                        )
+                                    }
+                                    .map { it.vtxoId }
+                            }.getOrDefault(emptyList())
+                        val quote = authoritativeExitQuoteFor(activeIds)
+                        if (quote != null &&
+                            ArkUnilateralExitPolicy.isEmergencyExitBlockedByQuote(quote)
+                        ) {
+                            SecureLog.w(TAG, "Ark maintenance: exit unfundable per quote — skipping progress")
+                            return@withLock
+                        }
                         val progress =
                             w.progressExits(
                                 feeRateSatPerVb = feeRate.toULong(),
@@ -3223,12 +4740,6 @@ class ArkRepository(
             runCatching { w.syncExits() }
             runCatching { w.syncForceExitedVtxos() }
             runCatching { w.syncPendingBoards() }
-            val onchain =
-                mutex.withLock {
-                    if (wallet !== w) return@withContext
-                    onchainWallet
-                }
-            runCatching { onchain?.sync() }
             mutex.withLock {
                 if (wallet !== w) return@withLock
                 // Opt-in auto-board only (default off).
@@ -3253,6 +4764,7 @@ class ArkRepository(
             current.pendingRefreshVtxoIds == ids &&
                 current.pendingRefreshScheduledHeight == height
         ) {
+            publishMailboxRescanBlockedLocked()
             return
         }
         _arkState.value =
@@ -3260,6 +4772,12 @@ class ArkRepository(
                 pendingRefreshVtxoIds = ids,
                 pendingRefreshScheduledHeight = height,
             )
+        publishMailboxRescanBlockedLocked()
+    }
+
+    /** Caller holds [mutex]. Recomputes [mailboxRescanBlocked] from live state + refresh tracking. */
+    private fun publishMailboxRescanBlockedLocked() {
+        _mailboxRescanBlocked.value = hasMailboxRescanBlockingActivity(_arkState.value)
     }
 
     private fun clearTrackedRefreshLocked() {
@@ -3281,17 +4799,59 @@ class ArkRepository(
         if (trackedRefreshVtxoIds.isEmpty() && trackedRefreshRoundId == null) return
         val roundId = trackedRefreshRoundId
         if (roundId != null) {
-            val stillPending =
-                runCatching { w.pendingRoundStates().any { it.id == roundId } }
-                    .getOrDefault(true)
-            if (!stillPending) {
+            val roundQuery =
+                runCatching { w.pendingRoundStates().firstOrNull { it.id == roundId } }
+            if (roundQuery.isFailure) {
+                return
+            }
+            val round = roundQuery.getOrNull()
+            if (round == null) {
+                // Round vanished: only a success if the submitted ids are also gone
+                // (consumed by settlement). Otherwise the DB was wiped/rescanned —
+                // report failure so manual refresh can retry; auto will reschedule.
+                val liveNow = liveVtxoIds.toSet()
+                val consumed = trackedRefreshVtxoIds.isNotEmpty() &&
+                    trackedRefreshVtxoIds.none { it in liveNow }
                 val automatic = trackedRefreshAutomatic
                 clearTrackedRefreshLocked()
+                if (consumed) {
+                    if (_lifecycleState.value is ArkLifecycleState.RefreshPending) {
+                        _lifecycleState.value = ArkLifecycleState.Completed()
+                    }
+                    _events.tryEmit(
+                        ArkEvent.RefreshCompleted(
+                            automatic = automatic,
+                            delegated = true,
+                        ),
+                    )
+                } else {
+                    val detail = localizedString(R.string.ark_refresh_round_failed)
+                    if (_lifecycleState.value is ArkLifecycleState.RefreshPending) {
+                        _lifecycleState.value = ArkLifecycleState.Error(detail)
+                    }
+                    _events.tryEmit(
+                        ArkEvent.RefreshFailed(
+                            message = detail,
+                            automatic = automatic,
+                            delegated = true,
+                        ),
+                    )
+                }
+                return
+            }
+            // Bark 0.7.0 exposes the round lifecycle phase: a failed/canceled
+            // participation stays listed but never completes — stop tracking it
+            // instead of leaving a stuck pending badge.
+            if (round.state == RoundFlowKind.FAILED || round.state == RoundFlowKind.CANCELED) {
+                val automatic = trackedRefreshAutomatic
+                clearTrackedRefreshLocked()
+                val detail = localizedString(R.string.ark_refresh_round_failed)
                 if (_lifecycleState.value is ArkLifecycleState.RefreshPending) {
-                    _lifecycleState.value = ArkLifecycleState.Completed()
+                    _lifecycleState.value = ArkLifecycleState.Error(detail)
                 }
                 _events.tryEmit(
-                    ArkEvent.RefreshCompleted(
+                    ArkEvent.RefreshFailed(
+                        message = detail,
                         automatic = automatic,
                         delegated = true,
                     ),
@@ -3330,6 +4890,85 @@ class ArkRepository(
     }
 
     /**
+     * Re-attach to refresh rounds the loaded Bark session knows about but Ibis
+     * isn't tracking — e.g. session restored from backup, or tracking wiped by
+     * an earlier rescan. Re-publishes pending badges from
+     * [pendingRoundInputVtxos], then drives [progressPendingRounds] + sync
+     * until no live round remains. Terminal outcomes flow through the existing
+     * [reconcileTrackedRefreshLocked] events; progression errors are reported
+     * instead of swallowed. Silent (no lifecycle churn) unless a round actually
+     * needs driving. Returns true when a live round was found.
+     */
+    private suspend fun resumePendingRefreshRounds(): Boolean {
+        val w = mutex.withLock { wallet } ?: return false
+        val rounds =
+            runCatching { w.pendingRoundStates() }.getOrElse { return false }
+        val live =
+            rounds.filter {
+                it.state != RoundFlowKind.FAILED && it.state != RoundFlowKind.CANCELED
+            }
+        if (rounds.isEmpty()) return false
+        // Anchor even on terminal-only rounds so the reconcile pass below
+        // surfaces the failure instead of staying silent.
+        val anchor = live.firstOrNull() ?: rounds.first()
+        val inputs =
+            runCatching { w.pendingRoundInputVtxos() }.getOrDefault(emptyList())
+        mutex.withLock {
+            if (wallet !== w) return false
+            trackedRefreshRoundId = anchor.id
+            trackedRefreshScheduledHeight =
+                live.mapNotNull { it.scheduledHeight?.toInt() }.maxOrNull()
+            trackedRefreshAutomatic = false
+            trackedRefreshVtxoIds =
+                (trackedRefreshVtxoIds + inputs.map { it.id }).distinct()
+            publishPendingRefreshToWalletStateLocked()
+        }
+        if (live.isEmpty()) {
+            mutex.withLock {
+                if (wallet !== w) return false
+                refreshStateLocked(sync = false, attemptBoard = false)
+            }
+            return false
+        }
+        // Scheduled-but-future rounds need no driving: badges are back, the
+        // round runs on its own schedule.
+        val tip = mutex.withLock { _arkState.value.chainTipHeight }
+        val awaitingBlock =
+            tip != null &&
+                live.all { it.state == RoundFlowKind.DELEGATED_PENDING } &&
+                live.mapNotNull { it.scheduledHeight?.toInt() }.all { it > tip }
+        if (awaitingBlock) return true
+        repeat(4) {
+            val progressError =
+                runCatching { w.progressPendingRounds() }.exceptionOrNull()
+            if (progressError is CancellationException) throw progressError
+            runCatching { w.sync() }
+            mutex.withLock {
+                if (wallet !== w) return false
+                refreshStateLocked(sync = false, attemptBoard = false)
+            }
+            if (progressError != null) {
+                _events.tryEmit(
+                    ArkEvent.RefreshFailed(
+                        message = publicError(progressError),
+                        automatic = false,
+                        delegated = true,
+                    ),
+                )
+                return false
+            }
+            val stillLive =
+                runCatching { w.pendingRoundStates() }.getOrDefault(emptyList())
+                    .filter {
+                        it.state != RoundFlowKind.FAILED && it.state != RoundFlowKind.CANCELED
+                    }
+            if (stillLive.isEmpty()) return true
+            delay(15_000)
+        }
+        return true
+    }
+
+    /**
      * Opens the refresh review dialog. With selected [vtxoIds], paints [RefreshPreview]
      * **synchronously** (no Loading spinner, no wait on ASP). Fee quote is best-effort in
      * the background and may stay Unavailable.
@@ -3345,6 +4984,15 @@ class ArkRepository(
                     )
                 return
             }
+            val snap = _arkState.value
+            val selectedVtxos = snap.vtxos.filter { it.id in targets.toSet() }
+            val scheduledHeight =
+                ArkRefreshPolicy.scheduledHeight(
+                    snap.nextRefreshHeight,
+                    snap.firstExpiringHeight,
+                    snap.chainTipHeight,
+                    selectedVtxos,
+                )
             // Instant paint on caller thread — dialog never blocks on IO / fee FFI.
             _lifecycleState.value =
                 ArkLifecycleState.RefreshPreview(
@@ -3352,7 +5000,7 @@ class ArkRepository(
                     feeSats = null,
                     netAmountSats = null,
                     refreshAll = false,
-                    scheduledHeight = null,
+                    scheduledHeight = scheduledHeight,
                 )
             eventScope.launch {
                 fillRefreshFeeQuote(targets)
@@ -3389,13 +5037,22 @@ class ArkRepository(
                         )
                     return@launch
                 }
+                val snap = _arkState.value
+                val selectedVtxos = snap.vtxos.filter { it.id in targets.toSet() }
+                val scheduledHeight =
+                    ArkRefreshPolicy.scheduledHeight(
+                        snap.nextRefreshHeight,
+                        snap.firstExpiringHeight,
+                        snap.chainTipHeight,
+                        selectedVtxos,
+                    )
                 _lifecycleState.value =
                     ArkLifecycleState.RefreshPreview(
                         vtxoIds = targets,
                         feeSats = null,
                         netAmountSats = null,
                         refreshAll = true,
-                        scheduledHeight = null,
+                        scheduledHeight = scheduledHeight,
                     )
                 fillRefreshFeeQuote(targets)
             } catch (e: CancellationException) {
@@ -3416,15 +5073,124 @@ class ArkRepository(
         val current = _lifecycleState.value as? ArkLifecycleState.RefreshPreview ?: return
         if (current.vtxoIds != targets) return
         if (mutex.withLock { wallet !== w }) return
+        // Scheduled-leg quote from the server fee schedule at the booked height,
+        // so the dialog can price both modes. Best-effort: stays null on failure.
+        var scheduledFee: Long? = null
+        val scheduledHeight = current.scheduledHeight
+        if (scheduledHeight != null) {
+            val snap = _arkState.value
+            scheduledFee =
+                withTimeoutOrNull(ARK_REFRESH_QUOTE_TIMEOUT_MS) {
+                    runCatching {
+                        estimateScheduledRefreshFeeLocked(
+                            wallet = w,
+                            vtxos = snap.vtxos.filter { it.id in targets.toSet() },
+                            scheduledHeight = scheduledHeight,
+                        )
+                    }.getOrNull()
+                }
+            val latest = _lifecycleState.value as? ArkLifecycleState.RefreshPreview ?: return
+            if (latest.vtxoIds != targets || mutex.withLock { wallet !== w }) return
+        }
         _lifecycleState.value =
             current.copy(
                 feeSats = estimate.feeSats.toLong(),
                 netAmountSats = estimate.netAmountSats.toLong(),
+                scheduledFeeSats = scheduledFee,
             )
     }
 
-    /** Lifecycle confirm. Manual and automatic UI paths use delegated refresh only. */
-    suspend fun executeRefresh(delegated: Boolean = true) =
+    /**
+     * Authoritative unilateral-exit cost via Bark `estimateEmergencyExitFee`
+     * (bark-ffi 0.23+/bark 0.6.2+). Debounced and dialog-independent: never
+     * touches [_lifecycleState]. Bark syncs the on-chain wallet first so
+     * `fundable` reflects confirmed funds; the UI keeps the manual 2x-weight
+     * estimate until this lands (or when it fails and clears back to null).
+     */
+    fun refreshEmergencyExitFeeQuote(vtxoIds: List<String>) {
+        val ids = vtxoIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        emergencyExitFeeQuoteJob?.cancel()
+        emergencyExitFeeQuoteJob = null
+        if (ids.isEmpty()) {
+            _emergencyExitFeeQuote.value = null
+            return
+        }
+        val current = _emergencyExitFeeQuote.value
+        if (current != null && !current.isQuoting && current.vtxoIds.toSet() == ids.toSet()) return
+        _emergencyExitFeeQuote.value =
+            ArkEmergencyExitFeeQuote(
+                vtxoIds = ids,
+                broadcastFeeSats = null,
+                claimFeeSats = null,
+                totalFeeSats = null,
+                feeRateSatPerVb = null,
+                txsToBroadcast = null,
+                fundable = null,
+                isQuoting = true,
+            )
+        emergencyExitFeeQuoteJob =
+            eventScope.launch {
+                delay(FEE_QUOTE_DEBOUNCE_MS)
+                val w = mutex.withLock { wallet }
+                val walletId = _loadedWalletId.value
+                if (w == null || walletId.isNullOrBlank()) {
+                    clearQuotingEmergencyExitFeeQuote(ids)
+                    return@launch
+                }
+                val quote =
+                    withTimeoutOrNull(EMERGENCY_EXIT_QUOTE_TIMEOUT_MS) {
+                        runCatching { w.estimateEmergencyExitFee(ids, null, null) }.getOrNull()
+                    }?.let { estimate ->
+                        ArkUnilateralExitPolicy.mapEmergencyExitFeeQuote(
+                            vtxoIds = ids,
+                            broadcastFeeSats = estimate.exitBroadcastFeeSats,
+                            claimFeeSats = estimate.claimFeeSats,
+                            totalFeeSats = estimate.totalFeeSats,
+                            feeRateSatPerVb = estimate.feeRateSatPerVb,
+                            txsToBroadcast = estimate.txsToBroadcast,
+                            fundable = estimate.fundable,
+                        )
+                    }
+                if (mutex.withLock { wallet !== w } || _loadedWalletId.value != walletId) return@launch
+                val painting = _emergencyExitFeeQuote.value
+                if (painting == null || !painting.isQuoting || painting.vtxoIds.toSet() != ids.toSet()) {
+                    return@launch
+                }
+                _emergencyExitFeeQuote.value = quote
+            }
+    }
+
+    private fun clearQuotingEmergencyExitFeeQuote(ids: List<String>) {
+        val current = _emergencyExitFeeQuote.value
+        if (current != null && current.isQuoting && current.vtxoIds.toSet() == ids.toSet()) {
+            _emergencyExitFeeQuote.value = null
+        }
+    }
+
+    /**
+     * Landed authoritative exit quote covering [ids], or null when missing,
+     * still quoting, or stale. Blocks when the landed quote covers all targets
+     * and reports fundable=false, even if the quote was taken for a superset
+     * (e.g. entire-wallet start vs active-exit progress selection).
+     * Callers fail open on null.
+     */
+    private fun authoritativeExitQuoteFor(ids: Collection<String>): ArkEmergencyExitFeeQuote? {
+        val quote = _emergencyExitFeeQuote.value?.takeIf { !it.isQuoting } ?: return null
+        if (ids.isNotEmpty()) {
+            val targets = ids.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            val quoted = quote.vtxoIds.toSet()
+            // Exact match: full quote. Subset: block only on known-unfundable,
+            // never treat a superset fundable=true as proof for a subset.
+            if (targets != quoted && !(targets.isNotEmpty() && quoted.containsAll(targets) && quote.fundable == false)) {
+                return null
+            }
+        }
+        return quote
+    }
+
+    /*     * Lifecycle confirm. Scheduled height when known, then delegated, then non-delegated.
+     */
+    suspend fun executeRefresh(delegated: Boolean = true, useScheduled: Boolean = true) =
         withContext(Dispatchers.IO) {
             val preview =
                 _lifecycleState.value as? ArkLifecycleState.RefreshPreview
@@ -3433,6 +5199,9 @@ class ArkRepository(
                             ArkLifecycleState.Error(localizedString(R.string.ark_error_nothing_prepared))
                         return@withContext
                     }
+            // Mode choice from the review dialog: false forces the next round even
+            // when a cheaper scheduled height was previewed. Defaults to scheduled.
+            val effectiveScheduledHeight = if (useScheduled) preview.scheduledHeight else null
             val w =
                 mutex.withLock { wallet }
                     ?: run {
@@ -3454,19 +5223,19 @@ class ArkRepository(
             // FFI cancel cannot interrupt it. Paint dismissible Pending immediately so the
             // review dialog never sticks on Working…; native work continues in the background.
             trackedRefreshVtxoIds = (trackedRefreshVtxoIds + submitIds).distinct()
-            trackedRefreshScheduledHeight = preview.scheduledHeight
+            trackedRefreshScheduledHeight = effectiveScheduledHeight
             trackedRefreshAutomatic = false
             publishPendingRefreshToWalletStateLocked()
             _lifecycleState.value =
                 ArkLifecycleState.RefreshPending(
-                    scheduledHeight = preview.scheduledHeight,
+                    scheduledHeight = effectiveScheduledHeight,
                     vtxoIds = submitIds,
                     inFlight = true,
                 )
             _events.tryEmit(
                 ArkEvent.RefreshSubmitted(
                     automatic = false,
-                    scheduledHeight = preview.scheduledHeight,
+                    scheduledHeight = effectiveScheduledHeight,
                     vtxoCount = submitIds.size,
                 ),
             )
@@ -3478,8 +5247,8 @@ class ArkRepository(
                                 wallet = w,
                                 vtxoIds = submitIds,
                                 preferDelegated = preferDelegated,
-                                allowNonDelegatedFallback = false,
-                                scheduledHeight = preview.scheduledHeight,
+                                allowNonDelegatedFallback = true,
+                                scheduledHeight = effectiveScheduledHeight,
                             )
                         mutex.withLock {
                             if (wallet !== w) return@withLock
@@ -3557,20 +5326,25 @@ class ArkRepository(
     /** Balance one-tap: schedule ahead when soon, otherwise submit delegated to the next round. */
     suspend fun quickRefreshVtxos() =
         withContext(Dispatchers.IO) {
-            mutex.withLock {
-                val w = wallet
-                if (w == null) {
-                    _events.tryEmit(
-                        ArkEvent.RefreshFailed(
-                            message = localizedString(R.string.ark_error_wallet_not_loaded),
-                            automatic = false,
-                            delegated = true,
-                        ),
-                    )
-                    return@withLock
-                }
-                _arkState.value = _arkState.value.copy(isAutoRefreshing = true)
-                try {
+            data class QuickPlan(
+                val wallet: Wallet,
+                val targets: List<ArkVtxo>,
+                val scheduledHeight: Int?,
+            )
+            val plan =
+                mutex.withLock {
+                    val w = wallet
+                    if (w == null) {
+                        _events.tryEmit(
+                            ArkEvent.RefreshFailed(
+                                message = localizedString(R.string.ark_error_wallet_not_loaded),
+                                automatic = false,
+                                delegated = true,
+                            ),
+                        )
+                        return@withLock null
+                    }
+                    if (manualRefreshJob?.isActive == true) return@withLock null
                     val due = w.getVtxosToRefresh().map { it.toArkVtxo() }
                     val allVtxos =
                         if (due.isEmpty()) {
@@ -3583,62 +5357,100 @@ class ArkRepository(
                     val firstExpiry =
                         runCatching { w.getFirstExpiringVtxoBlockheight()?.toInt() }.getOrNull()
                     val targets = ArkRefreshPolicy.autoRefreshTargets(due, allVtxos, firstExpiry)
-                    if (targets.isEmpty()) return@withLock
+                    if (targets.isEmpty()) return@withLock null
                     val tip = resolveChainTipHeight()
                     val nextHeight =
                         runCatching { w.getNextRequiredRefreshBlockheight()?.toInt() }.getOrNull()
                     val scheduledHeight =
                         ArkRefreshPolicy.scheduledHeight(nextHeight, firstExpiry, tip, targets)
-                    val result =
-                        runDelegatedRefreshWithFallbackLocked(
-                            wallet = w,
-                            vtxoIds = targets.map { it.id },
-                            preferDelegated = true,
-                            allowNonDelegatedFallback = false,
-                            scheduledHeight = scheduledHeight,
-                        )
-                    trackedRefreshRoundId = result.roundId
-                    trackedRefreshScheduledHeight = result.scheduledHeight
+                    val ids = targets.map { it.id }
+                    trackedRefreshVtxoIds = (trackedRefreshVtxoIds + ids).distinct()
+                    trackedRefreshScheduledHeight = scheduledHeight
                     trackedRefreshAutomatic = false
-                    trackedRefreshVtxoIds =
-                        (trackedRefreshVtxoIds + targets.map { it.id }).distinct()
                     publishPendingRefreshToWalletStateLocked()
-                    refreshStateLocked(sync = false, attemptBoard = false)
+                    _arkState.value = _arkState.value.copy(isAutoRefreshing = true)
                     _lifecycleState.value =
                         ArkLifecycleState.RefreshPending(
-                            scheduledHeight = result.scheduledHeight,
-                            vtxoIds = targets.map { it.id },
-                            inFlight = result.roundId != null,
+                            scheduledHeight = scheduledHeight,
+                            vtxoIds = ids,
+                            inFlight = true,
                         )
-                    _events.tryEmit(
-                        ArkEvent.RefreshSubmitted(
-                            automatic = false,
-                            scheduledHeight = result.scheduledHeight,
-                            vtxoCount = targets.size,
-                        ),
-                    )
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    _events.tryEmit(
-                        ArkEvent.RefreshFailed(
-                            message = publicError(e),
-                            automatic = false,
-                            delegated = true,
-                        ),
-                    )
-                } finally {
-                    _arkState.value = _arkState.value.copy(isAutoRefreshing = false)
+                    QuickPlan(w, targets, scheduledHeight)
+                } ?: return@withContext
+            val job =
+                eventScope.launch {
+                    try {
+                        val result =
+                            runDelegatedRefreshWithFallbackLocked(
+                                wallet = plan.wallet,
+                                vtxoIds = plan.targets.map { it.id },
+                                preferDelegated = true,
+                                allowNonDelegatedFallback = true,
+                                scheduledHeight = plan.scheduledHeight,
+                            )
+                        mutex.withLock {
+                            if (wallet !== plan.wallet) return@withLock
+                            trackedRefreshRoundId = result.roundId
+                            trackedRefreshScheduledHeight = result.scheduledHeight
+                            trackedRefreshAutomatic = false
+                            trackedRefreshVtxoIds =
+                                (trackedRefreshVtxoIds + plan.targets.map { it.id }).distinct()
+                            publishPendingRefreshToWalletStateLocked()
+                            runCatching { refreshStateLocked(sync = false, attemptBoard = false) }
+                            _lifecycleState.value =
+                                ArkLifecycleState.RefreshPending(
+                                    scheduledHeight = result.scheduledHeight,
+                                    vtxoIds = plan.targets.map { it.id },
+                                    inFlight = result.roundId != null,
+                                )
+                        }
+                        _events.tryEmit(
+                            ArkEvent.RefreshSubmitted(
+                                automatic = false,
+                                scheduledHeight = result.scheduledHeight,
+                                vtxoCount = plan.targets.size,
+                            ),
+                        )
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        val failedIds = plan.targets.map { it.id }.toSet()
+                        mutex.withLock {
+                            // Drop only the ids from this failed attempt; keep other pending.
+                            trackedRefreshVtxoIds =
+                                trackedRefreshVtxoIds.filterNot { it in failedIds }
+                            if (trackedRefreshVtxoIds.isEmpty()) {
+                                trackedRefreshRoundId = null
+                                trackedRefreshScheduledHeight = null
+                            }
+                            publishPendingRefreshToWalletStateLocked()
+                        }
+                        _events.tryEmit(
+                            ArkEvent.RefreshFailed(
+                                message = publicError(e),
+                                automatic = false,
+                                delegated = true,
+                            ),
+                        )
+                    } finally {
+                        mutex.withLock {
+                            if (wallet === plan.wallet) {
+                                _arkState.value = _arkState.value.copy(isAutoRefreshing = false)
+                            }
+                            if (manualRefreshJob === coroutineContext[Job]) {
+                                manualRefreshJob = null
+                            }
+                        }
+                    }
                 }
-            }
+            mutex.withLock { manualRefreshJob = job }
         }
 
     /**
      * Shared path for auto + one-tap + lifecycle.
      * [preferDelegated]=true tries ASP-delegated first.
-     * [scheduledHeight] uses Bark 0.5 height-priced delegated refresh when ahead of tip.
-     * [allowNonDelegatedFallback]=false (auto path) fails closed — never silent-spend under a
-     * different trust/fee model than the user opted into.
+     * [scheduledHeight] uses height-priced delegated refresh when ahead of tip.
+     * Falls back to immediate delegated, then non-delegated [Wallet.refreshVtxos].
      */
     private data class RefreshSubmission(
         val detail: String,
@@ -3653,6 +5465,23 @@ class ArkRepository(
         preferDelegated: Boolean,
         allowNonDelegatedFallback: Boolean = true,
         scheduledHeight: Int? = null,
+    ): RefreshSubmission =
+        exitOperationMutex.withLock {
+            runDelegatedRefreshWithFallbackInnerLocked(
+                wallet = wallet,
+                vtxoIds = vtxoIds,
+                preferDelegated = preferDelegated,
+                allowNonDelegatedFallback = allowNonDelegatedFallback,
+                scheduledHeight = scheduledHeight,
+            )
+        }
+
+    private suspend fun runDelegatedRefreshWithFallbackInnerLocked(
+        wallet: Wallet,
+        vtxoIds: List<String>,
+        preferDelegated: Boolean,
+        allowNonDelegatedFallback: Boolean,
+        scheduledHeight: Int?,
     ): RefreshSubmission {
         if (preferDelegated) {
             val height = scheduledHeight?.takeIf { it > 0 }
@@ -3761,6 +5590,14 @@ class ArkRepository(
                 )
             }.filter { it.expiryBlocksThreshold >= 0 && it.ppm >= 0L }
         if (tiers.isEmpty()) return null
+        if (BuildConfig.DEBUG) {
+            SecureLog.d(
+                TAG,
+                "Ark scheduled fee inputs height=$scheduledHeight n=${vtxos.size} base=$base " +
+                    "tiers=${tiers.sortedBy { it.expiryBlocksThreshold }.joinToString { "${it.expiryBlocksThreshold}:${it.ppm}" }} " +
+                    "expiryBlocks=${vtxos.map { (it.expiryHeight - scheduledHeight).coerceAtLeast(0) }}",
+            )
+        }
         return ArkRefreshPolicy.estimateScheduledFeeSats(vtxos, scheduledHeight, base, tiers)
     }
 
@@ -3771,18 +5608,30 @@ class ArkRepository(
         withContext(Dispatchers.IO) {
             _lifecycleState.value = ArkLifecycleState.InProgress
             val w = mutex.withLock { wallet }
+            val walletId = mutex.withLock { _loadedWalletId.value }
+            if (!walletId.isNullOrBlank() && !secureStorage.getPassphrase(walletId).isNullOrEmpty()) {
+                _lifecycleState.value =
+                    ArkLifecycleState.Error(localizedString(R.string.ark_error_passphrase_exit_unavailable))
+                return@withContext
+            }
+            val onchainPresent = mutex.withLock { onchainWallet != null }
             val spendableIds =
                 if (w != null) {
                     runCatching { w.spendableVtxos().map { it.id } }.getOrDefault(emptyList())
                 } else {
                     emptyList()
                 }
+            // VTXOs already submitted to a refresh round are locked by that round —
+            // exit must refuse them, never race the round.
+            val pendingRefreshAtPlan = pendingRefreshVtxoIdsSnapshot()
             val plan =
                 ArkUnilateralExitPolicy.planStartExit(
                     walletLoaded = w != null,
                     entireWallet = entireWallet,
                     requestedVtxoIds = vtxoIds,
                     spendableVtxoIds = spendableIds,
+                    onchainWalletPresent = onchainPresent,
+                    excludedVtxoIds = pendingRefreshAtPlan,
                 )
             if (plan is ArkUnilateralExitPolicy.StartExitPlan.Error) {
                 _lifecycleState.value =
@@ -3790,38 +5639,187 @@ class ArkRepository(
                         when (plan.reason) {
                             ArkUnilateralExitPolicy.StartExitError.WALLET_NOT_LOADED ->
                                 localizedString(R.string.ark_error_wallet_not_loaded)
+                            ArkUnilateralExitPolicy.StartExitError.ONCHAIN_WALLET_UNAVAILABLE ->
+                                localizedString(R.string.ark_error_onchain_wallet_unavailable)
                             ArkUnilateralExitPolicy.StartExitError.NO_SPENDABLE_VTXOS ->
                                 localizedString(R.string.ark_error_no_spendable_vtxos)
+                            ArkUnilateralExitPolicy.StartExitError.PENDING_REFRESH ->
+                                localizedString(R.string.ark_error_refresh_already_pending)
                         },
+                    )
+                return@withContext
+            }
+            // Strict affordability gate: refuse to register an exit the wallet cannot
+            // fund. Fail-open when weights are unknown (no false blocks).
+            val gateTargets =
+                when (plan) {
+                    is ArkUnilateralExitPolicy.StartExitPlan.EntireWallet -> spendableIds
+                    is ArkUnilateralExitPolicy.StartExitPlan.Selected -> plan.vtxoIds
+                    is ArkUnilateralExitPolicy.StartExitPlan.Error -> emptyList()
+                }
+            if (gateTargets.isNotEmpty()) {
+                // Refresh the authoritative quote synchronously for these exact ids:
+                // a debounced background quote may be missing/stale and would fail-open
+                // an unfundable start. Best-effort with a short timeout — fail-open on error.
+                runCatching {
+                    withTimeoutOrNull(8_000L) {
+                        val fresh =
+                            w?.let {
+                                runCatching { it.estimateEmergencyExitFee(gateTargets, null, null) }
+                                    .getOrNull()
+                            }
+                        if (fresh != null) {
+                            _emergencyExitFeeQuote.value =
+                                ArkUnilateralExitPolicy.mapEmergencyExitFeeQuote(
+                                    vtxoIds = gateTargets,
+                                    broadcastFeeSats = fresh.exitBroadcastFeeSats,
+                                    claimFeeSats = fresh.claimFeeSats,
+                                    totalFeeSats = fresh.totalFeeSats,
+                                    feeRateSatPerVb = fresh.feeRateSatPerVb,
+                                    txsToBroadcast = fresh.txsToBroadcast,
+                                    fundable = fresh.fundable,
+                                )
+                        }
+                    }
+                }
+                val liveWeights =
+                    runCatching { w?.spendableVtxos().orEmpty() }.getOrDefault(emptyList())
+                        .associate { it.id to it.exitTxWeightWu.toLong() }
+                // Price at the same live rate the start/progress path spends at —
+                // a cached rate could pass an exit the network can no longer fund.
+                // No dust padding: confirmed >= fee is sufficient (a sub-dust
+                // remainder is absorbed into the fee, no change output needed).
+                val gateFee =
+                    ArkUnilateralExitPolicy.estimateCpfpFeeSats(
+                        gateTargets.map { liveWeights[it] ?: 0L },
+                        feeRateSatPerVb = resolveExitProgressFeeRateSatPerVbLocked(),
+                    )
+                // Keep in sync with the review dialog's displayed fee
+                // (max of manual 2x budget and landed broadcast leg): the
+                // dialog must never show less than this gate enforces
+                // (e.g. 755 broadcast vs 1,497 enforced).
+                val gateRequired =
+                    listOfNotNull(
+                        gateFee,
+                        authoritativeExitQuoteFor(gateTargets)?.broadcastFeeSats,
+                    ).maxOrNull()
+                if (gateRequired != null) {
+                    runCatching { mutex.withLock { onchainWallet }?.sync() }
+                    val gateConfirmed =
+                        runCatching {
+                            mutex.withLock { onchainWallet }
+                                ?.balance()
+                                ?.confirmedSats
+                                ?.toLong()
+                        }.getOrNull()?.coerceAtLeast(0L) ?: 0L
+                    val gateShortfall = (gateRequired - gateConfirmed).coerceAtLeast(0L)
+                    if (gateShortfall > 0L) {
+                        _lifecycleState.value =
+                            ArkLifecycleState.Error(
+                                localizedString(
+                                    R.string.ark_error_exit_cpfp_funding_format,
+                                    "%,d".format(Locale.US, gateRequired),
+                                    "%,d".format(Locale.US, gateConfirmed),
+                                    "%,d".format(Locale.US, gateShortfall),
+                                ),
+                            )
+                        return@withContext
+                    }
+                }
+            }
+            // Authoritative Bark quote gate (bark-ffi 0.23+): the manual 2x-weight
+            // estimate cannot detect the serial-funding stall that Bark's full-walk
+            // `fundable` reports. Fail-open when the quote is missing or stale.
+            val landedQuote = authoritativeExitQuoteFor(gateTargets)
+            if (landedQuote != null &&
+                ArkUnilateralExitPolicy.isEmergencyExitBlockedByQuote(landedQuote)
+            ) {
+                _lifecycleState.value =
+                    ArkLifecycleState.Error(
+                        localizedString(R.string.ark_exit_emergency_fee_unfundable),
                     )
                 return@withContext
             }
             checkNotNull(w)
             exitOperationMutex.withLock {
                 try {
-                    val selected =
-                        when (plan) {
-                            is ArkUnilateralExitPolicy.StartExitPlan.EntireWallet -> {
-                                val beforeSpendable = spendableIds.toSet()
-                                w.startExitForEntireWallet()
-                                val exitIds =
-                                    runCatching { w.getExitVtxos().map { it.vtxoId } }
-                                        .getOrDefault(emptyList())
-                                        .ifEmpty {
-                                            val afterSpendable =
-                                                runCatching { w.spendableVtxos().map { it.id } }
-                                                    .getOrDefault(emptyList())
-                                                    .toSet()
-                                            (beforeSpendable - afterSpendable).toList()
-                                        }
-                                ArkUnilateralExitPolicy.resolveStartedVtxoIds(plan, exitIds)
+                    // TOCTOU: the pre-lock spendable snapshot may be stale (refresh/send
+                    // landed during the 8s quote window). Re-read inside the lock and
+                    // recompute the lock set; abort if the session changed underneath.
+                    if (wallet !== w) {
+                        _lifecycleState.value =
+                            ArkLifecycleState.Error(localizedString(R.string.ark_error_wallet_not_loaded))
+                        return@withLock
+                    }
+                    val freshSpendableIds =
+                        runCatching { w.spendableVtxos().map { it.id } }.getOrDefault(spendableIds)
+                    val freshPlan =
+                        ArkUnilateralExitPolicy.planStartExit(
+                            walletLoaded = true,
+                            entireWallet = entireWallet,
+                            requestedVtxoIds = vtxoIds,
+                            spendableVtxoIds = freshSpendableIds,
+                            onchainWalletPresent = onchainWallet != null,
+                            // Re-read inside the mutex: a refresh round may have been
+                            // submitted during the quote window above.
+                            excludedVtxoIds = pendingRefreshVtxoIdsSnapshot(),
+                        )
+                    val effectivePlan =
+                        if (freshPlan is ArkUnilateralExitPolicy.StartExitPlan.Error) {
+                            // A refresh round submitted during the quote window must
+                            // refuse the exit, never fall back to the pre-quote plan.
+                            if (freshPlan.reason == ArkUnilateralExitPolicy.StartExitError.PENDING_REFRESH) {
+                                _lifecycleState.value =
+                                    ArkLifecycleState.Error(
+                                        localizedString(R.string.ark_error_refresh_already_pending),
+                                    )
+                                return@withLock
                             }
-                            is ArkUnilateralExitPolicy.StartExitPlan.Selected -> {
-                                w.startExitForVtxos(plan.vtxoIds)
-                                ArkUnilateralExitPolicy.resolveStartedVtxoIds(plan, emptyList())
-                            }
-                            is ArkUnilateralExitPolicy.StartExitPlan.Error -> emptyList()
+                            plan
+                        } else {
+                            freshPlan
                         }
+                    val holder = VtxoLockHolder.Action(EXIT_LOCK_HOLDER_ID)
+                    val lockIds = ArkUnilateralExitPolicy.idsToLockBeforeStart(effectivePlan, freshSpendableIds)
+                    if (lockIds.isEmpty()) {
+                        _lifecycleState.value =
+                            ArkLifecycleState.Error(localizedString(R.string.ark_error_no_spendable_vtxos))
+                        return@withLock
+                    }
+                    w.lockVtxos(lockIds, holder)
+                    val selected =
+                        try {
+                            when (effectivePlan) {
+                                is ArkUnilateralExitPolicy.StartExitPlan.EntireWallet -> {
+                                    val beforeSpendable = freshSpendableIds.toSet()
+                                    w.startExitForEntireWallet()
+                                    val exitIds =
+                                        runCatching { w.getExitVtxos().map { it.vtxoId } }
+                                            .getOrDefault(emptyList())
+                                            .ifEmpty {
+                                                val afterSpendable =
+                                                    runCatching { w.spendableVtxos().map { it.id } }
+                                                        .getOrDefault(emptyList())
+                                                        .toSet()
+                                                (beforeSpendable - afterSpendable).toList()
+                                            }
+                                    ArkUnilateralExitPolicy.resolveStartedVtxoIds(effectivePlan, exitIds)
+                                }
+                                is ArkUnilateralExitPolicy.StartExitPlan.Selected -> {
+                                    w.startExitForVtxos(effectivePlan.vtxoIds)
+                                    ArkUnilateralExitPolicy.resolveStartedVtxoIds(effectivePlan, emptyList())
+                                }
+                                is ArkUnilateralExitPolicy.StartExitPlan.Error -> emptyList()
+                            }
+                        } catch (e: CancellationException) {
+                            runCatching { w.unlockVtxos(lockIds, holder) }
+                            throw e
+                        } catch (e: Exception) {
+                            runCatching { w.unlockVtxos(lockIds, holder) }
+                            throw e
+                        }
+                    val relockIds = selected.ifEmpty { lockIds }
+                    runCatching { w.lockVtxos(relockIds, holder) }
 
                     // Starting only registers the exit. Advance once immediately so the user
                     // does not have to discover and press a separate Push action.
@@ -3839,6 +5837,14 @@ class ArkRepository(
                     mutex.withLock {
                         if (wallet !== w) return@withLock
                         refreshStateLocked(sync = false, attemptBoard = false)
+                        // Re-check live exit state before declaring hollow: Bark may have
+                        // registered the exit but progressExits returned empty (e.g. AwaitingCpfp).
+                        // Only unlock when nothing is actually tracked.
+                        val liveExitIds =
+                            runCatching { w.getExitVtxos().map { it.vtxoId } }
+                                .getOrDefault(emptyList())
+                                .toSet()
+                        val hollowUnlockIds = relockIds.filter { it !in liveExitIds }
                         _lifecycleState.value =
                             when {
                                 progressError != null ->
@@ -3846,12 +5852,41 @@ class ArkRepository(
                                     ArkLifecycleState.Error(progressError)
                                 statuses.isNotEmpty() ->
                                     ArkLifecycleState.ExitProgressing(statuses)
-                                else ->
+                                selected.isNotEmpty() ->
                                     ArkLifecycleState.ExitStarted(
                                         vtxoIds = selected,
                                         entireWallet =
-                                            ArkUnilateralExitPolicy.markEntireWalletInResult(plan),
+                                            ArkUnilateralExitPolicy.markEntireWalletInResult(effectivePlan),
                                     )
+                                else -> {
+                                    // Bark accepted the call but no exit is trackable —
+                                    // re-sync once more before unlocking: registration may
+                                    // not be query-visible yet, and dropping locks early
+                                    // opens a refresh/send window on an exiting VTXO.
+                                    // Default to keeping locks on uncertainty.
+                                    val confirmedHollow =
+                                        if (hollowUnlockIds.isEmpty()) {
+                                            emptyList()
+                                        } else {
+                                            runCatching { w.syncExits() }
+                                            val retryIds =
+                                                runCatching { w.getExitVtxos().map { it.vtxoId } }
+                                                    .getOrDefault(emptyList())
+                                                    .toSet()
+                                            hollowUnlockIds.filter { it !in retryIds }
+                                        }
+                                    if (confirmedHollow.isNotEmpty()) {
+                                        runCatching {
+                                            w.unlockVtxos(
+                                                confirmedHollow,
+                                                VtxoLockHolder.Action(EXIT_LOCK_HOLDER_ID),
+                                            )
+                                        }
+                                    }
+                                    ArkLifecycleState.Error(
+                                        localizedString(R.string.ark_error_generic),
+                                    )
+                                }
                             }
                     }
                     if (progressError == null && statuses.isNotEmpty()) {
@@ -3862,6 +5897,77 @@ class ArkRepository(
                 } catch (e: Exception) {
                     _lifecycleState.value = ArkLifecycleState.Error(publicError(e))
                     // Start may have persisted before a later network call failed.
+                    mutex.withLock {
+                        if (wallet === w) refreshStateLocked(sync = false, attemptBoard = false)
+                    }
+                }
+            }
+        }
+
+    suspend fun cancelUnilateralExits(vtxoIds: List<String> = emptyList()) =
+        withContext(Dispatchers.IO) {
+            _lifecycleState.value = ArkLifecycleState.InProgress
+            val w = mutex.withLock { wallet }
+            if (w == null) {
+                _lifecycleState.value =
+                    ArkLifecycleState.Error(localizedString(R.string.ark_error_wallet_not_loaded))
+                return@withContext
+            }
+            val loadedId = _loadedWalletId.value
+            if (!loadedId.isNullOrBlank() && !secureStorage.getPassphrase(loadedId).isNullOrEmpty()) {
+                _lifecycleState.value =
+                    ArkLifecycleState.Error(localizedString(R.string.ark_error_passphrase_exit_unavailable))
+                return@withContext
+            }
+            val requested = vtxoIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+            val pending =
+                runCatching { w.getExitVtxos() }.getOrDefault(emptyList())
+            val targets =
+                if (requested.isEmpty()) {
+                    pending.filter { ArkBarkMappers.canCancelLabel(ArkBarkMappers.exitStateLabel(it.state)) }
+                } else {
+                    pending.filter {
+                        it.vtxoId in requested.toSet() &&
+                            ArkBarkMappers.canCancelLabel(ArkBarkMappers.exitStateLabel(it.state))
+                    }
+                }
+            if (targets.isEmpty()) {
+                _lifecycleState.value =
+                    ArkLifecycleState.Error(localizedString(R.string.ark_exit_cancel_none))
+                return@withContext
+            }
+            exitOperationMutex.withLock {
+                try {
+                    val holder = VtxoLockHolder.Action(EXIT_LOCK_HOLDER_ID)
+                    var canceledCount = 0
+                    var lastFailure: String? = null
+                    for (exit in targets) {
+                        val result = w.cancelExit(exit.vtxoId)
+                        if (result.canceled) {
+                            canceledCount++
+                            runCatching { w.unlockVtxos(listOf(exit.vtxoId), holder) }
+                        } else {
+                            lastFailure = exitCancelFailureMessage(result.reason)
+                        }
+                    }
+                    mutex.withLock {
+                        if (wallet !== w) return@withLock
+                        refreshStateLocked(sync = false, attemptBoard = false)
+                        _lifecycleState.value =
+                            if (canceledCount > 0) {
+                                ArkLifecycleState.Completed(
+                                    detail = localizedString(R.string.ark_exit_cancel_done_format, canceledCount),
+                                )
+                            } else {
+                                ArkLifecycleState.Error(
+                                    lastFailure ?: localizedString(R.string.ark_exit_cancel_none),
+                                )
+                            }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _lifecycleState.value = ArkLifecycleState.Error(publicError(e))
                     mutex.withLock {
                         if (wallet === w) refreshStateLocked(sync = false, attemptBoard = false)
                     }
@@ -3887,12 +5993,66 @@ class ArkRepository(
                         ArkLifecycleState.Error(localizedString(R.string.ark_error_wallet_not_loaded))
                     return@withContext
                 }
+            val loadedId = _loadedWalletId.value
+            if (!loadedId.isNullOrBlank() && !secureStorage.getPassphrase(loadedId).isNullOrEmpty()) {
+                _lifecycleState.value =
+                    ArkLifecycleState.Error(localizedString(R.string.ark_error_passphrase_exit_unavailable))
+                return@withContext
+            }
             if (onchain == null) {
                 _lifecycleState.value =
                     ArkLifecycleState.Error(localizedString(R.string.ark_error_onchain_wallet_unavailable))
                 return@withContext
             }
             val feeRate = resolveExitProgressFeeRateSatPerVbLocked(feeRateSatPerVb)
+            // Authoritative Bark quote gate: pushing an exit Bark reports as
+            // unfundable only burns time — surface the clear error instead.
+            // Fail-open when the quote is missing or stale.
+            val activeExitIds =
+                runCatching {
+                    w.getExitVtxos()
+                        .filter {
+                            ArkUnilateralExitPolicy.isActiveExitState(
+                                ArkBarkMappers.exitStateLabel(it.state),
+                            )
+                        }
+                        .map { it.vtxoId }
+                }.getOrDefault(emptyList())
+            // Mirror the start-path sync refresh for the active set: after partial
+            // progress the set shrinks and a cached superset quote no longer matches
+            // (exact-or-unfundable-superset), so Push would fail-open on the manual
+            // estimate only and stall mid-walk. Bounded + fail-open on error.
+            if (activeExitIds.isNotEmpty()) {
+                runCatching {
+                    withTimeoutOrNull(8_000L) {
+                        val fresh =
+                            runCatching { w.estimateEmergencyExitFee(activeExitIds, null, null) }
+                                .getOrNull()
+                        if (fresh != null) {
+                            _emergencyExitFeeQuote.value =
+                                ArkUnilateralExitPolicy.mapEmergencyExitFeeQuote(
+                                    vtxoIds = activeExitIds,
+                                    broadcastFeeSats = fresh.exitBroadcastFeeSats,
+                                    claimFeeSats = fresh.claimFeeSats,
+                                    totalFeeSats = fresh.totalFeeSats,
+                                    feeRateSatPerVb = fresh.feeRateSatPerVb,
+                                    txsToBroadcast = fresh.txsToBroadcast,
+                                    fundable = fresh.fundable,
+                                )
+                        }
+                    }
+                }
+            }
+            val progressQuote = authoritativeExitQuoteFor(activeExitIds)
+            if (progressQuote != null &&
+                ArkUnilateralExitPolicy.isEmergencyExitBlockedByQuote(progressQuote)
+            ) {
+                _lifecycleState.value =
+                    ArkLifecycleState.Error(
+                        localizedString(R.string.ark_exit_emergency_fee_unfundable),
+                    )
+                return@withContext
+            }
             exitOperationMutex.withLock {
                 try {
                     // CPFP / package broadcast needs a fresh on-chain UTXO view.
@@ -3934,65 +6094,91 @@ class ArkRepository(
     suspend fun prepareClaimExits(
         destinationAddress: String,
         vtxoIds: List<String> = emptyList(),
-        feeRateSatPerVb: Long = ArkUnilateralExitPolicy.DEFAULT_EXIT_FEE_RATE_SAT_VB,
+        feeRateSatPerVb: Long? = null,
     ) =
         withContext(Dispatchers.IO) {
-            mutex.withLock {
-                val w = wallet
-                val claimableFromWallet =
-                    if (w != null) {
-                        runCatching { w.listClaimableExits().map { it.vtxoId } }.getOrDefault(emptyList())
-                    } else {
-                        emptyList()
-                    }
-                when (
-                    val plan =
-                        ArkUnilateralExitPolicy.planClaimPrepare(
-                            walletLoaded = w != null,
-                            destinationAddress = destinationAddress,
-                            requestedVtxoIds = vtxoIds,
-                            claimableVtxoIds = claimableFromWallet,
-                            feeRateSatPerVb = feeRateSatPerVb,
-                        )
-                ) {
-                    is ArkUnilateralExitPolicy.ClaimPreparePlan.Error -> {
-                        _lifecycleState.value =
-                            ArkLifecycleState.Error(
-                                when (plan.reason) {
-                                    ArkUnilateralExitPolicy.ClaimPrepareError.WALLET_NOT_LOADED ->
-                                        localizedString(R.string.ark_error_wallet_not_loaded)
-                                    ArkUnilateralExitPolicy.ClaimPrepareError.INVALID_DESTINATION ->
-                                        localizedString(R.string.loc_9f80cab8)
-                                    ArkUnilateralExitPolicy.ClaimPrepareError.NO_CLAIMABLE_EXITS ->
-                                        localizedString(R.string.ark_error_no_claimable_exits)
-                                },
+            data class ClaimPrep(
+                val wallet: Wallet,
+                val plan: ArkUnilateralExitPolicy.ClaimPreparePlan.Ready,
+            )
+            // Null means auto: price at the same live rate the start/progress
+            // path spends at instead of the fixed default.
+            val effectiveRate =
+                feeRateSatPerVb?.let { ArkUnilateralExitPolicy.clampExitFeeRateSatPerVb(it) }
+                    ?: resolveExitProgressFeeRateSatPerVbLocked()
+            val prep =
+                mutex.withLock {
+                    val w = wallet
+                    val claimable =
+                        if (w != null) {
+                            runCatching { w.listClaimableExits() }.getOrDefault(emptyList())
+                        } else {
+                            emptyList()
+                        }
+                    val claimableFromWallet = claimable.map { it.vtxoId }
+                    when (
+                        val plan =
+                            ArkUnilateralExitPolicy.planClaimPrepare(
+                                walletLoaded = w != null,
+                                destinationAddress = destinationAddress,
+                                requestedVtxoIds = vtxoIds,
+                                claimableVtxoIds = claimableFromWallet,
+                                feeRateSatPerVb = effectiveRate,
                             )
-                        return@withLock
-                    }
-                    is ArkUnilateralExitPolicy.ClaimPreparePlan.Ready -> {
-                        checkNotNull(w)
-                        _lifecycleState.value = ArkLifecycleState.Loading
-                        try {
-                            val claim =
-                                w.drainExits(
-                                    vtxoIds = plan.vtxoIds,
-                                    address = plan.destinationAddress,
-                                    feeRateSatPerVb = plan.feeRateSatPerVb.toULong(),
-                                )
+                    ) {
+                        is ArkUnilateralExitPolicy.ClaimPreparePlan.Error -> {
                             _lifecycleState.value =
-                                ArkLifecycleState.ClaimPreview(
-                                    vtxoIds = plan.vtxoIds,
-                                    destinationAddress = plan.destinationAddress,
-                                    feeSats = claim.feeSats.toLong(),
-                                    feeRateSatPerVb = plan.feeRateSatPerVb,
-                                    psbtBase64 = claim.psbtBase64,
+                                ArkLifecycleState.Error(
+                                    when (plan.reason) {
+                                        ArkUnilateralExitPolicy.ClaimPrepareError.WALLET_NOT_LOADED ->
+                                            localizedString(R.string.ark_error_wallet_not_loaded)
+                                        ArkUnilateralExitPolicy.ClaimPrepareError.INVALID_DESTINATION ->
+                                            localizedString(R.string.loc_9f80cab8)
+                                        ArkUnilateralExitPolicy.ClaimPrepareError.NO_CLAIMABLE_EXITS ->
+                                            localizedString(R.string.ark_error_no_claimable_exits)
+                                    },
                                 )
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            _lifecycleState.value = ArkLifecycleState.Error(publicError(e))
+                            null
+                        }
+                        is ArkUnilateralExitPolicy.ClaimPreparePlan.Ready -> {
+                            checkNotNull(w)
+                            _lifecycleState.value = ArkLifecycleState.Loading
+                            ClaimPrep(w, plan)
                         }
                     }
+                } ?: return@withContext
+            exitOperationMutex.withLock {
+                try {
+                    val claim =
+                        prep.wallet.drainExits(
+                            vtxoIds = prep.plan.vtxoIds,
+                            address = prep.plan.destinationAddress,
+                            feeRateSatPerVb = prep.plan.feeRateSatPerVb.toULong(),
+                        )
+                    mutex.withLock {
+                        if (wallet !== prep.wallet) return@withLock
+                        // Snapshot the preview-time total: if the live amount query
+                        // fails at execute time, the ledger still records reality.
+                        val previewAmount =
+                            runCatching {
+                                prep.wallet.listClaimableExits()
+                                    .filter { it.vtxoId in prep.plan.vtxoIds.toSet() }
+                                    .sumOf { it.amountSats.toLong() }
+                            }.getOrNull()?.takeIf { it > 0L }
+                        _lifecycleState.value =
+                            ArkLifecycleState.ClaimPreview(
+                                vtxoIds = prep.plan.vtxoIds,
+                                destinationAddress = prep.plan.destinationAddress,
+                                feeSats = claim.feeSats.toLong(),
+                                feeRateSatPerVb = prep.plan.feeRateSatPerVb,
+                                psbtBase64 = claim.psbtBase64,
+                                claimAmountSats = previewAmount,
+                            )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _lifecycleState.value = ArkLifecycleState.Error(publicError(e))
                 }
             }
         }
@@ -4003,76 +6189,188 @@ class ArkRepository(
      */
     suspend fun executeClaimExits(expectedPsbtBase64: String? = null) =
         withContext(Dispatchers.IO) {
-            mutex.withLock {
-                val w = wallet
-                val preview = _lifecycleState.value as? ArkLifecycleState.ClaimPreview
-                when (
-                    ArkUnilateralExitPolicy.planClaimExecute(
-                        walletLoaded = w != null,
-                        hasClaimPreview = preview != null,
-                    )
-                ) {
-                    ArkUnilateralExitPolicy.ClaimExecuteError.WALLET_NOT_LOADED -> {
-                        _lifecycleState.value =
-                            ArkLifecycleState.Error(localizedString(R.string.ark_error_wallet_not_loaded))
-                        return@withLock
-                    }
-                    ArkUnilateralExitPolicy.ClaimExecuteError.NOTHING_PREPARED -> {
-                        _lifecycleState.value =
-                            ArkLifecycleState.Error(localizedString(R.string.ark_error_nothing_prepared))
-                        return@withLock
-                    }
-                    null -> Unit
-                }
-                checkNotNull(w)
-                checkNotNull(preview)
-                if (expectedPsbtBase64 != null &&
-                    expectedPsbtBase64 != preview.psbtBase64
-                ) {
-                    _lifecycleState.value =
-                        ArkLifecycleState.Error(localizedString(R.string.ark_error_claim_preview_stale))
-                    return@withLock
-                }
-                // Re-validate destination shape before signing (defense in depth).
-                if (!ArkUnilateralExitPolicy.isUsableBitcoinClaimAddress(preview.destinationAddress)) {
-                    _lifecycleState.value =
-                        ArkLifecycleState.Error(localizedString(R.string.loc_9f80cab8))
-                    return@withLock
-                }
-                _lifecycleState.value = ArkLifecycleState.InProgress
-                try {
-                    val claimAmount =
-                        runCatching {
-                            w.listClaimableExits()
-                                .filter { it.vtxoId in preview.vtxoIds }
-                                .sumOf { it.amountSats.toLong() }
-                        }.getOrDefault(0L)
-                    val signed = w.signExitClaimInputs(preview.psbtBase64)
-                    val txid = w.broadcastTx(signed)
-                    val walletId = _loadedWalletId.value
-                    if (walletId != null) {
-                        secureStorage.saveArkExitClaimHistory(
-                            walletId = walletId,
-                            claim =
-                                ArkExitClaimHistory(
-                                    txid = txid,
-                                    destinationAddress = preview.destinationAddress,
-                                    amountSats = (claimAmount - preview.feeSats).coerceAtLeast(0L),
-                                    feeSats = preview.feeSats,
-                                    vtxoIds = preview.vtxoIds,
-                                    createdAt = Instant.now().toString(),
-                                ),
+            data class ClaimExec(
+                val wallet: Wallet,
+                val walletId: String?,
+                val preview: ArkLifecycleState.ClaimPreview,
+            )
+            val exec =
+                mutex.withLock {
+                    val w = wallet
+                    val preview = _lifecycleState.value as? ArkLifecycleState.ClaimPreview
+                    when (
+                        ArkUnilateralExitPolicy.planClaimExecute(
+                            walletLoaded = w != null,
+                            hasClaimPreview = preview != null,
                         )
+                    ) {
+                        ArkUnilateralExitPolicy.ClaimExecuteError.WALLET_NOT_LOADED -> {
+                            _lifecycleState.value =
+                                ArkLifecycleState.Error(localizedString(R.string.ark_error_wallet_not_loaded))
+                            return@withLock null
+                        }
+                        ArkUnilateralExitPolicy.ClaimExecuteError.NOTHING_PREPARED -> {
+                            _lifecycleState.value =
+                                ArkLifecycleState.Error(localizedString(R.string.ark_error_nothing_prepared))
+                            return@withLock null
+                        }
+                        null -> Unit
                     }
-                    _lifecycleState.value = ArkLifecycleState.Completed(detail = txid)
-                    refreshStateLocked(sync = true)
+                    checkNotNull(w)
+                    checkNotNull(preview)
+                    if (expectedPsbtBase64 != null &&
+                        expectedPsbtBase64 != preview.psbtBase64
+                    ) {
+                        _lifecycleState.value =
+                            ArkLifecycleState.Error(localizedString(R.string.ark_error_claim_preview_stale))
+                        return@withLock null
+                    }
+                    if (!ArkUnilateralExitPolicy.isUsableBitcoinClaimAddress(preview.destinationAddress)) {
+                        _lifecycleState.value =
+                            ArkLifecycleState.Error(localizedString(R.string.loc_9f80cab8))
+                        return@withLock null
+                    }
+                    _lifecycleState.value = ArkLifecycleState.InProgress
+                    ClaimExec(w, _loadedWalletId.value, preview)
+                } ?: return@withContext
+            exitOperationMutex.withLock {
+                var journalSignedHex: String? = null
+                var journalClaimAmount = 0L
+                try {
+                    journalClaimAmount =
+                        ArkUnilateralExitPolicy.resolveClaimLedgerAmount(
+                            liveAmountSats =
+                                runCatching {
+                                    exec.wallet.listClaimableExits()
+                                        .filter { it.vtxoId in exec.preview.vtxoIds }
+                                        .sumOf { it.amountSats.toLong() }
+                                }.getOrNull(),
+                            previewAmountSats = exec.preview.claimAmountSats,
+                        )
+                    val signed = exec.wallet.signExitClaimInputs(exec.preview.psbtBase64)
+                    journalSignedHex = signed
+                    // Journal BEFORE broadcast: a crash from here on retains the
+                    // signed hex and derived txid, reconciled on the next load.
+                    persistPendingClaim(
+                        walletId = exec.walletId,
+                        preview = exec.preview,
+                        claimAmount = journalClaimAmount,
+                        signedHex = signed,
+                        txid = ArkUnilateralExitPolicy.txidFromSignedHex(signed),
+                    )
+                    val txid = exec.wallet.broadcastTx(signed)
+                    persistPendingClaim(
+                        walletId = exec.walletId,
+                        preview = exec.preview,
+                        claimAmount = journalClaimAmount,
+                        signedHex = signed,
+                        txid = txid,
+                    )
+                    mutex.withLock {
+                        if (wallet !== exec.wallet) {
+                            // Broadcast succeeded but the UI moved on: persist the
+                            // history row anyway — a txid must never be dropped.
+                            if (exec.walletId != null) {
+                                secureStorage.saveArkExitClaimHistory(
+                                    exec.walletId,
+                                    claimHistoryRow(exec.preview, journalClaimAmount, txid),
+                                )
+                                secureStorage.clearArkPendingClaim(exec.walletId)
+                            }
+                            return@withLock
+                        }
+                        val walletId = _loadedWalletId.value
+                        if (walletId != null) {
+                            secureStorage.saveArkExitClaimHistory(
+                                walletId,
+                                claimHistoryRow(exec.preview, journalClaimAmount, txid),
+                            )
+                            secureStorage.clearArkPendingClaim(walletId)
+                        }
+                        _lifecycleState.value = ArkLifecycleState.Completed(detail = txid)
+                        refreshStateLocked(sync = true)
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    // Broadcast may throw post-accept: journal the derived txid so the
+                    // attempt stays trackable, then surface the error for retry.
+                    val derived = journalSignedHex?.let { ArkUnilateralExitPolicy.txidFromSignedHex(it) }
+                    if (derived != null) {
+                        persistPendingClaim(
+                            walletId = exec.walletId,
+                            preview = exec.preview,
+                            claimAmount = journalClaimAmount,
+                            signedHex = journalSignedHex,
+                            txid = derived,
+                        )
+                    }
                     _lifecycleState.value = ArkLifecycleState.Error(publicError(e))
                 }
             }
         }
+
+    private fun claimHistoryRow(
+        preview: ArkLifecycleState.ClaimPreview,
+        claimAmount: Long,
+        txid: String,
+    ) = ArkExitClaimHistory(
+        txid = txid,
+        destinationAddress = preview.destinationAddress,
+        amountSats = (claimAmount - preview.feeSats).coerceAtLeast(0L),
+        feeSats = preview.feeSats,
+        vtxoIds = preview.vtxoIds,
+        createdAt = Instant.now().toString(),
+    )
+
+    private fun persistPendingClaim(
+        walletId: String?,
+        preview: ArkLifecycleState.ClaimPreview,
+        claimAmount: Long,
+        signedHex: String?,
+        txid: String?,
+    ) {
+        if (walletId.isNullOrBlank()) return
+        secureStorage.saveArkPendingClaim(
+            walletId,
+            ArkPendingClaim(
+                vtxoIds = preview.vtxoIds,
+                destinationAddress = preview.destinationAddress,
+                amountSats = (claimAmount - preview.feeSats).coerceAtLeast(0L),
+                feeSats = preview.feeSats,
+                feeRateSatPerVb = preview.feeRateSatPerVb,
+                psbtBase64 = preview.psbtBase64,
+                signedHex = signedHex,
+                txid = txid,
+                createdAt = Instant.now().toString(),
+            ),
+        )
+    }
+
+    /**
+     * Consume a pending-claim journal left by an interrupted [executeClaimExits].
+     * A recorded txid means broadcast may have succeeded: ensure the history row
+     * exists (dedupe by txid makes this idempotent). Without a txid the attempt
+     * died pre-sign/post-failure untracked — funds remain claimable, drop the row.
+     * No-op when no journal exists (hot refresh path).
+     */
+    private fun reconcilePendingClaimLocked(walletId: String) {
+        val pending = secureStorage.getArkPendingClaim(walletId) ?: return
+        if (!pending.txid.isNullOrBlank()) {
+            secureStorage.saveArkExitClaimHistory(
+                walletId,
+                ArkExitClaimHistory(
+                    txid = pending.txid,
+                    destinationAddress = pending.destinationAddress,
+                    amountSats = pending.amountSats,
+                    feeSats = pending.feeSats,
+                    vtxoIds = pending.vtxoIds,
+                    createdAt = pending.createdAt,
+                ),
+            )
+        }
+        secureStorage.clearArkPendingClaim(walletId)
+    }
 
     /**
      * Snapshot Bark per-wallet data dir (db.sqlite + onchain) as base64 encrypted payload for full backup.
@@ -4188,31 +6486,60 @@ class ArkRepository(
     ) = withContext(Dispatchers.IO) {
         // Supersede any in-flight load so it bails after its next generation check instead of
         // holding [mutex] through ASP recover while import waits.
-        loadGeneration.incrementAndGet()
+        val importGeneration = loadGeneration.incrementAndGet()
         var installedDir: File? = null
         try {
             val seed = resolveBip39Seed(walletId)
-            val plainZip =
-                try {
-                    ArkBackupCrypto.unwrapIfEncrypted(zipBytes, seed)
-                } catch (e: ArkBackupCrypto.WrongWalletException) {
-                    throw Exception(localizedString(R.string.ark_db_import_wrong_wallet))
-                } catch (e: ArkBackupCrypto.InvalidPayloadException) {
-                    throw Exception(localizedString(R.string.ark_db_import_invalid))
-                } finally {
-                    seed.fill(0)
-                }
+            val plainZip: ByteArray
+            val expectedFingerprint: String
+            val wasEncrypted = ArkBackupCrypto.isEncrypted(zipBytes)
+            try {
+                plainZip = ArkBackupCrypto.unwrapIfEncrypted(zipBytes, seed)
+                expectedFingerprint = ArkBackupCrypto.seedFingerprint(seed)
+            } catch (e: ArkBackupCrypto.WrongWalletException) {
+                throw Exception(localizedString(R.string.ark_db_import_wrong_wallet))
+            } catch (e: ArkBackupCrypto.InvalidPayloadException) {
+                throw Exception(localizedString(R.string.ark_db_import_invalid))
+            } finally {
+                seed.fill(0)
+            }
             if (!ArkWalletDataPack.isValidZipStructure(plainZip)) {
                 throw Exception(localizedString(R.string.ark_db_import_invalid))
             }
-            // Detach (and dispose outside mutex) until no live handles, then install into session.
+            // Bind the backup to this seed before anything on disk is touched:
+            // a foreign seed's export is rejected, never installed. walletId in
+            // the manifest is diagnostic only — same seed reimported under a new
+            // wallet id (or renamed) must still restore.
+            val importedManifest = ArkWalletDataPack.readManifest(plainZip)
+            if (importedManifest != null &&
+                !ArkWalletDataPack.isManifestBoundToWallet(importedManifest, expectedFingerprint)
+            ) {
+                throw Exception(localizedString(R.string.ark_db_import_wrong_wallet))
+            }
+            // Detach (and dispose outside mutex) until no live handles, then install
+            // into a TEMP dir. Detach + join run outside [mutex] (exit ops lock in
+            // the opposite order); the final lock re-checks the generation so a
+            // newer load attached in between is never torn down here.
             repeat(4) { attempt ->
+                // Fast-fail before detaching anything: a newer load owns the session.
+                if (loadGeneration.get() != importGeneration) {
+                    throw Exception(localizedString(R.string.ark_db_import_failed))
+                }
+                val detached = mutex.withLock { detachBackgroundJobsLocked() }
+                val backgroundBusy = joinDetachedJobs(detached)
                 val stale =
                     mutex.withLock {
+                        if (loadGeneration.get() != importGeneration) {
+                            throw Exception(localizedString(R.string.ark_db_import_failed))
+                        }
                         if (wallet != null || _loadedWalletId.value == walletId) {
                             // Never re-write pre-import history into SecureStorage during unload —
                             // that race re-paints ghost txs after the imported DB is installed.
-                            unloadLocked(disposeHandles = false, persistCache = false)
+                            unloadLocked(
+                                disposeHandles = false,
+                                persistCache = false,
+                                backgroundBusy = backgroundBusy,
+                            )
                         } else {
                             null
                         }
@@ -4226,9 +6553,19 @@ class ArkRepository(
                         if (wallet != null || _loadedWalletId.value == walletId) {
                             false
                         } else {
-                            val dir = createEmptySessionDataDir(walletId, loadGeneration.get())
+                            val dir =
+                                File(
+                                    arkSessionRootDir(),
+                                    "$walletId-import-tmp-${System.nanoTime()}",
+                                ).apply { mkdirs() }
                             installedDir = dir
-                            installImportedArkDbLocked(walletId, dir, plainZip)
+                            installImportedArkDbLocked(
+                                walletId = walletId,
+                                dir = dir,
+                                plainZip = plainZip,
+                                importedManifest = importedManifest,
+                                wasEncrypted = wasEncrypted,
+                            )
                             true
                         }
                     }
@@ -4245,6 +6582,7 @@ class ArkRepository(
                 if (pendingImportSessionDir == installedDir) {
                     pendingImportSessionDir = null
                     pendingImportWalletId = null
+                    pendingImportForceMailboxScan = false
                 }
             }
             SecureLog.w(TAG, "Ark data import failed")
@@ -4257,33 +6595,90 @@ class ArkRepository(
         walletId: String,
         dir: File,
         plainZip: ByteArray,
+        importedManifest: ArkWalletDataPack.Manifest?,
+        wasEncrypted: Boolean,
     ) {
-        // Extract Ibis history before install (sidecar is not written into Bark datadir).
+        // Extract Ibis history + claim ledger before install (sidecars are not
+        // written into the Bark datadir).
         val importedMovements =
             ArkWalletDataPack.readHistoryJson(plainZip)
                 ?.let { secureStorage.decodeArkMovementsFromBackup(it) }
                 .orEmpty()
-        ArkWalletDataPack.installAtomically(dir, plainZip)
-        markMailboxScanned(dir)
+        val importedClaims =
+            ArkWalletDataPack.readClaimsJson(plainZip)
+                ?.let { secureStorage.decodeArkExitClaimsFromBackup(it) }
+                .orEmpty()
+        try {
+            ArkWalletDataPack.installAtomically(dir, plainZip)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            throw Exception(localizedString(R.string.ark_db_import_invalid))
+        }
+        if (!hasReusableBarkDb(dir)) {
+            throw Exception(localizedString(R.string.ark_db_import_invalid))
+        }
+        val importedHistoryHasFunds =
+            importedMovements.any { it.effectiveBalanceSats != 0L || it.intendedBalanceSats != 0L }
+        // Only an encrypted + fingerprint-bound import may skip the mailbox scan
+        // on funded state. Plaintext legacy zips always rescan even when bound:
+        // the manifest fingerprint is a hint, not authentication, and a forged
+        // plaintext zip with victim fingerprint + inflated balances must never
+        // hide this wallet's real VTXOs behind a scanned marker. GCM auth on the
+        // encrypted path already rejects foreign seeds before this point.
+        val manifestBound = importedManifest?.seedFingerprint?.isNotBlank() == true
+        if (
+            ArkMailboxRecoveryPolicy.shouldMarkImportedMailboxScannedSecure(
+                manifestBound = manifestBound,
+                wasEncrypted = wasEncrypted,
+                hasReusableDb = hasReusableBarkDb(dir),
+                importedSpendableSats = importedManifest?.spendableSats ?: 0L,
+                importedHistoryHasFunds = importedHistoryHasFunds,
+            )
+        ) {
+            markMailboxScanned(dir)
+        }
         // Disaster restore into session dir — next load opens this path (stable wallet path preferred).
         // ASP/mailbox still hydrates when reachable; external SAF remains the durable copy.
         deleteSessionDataDir(pendingImportSessionDir)
         pendingImportSessionDir = dir
         pendingImportWalletId = walletId
-        // Prefer history embedded in the zip; legacy zips without sidecar clear the cache.
+        pendingImportForceMailboxScan =
+            ArkMailboxRecoveryPolicy.shouldForceImportMailboxScan(
+                manifestBound = manifestBound,
+                wasEncrypted = wasEncrypted,
+            )
+        // Prefer history embedded in the zip; legacy zips without a sidecar keep
+        // existing journal/cache — a stale backup must not wipe newer rows.
+        // Seed the journal too so imported rows survive later session-DB recreations.
+        // Union (sidecar wins ties): a stale backup must not wipe newer journal rows.
         val orderedImport = ArkDepositPolicy.sortMovementsChronologically(importedMovements)
         if (orderedImport.isNotEmpty()) {
+            val seeded =
+                ArkDepositPolicy.distinctPaintedMovements(
+                    orderedImport + secureStorage.getArkMovementJournal(walletId),
+                ).take(ArkDepositPolicy.MOVEMENT_JOURNAL_MAX_ROWS)
+            secureStorage.saveArkMovementJournal(walletId, seeded)
+        }
+        if (orderedImport.isNotEmpty()) {
+            // Preserve prior cached balances so delete-risk stays conservative until
+            // reload hydrates live VTXOs; movements-only zero-balance would flash 0.
+            val prior = secureStorage.getArkWalletStateCache(walletId)
             secureStorage.saveArkWalletStateCache(
                 walletId,
                 ArkWalletState(
                     walletId = walletId,
                     isInitialized = true,
+                    spendableSats = prior?.spendableSats ?: 0L,
+                    pendingInRoundSats = prior?.pendingInRoundSats ?: 0L,
+                    pendingBoardSats = prior?.pendingBoardSats ?: 0L,
+                    pendingExitSats = prior?.pendingExitSats ?: 0L,
+                    onchainConfirmedSats = prior?.onchainConfirmedSats ?: 0L,
+                    onchainPendingSats = prior?.onchainPendingSats ?: 0L,
                     movements = orderedImport,
                     lastSyncTimestamp = System.currentTimeMillis(),
                 ),
             )
-        } else {
-            secureStorage.clearArkWalletStateCache(walletId)
         }
         aspHydratedWalletId = null
         sessionDataDir = null
@@ -4300,7 +6695,16 @@ class ArkRepository(
         // Destinations / funding txids are app-side annotations keyed by movement id — they can
         // mis-attach onto the imported DB's different id space and invent peer/txid details.
         secureStorage.clearArkMovementDestinations(walletId)
-        secureStorage.clearArkExitClaimHistory(walletId)
+        secureStorage.clearArkFailedSends(walletId)
+        synchronized(failedArkSends) {
+            failedArkSends.removeAll { it.walletId == walletId }
+        }
+        if (importedClaims.isNotEmpty()) {
+            // Claim rows are keyed by on-chain txid (stable across DBs) — restore the
+            // ledger instead of clearing it. Legacy zips without the sidecar keep it:
+            // without it a broadcast claim goes invisible.
+            secureStorage.restoreArkExitClaimHistory(walletId, importedClaims)
+        }
         secureStorage.setArkFundingTxids(walletId, emptyList())
         secureStorage.markArkAutoDbBackupSuppressOnce(walletId)
         lastAutoDbBackupFingerprint = null
@@ -4338,11 +6742,15 @@ class ArkRepository(
                 movements
                     .takeIf { it.isNotEmpty() }
                     ?.let { secureStorage.encodeArkMovementsForBackup(it) }
+            // Claim txids are on-chain facts — embed the ledger so broadcast claims
+            // stay visible after a session-DB loss even before Bark re-derives them.
+            val claimsJson = secureStorage.encodeArkExitClaimsForBackup(walletId)
             val zip =
                 ArkWalletDataPack.zipDirectory(
                     dir = dir,
                     manifest = manifest,
                     historyJson = historyJson,
+                    claimsJson = claimsJson,
                 ) ?: return null
             ArkBackupCrypto.encrypt(zip, seed)
         } catch (e: Exception) {
@@ -5211,6 +7619,33 @@ class ArkRepository(
         return ArkDepositPolicy.sortMovementsChronologically(visible)
     }
 
+    /**
+     * Durable history journal: union painted rows into the per-wallet SecureStorage
+     * journal so rows survive session-DB recreation (Bark movement ids restart per
+     * DB) and restarts where Bark returns newest-only/empty history. Painted rows
+     * win on fingerprint collision (status updates); oldest beyond the cap drop.
+     * Noise filtering runs after the merge on every paint, so journaled rows that
+     * later classify as noise are still hidden.
+     */
+    private fun persistMovementJournal(walletId: String, painted: List<ArkMovement>) {
+        if (walletId.isBlank() || painted.isEmpty()) return
+        val journalable =
+            filterFailedSendPhantoms(
+                walletId,
+                painted.filterNot { ArkDepositPolicy.isSyntheticPendingOnchainDeposit(it) },
+            )
+        if (journalable.isEmpty()) return
+        val stored =
+            filterFailedSendPhantoms(walletId, secureStorage.getArkMovementJournal(walletId))
+        val merged =
+            ArkDepositPolicy.distinctPaintedMovements(journalable + stored)
+                .take(ArkDepositPolicy.MOVEMENT_JOURNAL_MAX_ROWS)
+        fun keys(rows: List<ArkMovement>) =
+            rows.mapTo(HashSet(rows.size)) { ArkDepositPolicy.movementUnionKey(it) }
+        if (keys(merged) == keys(stored)) return
+        secureStorage.saveArkMovementJournal(walletId, merged)
+    }
+
     fun saveAddressLabel(walletId: String, address: String, label: String) {
         secureStorage.setArkAddressLabel(walletId, address, label)
         if (_loadedWalletId.value == walletId) {
@@ -5331,6 +7766,7 @@ class ArkRepository(
         }
         _isConnecting.value = true
         _isConnected.value = false
+        sendInFlight.set(false)
         _sendState.value = ArkSendState.Idle
         _receiveState.value = ArkReceiveState.Idle
         _transferState.value = ArkTransferState.Idle
@@ -5355,6 +7791,40 @@ class ArkRepository(
                 isSyncing = true,
                 error = null,
             )
+    }
+
+    /**
+     * Transport-liveness accounting. Bark exposes no connection state and every
+     * call site swallows errors, so consecutive sync/hydrate outcomes are the
+     * disconnect detector: sustained failure flips the pill (unblocking every
+     * reload path gated on the stale `connected=true`), any success heals.
+     * Pure thresholds live in [ArkConnectionPolicy].
+     */
+    private fun noteTransportResult(ok: Boolean) {
+        if (wallet == null) return
+        arkTransportFailureStreak = ArkConnectionPolicy.nextFailureStreak(ok, arkTransportFailureStreak)
+        if (ok) {
+            if (!_isConnected.value) {
+                SecureLog.w(TAG, "Ark transport recovered — marking connected")
+                _isConnected.value = true
+                _arkState.value = _arkState.value.copy(isConnected = true)
+            }
+            return
+        }
+        if (
+            ArkConnectionPolicy.shouldMarkDisconnected(
+                streak = arkTransportFailureStreak,
+                connected = _isConnected.value,
+                walletLoaded = true,
+            )
+        ) {
+            SecureLog.w(
+                TAG,
+                "Ark transport failed ${arkTransportFailureStreak}x consecutively — marking disconnected",
+            )
+            _isConnected.value = false
+            _arkState.value = _arkState.value.copy(isConnected = false)
+        }
     }
 
     fun markLoadFailed(walletId: String, message: String) {
@@ -5403,6 +7873,8 @@ class ArkRepository(
                 isConnected = false,
                 isSyncing = true,
                 isAutoRefreshing = false,
+                autoRefreshNeedsAttention = false,
+                onchainWalletOpen = false,
                 aspHydrated = false,
                 error = null,
                 currentAddress = cachedArkAddress ?: base.currentAddress,
@@ -5555,6 +8027,8 @@ class ArkRepository(
                 isConnected = false,
                 isSyncing = false,
                 isAutoRefreshing = false,
+                autoRefreshNeedsAttention = false,
+                onchainWalletOpen = false,
                 aspHydrated = false,
                 error = null,
                 currentAddress = cachedArkAddress ?: base.currentAddress,
@@ -5564,8 +8038,11 @@ class ArkRepository(
 
     private fun ArkWalletState.withNoiseMovementsFiltered(walletId: String): ArkWalletState {
         if (movements.isEmpty()) return this
-        val filtered = filterHiddenArkMovements(walletId, movements)
-        return if (filtered === movements || filtered == movements) this else copy(movements = filtered)
+        // distinctPaintedMovements also collapses same-key duplicates (pending
+        // ghost + settled copy) so cached paints can never crash LazyColumn keys.
+        val filtered =
+            ArkDepositPolicy.distinctPaintedMovements(filterHiddenArkMovements(walletId, movements))
+        return if (filtered == movements) this else copy(movements = filtered)
     }
 
     private suspend fun refreshStateLocked(
@@ -5578,7 +8055,9 @@ class ArkRepository(
         val previousRefreshSoon = _arkState.value.refreshSoon
         try {
             if (sync) {
-                runCatching { w.sync() }
+                // w.sync() is the transport-liveness signal: account it so a dead
+                // ASP flips the pill instead of wedging every gated reload path.
+                noteTransportResult(runCatching { w.sync() }.isSuccess)
                 runCatching { onchainWallet?.sync() }
                 runCatching { w.tryClaimAllLightningReceives(wait = false) }
                 runCatching { w.syncExits() }
@@ -5625,9 +8104,44 @@ class ArkRepository(
             val tipHeight = resolveChainTipHeight()
             if (tipHeight != null) lastKnownChainTipHeight = tipHeight
             val fingerprint = runCatching { w.fingerprint() }.getOrNull()
+            // Cross-wallet guard: the previous paint may belong to another wallet
+            // (stale session paint mid-switch, or a prefs cache poisoned by an
+            // earlier mixup). Bark fingerprints are seed-derived: a positive
+            // mismatch proves foreign data, and a walletId mismatch means the
+            // paint was retargeted mid-switch. Either way, none of its on-chain
+            // or movement carryover may feed this wallet.
+            val previousForeignFingerprint =
+                !fingerprint.isNullOrBlank() &&
+                    !previousState.fingerprint.isNullOrBlank() &&
+                    !previousState.fingerprint.equals(fingerprint, ignoreCase = true)
+            val previousForeign = previousState.walletId != walletId || previousForeignFingerprint
+            if (previousForeignFingerprint) {
+                // Proven foreign paint: its deposit addresses can never be ours
+                // (different seed), so drop them from this wallet's remembered
+                // history — otherwise Esplora keeps attributing their UTXOs here.
+                // The live session re-derives and re-remembers its own below.
+                val foreignAddresses =
+                    previousState.onchainUtxos
+                        .map { it.address.trim() }
+                        .filter { it.isNotEmpty() }
+                secureStorage.removeArkOnchainDepositAddresses(walletId, foreignAddresses)
+            }
+            // Null previous feeds zero carryover (amounts) and empty collections.
+            val carryPrevious = if (previousForeign) null else previousState
             val labels = secureStorage.getAllArkMovementLabels(walletId)
             val destinations = secureStorage.getAllArkMovementDestinations(walletId)
             val mappedRefresh = refreshList.map { it.toArkVtxo() }
+            val liveWeightsById = allVtxos.associate { it.id to it.exitTxWeightWu.toLong() }
+            val previousWeightsById =
+                ((carryPrevious?.vtxos.orEmpty()).associate { it.id to it.exitTxWeightWu } +
+                    (carryPrevious?.exitVtxos.orEmpty()).associate { it.vtxoId to it.exitTxWeightWu })
+            val exitIds = exitList.map { it.vtxoId } + claimableList.map { it.vtxoId }
+            val vtxoWeightsById =
+                ArkUnilateralExitPolicy.mergeExitWeights(
+                    liveWeightsById = liveWeightsById,
+                    previousWeightsById = previousWeightsById,
+                    exitIds = exitIds.distinct(),
+                )
             val mappedExpiring =
                 expiringSoonList
                     .map { it.toArkVtxo() }
@@ -5643,12 +8157,18 @@ class ArkRepository(
                 runCatching { resolveUnusedBitcoinDepositAddressLocked(forceNew = false) }.getOrNull()
             val arkInfo = runCatching { w.arkInfo() }.getOrNull()
             val requiredBoardConfirmations =
-                arkInfo?.requiredBoardConfirmations?.toInt()?.takeIf { it > 0 }
-                    ?: _arkState.value.requiredBoardConfirmations?.takeIf { it > 0 }
+                arkInfo?.requiredBoardConfirmations?.toInt()?.takeIf { it >= 0 }
+                    ?: _arkState.value.requiredBoardConfirmations?.takeIf { it >= 0 }
                     ?: DEFAULT_BOARD_CONFIRMATIONS
             val minBoardAmountSats =
                 arkInfo?.minBoardAmountSats?.toLong()?.takeIf { it > 0L }
                     ?: _arkState.value.minBoardAmountSats?.takeIf { it > 0L }
+            val exitDeltaBlocks =
+                arkInfo?.vtxoExitDelta?.toInt()?.takeIf { it > 0 }
+                    ?: _arkState.value.exitDeltaBlocks?.takeIf { it > 0 }
+            val roundIntervalSecs =
+                arkInfo?.roundIntervalSecs?.toLong()?.takeIf { it > 0L }
+                    ?: _arkState.value.roundIntervalSecs?.takeIf { it > 0L }
             val knownBoardTxids =
                 (
                     pendingBoards.map { it.txid } +
@@ -5668,12 +8188,12 @@ class ArkRepository(
             // Bridge Esplora-known inbound + preserve previous when Bark on-chain still 0.
             // Also preserve across sync=true (session wipe forces full resync every open).
             // After L1 recover of a stuck deposit, never re-inflate stale inbound paint —
-            // including fee-pad leftover dust still below ASP min (session + prefs flag).
+            // including fee-pad leftover dust (session + prefs flag).
             val liveOnchainTotal = liveOnchainConfirmed + liveOnchainPending
             // /utxo already includes mempool. /txs fallback can resurrect spent boarded funding.
             val allowTxHistoryFallback = balance.pendingBoardSats.toLong() > 0L
             val recoveredOnchainTxids = recoveredOnchainTxidsLocked(walletId)
-            val boardedOnchainTxids = boardedOnchainTxidsLocked(walletId, previousState.movements)
+            val boardedOnchainTxids = boardedOnchainTxidsLocked(walletId, carryPrevious?.movements.orEmpty())
             val ignoredOnchainTxids = recoveredOnchainTxids + boardedOnchainTxids + knownBoardTxids
             val liveListedOnchainUtxos =
                 if (onchainWallet == null) {
@@ -5685,7 +8205,7 @@ class ArkRepository(
                         extraAddresses =
                             listOfNotNull(
                                 bitcoinDeposit,
-                                previousState.onchainUtxos.firstOrNull()?.address,
+                                carryPrevious?.onchainUtxos?.firstOrNull()?.address,
                             ),
                         allowTxHistoryFallback = allowTxHistoryFallback,
                     ).filterNot { ignoredOnchainTxids.contains(it.txid.trim().lowercase()) }
@@ -5697,7 +8217,7 @@ class ArkRepository(
                     fallbackAmountSats =
                         maxOf(
                             liveOnchainTotal,
-                            previousState.onchainTotalSats,
+                            carryPrevious?.onchainTotalSats ?: 0L,
                             balance.pendingBoardSats.toLong(),
                             liveListedOnchainUtxos.sumOf { it.amountSats.coerceAtLeast(0L) },
                         ),
@@ -5796,8 +8316,8 @@ class ArkRepository(
                     ArkDepositPolicy.resolveOnchainBuckets(
                         liveConfirmedSats = liveOnchainConfirmed,
                         livePendingSats = liveOnchainPending,
-                        previousConfirmedSats = previousState.onchainConfirmedSats,
-                        previousPendingSats = previousState.onchainPendingSats,
+                        previousConfirmedSats = carryPrevious?.onchainConfirmedSats ?: 0L,
+                        previousPendingSats = carryPrevious?.onchainPendingSats ?: 0L,
                         pendingBoardSats = balance.pendingBoardSats.toLong(),
                         esploraAmountSats = esploraAmountForBuckets,
                         esploraFundingConfirmations = esploraConfsForBuckets,
@@ -5841,6 +8361,7 @@ class ArkRepository(
             )
             val fundingTxids =
                 secureStorage.getArkFundingTxids(walletId).map { it.lowercase() }
+            val claimHistory = secureStorage.getArkExitClaimHistory(walletId)
             val movements =
                 history
                     .map {
@@ -5851,8 +8372,9 @@ class ArkRepository(
                         )
                     }
                     .let { mapped ->
+                        reconcilePendingClaimLocked(walletId)
                         val claimMovements =
-                            secureStorage.getArkExitClaimHistory(walletId).map { claim ->
+                            claimHistory.map { claim ->
                                 val confirmed =
                                     claim.vtxoIds.isNotEmpty() &&
                                         claim.vtxoIds.all { vtxoId ->
@@ -5886,7 +8408,7 @@ class ArkRepository(
                         val withPendingDeposit =
                             addPendingOnchainDepositMovement(
                                 movements = withRecovered,
-                                previousMovements = previousState.movements,
+                                previousMovements = carryPrevious?.movements.orEmpty(),
                                 confirmedSats = resolvedOnchainConfirmed,
                                 pendingSats = resolvedOnchainPending,
                                 pendingBoardSats = balance.pendingBoardSats.toLong(),
@@ -5894,8 +8416,8 @@ class ArkRepository(
                                 // Prefer stable cached deposit address; never invent a rotated one
                                 // solely for the synthetic history row.
                                 depositAddress =
-                                    previousState.movements
-                                        .firstOrNull {
+                                    carryPrevious?.movements
+                                        ?.firstOrNull {
                                             ArkDepositPolicy.isSyntheticPendingOnchainDeposit(it)
                                         }
                                         ?.receivedOnAddresses
@@ -5911,16 +8433,48 @@ class ArkRepository(
                             )
                         // Fresh session: Bark history() is often empty after mailbox VTXO
                         // recovery — never clobber SecureStorage-painted movements with [].
+                        // The journal also guards id-space resets: Bark movement ids are
+                        // per-DB row ids, so any session recreation restarts them.
+                        val journaledMovements =
+                            filterFailedSendPhantoms(
+                                walletId,
+                                secureStorage.getArkMovementJournal(walletId),
+                            )
+                        val previousMovements =
+                            filterFailedSendPhantoms(
+                                walletId,
+                                (carryPrevious?.movements.orEmpty() + journaledMovements)
+                                    .distinctBy { ArkDepositPolicy.movementUnionKey(it) },
+                            )
+                        val liveWithoutGhosts =
+                            filterFailedSendPhantoms(walletId, withPendingDeposit)
                         val mergedHistory =
-                            ArkDepositPolicy.mergePreservedMovements(
-                                live = withPendingDeposit,
-                                previous = previousState.movements,
+                            filterFailedSendPhantoms(
+                                walletId,
+                                ArkDepositPolicy.mergePreservedMovements(
+                                    live = liveWithoutGhosts,
+                                    previous = previousMovements,
+                                ),
                             )
                         filterHiddenArkMovements(
                             walletId,
                             attachPendingSendDestinationToList(walletId, mergedHistory),
                         )
                     }
+            // Journal painted history so rows survive session-DB recreation and
+            // restarts where Bark returns newest-only/empty history.
+            persistMovementJournal(walletId, movements)
+            // A failed send's Bark ghost must never survive in the journal even if
+            // it was journaled before the tombstone existed.
+            runCatching {
+                val journal = secureStorage.getArkMovementJournal(walletId)
+                if (journal.isNotEmpty()) {
+                    val filtered = filterFailedSendPhantoms(walletId, journal)
+                    if (filtered.size != journal.size) {
+                        secureStorage.saveArkMovementJournal(walletId, filtered)
+                    }
+                }
+            }
             // Persist proven-used addresses, then rotate current receive past them.
             rememberUsedAddressesFromMovements(walletId, movements)
             val unusedAfterHistory =
@@ -5941,8 +8495,22 @@ class ArkRepository(
                 bitcoinAddress = unusedBitcoinAfterHistory,
             )
             val wasAspHydrated = aspHydratedWalletId == walletId
+            relockActiveExitsLocked(w)
             // Drop refresh tracking once the round is gone or submitted VTXO ids were replaced.
             reconcileTrackedRefreshLocked(w, allVtxos.map { it.id })
+            // Exits the mailbox scan saw but this session cannot find live,
+            // progressing, or claimed: surface instead of silently dropping.
+            val unrecoveredExitIds =
+                run {
+                    val liveExitIds =
+                        (exitList.map { it.vtxoId } + claimableList.map { it.vtxoId }).toSet()
+                    if (lastMailboxExitedIds.isEmpty()) {
+                        emptyList()
+                    } else {
+                        val claimedExitIds = claimHistory.flatMap { it.vtxoIds }.toSet()
+                        lastMailboxExitedIds.filter { it !in liveExitIds && it !in claimedExitIds }
+                    }
+                }
             _arkState.value =
                 ArkWalletState(
                     walletId = walletId,
@@ -5964,9 +8532,22 @@ class ArkRepository(
                     vtxos = allVtxos.map { it.toArkVtxo() },
                     vtxosToRefresh = mappedRefresh,
                     expiringSoonVtxos = mappedExpiring,
-                    exitVtxos = exitList.map { it.toArkExitVtxo() },
-                    claimableExitVtxos = claimableList.map { it.toArkExitVtxo() },
-                    hasPendingExits = pendingExits || exitList.isNotEmpty(),
+                     exitVtxos =
+                         exitList
+                             .map { it.toArkExitVtxo(vtxoWeightsById) }
+                             .filter { !ArkBarkMappers.isTerminalExitLabel(it.state) },
+                     claimableExitVtxos = claimableList.map { it.toArkExitVtxo(vtxoWeightsById) },
+                     hasPendingExits =
+                         ArkUnilateralExitPolicy.computeHasPendingExits(
+                             barkHasPending = pendingExits,
+                             exitStates = exitList.map { ArkBarkMappers.exitStateLabel(it.state) },
+                         ),
+                      onchainWalletOpen = onchainWallet != null,
+                      exitFeeRateSatPerVb = lastExitFeeRateSatPerVb,
+                      // Clear a stale banner once manual refresh fixed the due list.
+                      autoRefreshNeedsAttention =
+                          lastAutoRefreshFailed &&
+                              (mappedRefresh.isNotEmpty() || mappedExpiring.isNotEmpty()),
                     nextRefreshHeight = nextRefresh,
                     firstExpiringHeight = firstExpiring,
                     chainTipHeight = tipHeight,
@@ -5979,18 +8560,19 @@ class ArkRepository(
                     aspHydrated = wasAspHydrated,
                     minBoardAmountSats = minBoardAmountSats,
                     requiredBoardConfirmations = requiredBoardConfirmations,
+                    exitDeltaBlocks = exitDeltaBlocks,
+                    roundIntervalSecs = roundIntervalSecs,
+                    unrecoveredExitIds = unrecoveredExitIds,
                 )
-            // Never persist empty movements over a non-empty cache while funds/VTXOs exist
-            // (mailbox recovery session: history not yet rehydrated).
+            // Never persist empty movements over a non-empty cache.
+            // Fresh mailbox sessions often return empty history() — that must not
+            // clobber SecureStorage-painted movements, even for a drained (0 + empty
+            // vtxos) wallet where balance already proves the drain.
             val stateToCache = _arkState.value
             val priorCache = secureStorage.getArkWalletStateCache(walletId)
             val priorMovements = priorCache?.movements.orEmpty()
             val cacheSafe =
-                if (
-                    stateToCache.movements.isEmpty() &&
-                        priorMovements.isNotEmpty() &&
-                        (stateToCache.totalSats > 0L || stateToCache.vtxos.isNotEmpty())
-                ) {
+                if (stateToCache.movements.isEmpty() && priorMovements.isNotEmpty()) {
                     stateToCache.copy(movements = priorMovements)
                 } else {
                     stateToCache
@@ -6039,14 +8621,23 @@ class ArkRepository(
                     fingerprint = arkStateBackupFingerprint(refreshed),
                 )
             }
+            publishMailboxRescanBlockedLocked()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            // A throw before the hydrate relock must not leave exiting VTXOs
+            // unlocked for refresh to spend — best-effort relock here.
+            runCatching { wallet?.let { relockActiveExitsLocked(it) } }
             _arkState.value =
                 _arkState.value.copy(
                     isSyncing = isSyncSpinnerHeld(),
                     error = publicError(e),
                 )
+            publishMailboxRescanBlockedLocked()
+            if (isSessionDbError(e)) {
+                val id = _loadedWalletId.value.orEmpty().ifBlank { _arkState.value.walletId.orEmpty() }
+                if (id.isNotBlank()) scheduleSessionDbReopen(id)
+            }
         }
     }
 
@@ -6060,46 +8651,33 @@ class ArkRepository(
     private suspend fun unloadLocked(
         disposeHandles: Boolean = true,
         persistCache: Boolean = true,
+        backgroundBusy: Boolean = false,
     ): Pair<Wallet?, OnchainWallet?>? {
-        val postOpen = postOpenSyncJob
-        postOpenSyncJob = null
-        lightningReceiveWatchJob?.cancel()
-        lightningReceiveWatchJob = null
-        receiveLightningBaselineSats = -1L
-        val staleJobs =
-            listOfNotNull(
-                notificationJob,
-                deferredBoardJob,
-                autoRefreshJob,
-                autoDbBackupJob,
-                manualRefreshJob,
-            )
-        notificationJob = null
-        notificationWallet = null
-        deferredBoardJob = null
-        autoRefreshJob = null
-        autoDbBackupJob = null
-        manualRefreshJob = null
         trackedRefreshRoundId = null
         trackedRefreshScheduledHeight = null
         trackedRefreshAutomatic = false
         trackedRefreshVtxoIds = emptyList()
         // Wallet state is wiped below; no need to publishPendingRefresh here.
+        _mailboxRescanBlocked.value = false
         cancelDatadirLockReopen()
+        cancelSessionDbReopen()
         datadirLockReopenAttempts = 0
-        postOpen?.cancel()
-        staleJobs.forEach { it.cancel() }
-        // Wait for in-flight native FFI calls to unwind before closing handles below.
-        // Cancellation alone cannot interrupt a blocking Bark call — closing while a
-        // collector/board/refresh job is inside the native lib aborts the process.
-        // Post-open ASP sync can run longer than notification collectors; give it more time
-        // so DB import does not dispose mid-sync (SIGABRT).
-        withTimeoutOrNull(ARK_POST_OPEN_JOIN_TIMEOUT_MS) { postOpen?.join() }
-        withTimeoutOrNull(ARK_JOB_JOIN_TIMEOUT_MS) { staleJobs.joinAll() }
+        sessionDbReopenAttempts = 0
+        pendingForcedSessionReopen = false
+        val nativeBusy = backgroundBusy || exitOperationMutex.isLocked
         lastNeedsRefreshEmitMs = 0L
         lastRefreshSoonEmitMs = 0L
+        crossDeviceDriftRescanWalletId = null
+        mailboxRescanOwedWalletId = null
+        mailboxRescanOwedAtMs = 0L
+        staleInputFailureStreak = 0
         lastAutoRefreshAttemptMs = 0L
         lastAutoRefreshFailed = false
+        lastExitFeeRateSatPerVb = 0L
+        lastMailboxExitedIds = emptyList()
+        // Job handles are detached + joined outside [mutex] before this runs
+        // (see detachBackgroundJobsLocked/joinDetachedJobs) — only clear paint.
+        _emergencyExitFeeQuote.value = null
         lastKnownChainTipHeight = null
         lastAutoDbBackupFingerprint = null
         onchainRevealCatchUpDone = false
@@ -6119,8 +8697,24 @@ class ArkRepository(
                 !displayWalletId.isNullOrBlank() &&
                 unloadedWalletId != displayWalletId
         val walletIdForCache = unloadedWalletId ?: displayWalletId
-        if (disposeHandles) {
-            // Close under the load mutex so Esplora reloads don't race a still-open Bark DB.
+        val parkNative =
+            nativeBusy && current != null
+        if (parkNative) {
+            // Single-slot park: dispose any previous leftover first so repeated
+            // busy unloads cannot leak a daemon + datadir lock.
+            val stale = unattachedBarkHandles
+            if (stale != null && stale.wallet !== current) {
+                unattachedBarkHandles = null
+                eventScope.launch {
+                    nativeHandleMutex.withLock { disposeOpenedArkWalletLocked(stale) }
+                    stopEsploraRelays()
+                }
+            }
+            unattachedBarkHandles = OpenedArkWallet(current, currentOnchain)
+            // No follow-up open is guaranteed (user may have left Ark entirely):
+            // reap the parked daemon instead of leaving the wallet alive.
+            scheduleParkedHandlesReap()
+        } else if (disposeHandles) {
             disposeBarkHandles(current, currentOnchain)
             stopEsploraRelays()
             flushPendingSessionDirDeletes()
@@ -6140,6 +8734,7 @@ class ArkRepository(
         pendingSendDestination = null
         pendingSendAmountSats = null
         pendingSendKind = null
+        sendInFlight.set(false)
         if (switchedAway) {
             // Display already retargeted via beginConnecting — leave next-wallet paint alone.
         } else if (walletIdForCache.isNullOrBlank()) {
@@ -6149,7 +8744,7 @@ class ArkRepository(
         } else {
             applyDisconnectedArkStateLocked(walletIdForCache, persistCache = persistCache)
         }
-        return if (disposeHandles) null else (current to currentOnchain)
+        return if (disposeHandles || parkNative) null else (current to currentOnchain)
     }
 
     /**
@@ -6174,60 +8769,79 @@ class ArkRepository(
         if (!ArkRefreshPolicy.shouldRunAutoRefresh(_arkState.value.needsRefresh, _arkState.value.refreshSoon)) return
         val now = System.currentTimeMillis()
         if (now - lastAutoRefreshAttemptMs < autoRefreshCooldownMs()) return
+        val plannedWallet = wallet ?: return
         autoRefreshJob =
             eventScope.launch {
-                var shouldReschedule = false
-                try {
+                data class AutoPlan(
+                    val wallet: Wallet,
+                    val targets: List<String>,
+                    val scheduledHeight: Int?,
+                    val fee: Long,
+                )
+                val plan =
                     mutex.withLock {
-                        if (!secureStorage.isArkAutoDelegatedRefreshEnabled()) return@withLock
-                        val w = wallet ?: return@withLock
-                        if (!_isConnected.value) return@withLock
-                        if (_arkState.value.isAutoRefreshing) return@withLock
+                        if (!secureStorage.isArkAutoDelegatedRefreshEnabled()) return@withLock null
+                        val w = wallet
+                        if (w == null || w !== plannedWallet || !_isConnected.value) return@withLock null
+                        if (_arkState.value.isAutoRefreshing) return@withLock null
                         if (!ArkRefreshPolicy.shouldRunAutoRefresh(
                                 _arkState.value.needsRefresh,
                                 _arkState.value.refreshSoon,
                             )
                         ) {
-                            return@withLock
+                            return@withLock null
                         }
-                        // Re-check cooldown under lock (another job may have started).
                         val lockedNow = System.currentTimeMillis()
                         if (lockedNow - lastAutoRefreshAttemptMs < autoRefreshCooldownMs()) {
-                            return@withLock
+                            return@withLock null
                         }
-                        val due = w.getVtxosToRefresh().map { it.toArkVtxo() }
-                        val allVtxos =
-                            if (due.isEmpty()) {
-                                w.vtxos()
-                                    .map { it.toArkVtxo() }
-                                    .filter { ArkBarkMappers.isSpendableLabel(it.state) }
-                            } else {
-                                emptyList()
-                            }
-                        val firstExpiry = _arkState.value.firstExpiringHeight
-                        val targetVtxos = ArkRefreshPolicy.autoRefreshTargets(due, allVtxos, firstExpiry)
-                        val targets = targetVtxos.map { it.id }
-                        if (targets.isEmpty()) return@withLock
-                        val tip = resolveChainTipHeight()
-                        val nextHeight = _arkState.value.nextRefreshHeight
-                        val scheduledHeight =
-                            ArkRefreshPolicy.scheduledHeight(
-                                nextHeight,
-                                firstExpiry,
-                                tip,
-                                targetVtxos,
-                            )
-                        val fee =
-                            if (scheduledHeight != null) {
-                                estimateScheduledRefreshFeeLocked(w, targetVtxos, scheduledHeight)
-                            } else {
-                                runCatching { w.estimateRefreshFee(targets).feeSats.toLong() }.getOrNull()
-                            }
+                        Triple(w, lockedNow, _arkState.value)
+                    } ?: return@launch
+                val w = plan.first
+                val lockedNow = plan.second
+                val snap = plan.third
+                val due = w.getVtxosToRefresh().map { it.toArkVtxo() }
+                val allVtxos =
+                    if (due.isEmpty()) {
+                        w.vtxos()
+                            .map { it.toArkVtxo() }
+                            .filter { ArkBarkMappers.isSpendableLabel(it.state) }
+                    } else {
+                        emptyList()
+                    }
+                val firstExpiry = snap.firstExpiringHeight
+                val targetVtxos = ArkRefreshPolicy.autoRefreshTargets(due, allVtxos, firstExpiry)
+                val targets = targetVtxos.map { it.id }
+                if (targets.isEmpty()) return@launch
+                val tip = resolveChainTipHeight()
+                val scheduledHeight =
+                    ArkRefreshPolicy.scheduledHeight(
+                        snap.nextRefreshHeight,
+                        firstExpiry,
+                        tip,
+                        targetVtxos,
+                    )
+                val fee =
+                    if (scheduledHeight != null) {
+                        estimateScheduledRefreshFeeLocked(w, targetVtxos, scheduledHeight)
+                    } else {
+                        runCatching { w.estimateRefreshFee(targets).feeSats.toLong() }.getOrNull()
+                    }
+                val committed =
+                    mutex.withLock {
+                        if (wallet !== w || !_isConnected.value) return@withLock null
                         val dailyRemaining = autoRefreshDailyRemainingLocked()
-                        val overPerAttempt = fee == null || fee > AUTO_REFRESH_MAX_FEE_SATS
-                        val overDaily = fee == null || fee > dailyRemaining
-                        if (overPerAttempt || overDaily || dailyRemaining <= 0L) {
-                            // Too expensive to silent-auto — banner only; do not burn cooldown.
+                        val skipFee =
+                            ArkRefreshPolicy.shouldSkipAutoRefreshForFee(
+                                feeSats = fee,
+                                needsRefresh = _arkState.value.needsRefresh,
+                                maxFeeSats = AUTO_REFRESH_MAX_FEE_SATS,
+                                dailyRemainingSats = dailyRemaining,
+                            )
+                        if (skipFee) {
+                            lastAutoRefreshFailed = true
+                            _arkState.value =
+                                _arkState.value.copy(autoRefreshNeedsAttention = true)
                             val emitNow = System.currentTimeMillis()
                             if (emitNow - lastNeedsRefreshEmitMs > REFRESH_SIGNAL_COOLDOWN_MS) {
                                 lastNeedsRefreshEmitMs = emitNow
@@ -6239,70 +8853,88 @@ class ArkRepository(
                                     ),
                                 )
                             }
-                            return@withLock
+                            return@withLock null
                         }
-                        // Commit cooldown only once we are about to spend / hit the ASP.
                         lastAutoRefreshAttemptMs = lockedNow
                         lastAutoRefreshFailed = false
-                        _arkState.value = _arkState.value.copy(isAutoRefreshing = true)
-                        try {
-                            _events.tryEmit(
-                                ArkEvent.NeedsRefresh(
-                                    vtxoCount = targets.size,
-                                    nextRefreshHeight = _arkState.value.nextRefreshHeight,
-                                    autoStarted = true,
-                                ),
+                        _arkState.value =
+                            _arkState.value.copy(
+                                isAutoRefreshing = true,
+                                autoRefreshNeedsAttention = false,
                             )
-                            val result =
-                                runDelegatedRefreshWithFallbackLocked(
-                                    wallet = w,
-                                    vtxoIds = targets,
-                                    preferDelegated = true,
-                                    allowNonDelegatedFallback = false,
-                                    scheduledHeight = scheduledHeight,
-                                )
-                            trackedRefreshRoundId = result.roundId
-                            trackedRefreshScheduledHeight = result.scheduledHeight
-                            trackedRefreshAutomatic = true
-                            trackedRefreshVtxoIds =
-                                (trackedRefreshVtxoIds + targets).distinct()
-                            publishPendingRefreshToWalletStateLocked()
-                            recordAutoRefreshFeeLocked(checkNotNull(fee))
-                            refreshStateLocked(sync = false, attemptBoard = false)
-                            lastAutoRefreshFailed = false
-                            _events.tryEmit(
-                                ArkEvent.RefreshSubmitted(
-                                    automatic = true,
-                                    scheduledHeight = result.scheduledHeight,
-                                    vtxoCount = targets.size,
-                                ),
-                            )
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            lastAutoRefreshFailed = true
-                            _events.tryEmit(
-                                ArkEvent.RefreshFailed(
-                                    message = publicError(e),
-                                    automatic = true,
-                                    delegated = true,
-                                ),
-                            )
-                        } finally {
-                            _arkState.value = _arkState.value.copy(isAutoRefreshing = false)
-                            shouldReschedule =
-                                secureStorage.isArkAutoDelegatedRefreshEnabled() &&
-                                    _isConnected.value &&
-                                    trackedRefreshRoundId == null &&
-                                    ArkRefreshPolicy.shouldRunAutoRefresh(
-                                        _arkState.value.needsRefresh,
-                                        _arkState.value.refreshSoon,
-                                    )
+                        AutoPlan(w, targets, scheduledHeight, fee ?: 0L)
+                    } ?: return@launch
+                _events.tryEmit(
+                    ArkEvent.NeedsRefresh(
+                        vtxoCount = committed.targets.size,
+                        nextRefreshHeight = _arkState.value.nextRefreshHeight,
+                        autoStarted = true,
+                    ),
+                )
+                var shouldReschedule = false
+                try {
+                    val result =
+                        runDelegatedRefreshWithFallbackLocked(
+                            wallet = committed.wallet,
+                            vtxoIds = committed.targets,
+                            preferDelegated = true,
+                            // Auto is fee-capped delegated-only: never silently submit
+                            // the costlier non-cooperative path. Manual can still fall back.
+                            allowNonDelegatedFallback = false,
+                            scheduledHeight = committed.scheduledHeight,
+                        )
+                    mutex.withLock {
+                        if (wallet !== committed.wallet) return@withLock
+                        trackedRefreshRoundId = result.roundId
+                        trackedRefreshScheduledHeight = result.scheduledHeight
+                        trackedRefreshAutomatic = true
+                        trackedRefreshVtxoIds =
+                            (trackedRefreshVtxoIds + committed.targets).distinct()
+                        publishPendingRefreshToWalletStateLocked()
+                        recordAutoRefreshFeeLocked(committed.fee)
+                        refreshStateLocked(sync = false, attemptBoard = false)
+                        lastAutoRefreshFailed = false
+                        _arkState.value =
+                            _arkState.value.copy(autoRefreshNeedsAttention = false)
+                    }
+                    _events.tryEmit(
+                        ArkEvent.RefreshSubmitted(
+                            automatic = true,
+                            scheduledHeight = result.scheduledHeight,
+                            vtxoCount = committed.targets.size,
+                        ),
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    mutex.withLock {
+                        lastAutoRefreshFailed = true
+                        if (wallet === committed.wallet) {
+                            _arkState.value =
+                                _arkState.value.copy(autoRefreshNeedsAttention = true)
                         }
                     }
+                    _events.tryEmit(
+                        ArkEvent.RefreshFailed(
+                            message = publicError(e),
+                            automatic = true,
+                            delegated = true,
+                        ),
+                    )
                 } finally {
-                    // Outside the prior withLock: pick up remaining due VTXOs after failure retry window
-                    // or if Bark still lists due notes (respects cooldown / failure retry).
+                    mutex.withLock {
+                        if (wallet === committed.wallet) {
+                            _arkState.value = _arkState.value.copy(isAutoRefreshing = false)
+                        }
+                        shouldReschedule =
+                            secureStorage.isArkAutoDelegatedRefreshEnabled() &&
+                                _isConnected.value &&
+                                trackedRefreshRoundId == null &&
+                                ArkRefreshPolicy.shouldRunAutoRefresh(
+                                    _arkState.value.needsRefresh,
+                                    _arkState.value.refreshSoon,
+                                )
+                    }
                     if (shouldReschedule) {
                         mutex.withLock { maybeScheduleAutoRefreshLocked() }
                     }
@@ -6386,6 +9018,12 @@ class ArkRepository(
             return
         }
         if (barkWallet != null) {
+            // Wait for daemon tasks to finish (bark 0.7.0+) so nothing writes to
+            // the datadir after close. Bounded — on timeout fall back to the
+            // fire-and-forget stop below rather than hanging unload.
+            runCatching {
+                withTimeoutOrNull(ARK_JOB_JOIN_TIMEOUT_MS) { barkWallet.stopDaemonWait() }
+            }
             runCatching { barkWallet.stopDaemon() }
             runCatching { barkWallet.close() }
         }
@@ -6397,6 +9035,9 @@ class ArkRepository(
     private suspend fun disposeOpenedArkWalletLocked(opened: OpenedArkWallet) {
         if (opened.wallet === closedUnattachedWallet) return
         closedUnattachedWallet = opened.wallet
+        runCatching {
+            withTimeoutOrNull(ARK_JOB_JOIN_TIMEOUT_MS) { opened.wallet.stopDaemonWait() }
+        }
         runCatching { opened.wallet.stopDaemon() }
         runCatching { opened.wallet.close() }
         opened.onchain?.let { runCatching { it.close() } }
@@ -6405,6 +9046,71 @@ class ArkRepository(
     private fun cancelDatadirLockReopen() {
         datadirLockReopenJob?.cancel()
         datadirLockReopenJob = null
+    }
+
+    private fun cancelSessionDbReopen() {
+        sessionDbReopenJob?.cancel()
+        sessionDbReopenJob = null
+    }
+
+    /**
+     * Deferred kill for native handles parked by [unloadLocked]. Runs only while a
+     * leftover is parked and no load is in flight (a fresh open consumes the leftover
+     * itself). Guarantees a deselected wallet's Bark daemon always dies — switching
+     * wallets, leaving Ark, or deleting the wallet must never leave it running.
+     */
+    private fun scheduleParkedHandlesReap() {
+        if (parkedHandlesReapJob?.isActive == true) return
+        parkedHandlesReapJob =
+            eventScope.launch {
+                try {
+                    // Grace period: a quick switch-back consumes the parked session
+                    // on open instead of paying a full close + reopen.
+                    delay(PARKED_HANDLES_REAP_GRACE_MS)
+                    while (unattachedBarkHandles != null) {
+                        val quietGeneration = loadGeneration.get()
+                        delay(PARKED_HANDLES_REAP_QUIET_MS)
+                        if (unattachedBarkHandles == null) break
+                        // A new load owns the leftover — never race its open/attach.
+                        if (loadGeneration.get() != quietGeneration) continue
+                        if (_isConnecting.value) continue
+                        nativeHandleMutex.withLock {
+                            val leftover = unattachedBarkHandles ?: return@withLock
+                            if (leftover.wallet === wallet) return@withLock
+                            unattachedBarkHandles = null
+                            disposeOpenedArkWalletLocked(leftover)
+                        }
+                        delay(PARKED_HANDLES_REAP_RETRY_MS)
+                    }
+                } finally {
+                    if (parkedHandlesReapJob === coroutineContext[Job]) {
+                        parkedHandlesReapJob = null
+                    }
+                }
+            }
+    }
+
+    /**
+     * Cache-evicted or unreadable Bark SQLite: drop the stale native handle and reopen
+     * so mailbox recovery can rebuild the session without an app restart.
+     */
+    private fun scheduleSessionDbReopen(walletId: String) {
+        if (walletId.isBlank()) return
+        if (sessionDbReopenAttempts >= ArkSessionDbErrorPolicy.MAX_AUTO_REOPENS) return
+        sessionDbReopenAttempts += 1
+        val scheduledGeneration = loadGeneration.get()
+        cancelSessionDbReopen()
+        pendingForcedSessionReopen = true
+        sessionDbReopenJob =
+            eventScope.launch {
+                delay(ArkSessionDbErrorPolicy.retryDelayMs(sessionDbReopenAttempts))
+                if (loadGeneration.get() != scheduledGeneration) return@launch
+                if (_isConnecting.value) return@launch
+                if (_arkState.value.walletId != walletId) return@launch
+                if (!isEligible(walletId)) return@launch
+                SecureLog.w(TAG, "Ark session DB — automatic reopen")
+                runCatching { loadWallet(walletId) }
+            }
     }
 
     /**
@@ -6419,7 +9125,7 @@ class ArkRepository(
         cancelDatadirLockReopen()
         datadirLockReopenJob =
             eventScope.launch {
-                delay(ArkDatadirLockPolicy.retryDelayMs(datadirLockReopenAttempts + 1))
+                delay(ArkDatadirLockPolicy.retryDelayMs(datadirLockReopenAttempts))
                 if (loadGeneration.get() != scheduledGeneration) return@launch
                 if (_isConnected.value || _isConnecting.value) return@launch
                 if (_arkState.value.walletId != walletId) return@launch
@@ -6435,12 +9141,47 @@ class ArkRepository(
     }
 
     private fun startNotificationsLocked(opened: Wallet) {
-        notificationJob?.cancel()
+        val prev = notificationJob.takeIf { notificationWallet !== opened }
+        val prevWallet = notificationWallet.takeIf { notificationWallet !== opened }
+        prev?.cancel()
+        // Join the previous collector outside the attach path: cancel cannot
+        // interrupt a blocking native notificationsFlow, so bound the overlap
+        // instead of disposing its handle underneath it.
+        if (prev != null) {
+            eventScope.launch {
+                withTimeoutOrNull(ARK_JOB_JOIN_TIMEOUT_MS) { prev.join() }
+            }
+        }
+        if (prevWallet != null && prevWallet !== opened) {
+            SecureLog.w(TAG, "Ark notifications collector superseded")
+            // Never drop the previous handle: park it for the reaper so a fast
+            // re-attach cannot leak a daemon + datadir lock.
+            val orphan = prevWallet
+            val stale = unattachedBarkHandles
+            if (stale != null && stale.wallet !== orphan) {
+                unattachedBarkHandles = null
+                eventScope.launch {
+                    nativeHandleMutex.withLock { disposeOpenedArkWalletLocked(stale) }
+                }
+            }
+            // Only park if not already tracked; the superseded collector owns it
+            // until its join above completes, and the reaper waits for quiet.
+            if (unattachedBarkHandles?.wallet !== orphan) {
+                // Find its onchain counterpart if still parked alongside; else null.
+                // Park wallet-only: onchain (if any) is closed with the wallet reap.
+                unattachedBarkHandles = OpenedArkWallet(orphan, null)
+                scheduleParkedHandlesReap()
+            }
+        }
         notificationWallet = opened
+        val attachGeneration = loadGeneration.get()
         notificationJob =
             eventScope.launch {
                 runCatching {
                     opened.notificationsFlow().collect { event ->
+                        // Stale collector from a superseded wallet must never paint
+                        // or refresh the newly attached session.
+                        if (wallet !== opened || loadGeneration.get() != attachGeneration) return@collect
                         when (event) {
                             is WalletNotification.MovementCreated -> {
                                 val amount = event.movement.effectiveBalanceSats
@@ -6453,17 +9194,22 @@ class ArkRepository(
                                     )
                                 }
                                 mutex.withLock {
+                                    if (wallet !== opened) return@withLock
                                     checkLightningReceivePaidLocked()
                                     refreshStateLocked(sync = false)
                                 }
                             }
                             is WalletNotification.MovementUpdated ->
                                 mutex.withLock {
+                                    if (wallet !== opened) return@withLock
                                     checkLightningReceivePaidLocked()
                                     refreshStateLocked(sync = false)
                                 }
                             is WalletNotification.ChannelLagging ->
-                                mutex.withLock { refreshStateLocked(sync = false) }
+                                mutex.withLock {
+                                    if (wallet !== opened) return@withLock
+                                    refreshStateLocked(sync = false)
+                                }
                         }
                     }
                 }
@@ -6533,6 +9279,9 @@ class ArkRepository(
             daemonManualSync = null,
             lightningReceiveClaimRetries = null,
             userAgent = ArkDefaults.USER_AGENT,
+            // Null keeps Bark's default VTXO key gap limit (250): bounds how many
+            // consecutive unused key indices a mailbox recovery scan crosses.
+            vtxoKeyGapLimit = null,
         )
 
     private fun normalizeEsploraUrl(url: String): String = url.trim().trimEnd('/')
@@ -6558,8 +9307,7 @@ class ArkRepository(
     ) {
         val pref = normalizeEsploraUrl(preferred)
         val act = normalizeEsploraUrl(active)
-        if (pref.isBlank() || act.isBlank()) return
-        if (pref.equals(act, ignoreCase = true)) return
+        if (!ArkEsploraOpenPolicy.shouldNotifyFallback(pref, act)) return
         if (isOnionEsplora(pref)) return
         _events.tryEmit(
             ArkEvent.EsploraFallbackUsed(
@@ -6572,14 +9320,16 @@ class ArkRepository(
     private fun isOnionEsplora(url: String): Boolean =
         runCatching {
             java.net.URI(normalizeEsploraUrl(url)).host?.endsWith(".onion", ignoreCase = true) == true
-        }.getOrElse {
-            normalizeEsploraUrl(url).contains(".onion", ignoreCase = true)
-        }
+        }.getOrDefault(false)
 
     private fun esploraCandidates(): List<String> {
         val preferred = normalizeEsploraUrl(secureStorage.getArkEsploraAddress())
         // Onion is explicit privacy choice — don't silently fall back to clearnet.
         if (isOnionEsplora(preferred)) {
+            return listOf(preferred)
+        }
+        // Fail-closed mode: only the configured host is ever contacted.
+        if (!secureStorage.getArkEsploraAutoFallback()) {
             return listOf(preferred)
         }
         val lastGood =
@@ -6633,7 +9383,11 @@ class ArkRepository(
                 SecureLog.w(TAG, "All Esplora preflights failed")
             }
             ArkOpenEndpoints(
-                esploraOrder = ArkEsploraOpenPolicy.orderForOpen(reachable),
+                esploraOrder =
+                    ArkEsploraOpenPolicy.orderForOpen(
+                        reachable,
+                        preferred = secureStorage.getArkEsploraAddress(),
+                    ),
                 aspReachable = aspOk,
             )
         }
@@ -6678,7 +9432,15 @@ class ArkRepository(
     private fun preflightClearnetHttps(url: String): Boolean {
         val normalized = url.trim().trimEnd('/')
         if (normalized.isBlank()) return false
-        if (isOnionEsplora(normalized)) return true
+        // Bark cannot dial .onion ASP (no Tor path in current bindings) — fail fast
+        // with asp_unreachable instead of hanging native DNS inside Wallet.open.
+        if (isOnionEsplora(normalized)) {
+            SecureLog.w(TAG, "Ark ASP onion unsupported by Bark bindings: $normalized")
+            return false
+        }
+        if (secureStorage.isTorEnabled()) {
+            SecureLog.w(TAG, "Ark ASP connects direct even with Tor on (Bark limitation)")
+        }
         return runCatching {
             val request =
                 Request.Builder()
@@ -6711,6 +9473,14 @@ class ArkRepository(
         stopEsploraRelays()
         configuredEsploraUrl = esplora
         if (!isOnionEsplora(esplora)) {
+            // Fail-closed privacy: Tor ON + clearnet Esplora would leak
+            // balance/deposit/tip queries outside Tor. Block instead of dialing
+            // direct — user picks onion Esplora or turns Tor off.
+            if (secureStorage.isTorEnabled()) {
+                throw IllegalStateException(
+                    localizedString(R.string.ark_error_tor_clearnet_blocked),
+                )
+            }
             val relay = EsploraClearnetRelay.fromUrl(esplora)
             if (relay == null) return esplora
             val localBase = relay.start()
@@ -6718,8 +9488,8 @@ class ArkRepository(
             SecureLog.w(TAG, "Clearnet Esplora via IPv4 loopback relay $localBase → $esplora")
             return localBase
         }
-        val onionHost =
-            EsploraTorRelay.onionHostFromEsploraUrl(esplora)
+        val relay =
+            EsploraTorRelay.fromUrl(esplora)
                 ?: error("Invalid onion Esplora URL")
         if (!torManager.isReady()) {
             torManager.start()
@@ -6728,10 +9498,9 @@ class ArkRepository(
             }
             delay(TOR_POST_BOOTSTRAP_DELAY_MS)
         }
-        val relay = EsploraTorRelay(onionHost = onionHost)
         val localBase = relay.start()
         esploraTorRelay = relay
-        SecureLog.w(TAG, "Onion Esplora via loopback relay $localBase → $onionHost")
+        SecureLog.w(TAG, "Onion Esplora via loopback relay $localBase → $esplora")
         return localBase
     }
 
@@ -6822,7 +9591,11 @@ class ArkRepository(
         skipRecovery: Boolean,
     ): OpenedArkWallet {
         var lastError: Exception? = null
-        val hosts = ArkEsploraOpenPolicy.orderForOpen(esploraOrder)
+        val hosts =
+            ArkEsploraOpenPolicy.orderForOpen(
+                esploraOrder,
+                preferred = secureStorage.getArkEsploraAddress(),
+            )
         if (hosts.isEmpty()) {
             throw lastError ?: Exception(localizedString(R.string.ark_error_chain_source))
         }
@@ -6846,6 +9619,8 @@ class ArkRepository(
                         run {
                             val onchainDatadir =
                                 File(datadir, "onchain").apply { mkdirs() }.absolutePath
+                            val needsInitialScan =
+                                File(onchainDatadir).listFiles().orEmpty().none { it.isFile && it.length() > 0L }
                             val onchain =
                                 OnchainWallet.default(
                                     network = Network.BITCOIN,
@@ -6854,6 +9629,15 @@ class ArkRepository(
                                     datadir = onchainDatadir,
                                 )
                             try {
+                                if (needsInitialScan) {
+                                    runCatching { onchain.initialScan(null) }
+                                        .onFailure {
+                                            SecureLog.w(
+                                                TAG,
+                                                "Ark on-chain initialScan failed: ${publicError(it)}",
+                                            )
+                                        }
+                                }
                                 openBarkWallet(
                                     credentials.mnemonicOrSeed,
                                     config,
@@ -6965,51 +9749,17 @@ class ArkRepository(
         )
     }
 
-    private fun emitBoardBelowMinimumThrottled(
-        onchainConfirmedSats: Long,
-        minBoardAmountSats: Long,
-    ) {
-        val now = System.currentTimeMillis()
-        if (now - lastBoardBelowMinEmitMs < ONCHAIN_UNAVAILABLE_COOLDOWN_MS) return
-        lastBoardBelowMinEmitMs = now
-        val shortfall =
-            ArkDepositPolicy.shortfallToMinBoard(onchainConfirmedSats, minBoardAmountSats)
-        val minLabel = "$minBoardAmountSats sats"
-        val message =
-            if (shortfall != null && shortfall > 0L) {
-                localizedString(
-                    R.string.ark_board_below_min_shortfall_format,
-                    "$onchainConfirmedSats sats",
-                    minLabel,
-                    "$shortfall sats",
-                )
-            } else {
-                localizedString(
-                    R.string.ark_board_below_min_format,
-                    "$onchainConfirmedSats sats",
-                    minLabel,
-                )
-            }
-        _events.tryEmit(
-            ArkEvent.BoardBelowMinimum(
-                onchainConfirmedSats = onchainConfirmedSats,
-                minBoardAmountSats = minBoardAmountSats,
-                shortfallSats = shortfall,
-                message = message,
-            ),
-        )
-    }
-
     private suspend fun openBarkWallet(
         mnemonicOrSeed: String,
         config: Config,
         datadir: String,
         onchain: OnchainWallet?,
         skipRecovery: Boolean,
+        runDaemon: Boolean = true,
     ): Wallet {
         val openArgs =
             WalletOpenArgs(
-                runDaemon = true,
+                runDaemon = runDaemon,
                 datadir = datadir,
                 onchain = onchain,
                 createIfNotExists = true,
@@ -7071,21 +9821,11 @@ class ArkRepository(
             message.contains("blockchain")
     }
 
-    private fun isDnsOrNetworkError(error: Throwable): Boolean {
-        val message = error.message.orEmpty().lowercase()
-        return message.contains("dns") ||
-            message.contains("lookup") ||
-            message.contains("connect") ||
-            message.contains("network") ||
-            message.contains("timed out") ||
-            message.contains("timeout") ||
-            message.contains("unreachable") ||
-            message.contains("no route") ||
-            message.contains("broken pipe") ||
-            message.contains("eof") ||
-            message.contains("ssl") ||
-            message.contains("handshake")
-    }
+    private fun isDnsOrNetworkError(error: Throwable): Boolean =
+        ArkSessionDbErrorPolicy.isDnsOrNetworkError(error.message)
+
+    private fun isSessionDbError(error: Throwable): Boolean =
+        ArkSessionDbErrorPolicy.isSessionDbError(error.message)
 
     /** ASP / Esplora / lock races — keep the cached Bark DB. */
     private fun isTransientArkOpenError(error: Throwable): Boolean =
@@ -7093,6 +9833,7 @@ class ArkRepository(
 
     /** Signals that the on-disk Bark DB itself is unusable (safe to wipe + mailbox recover). */
     private fun isLocalBarkDbOpenError(error: Throwable): Boolean {
+        if (isSessionDbError(error)) return true
         val message = error.message.orEmpty().lowercase()
         return message.contains("sqlite") ||
             message.contains("database") ||
@@ -7125,6 +9866,8 @@ class ArkRepository(
         return when {
             ArkDatadirLockPolicy.isDatadirLockError(message) ->
                 localizedString(R.string.ark_error_datadir_locked)
+            ArkSessionDbErrorPolicy.isSessionDbError(message) ->
+                localizedString(R.string.ark_error_session_db)
             message.contains("dns error", ignoreCase = true) ||
                 message.contains("failed to lookup", ignoreCase = true) ->
                 localizedString(R.string.ark_error_esplora_dns)
@@ -7314,7 +10057,9 @@ class ArkRepository(
 
     private fun looksLikeBitcoinAddress(value: String): Boolean {
         val v = value.trim()
-        return v.startsWith("bc1", ignoreCase = true) ||
+        return v.startsWith("bc1q", ignoreCase = true) ||
+            v.startsWith("bc1p", ignoreCase = true) ||
+            v.startsWith("bc1", ignoreCase = true) ||
             v.startsWith("1") ||
             v.startsWith("3")
     }
@@ -7789,8 +10534,6 @@ class ArkRepository(
         val onchainTotal = (confirmedSats + pendingSats).coerceAtLeast(0L)
         val pendingBoardTotal =
             pendingBoards.sumOf { it.amountSats.toLong() }.coerceAtLeast(pendingBoardSats)
-        val minBoard =
-            _arkState.value.minBoardAmountSats?.takeIf { it > 0L }
         val now = Instant.now().toString()
         val boardTxid = chainDetails?.boardTxid ?: pendingBoards.firstOrNull()?.txid?.trim()
         val boardVtxoIds = pendingBoards.map { it.vtxoId }.filter { it.isNotBlank() }
@@ -7869,15 +10612,10 @@ class ArkRepository(
                         }
                 val amount = utxo.amountSats.coerceAtLeast(0L)
                 val confs = utxo.confirmations.coerceAtLeast(0)
-                val belowMin =
-                    pendingBoardTotal <= 0L &&
-                        utxo.isConfirmed &&
-                        ArkDepositPolicy.isBelowMinBoardAmount(amount, minBoard)
                 val status =
                     when {
                         pendingBoardTotal > 0L -> "boarding"
                         !utxo.isConfirmed || confs <= 0 -> "confirming"
-                        belowMin -> ArkDepositPolicy.STATUS_BELOW_MIN
                         else -> "pending"
                     }
                 val address =
@@ -8532,13 +11270,20 @@ class ArkRepository(
     }
 
     private suspend fun listLiveVtxos(w: Wallet): List<Vtxo> {
+        // w.vtxos() returns every tracked VTXO, including Spent/Exited ones the
+        // mailbox recovery re-imports. Only Spendable + Locked (in-round/in-exit)
+        // are live — anything else (e.g. pre-refresh outputs after a rescan) must
+        // never paint or count toward the balance. Same filter as the fallback
+        // below and the refresh-target queries.
+        fun isLive(vtxo: Vtxo): Boolean =
+            vtxo.state is VtxoState.Spendable || vtxo.state is VtxoState.Locked
         val spendable = runCatching { w.spendableVtxos() }.getOrDefault(emptyList())
         val current = runCatching { w.vtxos() }.getOrDefault(emptyList())
-        val merged = (spendable + current).distinctBy { it.id }
+        val merged = (spendable + current).distinctBy { it.id }.filter(::isLive)
         if (merged.isNotEmpty()) return merged
         return runCatching { w.allVtxos() }
             .getOrDefault(emptyList())
-            .filter { it.state is VtxoState.Spendable || it.state is VtxoState.Locked }
+            .filter(::isLive)
     }
 
     private fun Vtxo.toArkVtxo(): ArkVtxo =
@@ -8553,12 +11298,15 @@ class ArkRepository(
             registered = registered,
         )
 
-    private fun uniffi.bark.ExitVtxo.toArkExitVtxo(): ArkExitVtxo =
+    private fun uniffi.bark.ExitVtxo.toArkExitVtxo(
+        vtxoWeightsById: Map<String, Long> = emptyMap(),
+    ): ArkExitVtxo =
         ArkExitVtxo(
             vtxoId = vtxoId,
             amountSats = amountSats.toLong(),
             state = ArkBarkMappers.exitStateLabel(state),
             isClaimable = isClaimable,
+            exitTxWeightWu = vtxoWeightsById[vtxoId] ?: 0L,
         )
 
     private fun uniffi.bark.ExitProgressStatus.toArkExitProgress(): ArkExitProgress =
@@ -8568,6 +11316,17 @@ class ArkRepository(
             error = error?.takeIf { it.isNotBlank() },
         )
 
+    private fun exitCancelFailureMessage(reason: ExitCancelFailure?): String =
+        when (reason) {
+            is ExitCancelFailure.NotExiting ->
+                localizedString(R.string.ark_exit_cancel_not_exiting)
+            is ExitCancelFailure.TooLate ->
+                localizedString(R.string.ark_exit_cancel_too_late)
+            is ExitCancelFailure.AlreadyBroadcast ->
+                localizedString(R.string.ark_exit_cancel_broadcast)
+            null -> localizedString(R.string.ark_exit_cancel_none)
+        }
+
     private fun resolveExitProgressError(statuses: List<ArkExitProgress>): String? =
         ArkUnilateralExitPolicy.firstProgressErrorFromMessages(statuses.map { it.error })
             ?: if (ArkUnilateralExitPolicy.needsCpfpFunding(statuses.map { it.state })) {
@@ -8575,11 +11334,23 @@ class ArkRepository(
                 val state = _arkState.value
                 val estimatedFee =
                     ArkUnilateralExitPolicy.estimateCpfpFeeSats(
-                        state.vtxos
-                            .filter { it.id in statusIds }
-                            .map { it.exitTxWeightWu },
+                        ArkUnilateralExitPolicy.cpfpWeightsForExits(
+                            exitVtxoWeightsWu =
+                                state.exitVtxos
+                                    .filter { it.vtxoId in statusIds }
+                                    .map { it.exitTxWeightWu },
+                            spendableWeightsWu =
+                                state.vtxos
+                                    .filter { it.id in statusIds }
+                                    .map { it.exitTxWeightWu },
+                        ),
+                        feeRateSatPerVb =
+                            lastExitFeeRateSatPerVb.takeIf { it > 0L }
+                                ?: ArkUnilateralExitPolicy.PROGRESS_EXIT_FEE_RATE_SAT_VB,
                     )
-                val requiredFunds = estimatedFee?.plus(ArkUnilateralExitPolicy.CPFP_CHANGE_DUST_SATS)
+                // No dust padding here either: the message must quote the fee the
+                // gate enforces, otherwise it overstates the top-up by 330 sats.
+                val requiredFunds = estimatedFee
                 if (requiredFunds != null) {
                     val confirmed = state.onchainConfirmedSats.coerceAtLeast(0L)
                     val shortfall = (requiredFunds - confirmed).coerceAtLeast(0L)
@@ -8602,12 +11373,18 @@ class ArkRepository(
      * When the caller passes an explicit rate above default, use that (still clamped).
      * Bark [OnchainWallet.feeRates] (sat/kwu) is preferred when the on-chain wallet is open.
      */
+    /**
+     * Caller must hold [mutex] OR guarantee the wallet cannot be unloaded
+     * concurrently (maintenance/progress snapshot paths). Reads [onchainWallet]
+     * directly to avoid nested [mutex] deadlock — never take [mutex] in here.
+     */
     private suspend fun resolveExitProgressFeeRateSatPerVbLocked(
         requestedFeeRateSatPerVb: Long = ArkUnilateralExitPolicy.DEFAULT_EXIT_FEE_RATE_SAT_VB,
+        onchainSnapshot: OnchainWallet? = onchainWallet,
     ): Long {
         val fromBark =
             runCatching {
-                onchainWallet
+                onchainSnapshot
                     ?.feeRates()
                     ?.regularSatPerKwu
                     ?.toLong()
@@ -8625,7 +11402,53 @@ class ArkRepository(
                 preferred,
                 requestedFeeRateSatPerVb,
             )
-        return ArkUnilateralExitPolicy.clampExitFeeRateSatPerVb(floor)
+        val clamped = ArkUnilateralExitPolicy.clampExitFeeRateSatPerVb(floor)
+        lastExitFeeRateSatPerVb = clamped
+        return clamped
+    }
+
+    /**
+     * Resolve the live exit CPFP fee rate (same source the start/progress path
+     * spends at) and publish it so review dialogs price at the current network
+     * rate instead of the last-resolved — or flat fallback — value.
+     */
+    suspend fun refreshExitFeeRate() =
+        withContext(Dispatchers.IO) {
+            val rate =
+                mutex.withLock {
+                    if (wallet == null || !_isConnected.value) return@withLock null
+                    resolveExitProgressFeeRateSatPerVbLocked()
+                } ?: return@withContext
+            mutex.withLock {
+                _arkState.value = _arkState.value.copy(exitFeeRateSatPerVb = rate)
+            }
+        }
+
+    /**
+     * Best-effort relock of active exits during hydrate (caller holds [mutex]).
+     * Never blocks on [exitOperationMutex] (opposite lock order vs exit ops):
+     * uses tryLock and skips when an exit/cancel holds it. Re-reads exit state
+     * after acquiring so a just-canceled VTXO is not re-frozen.
+     */
+    private suspend fun relockActiveExitsLocked(w: Wallet) {
+        if (!exitOperationMutex.tryLock()) return
+        try {
+            if (wallet !== w) return
+            val ids =
+                runCatching {
+                    w.getExitVtxos()
+                        .filter {
+                            ArkUnilateralExitPolicy.isActiveExitState(ArkBarkMappers.exitStateLabel(it.state))
+                        }
+                        .map { it.vtxoId }
+                }.getOrDefault(emptyList())
+            if (ids.isEmpty()) return
+            if (wallet !== w) return
+            runCatching { w.lockVtxos(ids, VtxoLockHolder.Action(EXIT_LOCK_HOLDER_ID)) }
+                .onFailure { SecureLog.w(TAG, "Ark exit relock failed: ${publicError(it)}") }
+        } finally {
+            exitOperationMutex.unlock()
+        }
     }
 
     companion object {
@@ -8633,6 +11456,13 @@ class ArkRepository(
         /** Reserved local-only history id for BTC visible before Bark creates a board movement. */
         /** Bark working dirs under cacheDir — reused per wallet; never Android-backed-up storage. */
         private const val ARK_SESSION_ROOT = "ark-session"
+        /** Pre-wipe safety copies of Bark session dirs (see backupSessionDirBeforeWipe). */
+        private const val ARK_SESSION_BACKUP_ROOT = "ark-session-backups"
+        /** Safety copies kept per wallet (mirrors the auto-backup latest + backup pair). */
+        private const val SESSION_BACKUP_KEEP_COUNT = 2
+        private const val SESSION_BACKUP_REASON_RESCAN = "rescan"
+        private const val SESSION_BACKUP_REASON_CORRUPT = "corrupt-db"
+        private const val SESSION_BACKUP_REASON_IMPORT = "import-replace"
         /** Minimum SQLite size to treat a cached Bark DB as reopenable (skip mailbox recovery). */
         private const val MIN_REUSABLE_BARK_DB_BYTES = 100L
         private const val TOR_BOOTSTRAP_TIMEOUT_MS = 90_000L
@@ -8678,6 +11508,8 @@ class ArkRepository(
         private const val AUTO_BACKUP_LATEST_TMP_NAME = "ibis-ark-db-latest.tmp.zip"
         /** Bound wait=true Lightning pays so a hung ASP cannot hold the wallet mutex forever. */
         private const val LIGHTNING_PAY_TIMEOUT_MS = 120_000L
+        private const val LIGHTNING_SETTLE_POLL_INTERVAL_MS = 2_000L
+        private const val LIGHTNING_SETTLE_POLL_ATTEMPTS = 30
         /** Max wait for mutex unload during auto-wipe before force-deleting files. */
         private const val FULL_WIPE_UNLOAD_TIMEOUT_MS = 5_000L
         /**
@@ -8686,17 +11518,34 @@ class ArkRepository(
          * cannot hang unload; on timeout we close anyway rather than leak the wallet.
          */
         private const val ARK_JOB_JOIN_TIMEOUT_MS = 10_000L
+        private const val EXIT_LOCK_HOLDER_ID = "ibis-unilateral-exit"
         /** Post-open ASP sync may be mid-native call; wait longer before dispose on import/unload. */
         private const val ARK_POST_OPEN_JOIN_TIMEOUT_MS = 30_000L
+        /**
+         * Parked-handle reaper (see [ArkRepository.scheduleParkedHandlesReap]): grace
+         * before the first kill attempt so a quick switch-back reuses the session,
+         * quiet window to never race an in-flight open, retry cadence while parked.
+         */
+        private const val PARKED_HANDLES_REAP_GRACE_MS = 30_000L
+        private const val PARKED_HANDLES_REAP_QUIET_MS = 10_000L
+        private const val PARKED_HANDLES_REAP_RETRY_MS = 15_000L
         /**
          * Background fee quote after RefreshPreview is already painted.
          * Keep short — UI must not wait; null fee is fine (Unavailable).
          */
         private const val ARK_REFRESH_QUOTE_TIMEOUT_MS = 4_000L
+        /** Debounce fee-quote triggers so rapid toggles do not spam FFI. */
+        private const val FEE_QUOTE_DEBOUNCE_MS = 400L
         private const val ARK_REFRESH_STATUS_POLL_MS = 10_000L
         private const val ARK_REFRESH_INITIAL_STATUS_CHECKS = 3
         /** Bound send fee-quote FFI so review cannot spin forever on a hung ASP. */
         private const val ARK_SEND_PREVIEW_TIMEOUT_MS = 45_000L
+        /**
+         * Bound the authoritative exit-fee quote. Bark syncs the on-chain wallet
+         * first, so allow longer than refresh quotes — the dialog paints the
+         * manual estimate meanwhile.
+         */
+        private const val EMERGENCY_EXIT_QUOTE_TIMEOUT_MS = 45_000L
         /** Min gap between forced re-opens when a seed wallet is running off-chain-only. */
         private const val ONCHAIN_REOPEN_DEBOUNCE_MS = 2 * 60_000L
         /** Min gap between on-chain-unavailable snackbars. */
@@ -8705,5 +11554,15 @@ class ArkRepository(
         private const val ONCHAIN_REVEAL_CATCHUP_MAX = 64
         /** Blind board attempts (Esplora sees funds, Bark doesn't) before alerting. */
         private const val ONCHAIN_BLIND_BOARD_ATTEMPTS_ALERT = 3
+        /** Failed-send tombstone lifetime — long enough for Bark ghosts to settle/drop. */
+        private const val FAILED_SEND_TOMBSTONE_TTL_MS = 30 * 60_000L
+        /** Max tombstones kept (per process; purged oldest-first). */
+        private const val MAX_FAILED_SEND_TOMBSTONES = 20
+        /** Amount tolerance when matching a ghost to a failed send (fee rounding). */
+        private const val FAILED_SEND_AMOUNT_TOLERANCE_SATS = 2L
+        /** Ghost must be created within this window of the failed send. */
+        private const val FAILED_SEND_CREATE_WINDOW_MS = 10 * 60_000L
+        /** When movement time is unparseable, only match very recent failures. */
+        private const val FAILED_SEND_UNKNOWN_TIME_MATCH_MS = 2 * 60_000L
     }
 }

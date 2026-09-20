@@ -131,21 +131,42 @@ data class StoredWallet(
         index: Long,
     ): String {
         val branch = if (change) 1L else 0L
-        return when (seedFormat) {
-            SeedFormat.ELECTRUM_STANDARD -> "m/$branch/$index"
-            SeedFormat.ELECTRUM_SEGWIT -> "m/0'/$branch/$index"
-            SeedFormat.BIP39 -> {
-                val base = derivationPath.trim().ifBlank { addressType.defaultPath }
-                val branchPath =
-                    if (base.endsWith("/0") || base.endsWith("/1")) {
-                        base.dropLast(2) + "/$branch"
-                    } else {
-                        "$base/$branch"
-                    }
-                "$branchPath/$index"
+        val defaultBase =
+            when (seedFormat) {
+                SeedFormat.ELECTRUM_STANDARD -> "m"
+                SeedFormat.ELECTRUM_SEGWIT -> "m/0'"
+                SeedFormat.BIP39 -> addressType.defaultPath
             }
+        val base = derivationPath.trim().ifBlank { defaultBase }
+        if (seedFormat == SeedFormat.ELECTRUM_STANDARD && (base == "m" || base == "m/")) {
+            return "m/$branch/$index"
         }
+        if (seedFormat == SeedFormat.ELECTRUM_SEGWIT && base == "m/0'") {
+            return "m/0'/$branch/$index"
+        }
+        val branchPath =
+            if (base.endsWith("/0") || base.endsWith("/1")) {
+                base.dropLast(2) + "/$branch"
+            } else {
+                "$base/$branch"
+            }
+        return "$branchPath/$index"
     }
+
+    fun canEditDerivationPath(): Boolean =
+        walletKind == WalletKind.BITCOIN &&
+            policyType == WalletPolicyType.SINGLE_SIG &&
+            derivationPath != "single" &&
+            derivationPath != "liquid_ct" &&
+            derivationPath != "lightning_node" &&
+            derivationPath != "multisig"
+
+    fun defaultDerivationPath(): String =
+        when (seedFormat) {
+            SeedFormat.BIP39 -> addressType.defaultPath
+            SeedFormat.ELECTRUM_STANDARD -> "m"
+            SeedFormat.ELECTRUM_SEGWIT -> "m/0'"
+        }
 
     companion object {
         const val DEFAULT_GAP_LIMIT = 20
@@ -176,6 +197,9 @@ data class WalletState(
     val transactions: List<TransactionDetails> = emptyList(),
     val currentAddress: String? = null,
     val currentAddressInfo: ReceiveAddressInfo? = null,
+    val silentPaymentAddress: String? = null,
+    val silentPaymentsSupported: Boolean? = null,
+    val canReceiveSilentPayments: Boolean = false,
     val isSyncing: Boolean = false,
     val isFullSyncing: Boolean = false,
     val syncProgress: SyncProgress? = null,
@@ -366,6 +390,12 @@ data class UtxoInfo(
     val assetId: String? = null,
     /** Unix seconds when the parent tx was confirmed (or first seen if unconfirmed). */
     val timestamp: Long? = null,
+    /**
+     * True for silent-payment outputs tracked outside the BDK wallet graph.
+     * Such UTXOs cannot back flows that sign through the BDK hot wallet
+     * (e.g. Spark exit CPFP funding) and must be filtered out of them.
+     */
+    val isSilentPayment: Boolean = false,
 )
 
 /**
@@ -390,6 +420,7 @@ data class FeeEstimates(
 enum class FeeEstimateSource {
     MEMPOOL_SPACE,
     ELECTRUM_SERVER,
+    SPARK_SERVICE,
 }
 
 /**
@@ -415,6 +446,47 @@ data class Recipient(
     val assetId: String? = null,
 )
 
+data class SilentPaymentUtxo(
+    val txid: String,
+    val vout: Int,
+    val valueSats: ULong,
+    val scriptPubKeyHex: String,
+    val tweakKeyHex: String,
+    val tweakIndex: Int,
+    val isChange: Boolean,
+    val height: Int,
+    val spent: Boolean = false,
+    val spendTxid: String? = null,
+    val spendFeeSats: ULong? = null,
+    val spendAddress: String? = null,
+    val spendTimestamp: Long? = null,
+    val spendHeight: Int = 0,
+    val timestamp: Long? = null,
+) {
+    val outpoint: String get() = "$txid:$vout"
+}
+
+/**
+ * A Frigate history item whose transaction could not be fetched yet.
+ * Retried on every SP push/refresh until it scans or expires — a transient
+ * fetch failure must never permanently drop a receive.
+ *
+ * [lastSeenMs] tracks the most recent server advertisement (0 = never
+ * re-advertised since queueing); expiry is measured from the last sighting,
+ * not from first sighting, so a continuously advertised receive is retried
+ * indefinitely instead of aging out of the queue.
+ */
+data class SilentPaymentPendingItem(
+    val txHash: String,
+    val tweakKey: String,
+    val height: Int,
+    val firstSeenMs: Long,
+    val lastSeenMs: Long = 0L,
+) {
+    /** Most recent evidence the transaction still exists server-side. */
+    val lastAdvertisedMs: Long get() = maxOf(lastSeenMs, firstSeenMs)
+}
+
 /**
  * Details extracted from a created PSBT for display purposes.
  * Contains the actual fee/amounts computed by BDK's TxBuilder,
@@ -431,6 +503,20 @@ data class PsbtDetails(
     val psbtId: String? = null,
     val presentSignatures: Int = 0,
     val requiredSignatures: Int? = null,
+    val changeAddress: String? = null,
+    val changeIsMine: Boolean = true,
+)
+
+/**
+ * A fully-signed Ark board funding transaction that has NOT been broadcast yet.
+ * The signed PSBT is handed to Bark `boardPsbt` first (it commits to this exact
+ * txid), and only broadcast afterwards via [broadcastSignedBoardFundingTx].
+ */
+data class SignedBoardFunding(
+    val signedPsbtBase64: String,
+    val txid: String,
+    val feeSats: Long,
+    val recipientAmountSats: Long,
 )
 
 /**

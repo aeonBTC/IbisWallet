@@ -475,6 +475,10 @@ class NwcClient : LightningNodeBackend {
                                 if (arr.length() < 3) return
                                 val eventObj = arr.optJSONObject(2) ?: return
                                 if (!isAuthenticNwcResponse(eventObj, walletPubkey, eventId)) return
+                                // Replay guard: a captured authentic response must not
+                                // complete two requests.
+                                val responseId = eventObj.optString("id")
+                                if (responseId.isBlank() || !markResponseIdSeen(responseId)) return
                                 val content = eventObj.optString("content")
                                 if (content.isBlank()) return
                                 val plaintext =
@@ -571,6 +575,9 @@ class NwcClient : LightningNodeBackend {
                 ),
             )
             builder.dns { hostname ->
+                // Tor path: never resolve locally. The placeholder address forces
+                // OkHttp through the SOCKS proxy above, which resolves the relay
+                // hostname inside Tor (equivalent to SocksProxyHostnameDns).
                 listOf(InetAddress.getByAddress(hostname, byteArrayOf(0, 0, 0, 0)))
             }
         }
@@ -579,7 +586,31 @@ class NwcClient : LightningNodeBackend {
 
     companion object {
         private const val REQUEST_TIMEOUT_MS = 45_000L
-        private const val RESPONSE_MAX_AGE_SECONDS = 120L
+        private const val RESPONSE_MAX_AGE_SECONDS = 60L
+        private const val RESPONSE_MAX_FUTURE_SKEW_SECONDS = 30L
+
+        /**
+         * Legacy NIP-04 decrypt fallback is OFF by default. NIP-04 uses
+         * unauthenticated CBC without the NIP-44 v2 binding; enabling it allows
+         * a relay/wallet to downgrade encryption. Keep false unless the user
+         * explicitly opts in for an old wallet.
+         */
+        var allowLegacyNip04Fallback: Boolean = false
+
+        private val seenResponseIds = LinkedHashMap<String, Long>()
+        private const val SEEN_RESPONSE_CACHE_MAX = 500
+
+        @Synchronized
+        internal fun markResponseIdSeen(eventId: String): Boolean {
+            val key = eventId.lowercase()
+            if (seenResponseIds.containsKey(key)) return false
+            seenResponseIds[key] = System.currentTimeMillis()
+            while (seenResponseIds.size > SEEN_RESPONSE_CACHE_MAX) {
+                val oldest = seenResponseIds.keys.firstOrNull() ?: break
+                seenResponseIds.remove(oldest)
+            }
+            return true
+        }
 
         internal fun isAuthenticNwcResponse(
             eventObj: JSONObject,
@@ -591,7 +622,11 @@ class NwcClient : LightningNodeBackend {
             if (!pubkey.equals(walletPubkey, ignoreCase = true)) return false
             val createdAt = eventObj.optLong("created_at", 0L)
             val now = System.currentTimeMillis() / 1000L
-            if (createdAt <= 0L || kotlin.math.abs(now - createdAt) > RESPONSE_MAX_AGE_SECONDS) return false
+            // Tight replay window with explicit future-skew reject: future-dated
+            // responses must not be accepted (abs() would allow them).
+            if (createdAt <= 0L) return false
+            if (createdAt > now + RESPONSE_MAX_FUTURE_SKEW_SECONDS) return false
+            if (now - createdAt > RESPONSE_MAX_AGE_SECONDS) return false
             val tags = eventObj.optJSONArray("tags") ?: return false
             val referencedRequest =
                 (0 until tags.length()).any { i ->
@@ -696,8 +731,10 @@ class NwcClient : LightningNodeBackend {
         }
 
         /**
-         * Prefer NIP-44 (modern wallets). Fall back to legacy NIP-04 payloads of the form
-         * `base64?iv=base64` when the cipher text is not a valid NIP-44 v2 blob.
+         * Prefer NIP-44 (modern wallets). Legacy NIP-04 payloads of the form
+         * `base64?iv=base64` are only attempted when [allowLegacyNip04Fallback]
+         * is explicitly enabled — otherwise a decrypt failure is surfaced as
+         * NIP-44-only so relays cannot silently downgrade encryption.
          */
         private fun decryptNwcContent(
             payload: String,
@@ -708,6 +745,12 @@ class NwcClient : LightningNodeBackend {
                 runCatching {
                     return Nip44.decrypt(payload, privateKey, senderPubkeyHex)
                 }.exceptionOrNull()
+            if (!allowLegacyNip04Fallback) {
+                throw IllegalStateException(
+                    "NIP-44 decrypt failed and legacy NIP-04 fallback is disabled: ${nip44Error?.message ?: "failed"}",
+                    nip44Error,
+                )
+            }
             return runCatching {
                 nip04Decrypt(payload, privateKey, senderPubkeyHex)
             }.getOrElse { nip04Error ->

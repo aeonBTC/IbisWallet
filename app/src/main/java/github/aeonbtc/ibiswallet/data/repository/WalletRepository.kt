@@ -28,6 +28,9 @@ import github.aeonbtc.ibiswallet.data.model.PsbtSigningSession
 import github.aeonbtc.ibiswallet.data.model.ReceiveAddressInfo
 import github.aeonbtc.ibiswallet.data.model.Recipient
 import github.aeonbtc.ibiswallet.data.model.SeedFormat
+import github.aeonbtc.ibiswallet.data.model.SignedBoardFunding
+import github.aeonbtc.ibiswallet.data.model.SilentPaymentPendingItem
+import github.aeonbtc.ibiswallet.data.model.SilentPaymentUtxo
 import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
 import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
@@ -50,6 +53,7 @@ import github.aeonbtc.ibiswallet.data.model.WalletState
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.tor.CachingElectrumProxy
 import github.aeonbtc.ibiswallet.tor.ElectrumNotification
+import github.aeonbtc.ibiswallet.tor.SilentPaymentHistoryItem
 import github.aeonbtc.ibiswallet.util.ArkBackupCrypto
 import github.aeonbtc.ibiswallet.util.ArkWalletDataPack
 import github.aeonbtc.ibiswallet.util.Bip137MessageSigner
@@ -102,6 +106,7 @@ import org.bitcoindevkit.ElectrumClient
 import org.bitcoindevkit.EvictedTx
 import org.bitcoindevkit.FeeRate
 import org.bitcoindevkit.FullScanScriptInspector
+import org.bitcoindevkit.Input
 import org.bitcoindevkit.KeychainKind
 import org.bitcoindevkit.Mnemonic
 import org.bitcoindevkit.Network
@@ -113,9 +118,11 @@ import org.bitcoindevkit.Script
 import org.bitcoindevkit.SyncScriptInspector
 import org.bitcoindevkit.Transaction
 import org.bitcoindevkit.TxBuilder
+import org.bitcoindevkit.TxOut
 import org.bitcoindevkit.Txid
 import org.bitcoindevkit.Wallet
 import org.bitcoindevkit.WalletEvent
+import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
@@ -130,6 +137,7 @@ class WalletRepository(context: Context) {
         private const val BDK_DB_DIR = "bdk"
         private const val LWK_DB_DIR = "lwk"
         private const val SPARK_DB_DIR = "spark"
+        private const val SPARK_EXIT_BACKUP_DIR = "spark-exit-backup"
         private const val ARK_DB_DIR = "ark"
         private const val ARK_AUTO_BACKUP_DIR = "ark_auto_backup"
         private const val ARK_SESSION_DIR = "ark-session"
@@ -144,6 +152,24 @@ class WalletRepository(context: Context) {
         private const val SCRIPT_HASH_SAMPLE_SIZE = 5
         private const val NOTIFICATION_DEBOUNCE_MS = 1000L
         private const val ADDRESS_PEEK_AHEAD = 100
+        private const val TAPROOT_ACTIVATION_HEIGHT = 709632
+        // Frigate re-runs the whole historical scan on every (re)subscribe and
+        // only reports mempool at progress=1.0, so never restart a live scan
+        // from refresh paths — only when no push arrives within this window.
+        private const val SP_SCAN_STALL_MS = 180_000L
+        private const val SP_REFRESH_TIMEOUT_MS = 90_000L
+        private const val SP_PENDING_ITEM_TTL_MS = 7 * 24 * 60 * 60_000L
+        // Scan-logic generation: bump when scan semantics change so one
+        // unskipped backfill re-examines history (missed outputs from older
+        // logic must not be skipped as "already scanned"). Generation 2 =
+        // the BIP0352/Label tweak fix (was: compressed pubkey preimage).
+        private const val SP_SCAN_GENERATION = 2
+        private const val SP_PENDING_RETRY_BASE_MS = 30_000L
+        private const val SP_PENDING_RETRY_MAX_MS = 15 * 60_000L
+        // Reorg window for SP receive/spend re-verification: matches the
+        // -100 block scan overlap. Confirmed UTXOs/spends deeper than this
+        // are considered stable and skipped to bound Electrum I/O.
+        private const val SP_REORG_WINDOW_BLOCKS = 100L
         private const val MAX_RECEIVE_ADDRESS_SCAN_ATTEMPTS = 10_000
         private const val INCREMENTAL_RECONCILE_INTERVAL = 10
         private const val INCREMENTAL_RECONCILE_MAX_AGE_MS = 30 * 60_000L
@@ -152,9 +178,54 @@ class WalletRepository(context: Context) {
         private const val BITCOIN_SOURCE_CHAIN_SWAP = BitcoinTxSource.CHAIN_SWAP
         /** BIP125 opt-in RBF signaling sequence. */
         private const val RBF_SIGNAL_SEQUENCE: UInt = 0xFFFFFFFDu
+        /**
+         * Board funding broadcast-race verification: presence polls after a
+         * broadcast failure (Bark Esplora → our Electrum propagation can lag).
+         */
+        private const val BOARD_BROADCAST_VERIFY_ATTEMPTS = 3
+        private const val BOARD_BROADCAST_VERIFY_RETRY_MS = 4_000L
+
+        /**
+         * True when a broadcast rejection means the server already holds the tx
+         * (bitcoind/ElectrumX "already in block chain", "txn-already-known", …),
+         * i.e. a lost broadcast race rather than a real failure.
+         */
+        internal fun isKnownTxBroadcastRejection(message: String?): Boolean {
+            val msg = message.orEmpty()
+            return msg.contains("already", ignoreCase = true) ||
+                msg.contains("duplicate", ignoreCase = true)
+        }
 
         /** Pattern to extract supported xpub/zpub keys from a descriptor string. */
         private val XPUB_PATTERN = """]([xzXZ]pub[a-zA-Z0-9]+)""".toRegex()
+
+        const val SETH_TOR_HOST = "iuo6acfdicxhrovyqrekefh4rg2b7vgmzeeohc5cbwegawwhqpdxkgad.onion"
+        const val BULL_BITCOIN_HOST = "electrum.bullbitcoin.com"
+        const val FRIGATE_HOST = "frigate.2140.dev"
+        private const val DEFAULT_ELECTRUM_PORT = 50002
+
+        val DEFAULT_ELECTRUM_SERVERS =
+            listOf(
+                ElectrumConfig(
+                    name = "SethForPrivacy (Tor)",
+                    url = SETH_TOR_HOST,
+                    port = DEFAULT_ELECTRUM_PORT,
+                    useSsl = true,
+                    useTor = true,
+                ),
+                ElectrumConfig(
+                    name = "Bull Bitcoin",
+                    url = BULL_BITCOIN_HOST,
+                    port = DEFAULT_ELECTRUM_PORT,
+                    useSsl = true,
+                ),
+                ElectrumConfig(
+                    name = "Frigate (Silent Payments)",
+                    url = FRIGATE_HOST,
+                    port = DEFAULT_ELECTRUM_PORT,
+                    useSsl = true,
+                ),
+            )
     }
 
     private data class CachedWalletTransaction(
@@ -401,6 +472,7 @@ class WalletRepository(context: Context) {
     private val bdkDbDir: File = File(context.filesDir, BDK_DB_DIR).apply { mkdirs() }
     private val lwkDbDir: File = File(context.filesDir, LWK_DB_DIR).apply { mkdirs() }
     private val sparkDbDir: File = File(context.filesDir, SPARK_DB_DIR)
+    private val sparkExitBackupDir: File = File(context.filesDir, SPARK_EXIT_BACKUP_DIR)
     private val arkDbDir: File = File(context.filesDir, ARK_DB_DIR)
     private val arkAutoBackupDir: File = File(context.filesDir, ARK_AUTO_BACKUP_DIR)
     private val arkSessionDir: File = File(context.cacheDir, ARK_SESSION_DIR)
@@ -410,6 +482,7 @@ class WalletRepository(context: Context) {
         if (!cleanupSweepTempDatabases() && BuildConfig.DEBUG) {
             Log.w(TAG, "Failed to clean sweep temp databases on startup")
         }
+        ensureFrigateServerPresent()
     }
 
     /**
@@ -452,6 +525,21 @@ class WalletRepository(context: Context) {
         }
     }
 
+    /**
+     * Best-effort Spark SDK data removal (session DB + exit-state backup).
+     * SecureStorage Spark keys are already purged by [SecureStorage.deleteWallet]
+     * above; the SDK owns no keys outside its filesDir trees. Never throws —
+     * wallet deletion must not fail on a locked/stale SDK dir.
+     */
+    private fun deleteSparkWalletData(walletId: String) {
+        runCatching { File(sparkDbDir, walletId).deleteRecursively() }
+            .onFailure {
+                SecureLog.w(TAG, "Failed to delete Spark wallet data", it, releaseMessage = "Spark cleanup failed")
+            }
+        runCatching { File(sparkExitBackupDir, "$walletId.exitstate").delete() }
+        runCatching { File(sparkExitBackupDir, "$walletId.exitstate.tmp").delete() }
+    }
+
     private fun deleteSqliteArtifacts(dbPath: String): Boolean {
         val sqliteFiles = listOf(
             File(dbPath),
@@ -489,6 +577,10 @@ class WalletRepository(context: Context) {
         walletExternalDescriptor = null
         walletInternalDescriptor = null
         walletIsSingleKey = false
+        stopSilentPaymentScan()
+        spPendingRetryJob?.cancel()
+        spPendingRetryJob = null
+        silentPaymentKeys = null
         walletTransactionCache.clear()
         peekAddressStringCache.clear()
         scriptHashByKeychainIndex.clear()
@@ -693,6 +785,21 @@ class WalletRepository(context: Context) {
     private var walletExternalDescriptor: Descriptor? = null
     private var walletInternalDescriptor: Descriptor? = null
     private var walletIsSingleKey: Boolean = false
+    private var silentPaymentKeys: SilentPayment.ReceiverKeys? = null
+    @Volatile private var silentPaymentsSupported: Boolean? = null
+    private var subscribedSilentPaymentScanKeyHex: String? = null
+    private var subscribedSilentPaymentSpendKeyHex: String? = null
+    private var spSubscribedProxy: CachingElectrumProxy? = null
+    private var spSubscribedAtMs: Long = 0L
+    private var spScanProgress: Double = 0.0
+    private var spLastPushMs: Long = 0L
+    // Serializes every read-modify-write of the stored SP UTXO list. Push
+    // handling, refresh, and local spends all run on IO threads and each does
+    // slow network I/O mid-sequence — without this, concurrent saves silently
+    // drop freshly discovered receives.
+    private val spUtxoMutex = Mutex()
+    private val silentPaymentBlockTimes = java.util.concurrent.ConcurrentHashMap<Int, Long>()
+    private val coinControlOutpoints = ThreadLocal<Set<String>?>()
     private var electrumClient: ElectrumClient? = null
     private val walletTransactionCache = linkedMapOf<String, CachedWalletTransaction>()
     // Cache of (keychain, index) -> bech32 address string for the active wallet. Peek derivation
@@ -749,6 +856,7 @@ class WalletRepository(context: Context) {
     // Used to detect new addresses after sync (gap limit expansion) and
     // subscribe them without re-subscribing everything.
     private val subscribedScriptHashes = mutableSetOf<String>()
+    private val silentPaymentScriptHashes = mutableSetOf<String>()
 
     /**
      * Subscribe to block headers on the connected Electrum server.
@@ -980,7 +1088,7 @@ class WalletRepository(context: Context) {
         if (useChangeOnly) {
             builder = builder.changePolicy(ChangeSpendPolicy.ONLY_CHANGE)
         }
-        return builder
+        return applySilentPaymentUtxos(builder)
     }
 
     /**
@@ -1030,15 +1138,16 @@ class WalletRepository(context: Context) {
         // so we can extract the signed tx directly without calling finalize().
         try {
             val isSigned = wallet.sign(psbt)
+            val spPsbt = signSilentPaymentInputs(psbt)
             if (isSigned) {
                 // sign() auto-finalized; extract the signed tx with real witness data
-                val signedTx = psbt.extractTx()
+                val signedTx = spPsbt.extractTx()
                 val weight = signedTx.weight()
                 return kotlin.math.ceil(weight.toDouble() / 4.0)
             }
             // Partially signed — try explicit finalize as backup
             try {
-                val finalizeResult = psbt.finalize()
+                val finalizeResult = spPsbt.finalize()
                 if (finalizeResult.couldFinalize) {
                     val signedTx = finalizeResult.psbt.extractTx()
                     val weight = signedTx.weight()
@@ -1115,7 +1224,12 @@ class WalletRepository(context: Context) {
      * Result of [signWithFeeCorrection]: the broadcast-ready [Transaction]
      * whose effective fee rate matches the target as closely as possible.
      */
-    private data class SignedTxResult(val tx: Transaction, val feeSats: ULong, val vsize: Double)
+    private data class SignedTxResult(
+        val tx: Transaction,
+        val feeSats: ULong,
+        val vsize: Double,
+        val signedPsbt: Psbt,
+    )
 
     private data class PreparedPsbtBuild(
         val psbt: Psbt,
@@ -1129,6 +1243,7 @@ class WalletRepository(context: Context) {
         val changeAmountSats: ULong?,
         val changeAddress: String?,
         val hasChange: Boolean,
+        val changeIsMine: Boolean = true,
     )
 
     private data class MultiRecipientOutputSummary(
@@ -1136,6 +1251,7 @@ class WalletRepository(context: Context) {
         val changeAmountSats: ULong?,
         val changeAddress: String?,
         val hasChange: Boolean,
+        val changeIsMine: Boolean = true,
     )
 
     private data class SendRecipientScript(
@@ -1172,7 +1288,11 @@ class WalletRepository(context: Context) {
         targetSatPerVb: Double,
         rebuildWithFee: (ULong) -> Psbt?,
         feeOffsetSats: Long = 0,
+        spWalletId: String? = null,
     ): SignedTxResult {
+        // spWalletId pins silent-payment signing/records to the send flow's
+        // wallet. Null reads the current wallet: only for flows that cannot
+        // involve silent inputs (or dry-runs that never broadcast).
         // Package-aware fee target: rate * vsize + offset (offset accounts for a
         // CPFP parent's fee/vsize). Floored at ~1 sat/vB relay minimum.
         fun targetFeeFor(vsize: Double): ULong? {
@@ -1204,12 +1324,13 @@ class WalletRepository(context: Context) {
 
         // --- attempt 1: sign the initial PSBT ---
         wallet.sign(initialPsbt)
-        val tx = initialPsbt.extractTx()
-        val bakedFee = try { initialPsbt.fee() } catch (_: Exception) { 0UL }
+        val spSigned = signSilentPaymentInputs(initialPsbt, spWalletId)
+        val tx = spSigned.extractTx()
+        val bakedFee = try { spSigned.fee() } catch (_: Exception) { 0UL }
         val weight = tx.weight()
         val vsize = kotlin.math.ceil(weight.toDouble() / 4.0)
         val targetFee = targetFeeFor(vsize)
-        val candidate1 = SignedTxResult(tx, bakedFee, vsize)
+        val candidate1 = SignedTxResult(tx, bakedFee, vsize, spSigned)
 
         if (targetFee == null || targetFee == bakedFee) {
             return candidate1
@@ -1228,12 +1349,13 @@ class WalletRepository(context: Context) {
         }
 
         wallet.sign(correctedPsbt)
-        val tx2 = correctedPsbt.extractTx()
-        val bakedFee2 = try { correctedPsbt.fee() } catch (_: Exception) { 0UL }
+        val spSigned2 = signSilentPaymentInputs(correctedPsbt, spWalletId)
+        val tx2 = spSigned2.extractTx()
+        val bakedFee2 = try { spSigned2.fee() } catch (_: Exception) { 0UL }
         val weight2 = tx2.weight()
         val vsize2 = kotlin.math.ceil(weight2.toDouble() / 4.0)
         val targetFee2 = targetFeeFor(vsize2)
-        val candidate2 = SignedTxResult(tx2, bakedFee2, vsize2)
+        val candidate2 = SignedTxResult(tx2, bakedFee2, vsize2, spSigned2)
 
         // If the corrected fee still matches the baked fee for this vsize, we're done
         if (targetFee2 == null || targetFee2 == bakedFee2) {
@@ -1249,12 +1371,13 @@ class WalletRepository(context: Context) {
         if (correctedPsbt3 != null) {
             try {
                 wallet.sign(correctedPsbt3)
-                val tx3 = correctedPsbt3.extractTx()
-                val bakedFee3 = try { correctedPsbt3.fee() } catch (_: Exception) { 0UL }
+                val spSigned3 = signSilentPaymentInputs(correctedPsbt3, spWalletId)
+                val tx3 = spSigned3.extractTx()
+                val bakedFee3 = try { spSigned3.fee() } catch (_: Exception) { 0UL }
                 val weight3 = tx3.weight()
                 val vsize3 = kotlin.math.ceil(weight3.toDouble() / 4.0)
                 val targetFee3 = targetFeeFor(vsize3)
-                val candidate3 = SignedTxResult(tx3, bakedFee3, vsize3)
+                val candidate3 = SignedTxResult(tx3, bakedFee3, vsize3, spSigned3)
 
                 if (targetFee3 == null || targetFee3 == bakedFee3) {
                     return candidate3
@@ -1465,7 +1588,7 @@ class WalletRepository(context: Context) {
             ?: return WalletResult.Error("No signing key available")
         val passphrase = secureStorage.getPassphrase(walletId)
         val seed = when (storedWallet.seedFormat) {
-            SeedFormat.BIP39 -> ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, passphrase)
+            SeedFormat.BIP39 -> bip39SeedCanonical(mnemonic, passphrase)
             SeedFormat.ELECTRUM_STANDARD, SeedFormat.ELECTRUM_SEGWIT ->
                 ElectrumSeedUtil.mnemonicToSeed(mnemonic, passphrase)
         }
@@ -1804,6 +1927,7 @@ class WalletRepository(context: Context) {
                                     config.addressType,
                                     bdkNetworkKind,
                                     resolvedFingerprint,
+                                    config.customDerivationPath,
                                 )
                             isXprv ->
                                 createExtendedPrivateKeyDescriptors(
@@ -1811,6 +1935,7 @@ class WalletRepository(context: Context) {
                                     config.addressType,
                                     bdkNetworkKind,
                                     resolvedFingerprint,
+                                    config.customDerivationPath,
                                 )
                             electrumSeedType != null ->
                                 createDescriptorsFromElectrumSeed(
@@ -1818,6 +1943,8 @@ class WalletRepository(context: Context) {
                                     passphrase = config.passphrase,
                                     seedType = electrumSeedType,
                                     networkKind = bdkNetworkKind,
+                                    customPath = config.customDerivationPath,
+                                    addressType = config.addressType,
                                 )
                             else ->
                                 createDescriptorsFromMnemonic(
@@ -1933,10 +2060,10 @@ class WalletRepository(context: Context) {
     ): WalletResult<Unit> {
         val localCosignerMaterial = importConfig.localCosignerKeyMaterial?.trim()?.takeIf { it.isNotBlank() }
         val hasPrivateDescriptor =
-            localCosignerMaterial?.contains("prv", ignoreCase = true) == true ||
-                multisigConfig.externalDescriptor.contains("prv", ignoreCase = true)
+            BitcoinUtils.isExtendedPrivateKeyMaterial(localCosignerMaterial ?: "") ||
+                BitcoinUtils.isExtendedPrivateKeyMaterial(multisigConfig.externalDescriptor)
         val (externalDescriptor, internalDescriptor) =
-            createMultisigDescriptors(multisigConfig, localCosignerMaterial, network.toNetworkKind())
+            createMultisigDescriptors(multisigConfig, localCosignerMaterial, network.toNetworkKind(), strictOverride = true)
         val persister = Persister.newSqlite(getWalletDbPath(walletId))
         val importedWallet =
             Wallet(
@@ -1970,9 +2097,7 @@ class WalletRepository(context: Context) {
                 multisigTotalCosigners = multisigConfig.totalCosigners,
                 multisigScriptType = multisigConfig.scriptType,
                 localCosignerFingerprint =
-                    multisigConfig.cosigners.firstOrNull { cosigner ->
-                        localCosignerMaterial?.contains(cosigner.fingerprint, ignoreCase = true) == true
-                    }?.fingerprint,
+                    resolveLocalCosignerFingerprint(multisigConfig, localCosignerMaterial),
             )
         secureStorage.saveWalletMetadata(storedWallet)
         revealConfiguredGapLimit(wallet!!, walletId)
@@ -1989,13 +2114,57 @@ class WalletRepository(context: Context) {
         config: MultisigWalletConfig,
         localCosignerMaterial: String?,
         networkKind: NetworkKind,
+        strictOverride: Boolean = false,
     ): Pair<Descriptor, Descriptor> {
-        val descriptorPair =
+        val overridePair =
             localCosignerMaterial
                 ?.takeIf { MultisigWalletParser.looksLikeMultisig(it) }
                 ?.let { MultisigWalletParser.normalizeDescriptorPair(it) }
+                ?.takeIf { (rawExternal, rawInternal) ->
+                    // The override may embed xprv keys (signing-capable). Bind it
+                    // to the quorum by comparing its public-normalized form, but
+                    // build BDK with the raw pair so private keys are retained.
+                    val normalizedPublic =
+                        MultisigWalletParser.normalizePrivateKeysToPublic("$rawExternal\n$rawInternal")
+                            ?.let { MultisigWalletParser.normalizeDescriptorPair(it) }
+                            ?: return@takeIf false
+                    MultisigWalletParser.overrideMatchesConfig(
+                        normalizedPublic.first,
+                        normalizedPublic.second,
+                        config,
+                    )
+                }
+        if (overridePair == null && strictOverride && !localCosignerMaterial.isNullOrBlank()) {
+            throw IllegalArgumentException("Local signer does not match this multisig quorum")
+        }
+        // Defense in depth: config pairs are validated at parse time, but a
+        // mismatched persisted config must never silently route change away.
+        val descriptorPair =
+            overridePair
                 ?: (config.externalDescriptor to config.internalDescriptor)
+                    .takeIf { MultisigWalletParser.descriptorsMatch(it.first, it.second) }
+                ?: throw IllegalArgumentException("Multisig change descriptor does not match receive descriptor")
         return Descriptor(descriptorPair.first, networkKind) to Descriptor(descriptorPair.second, networkKind)
+    }
+
+    /**
+     * Identify which quorum cosigner holds the attached local signer key.
+     * Only fingerprints whose key material in [localCosignerMaterial] is
+     * actually private ([xprv/zprv]) and listed in [config] qualify — plain
+     * substring matching could misfire on base58 text. Returns null for
+     * watch-only wallets or ambiguous material. Never throws.
+     */
+    private fun resolveLocalCosignerFingerprint(
+        config: MultisigWalletConfig,
+        localCosignerMaterial: String?,
+    ): String? {
+        if (localCosignerMaterial.isNullOrBlank()) return null
+        return runCatching {
+            val privateFingerprints =
+                MultisigWalletParser.privateKeyFingerprints(localCosignerMaterial)
+            val configFingerprints = config.cosigners.map { it.fingerprint.lowercase() }.toSet()
+            privateFingerprints.intersect(configFingerprints).singleOrNull()
+        }.getOrNull()
     }
 
     /**
@@ -2190,6 +2359,7 @@ class WalletRepository(context: Context) {
                     walletExternalDescriptor = externalDescriptor
                     walletInternalDescriptor = internalDescriptor
                     walletIsSingleKey = false
+                    refreshSilentPaymentKeys(storedWallet)
                     wallet?.let { revealConfiguredGapLimit(it, walletId) }
                     updateWalletStateLightweight()
                     wallet?.let { scheduleDetailedTransactionRefresh(walletId, it) }
@@ -2231,7 +2401,7 @@ class WalletRepository(context: Context) {
                     // in scope so a descriptor mismatch can fall back to the standard
                     // path (see below).
                     var bip39FallbackCredentials: Pair<String, String?>? = null
-                    val storedCustomPath = customBip39DerivationPath(storedWallet)
+                    val storedCustomPath = customDerivationPath(storedWallet)
                     var (externalDescriptor, internalDescriptor) =
                         when {
                             secureStorage.hasExtendedKey(walletId) -> {
@@ -2239,31 +2409,29 @@ class WalletRepository(context: Context) {
                                     secureStorage.getExtendedKey(walletId)
                                         ?: return@withContext failLoad("No extended key found")
                                 if (isExtendedPrivateKeyInput(extendedKey)) {
-                                    // Extended PRIVATE key import — spend-capable descriptors
                                     createExtendedPrivateKeyDescriptors(
                                         extendedKey,
                                         storedWallet.addressType,
                                         bdkNetworkKind,
                                         storedWallet.masterFingerprint,
+                                        storedCustomPath,
                                     )
                                 } else {
-                                    // Watch-only wallet - include master fingerprint for PSBT signing
                                     createWatchOnlyDescriptors(
                                         extendedKey,
                                         storedWallet.addressType,
                                         bdkNetworkKind,
                                         storedWallet.masterFingerprint,
+                                        storedCustomPath,
                                     )
                                 }
                             }
                             else -> {
-                                // Full wallet from mnemonic
                                 val mnemonic =
                                     secureStorage.getMnemonic(walletId)
                                         ?: return@withContext failLoad("No mnemonic found")
                                 val passphrase = secureStorage.getPassphrase(walletId)
 
-                                // Route Electrum seeds through their own derivation
                                 when (storedWallet.seedFormat) {
                                     SeedFormat.ELECTRUM_STANDARD ->
                                         createDescriptorsFromElectrumSeed(
@@ -2271,6 +2439,8 @@ class WalletRepository(context: Context) {
                                             passphrase,
                                             ElectrumSeedUtil.ElectrumSeedType.STANDARD,
                                             bdkNetworkKind,
+                                            storedCustomPath,
+                                            storedWallet.addressType,
                                         )
                                     SeedFormat.ELECTRUM_SEGWIT ->
                                         createDescriptorsFromElectrumSeed(
@@ -2278,6 +2448,8 @@ class WalletRepository(context: Context) {
                                             passphrase,
                                             ElectrumSeedUtil.ElectrumSeedType.SEGWIT,
                                             bdkNetworkKind,
+                                            storedCustomPath,
+                                            storedWallet.addressType,
                                         )
                                     else -> {
                                         if (storedCustomPath != null) {
@@ -2360,6 +2532,8 @@ class WalletRepository(context: Context) {
                     walletInternalDescriptor = internalDescriptor
                     walletIsSingleKey = false
                 }
+
+                refreshSilentPaymentKeys(storedWallet)
 
                 val loadedWallet = wallet
                 loadedWallet?.let { revealConfiguredGapLimit(it, walletId) }
@@ -2497,34 +2671,28 @@ class WalletRepository(context: Context) {
      * Throws IllegalArgumentException on malformed paths so bad input fails
      * loudly instead of silently deriving the wrong wallet.
      */
-    private fun customAccountPath(rawPath: String): String {
-        var normalized = rawPath.trim().replace(" ", "").removeSuffix("/")
-        if (normalized.startsWith("M/")) normalized = "m/" + normalized.removePrefix("M/")
-        if (normalized == "m" || normalized == "M") return "m"
-        if (!normalized.startsWith("m/")) normalized = "m/$normalized"
-        val segments = normalized.removePrefix("m/").split("/")
-        require(segments.all { it.matches(Regex("^\\d+'?$")) }) {
-            "Invalid derivation path: $rawPath"
-        }
-        val accountSegments =
-            if (segments.last() == "0" || segments.last() == "1") {
-                segments.dropLast(1)
-            } else {
-                segments
-            }
-        return if (accountSegments.isEmpty()) "m" else "m/" + accountSegments.joinToString("/")
-    }
+    private fun customAccountPath(rawPath: String): String =
+        BitcoinUtils.bip39AccountDerivationPath(rawPath)
 
     /**
-     * Returns the custom BIP39 derivation path stored for this wallet, or null when
+     * Returns the custom derivation path stored for this wallet, or null when
      * the stored path is a sentinel/default that uses a dedicated descriptor builder.
      */
-    private fun customBip39DerivationPath(storedWallet: StoredWallet): String? {
+    private fun customDerivationPath(storedWallet: StoredWallet): String? {
         val path = storedWallet.derivationPath.trim()
         if (path.isBlank()) return null
-        if (path == "single" || path == "m" || path == "m/0'" || path == "liquid_ct") return null
-        if (path == storedWallet.addressType.defaultPath) return null
-        return path
+        if (path == "single" || path == "liquid_ct" || path == "lightning_node" || path == "multisig") {
+            return null
+        }
+        val defaultPath = storedWallet.defaultDerivationPath()
+        return if (
+            BitcoinUtils.bip39AccountDerivationPath(path) ==
+            BitcoinUtils.bip39AccountDerivationPath(defaultPath)
+        ) {
+            null
+        } else {
+            path
+        }
     }
 
     /**
@@ -2540,9 +2708,17 @@ class WalletRepository(context: Context) {
         passphrase: String?,
         seedType: ElectrumSeedUtil.ElectrumSeedType,
         networkKind: NetworkKind,
+        customPath: String? = null,
+        addressType: AddressType? = null,
     ): Pair<Descriptor, Descriptor> {
         val seed = ElectrumSeedUtil.mnemonicToSeed(mnemonic, passphrase)
-        val (externalStr, internalStr) = ElectrumSeedUtil.buildDescriptorStrings(seed, seedType)
+        val (externalStr, internalStr) =
+            ElectrumSeedUtil.buildDescriptorStrings(
+                seed = seed,
+                seedType = seedType,
+                customPath = customPath,
+                addressType = addressType,
+            )
         return Pair(Descriptor(externalStr, networkKind), Descriptor(internalStr, networkKind))
     }
 
@@ -2594,10 +2770,11 @@ class WalletRepository(context: Context) {
         addressType: AddressType,
         networkKind: NetworkKind,
         masterFingerprint: String? = null,
+        customPath: String? = null,
     ): Pair<Descriptor, Descriptor> {
         val parsed = parseKeyOrigin(extendedKey.trim())
         val fingerprint = parsed.fingerprint ?: masterFingerprint
-        val originPath = parsed.derivationPath
+        val originPath = overrideOriginPath(parsed.derivationPath, customPath)
         validateKeyScriptTypeConsistency(parsed.bareKey, originPath, addressType)
         val xprvKey = BitcoinUtils.convertToXprv(parsed.bareKey)
         val keyWithOrigin = BitcoinUtils.buildKeyWithOrigin(xprvKey, fingerprint, originPath, addressType)
@@ -2656,15 +2833,23 @@ class WalletRepository(context: Context) {
      * - Full output descriptor: wpkh([73c5da0a/84'/0'/0']xpub6.../0/wildcard)
      * - BIP 389 multipath: `wpkh([73c5da0a/84'/0'/0']xpub6.../<0;1>/{wildcard})`
      */
+    private fun overrideOriginPath(
+        parsedOriginPath: String?,
+        customPath: String?,
+    ): String? {
+        if (customPath.isNullOrBlank()) return parsedOriginPath
+        return BitcoinUtils.originPathFromDerivationPath(customPath)
+    }
+
     private fun createWatchOnlyDescriptors(
         extendedKey: String,
         addressType: AddressType,
         networkKind: NetworkKind,
         masterFingerprint: String? = null,
+        customPath: String? = null,
     ): Pair<Descriptor, Descriptor> {
         val input = extendedKey.trim()
 
-        // Check if input is already a full output descriptor (e.g., "wpkh([fp/path]xpub/0/*)")
         val descriptorPrefixes = listOf("pkh(", "wpkh(", "tr(")
         val isFullDescriptor = descriptorPrefixes.any { input.lowercase().startsWith(it) }
 
@@ -2672,11 +2857,10 @@ class WalletRepository(context: Context) {
             return parseFullDescriptor(input, networkKind)
         }
 
-        // Parse origin info from "[fingerprint/path]xpub..." format
         val parsed = parseKeyOrigin(input)
         val bareKey = parsed.bareKey
         val fingerprint = parsed.fingerprint ?: masterFingerprint
-        val originPath = parsed.derivationPath
+        val originPath = overrideOriginPath(parsed.derivationPath, customPath)
 
         validateKeyScriptTypeConsistency(bareKey, originPath, addressType)
 
@@ -2863,6 +3047,23 @@ class WalletRepository(context: Context) {
         return Descriptor(descriptorStr, networkKind)
     }
 
+    private inline fun <T> withSelectedUtxos(
+        selectedUtxos: List<UtxoInfo>?,
+        block: () -> T,
+    ): T {
+        val previous = coinControlOutpoints.get()
+        coinControlOutpoints.set(selectedUtxos?.map { it.outpoint }?.toSet())
+        try {
+            return block()
+        } finally {
+            if (previous == null) {
+                coinControlOutpoints.remove()
+            } else {
+                coinControlOutpoints.set(previous)
+            }
+        }
+    }
+
     /**
      * Load the active wallet from secure storage
      */
@@ -2889,6 +3090,7 @@ class WalletRepository(context: Context) {
                 var newClient: ElectrumClient? = null
                 try {
                     stopNotificationCollector()
+                    resetSilentPaymentsCapability()
                     electrumClient = null
                     cachingProxy?.stop()
                     cachingProxy = null
@@ -3031,6 +3233,7 @@ class WalletRepository(context: Context) {
                 var newClient: ElectrumClient? = null
                 try {
                     stopNotificationCollector()
+                    resetSilentPaymentsCapability()
                     electrumClient = null
                     cachingProxy?.stop()
                     cachingProxy = null
@@ -3313,6 +3516,7 @@ class WalletRepository(context: Context) {
                             ?: true // No proxy — sync to be safe
                     if (!hasChanges) {
                         secureStorage.saveLastSyncTime(activeWalletId, System.currentTimeMillis())
+                        refreshSilentPaymentWalletState()
                         _walletState.value = _walletState.value.copy(isSyncing = false)
                         if (BuildConfig.DEBUG) {
                             Log.d(
@@ -3452,8 +3656,11 @@ class WalletRepository(context: Context) {
                         }
                         updateWalletState()
                         refreshScriptHashCache(postSyncWallet)
-                    } else if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "Quick sync: no changes detected, skipping state rebuild")
+                    } else {
+                        refreshSilentPaymentWalletState()
+                        if (BuildConfig.DEBUG) {
+                            Log.d(TAG, "Quick sync: no BDK changes, refreshed silent payment state")
+                        }
                     }
                 }
 
@@ -3547,11 +3754,37 @@ class WalletRepository(context: Context) {
 
                             val allScriptHashes = getAllRevealedScriptHashes(currentWallet)
                             if (proxy != null && allScriptHashes.isNotEmpty()) {
-                                val currentStatuses = proxy.subscribeScriptHashes(allScriptHashes)
+                                // No persisted baseline (fresh wallet / derivation change):
+                                // every status counts as changed, so subscribing first
+                                // is pure overhead — the full scan fetches everything.
+                                // Some servers (Frigate forwards each subscribe to its
+                                // backend) are very slow here; never stall the scan.
+                                val persistedBaseline =
+                                    runCatching { electrumCache.loadScriptHashStatuses(scriptHashCacheWalletId()) }
+                                        .getOrDefault(emptyMap())
+                                val currentStatuses =
+                                    if (persistedBaseline.isEmpty()) {
+                                        if (BuildConfig.DEBUG) {
+                                            Log.d(
+                                                TAG,
+                                                "No persisted script-hash baseline — skipping pre-subscribe for ${allScriptHashes.size} scripts",
+                                            )
+                                        }
+                                        emptyMap()
+                                    } else {
+                                        withTimeoutOrNull(120_000) {
+                                            proxy.subscribeScriptHashes(allScriptHashes)
+                                        } ?: run {
+                                            if (BuildConfig.DEBUG) {
+                                                Log.w(TAG, "Pre-sync subscribe timed out — scanning without cache assist")
+                                            }
+                                            emptyMap()
+                                        }
+                                    }
                                 proxy.setValidStatuses(currentStatuses)
 
                                 if (BuildConfig.DEBUG) {
-                                    val persistedStatuses = electrumCache.loadScriptHashStatuses()
+                                    val persistedStatuses = electrumCache.loadScriptHashStatuses(scriptHashCacheWalletId())
                                     val unchangedCount =
                                         currentStatuses.count { (scriptHash, status) ->
                                             status != null && persistedStatuses[scriptHash] == status
@@ -3879,6 +4112,9 @@ class WalletRepository(context: Context) {
             transactions = visibleTransactions,
             currentAddress = address,
             currentAddressInfo = buildCurrentReceiveAddressInfo(walletId, address),
+            silentPaymentAddress = silentPaymentKeys?.address,
+            silentPaymentsSupported = silentPaymentsSupported,
+            canReceiveSilentPayments = canReceiveSilentPayments(activeWallet),
         )
     }
 
@@ -3936,6 +4172,10 @@ class WalletRepository(context: Context) {
                                 sameWallet && it.address == cached
                             },
                     ),
+                silentPaymentAddress =
+                    if (sameWallet) previous.silentPaymentAddress else silentPaymentKeys?.address,
+                silentPaymentsSupported = silentPaymentsSupported,
+                canReceiveSilentPayments = canReceiveSilentPayments(storedWallet),
                 lastSyncTimestamp =
                     if (sameWallet) {
                         previous.lastSyncTimestamp
@@ -4209,10 +4449,20 @@ class WalletRepository(context: Context) {
     fun clearScriptHashCache() {
         scriptHashStatusCache.clear()
         subscribedScriptHashes.clear()
+        silentPaymentScriptHashes.clear()
         lastSubscribedScriptHashFingerprint = null
-        electrumCache.clearScriptHashStatuses()
+        // Scope clearing to the active wallet so one wallet's switch/disconnect
+        // cannot wipe another wallet's sync baseline (linkability + resync DoS).
+        val activeId = secureStorage.getActiveWalletId().orEmpty()
+        if (activeId.isNotBlank()) {
+            electrumCache.clearScriptHashStatuses(activeId)
+        } else {
+            electrumCache.clearScriptHashStatuses()
+        }
         invalidatePreparedSendCache()
     }
+
+    private fun scriptHashCacheWalletId(): String = secureStorage.getActiveWalletId().orEmpty()
 
     private fun scriptHashForRevealedAddress(
         currentWallet: Wallet,
@@ -4275,6 +4525,16 @@ class WalletRepository(context: Context) {
             return { it }
         }
 
+        // Fail closed: `unspendable` does not evict explicitly `addUtxo`'d inputs,
+        // so check the requested selection against frozen refs up front.
+        val frozenRefs = frozenRefsForActiveWallet()
+        if (frozenRefs.isNotEmpty()) {
+            val frozenSelected = selectedUtxos.map { it.outpoint }.filter { it in frozenRefs }
+            require(frozenSelected.isEmpty()) {
+                "Cannot send using frozen UTXOs — unfreeze coins or change selection"
+            }
+        }
+
         val selectedOutpoints = selectedUtxos.map { it.outpoint }.toSet()
         val selectedWalletUtxos =
             currentWallet.listUnspent().filter { utxo ->
@@ -4283,6 +4543,17 @@ class WalletRepository(context: Context) {
             }
 
         return { builder ->
+            // Re-check inside the applier: freeze may have landed after the
+            // applier was built but before the TxBuilder runs.
+            val liveFrozen = frozenRefsForActiveWallet()
+            if (liveFrozen.isNotEmpty()) {
+                val pinned =
+                    selectedWalletUtxos.map { "${it.outpoint.txid}:${it.outpoint.vout}" }
+                        .filter { it in liveFrozen }
+                require(pinned.isEmpty()) {
+                    "Cannot send using frozen UTXOs — unfreeze coins or change selection"
+                }
+            }
             var configuredBuilder = builder
             selectedWalletUtxos.forEach { utxo ->
                 configuredBuilder = configuredBuilder.addUtxo(utxo.outpoint)
@@ -4360,8 +4631,13 @@ class WalletRepository(context: Context) {
         txid: String,
         recipients: List<Recipient>,
     ) {
-        if (!hasSilentPaymentRecipient(recipients)) return
-        secureStorage.saveSilentPaymentRecipients(walletId, txid, recipients)
+        if (hasSilentPaymentRecipient(recipients)) {
+            secureStorage.saveSilentPaymentRecipients(walletId, txid, recipients)
+        } else {
+            // Record known non-SP sends so a later RBF bump can tell them apart from
+            // unknown/legacy transactions when a fee top-up changes the input set.
+            secureStorage.saveNoSilentPaymentMarker(walletId, txid)
+        }
     }
 
     private fun rebuildWithSilentPaymentOutputs(
@@ -4370,15 +4646,30 @@ class WalletRepository(context: Context) {
         storedWallet: StoredWallet?,
         recipients: List<Recipient>,
         feeSats: ULong,
+        walletId: String,
         forceRbf: Boolean = false,
     ): Psbt {
         val finalTx = placeholderPsbt.extractTx()
         val inputOutpoints = finalTx.input().map { it.previousOutput }
+        // `unspendable` does not evict explicitly `addUtxo`'d inputs below,
+        // so a frozen coin in the placeholder set would otherwise be pinned
+        // straight into the replacement. Fail closed here (the placeholder
+        // was built with the frozen filter, so this only fires on a
+        // freeze-while-building race or cross-wallet misuse).
+        val frozenRefs = secureStorage.getFrozenUtxos(walletId)
+        if (frozenRefs.isNotEmpty()) {
+            val frozenPinned =
+                inputOutpoints.map { "${it.txid}:${it.vout}" }.filter { it in frozenRefs }
+            require(frozenPinned.isEmpty()) {
+                "Cannot send using frozen UTXOs — unfreeze coins or change selection"
+            }
+        }
         val inputKeys =
             deriveSilentPaymentInputKeys(
                 currentWallet = currentWallet,
                 storedWallet = storedWallet,
                 inputOutpoints = inputOutpoints.map { "${it.txid}:${it.vout}" },
+                walletId = walletId,
             )
         val silentRecipientIndexes =
             recipients.mapIndexedNotNull { index, recipient ->
@@ -4397,8 +4688,19 @@ class WalletRepository(context: Context) {
         var builder = TxBuilder().feeAbsolute(Amount.fromSat(feeSats))
         builder = if (forceRbf) builder.applyOptInRbf() else builder.applyOptInRbfIfEnabled()
         builder = builder.applyFrozenUtxoFilter()
+        val silentByOutpoint =
+            secureStorage.getSilentPaymentUtxos(walletId)
+                .associateBy { it.outpoint.lowercase() }
+                .orEmpty()
         inputOutpoints.forEach { outpoint ->
-            builder = builder.addUtxo(outpoint)
+            val key = "${outpoint.txid}:${outpoint.vout}".lowercase()
+            val silent = silentByOutpoint[key]
+            builder =
+                if (silent != null) {
+                    addSilentPaymentForeignUtxo(builder, silent)
+                } else {
+                    builder.addUtxo(outpoint)
+                }
         }
         builder = addRecipientScripts(builder.manuallySelectedOnly(), recipientScripts)
         return builder.finish(currentWallet)
@@ -4409,6 +4711,7 @@ class WalletRepository(context: Context) {
         currentWallet: Wallet,
         storedWallet: StoredWallet?,
         destinationAddress: String,
+        walletId: String,
     ): Script {
         val finalTx = placeholderPsbt.extractTx()
         val inputOutpoints = finalTx.input().map { it.previousOutput }
@@ -4417,6 +4720,7 @@ class WalletRepository(context: Context) {
                 currentWallet = currentWallet,
                 storedWallet = storedWallet,
                 inputOutpoints = inputOutpoints.map { "${it.txid}:${it.vout}" },
+                walletId = walletId,
             )
         val outputKey =
             SilentPayment.createOutputKeys(
@@ -4432,38 +4736,101 @@ class WalletRepository(context: Context) {
         currentWallet: Wallet,
         storedWallet: StoredWallet?,
         inputOutpoints: List<String>,
+        walletId: String,
     ): List<SilentPayment.InputKey> {
         val walletOutputsByOutpoint =
             currentWallet.listOutput().associateBy { localOutput ->
                 "${localOutput.outpoint.txid}:${localOutput.outpoint.vout}"
             }
-        val missing = inputOutpoints.filter { it !in walletOutputsByOutpoint }
+        val silentUtxosByOutpoint =
+            secureStorage.getSilentPaymentUtxos(walletId)
+                .associateBy { it.outpoint.lowercase() }
+        val missing =
+            inputOutpoints.filter {
+                it !in walletOutputsByOutpoint && it.lowercase() !in silentUtxosByOutpoint
+            }
         require(missing.isEmpty()) {
             "Silent payments cannot recover input keys for unknown outpoints"
         }
         val keys =
             inputOutpoints.mapNotNull { outpoint ->
+                silentUtxosByOutpoint[outpoint.lowercase()]?.let { utxo ->
+                    return@mapNotNull silentPaymentInputKey(utxo)
+                }
                 val localOutput = walletOutputsByOutpoint.getValue(outpoint)
                 val scriptBytes = localOutput.txout.scriptPubkey.toBytes().toUByteArray().toByteArray()
                 val isTaproot = isP2trScript(scriptBytes)
                 if (!isEligibleSilentPaymentInputScript(scriptBytes)) {
                     return@mapNotNull null
                 }
-                val activeWalletId = secureStorage.getActiveWalletId()
-                val wif = activeWalletId?.let { secureStorage.getPrivateKey(it) }
-                if (wif != null && !isWifCompressed(wif)) {
+                val wif = secureStorage.getPrivateKey(walletId)
+                // Single-key (WIF) wallets share one key across all inputs. An
+                // uncompressed key cannot contribute to the BIP-352 scalar sum —
+                // decode-check (not prefix-guess) so `5...` keys fail closed
+                // here instead of burning the SP output.
+                if (wif != null && !SilentPayment.isCompressedWif(wif)) {
                     return@mapNotNull null
                 }
-                val privateKey = deriveWalletInputPrivateKey(storedWallet, localOutput.keychain, localOutput.derivationIndex, isTaproot)
+                val privateKey =
+                    deriveWalletInputPrivateKey(
+                        storedWallet,
+                        localOutput.keychain,
+                        localOutput.derivationIndex,
+                        isTaproot,
+                        walletId,
+                    )
+                // Fail closed before the key enters the shared-secret sum: a
+                // derivation mismatch (wrong seed, stale custom path,
+                // cross-wallet race) would otherwise burn the SP outputs while
+                // the transaction itself broadcasts fine.
+                require(
+                    SilentPayment.inputKeyMatchesScript(privateKey, scriptBytes, isTaproot),
+                ) { "Silent payment input key does not match $outpoint" }
                 SilentPayment.InputKey(
                     outpoint = outpoint,
                     privateKey = privateKey,
                     isTaproot = isTaproot,
-                    includeInInputHash = true,
                 )
             }
         require(keys.isNotEmpty()) { "Silent payments require an eligible compressed input" }
         return keys
+    }
+
+    private fun silentPaymentInputKey(utxo: SilentPaymentUtxo): SilentPayment.InputKey {
+        val keys =
+            silentPaymentKeys
+                ?: throw IllegalStateException("Silent payment keys unavailable")
+        val found =
+            SilentPayment.scanOutputs(
+                tweakKey = utxo.tweakKeyHex.hexToByteArray(),
+                scanPrivateKey = keys.scanPrivateKey,
+                spendPrivateKey = keys.spendPrivateKey,
+                spendPublicKey = keys.spendPublicKey,
+                outputs =
+                    listOf(
+                        SilentPayment.TxOutput(
+                            scriptPubKey = utxo.scriptPubKeyHex.hexToByteArray(),
+                            valueSats = utxo.valueSats,
+                        ),
+                    ),
+            ).firstOrNull()
+                ?: throw IllegalStateException("Could not derive silent payment input key")
+        val normalized = SilentPayment.evenYPrivateKey(found.spendPrivateKey)
+        // Same fail-closed ownership check as hot-wallet inputs: a corrupted
+        // SP UTXO record (wrong tweak/script) must abort the send instead of
+        // entering the shared-secret sum and burning the outputs.
+        require(
+            SilentPayment.inputKeyMatchesScript(
+                normalized,
+                utxo.scriptPubKeyHex.hexToByteArray(),
+                true,
+            ),
+        ) { "Silent payment input key does not match ${utxo.outpoint}" }
+        return SilentPayment.InputKey(
+            outpoint = utxo.outpoint,
+            privateKey = normalized,
+            isTaproot = true,
+        )
     }
 
     private fun deriveWalletInputPrivateKey(
@@ -4471,19 +4838,18 @@ class WalletRepository(context: Context) {
         keychain: KeychainKind,
         derivationIndex: UInt,
         isTaproot: Boolean,
+        walletId: String,
     ): ByteArray {
-        val activeWalletId = secureStorage.getActiveWalletId()
-            ?: throw IllegalStateException("Wallet not initialized")
-        secureStorage.getPrivateKey(activeWalletId)?.let { wif ->
+        secureStorage.getPrivateKey(walletId)?.let { wif ->
             val key = SilentPayment.privateKeyFromWif(wif)
             return if (isTaproot) SilentPayment.deriveTaprootOutputPrivateKey(key) else key
         }
         if (storedWallet?.isWatchOnly == true) {
             throw IllegalStateException("Silent payments require a hot wallet")
         }
-        val mnemonic = secureStorage.getMnemonic(activeWalletId)
+        val mnemonic = secureStorage.getMnemonic(walletId)
             ?: throw IllegalStateException("Silent payments require a seed wallet")
-        val passphrase = secureStorage.getPassphrase(activeWalletId)
+        val passphrase = secureStorage.getPassphrase(walletId)
         val wallet =
             storedWallet ?: throw IllegalStateException("Silent payments require a seed wallet")
         val path =
@@ -4493,7 +4859,7 @@ class WalletRepository(context: Context) {
             )
         val seed =
             when (wallet.seedFormat) {
-                SeedFormat.BIP39 -> ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, passphrase)
+                SeedFormat.BIP39 -> bip39SeedCanonical(mnemonic, passphrase)
                 SeedFormat.ELECTRUM_STANDARD,
                 SeedFormat.ELECTRUM_SEGWIT,
                 -> ElectrumSeedUtil.mnemonicToSeed(mnemonic, passphrase)
@@ -4502,8 +4868,22 @@ class WalletRepository(context: Context) {
         return if (isTaproot) SilentPayment.deriveTaprootOutputPrivateKey(key) else key
     }
 
+    // BIP-352 eligible inputs with keys we can derive: P2PKH, P2WPKH, P2TR.
+    // NOTE: P2SH-P2WPKH is deliberately NOT eligible: we only have the
+    // scriptPubKey here, not the redeemScript, so we cannot prove the inner
+    // script is P2WPKH nor extract the right key. Including outer-template
+    // matches in `a` would diverge from compliant receivers and burn outputs.
     private fun isEligibleSilentPaymentInputScript(scriptBytes: ByteArray): Boolean =
-        isP2pkhScript(scriptBytes) || isP2wpkhScript(scriptBytes) || isP2trScript(scriptBytes)
+        isP2pkhScript(scriptBytes) ||
+            isP2wpkhScript(scriptBytes) ||
+            isP2trScript(scriptBytes)
+
+    @Suppress("unused")
+    private fun isP2shP2wpkhScript(scriptBytes: ByteArray): Boolean =
+        scriptBytes.size == 23 &&
+            scriptBytes[0] == 0xA9.toByte() &&
+            scriptBytes[1] == 0x14.toByte() &&
+            scriptBytes[22] == 0x87.toByte()
 
     private fun isP2pkhScript(scriptBytes: ByteArray): Boolean =
         scriptBytes.size == 25 &&
@@ -4643,6 +5023,7 @@ class WalletRepository(context: Context) {
         var changeAmount: ULong? = null
         var changeAddress: String? = null
         var hasChange = false
+        var changeIsMine = true
 
         for (output in tx.output()) {
             if (output.scriptPubkey.toBytes().contentEquals(recipientScript.toBytes())) {
@@ -4655,6 +5036,9 @@ class WalletRepository(context: Context) {
                     } catch (_: Exception) {
                         null
                     }
+                // Never label a foreign output as change: a mismatched change
+                // descriptor routes funds away, and by-exclusion labeling hides it.
+                changeIsMine = runCatching { currentWallet.isMine(output.scriptPubkey) }.getOrDefault(false)
                 hasChange = true
             }
         }
@@ -4664,6 +5048,7 @@ class WalletRepository(context: Context) {
             changeAmountSats = changeAmount,
             changeAddress = changeAddress,
             hasChange = hasChange,
+            changeIsMine = changeIsMine,
         )
     }
 
@@ -4680,6 +5065,7 @@ class WalletRepository(context: Context) {
         var changeAmount: ULong? = null
         var changeAddress: String? = null
         var hasChange = false
+        var changeIsMine = true
 
         for (output in tx.output()) {
             val scriptBytes = output.scriptPubkey.toBytes()
@@ -4693,6 +5079,7 @@ class WalletRepository(context: Context) {
                     } catch (_: Exception) {
                         null
                     }
+                changeIsMine = runCatching { currentWallet.isMine(output.scriptPubkey) }.getOrDefault(false)
                 hasChange = true
             }
         }
@@ -4702,6 +5089,7 @@ class WalletRepository(context: Context) {
             changeAmountSats = changeAmount,
             changeAddress = changeAddress,
             hasChange = hasChange,
+            changeIsMine = changeIsMine,
         )
     }
 
@@ -4722,6 +5110,8 @@ class WalletRepository(context: Context) {
             recipientAmountSats = summary.recipientAmountSats,
             changeAmountSats = summary.changeAmountSats,
             totalInputSats = totalInputSats,
+            changeAddress = summary.changeAddress,
+            changeIsMine = summary.changeIsMine,
         )
     }
 
@@ -4742,6 +5132,8 @@ class WalletRepository(context: Context) {
             recipientAmountSats = summary.totalRecipientAmountSats,
             changeAmountSats = summary.changeAmountSats,
             totalInputSats = totalInputSats,
+            changeAddress = summary.changeAddress,
+            changeIsMine = summary.changeIsMine,
         )
     }
 
@@ -4838,6 +5230,7 @@ class WalletRepository(context: Context) {
                 if (BuildConfig.DEBUG) {
                     Log.d(TAG, "Subscription set unchanged — skipping re-subscribe (${allScriptHashes.size})")
                 }
+                startSilentPaymentScan(proxy, activeWalletId)
                 return@withContext SubscriptionResult.NO_CHANGES
             }
 
@@ -4864,7 +5257,7 @@ class WalletRepository(context: Context) {
             scriptHashStatusCache.clear()
 
             // Compare against persisted statuses from previous session
-            val persistedStatuses = electrumCache.loadScriptHashStatuses()
+            val persistedStatuses = electrumCache.loadScriptHashStatuses(scriptHashCacheWalletId())
             val needsSync =
                 if (revealedGapLimitAddresses) {
                     if (BuildConfig.DEBUG) Log.d(TAG, "New gap-limit addresses revealed — sync needed")
@@ -4886,7 +5279,7 @@ class WalletRepository(context: Context) {
                         // BDK is in sync with.
                         scriptHashStatusCache.putAll(currentStatuses)
                         // Persist current statuses for next app launch
-                        electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
+                        electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap(), scriptHashCacheWalletId())
                         SubscriptionResult.SYNCED
                     } else {
                         // Sync failed — do NOT record the server's statuses in memory
@@ -4898,14 +5291,14 @@ class WalletRepository(context: Context) {
             } else {
                 if (BuildConfig.DEBUG) Log.d(TAG, "No changes since last session — skipping sync")
                 scriptHashStatusCache.putAll(currentStatuses)
-                electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
+                electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap(), scriptHashCacheWalletId())
                 result = SubscriptionResult.NO_CHANGES
             }
 
             if (BuildConfig.DEBUG) Log.d(TAG, "Starting notification collector (result=$result)")
 
-            // Start collecting push notifications for real-time updates
             startNotificationCollector(proxy)
+            startSilentPaymentScan(proxy, activeWalletId)
 
             result
         }
@@ -4947,7 +5340,7 @@ class WalletRepository(context: Context) {
                                     val result = sync(force = true)
                                     if (result is WalletResult.Success) {
                                         subscribeNewlyRevealedAddresses()
-                                        electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
+                                        electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap(), scriptHashCacheWalletId())
                                     }
                                 }
                         }
@@ -4962,8 +5355,32 @@ class WalletRepository(context: Context) {
                         return@collect
                     }
 
+                    if (notification is ElectrumNotification.SilentPaymentsUpdate) {
+                        try {
+                            handleSilentPaymentUpdate(notification)
+                        } catch (e: Exception) {
+                            if (BuildConfig.DEBUG) {
+                                Log.e(TAG, "Silent payments update failed: ${e.message}", e)
+                            }
+                        }
+                        return@collect
+                    }
+
+                    if (
+                        notification is ElectrumNotification.ScriptHashChanged &&
+                        notification.scriptHash in silentPaymentScriptHashes
+                    ) {
+                        refreshSilentPaymentWalletState()
+                        if (notification.scriptHash in scriptHashStatusCache) {
+                            pendingNotifications.add(notification)
+                            launchDebouncedSync()
+                        }
+                        return@collect
+                    }
+
                     if (notification is ElectrumNotification.NewBlockHeader) {
                         lastKnownBlockHeight = notification.height.toULong()
+                        secureStorage.getActiveWalletId()?.let { ensureSpPendingRetryLoop(it) }
                         val current = _walletState.value
                         if (current.blockHeight != notification.height.toUInt()) {
                             _walletState.value = current.copy(blockHeight = notification.height.toUInt())
@@ -4982,7 +5399,7 @@ class WalletRepository(context: Context) {
                                 val result = sync(force = true)
                                 if (result is WalletResult.Success) {
                                     subscribeNewlyRevealedAddresses()
-                                    electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap())
+                                    electrumCache.saveScriptHashStatuses(scriptHashStatusCache.toMap(), scriptHashCacheWalletId())
                                 }
                             }
                         }
@@ -5025,6 +5442,1215 @@ class WalletRepository(context: Context) {
         notificationSyncJob = null
         notificationCollectorJob?.cancel()
         notificationCollectorJob = null
+    }
+
+    /**
+     * BIP39 seed for silent payments / message signing, canonicalized through
+     * the same BDK `Mnemonic` parser used for descriptors. BDK normalizes
+     * whitespace/case per rust-bip39; feeding the raw stored string into PBKDF2
+     * instead would derive a different seed and burn SP outputs. Falls back to
+     * the stored string only if BDK parsing fails (caller then fails closed
+     * via inputKeyMatchesScript / no-match signing).
+     */
+    private fun bip39SeedCanonical(mnemonic: String, passphrase: String?): ByteArray {
+        val canonical =
+            runCatching { Mnemonic.fromString(mnemonic).use { it.toString() } }
+                .getOrNull()?.takeIf { it.isNotBlank() } ?: mnemonic
+        return ElectrumSeedUtil.bip39MnemonicToSeed(canonical, passphrase)
+    }
+
+    private fun seedForSilentPayments(storedWallet: StoredWallet): ByteArray? {
+        val mnemonic = secureStorage.getMnemonic(storedWallet.id) ?: return null
+        val passphrase = secureStorage.getPassphrase(storedWallet.id)
+        return when (storedWallet.seedFormat) {
+            SeedFormat.BIP39 -> bip39SeedCanonical(mnemonic, passphrase)
+            SeedFormat.ELECTRUM_STANDARD,
+            SeedFormat.ELECTRUM_SEGWIT,
+            -> ElectrumSeedUtil.mnemonicToSeed(mnemonic, passphrase)
+        }
+    }
+
+    private fun refreshSilentPaymentKeys(storedWallet: StoredWallet?) {
+        silentPaymentKeys =
+            if (canReceiveSilentPayments(storedWallet) && storedWallet != null) {
+                seedForSilentPayments(storedWallet)?.let { SilentPayment.deriveReceiverKeys(it) }
+            } else {
+                null
+            }
+    }
+
+    private fun startSilentPaymentScan(
+        proxy: CachingElectrumProxy,
+        walletId: String,
+        force: Boolean = false,
+    ) {
+        val keys = silentPaymentKeys
+        if (keys == null) {
+            stopSilentPaymentScan()
+            if (_walletState.value.silentPaymentsSupported != silentPaymentsSupported) {
+                updateWalletState()
+            }
+            return
+        }
+        when (proxy.supportsSilentPayments()) {
+            true -> silentPaymentsSupported = true
+            false -> silentPaymentsSupported = false
+            null -> Unit
+        }
+        if (silentPaymentsSupported != _walletState.value.silentPaymentsSupported) {
+            updateWalletState()
+        }
+        if (silentPaymentsSupported == false) return
+        val scanHex = keys.scanPrivateKey.joinToString("") { "%02x".format(it) }
+        val spendHex = keys.spendPublicKey.joinToString("") { "%02x".format(it) }
+        if (
+            !force &&
+            spSubscribedProxy === proxy &&
+            subscribedSilentPaymentScanKeyHex == scanHex &&
+            subscribedSilentPaymentSpendKeyHex == spendHex
+        ) {
+            return
+        }
+        stopSilentPaymentScan()
+        val lastHeight = secureStorage.getSilentPaymentScanHeight(walletId)
+        val hasUtxos = secureStorage.getSilentPaymentUtxos(walletId).isNotEmpty()
+        val fullStart =
+            when {
+                !hasUtxos -> TAPROOT_ACTIVATION_HEIGHT
+                lastHeight > TAPROOT_ACTIVATION_HEIGHT + 100 -> lastHeight - 100
+                else -> TAPROOT_ACTIVATION_HEIGHT
+            }
+        // A fresh wallet would otherwise scan the whole chain before learning
+        // anything — including mempool, which Frigate only reports at
+        // progress=1.0. Prime live state with a cheap recent-window scan
+        // first; the full backfill follows on the same subscription. The merge
+        // is idempotent, so nothing can be missed or doubled.
+        val tip =
+            runCatching { wallet?.latestCheckpoint()?.height?.toInt() }.getOrNull()
+                ?: lastKnownBlockHeight?.toInt()
+        val quickStart = tip?.let { maxOf(TAPROOT_ACTIVATION_HEIGHT, it - 100) }
+        if (quickStart != null && quickStart > fullStart) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "SP scan: priming live state from $quickStart before full backfill from $fullStart")
+            }
+            proxy.subscribeSilentPayments(scanHex, spendHex, quickStart)
+        }
+        if (!proxy.subscribeSilentPayments(scanHex, spendHex, fullStart)) return
+        subscribedSilentPaymentScanKeyHex = scanHex
+        subscribedSilentPaymentSpendKeyHex = spendHex
+        spSubscribedProxy = proxy
+        spSubscribedAtMs = System.currentTimeMillis()
+        spScanProgress = 0.0
+        spLastPushMs = 0L
+        subscribeSilentPaymentScriptHashes(proxy, walletId)
+    }
+
+    private fun stopSilentPaymentScan() {
+        val scanHex = subscribedSilentPaymentScanKeyHex
+        val spendHex = subscribedSilentPaymentSpendKeyHex
+        if (scanHex != null && spendHex != null) {
+            cachingProxy?.unsubscribeSilentPayments(scanHex, spendHex)
+        }
+        subscribedSilentPaymentScanKeyHex = null
+        subscribedSilentPaymentSpendKeyHex = null
+        spSubscribedProxy = null
+        spSubscribedAtMs = 0L
+        spScanProgress = 0.0
+        spLastPushMs = 0L
+    }
+
+    private fun resetSilentPaymentsCapability() {
+        stopSilentPaymentScan()
+        silentPaymentsSupported = null
+    }
+
+    private fun subscribeSilentPaymentScriptHashes(
+        proxy: CachingElectrumProxy,
+        walletId: String,
+    ) {
+        val hashes =
+            secureStorage.getSilentPaymentUtxos(walletId)
+                .filterNot { it.spent }
+                .mapNotNull { utxo ->
+                    runCatching {
+                        BitcoinUtils.computeScriptHash(utxo.scriptPubKeyHex.hexToByteArray())
+                    }.getOrNull()
+                }
+        if (hashes.isEmpty()) return
+        silentPaymentScriptHashes.addAll(hashes)
+        proxy.subscribeAdditionalScriptHashes(hashes)
+        subscribedScriptHashes.addAll(hashes)
+    }
+
+    private suspend fun refreshSilentPaymentWalletState() {
+        val walletId = secureStorage.getActiveWalletId() ?: return
+        val proxy = cachingProxy
+        if (proxy != null) {
+            // Bound the whole refresh: every step inside is serial Tor I/O
+            // with no per-call timeout. Without this cap a hung socket
+            // stalls the sync pre-check path indefinitely and the next
+            // refresh forces a resubscribe → backfill → stall livelock.
+            // Mutations persist only on the success path, so a timeout
+            // leaves stored state untouched for the next attempt.
+            withTimeoutOrNull(SP_REFRESH_TIMEOUT_MS) {
+                spUtxoMutex.withLock {
+                // Never restart a live Frigate scan here: every resubscribe
+                // re-runs the historical scan and mempool is only reported
+                // at progress=1.0. (Re)subscribe only when never subscribed
+                // on this connection, when the scan stalled with no push
+                // inside the stall window, or when scan semantics changed
+                // (generation bump forces one unskipped backfill so older
+                // logic's misses are re-examined).
+                val generationChanged =
+                    secureStorage.getSilentPaymentScanGeneration(walletId) != SP_SCAN_GENERATION
+                startSilentPaymentScan(proxy, walletId, force = spScanStalled(proxy) || generationChanged)
+                val keys = silentPaymentKeys
+                val utxos = secureStorage.getSilentPaymentUtxos(walletId).toMutableList()
+                var dirty = false
+                if (keys != null && retrySilentPaymentPendingItems(proxy, keys, walletId, utxos)) {
+                    dirty = true
+                }
+                if (utxos.isNotEmpty() && refreshSilentPaymentSpentStatus(walletId, proxy, utxos)) {
+                    dirty = true
+                }
+                if (repairSilentPaymentUtxoAmountsInList(proxy, utxos)) {
+                    dirty = true
+                }
+                if (fillSilentPaymentTimestampsInList(utxos)) {
+                    dirty = true
+                }
+                if (dirty) {
+                    secureStorage.saveSilentPaymentUtxos(walletId, utxos)
+                    subscribeSilentPaymentScriptHashes(proxy, walletId)
+                }
+                }
+            }
+        }
+        if (secureStorage.getSilentPaymentPendingItems(walletId).isNotEmpty()) {
+            ensureSpPendingRetryLoop(walletId)
+        }
+        updateWalletState()
+    }
+
+    private fun spScanStalled(proxy: CachingElectrumProxy): Boolean {
+        if (spSubscribedProxy !== proxy) return false
+        if (subscribedSilentPaymentScanKeyHex == null) return false
+        if (spScanProgress >= 1.0) return false
+        val lastActivity = maxOf(spLastPushMs, spSubscribedAtMs)
+        if (lastActivity <= 0L) return false
+        return System.currentTimeMillis() - lastActivity > SP_SCAN_STALL_MS
+    }
+
+    private suspend fun handleSilentPaymentUpdate(update: ElectrumNotification.SilentPaymentsUpdate) {
+        val keys = silentPaymentKeys ?: return
+        val walletId = secureStorage.getActiveWalletId() ?: return
+        if (!update.address.equals(keys.address, ignoreCase = true)) return
+        spScanProgress = update.progress
+        spLastPushMs = System.currentTimeMillis()
+        if (BuildConfig.DEBUG) {
+            val preview = update.history.take(5).joinToString(",") { "${it.txHash.take(8)}@${it.height}" }
+            Log.d(TAG, "Silent payments push: progress=${update.progress} history=${update.history.size} startHeight=${update.startHeight} [$preview]")
+        }
+        if (silentPaymentsSupported != true) {
+            silentPaymentsSupported = true
+        }
+        val proxy = cachingProxy ?: return
+        // Skip re-fetching transactions this generation already scanned: a
+        // fully-scanned tx is immutable, so its result cannot change. The
+        // skip is disabled until the stored generation catches up, forcing
+        // one thorough pass after every scan-logic upgrade.
+        val skipScannedTx = secureStorage.getSilentPaymentScanGeneration(walletId) == SP_SCAN_GENERATION
+        spUtxoMutex.withLock {
+            val existing = secureStorage.getSilentPaymentUtxos(walletId).toMutableList()
+            val scannedTxids =
+                if (skipScannedTx) {
+                    existing.map { it.txid.lowercase() }.toSet()
+                } else {
+                    emptySet()
+                }
+            var added = retrySilentPaymentPendingItems(proxy, keys, walletId, existing)
+            touchSilentPaymentPendingAdvertised(walletId, update.history)
+            update.history.forEach { item ->
+                if (item.txHash.lowercase() in scannedTxids) {
+                    removeSilentPaymentPendingItem(walletId, item.txHash)
+                    return@forEach
+                }
+                try {
+                    val found = scanSilentPaymentHistoryItem(proxy, keys, item)
+                    if (found == null) {
+                        // Transient fetch failure — queue for retry instead of
+                        // dropping the receive forever.
+                        queueSilentPaymentPendingItem(walletId, item)
+                        if (BuildConfig.DEBUG) {
+                            Log.d(TAG, "SP scan: tx fetch failed for ${item.txHash}, queued for retry")
+                        }
+                        return@forEach
+                    }
+                    removeSilentPaymentPendingItem(walletId, item.txHash)
+                    found.forEach { utxo ->
+                        added = mergeSilentPaymentUtxo(existing, utxo) || added
+                    }
+                } catch (e: Exception) {
+                    if (BuildConfig.DEBUG) {
+                        Log.e(TAG, "SP scan failed for ${item.txHash}: ${e.message}", e)
+                    }
+                    queueSilentPaymentPendingItem(walletId, item)
+                }
+            }
+            if (update.progress >= 1.0) {
+                val scannedTo =
+                    update.history
+                        .map { it.height }
+                        .filter { it > 0 }
+                        .maxOrNull()
+                val previous = secureStorage.getSilentPaymentScanHeight(walletId)
+                if (scannedTo != null) {
+                    if (scannedTo > previous) {
+                        secureStorage.setSilentPaymentScanHeight(walletId, scannedTo)
+                    }
+                } else {
+                    // A complete scan with no confirmed history still proves
+                    // the chain was scanned: persist the tip so the next
+                    // launch resumes with the usual overlap instead of
+                    // re-backfilling from genesis every time. Forward-only.
+                    val tip =
+                        runCatching { wallet?.latestCheckpoint()?.height?.toInt() }.getOrNull()
+                            ?: lastKnownBlockHeight?.toInt()
+                    if (tip != null && tip > previous) {
+                        secureStorage.setSilentPaymentScanHeight(walletId, tip)
+                    }
+                }
+                if (!skipScannedTx) {
+                    secureStorage.setSilentPaymentScanGeneration(walletId, SP_SCAN_GENERATION)
+                }
+            }
+            val spentChanged = refreshSilentPaymentSpentStatus(walletId, proxy, existing)
+            val repaired = repairSilentPaymentUtxoAmountsInList(proxy, existing)
+            if (added || spentChanged || repaired) {
+                secureStorage.saveSilentPaymentUtxos(walletId, existing)
+                subscribeSilentPaymentScriptHashes(proxy, walletId)
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "SP scan: stored ${existing.size} utxo(s), added=$added spentChanged=$spentChanged")
+                }
+            }
+        }
+        if (secureStorage.getSilentPaymentPendingItems(walletId).isNotEmpty()) {
+            ensureSpPendingRetryLoop(walletId)
+        }
+        updateWalletState()
+    }
+
+    private fun mergeSilentPaymentUtxo(
+        existing: MutableList<SilentPaymentUtxo>,
+        utxo: SilentPaymentUtxo,
+    ): Boolean {
+        val existingIndex = existing.indexOfFirst { it.outpoint == utxo.outpoint }
+        if (existingIndex < 0) {
+            existing += utxo
+            return true
+        }
+        val current = existing[existingIndex]
+        val merged =
+            current.copy(
+                height = maxOf(current.height, utxo.height),
+                timestamp = utxo.timestamp ?: current.timestamp,
+            )
+        if (merged != current) {
+            existing[existingIndex] = merged
+            return true
+        }
+        return false
+    }
+
+    private fun queueSilentPaymentPendingItem(
+        walletId: String,
+        item: SilentPaymentHistoryItem,
+    ) {
+        val now = System.currentTimeMillis()
+        val pending = secureStorage.getSilentPaymentPendingItems(walletId).toMutableList()
+        val index = pending.indexOfFirst { it.txHash.equals(item.txHash, ignoreCase = true) }
+        if (index < 0) {
+            pending +=
+                SilentPaymentPendingItem(
+                    txHash = item.txHash,
+                    tweakKey = item.tweakKey,
+                    height = item.height,
+                    firstSeenMs = now,
+                    lastSeenMs = now,
+                )
+        } else {
+            pending[index] = pending[index].copy(
+                height = maxOf(pending[index].height, item.height),
+                lastSeenMs = now,
+            )
+        }
+        secureStorage.saveSilentPaymentPendingItems(walletId, pending)
+    }
+
+    /**
+     * Record that these txs are still advertised server-side, so expiry is
+     * measured from the last sighting. A continuously advertised receive is
+     * retried indefinitely instead of aging out of the queue.
+     */
+    private fun touchSilentPaymentPendingAdvertised(
+        walletId: String,
+        history: List<SilentPaymentHistoryItem>,
+    ) {
+        if (history.isEmpty()) return
+        val advertised = history.map { it.txHash.lowercase() }.toSet()
+        val pending = secureStorage.getSilentPaymentPendingItems(walletId)
+        if (pending.none { it.txHash.lowercase() in advertised }) return
+        val now = System.currentTimeMillis()
+        secureStorage.saveSilentPaymentPendingItems(
+            walletId,
+            pending.map { item ->
+                if (item.txHash.lowercase() in advertised) item.copy(lastSeenMs = now) else item
+            },
+        )
+    }
+
+    private fun removeSilentPaymentPendingItem(
+        walletId: String,
+        txHash: String,
+    ) {
+        val pending = secureStorage.getSilentPaymentPendingItems(walletId)
+        if (pending.none { it.txHash.equals(txHash, ignoreCase = true) }) return
+        secureStorage.saveSilentPaymentPendingItems(
+            walletId,
+            pending.filterNot { it.txHash.equals(txHash, ignoreCase = true) },
+        )
+    }
+
+    private var spPendingRetryJob: Job? = null
+
+    // A queued mempool receive must not wait for user action to retry: while
+    // the queue is non-empty, retry with exponential backoff (30s base,
+    // 15min cap; reset on progress) plus on every push, refresh and block,
+    // until each item scans or expires. Self-terminates on empty queue,
+    // wallet switch, or missing keys.
+    private fun ensureSpPendingRetryLoop(walletId: String) {
+        if (spPendingRetryJob?.isActive == true) return
+        if (secureStorage.getSilentPaymentPendingItems(walletId).isEmpty()) return
+        spPendingRetryJob =
+            repositoryScope.launch {
+                var attempts = 0
+                while (isActive) {
+                    val delayMs = (SP_PENDING_RETRY_BASE_MS shl attempts.coerceAtMost(5))
+                        .coerceAtMost(SP_PENDING_RETRY_MAX_MS)
+                    delay(delayMs)
+                    val activeId = secureStorage.getActiveWalletId()
+                    if (activeId != walletId) break
+                    val keys = silentPaymentKeys ?: break
+                    val proxy = cachingProxy ?: continue
+                    var dirty = false
+                    spUtxoMutex.withLock {
+                        val existing = secureStorage.getSilentPaymentUtxos(activeId).toMutableList()
+                        if (retrySilentPaymentPendingItems(proxy, keys, activeId, existing)) {
+                            secureStorage.saveSilentPaymentUtxos(activeId, existing)
+                            subscribeSilentPaymentScriptHashes(proxy, activeId)
+                            dirty = true
+                        }
+                    }
+                    if (dirty) {
+                        attempts = 0
+                        updateWalletState()
+                    } else {
+                        attempts++
+                    }
+                    if (secureStorage.getSilentPaymentPendingItems(activeId).isEmpty()) break
+                }
+            }
+    }
+
+    private fun retrySilentPaymentPendingItems(
+        proxy: CachingElectrumProxy,
+        keys: SilentPayment.ReceiverKeys,
+        walletId: String,
+        existing: MutableList<SilentPaymentUtxo>,
+    ): Boolean {
+        val pending = secureStorage.getSilentPaymentPendingItems(walletId)
+        if (pending.isEmpty()) return false
+        var added = false
+        val now = System.currentTimeMillis()
+        pending.forEach { item ->
+            if (now - item.lastAdvertisedMs > SP_PENDING_ITEM_TTL_MS) {
+                // The server stopped advertising this candidate over a week
+                // ago: likely a reorged mempool phantom. Scan one final time
+                // before dropping — a confirmed-but-unadvertised receive must
+                // not be discarded without ever being examined. A later
+                // backfill re-queues it via history if it reappears.
+                val lastChance =
+                    runCatching {
+                        scanSilentPaymentHistoryItem(
+                            proxy,
+                            keys,
+                            SilentPaymentHistoryItem(height = item.height, txHash = item.txHash, tweakKey = item.tweakKey),
+                        )
+                    }.getOrNull()
+                if (lastChance != null) {
+                    removeSilentPaymentPendingItem(walletId, item.txHash)
+                    lastChance.forEach { utxo ->
+                        added = mergeSilentPaymentUtxo(existing, utxo) || added
+                    }
+                } else {
+                    Log.w(TAG, "SP scan: pending ${item.txHash} unadvertised for TTL without scanning; dropping from retry queue")
+                    removeSilentPaymentPendingItem(walletId, item.txHash)
+                }
+                return@forEach
+            }
+            val found =
+                scanSilentPaymentHistoryItem(
+                    proxy,
+                    keys,
+                    SilentPaymentHistoryItem(height = item.height, txHash = item.txHash, tweakKey = item.tweakKey),
+                ) ?: return@forEach
+            removeSilentPaymentPendingItem(walletId, item.txHash)
+            found.forEach { utxo ->
+                added = mergeSilentPaymentUtxo(existing, utxo) || added
+            }
+        }
+        return added
+    }
+
+    private fun refreshSilentPaymentSpentStatus(
+        walletId: String,
+        proxy: CachingElectrumProxy,
+        utxos: MutableList<SilentPaymentUtxo>,
+    ): Boolean {
+        var changed = false
+        val phantomTxids = mutableListOf<String>()
+        val tipHeight =
+            lastKnownBlockHeight?.toLong()
+                ?: runCatching { wallet?.latestCheckpoint()?.height?.toLong() }.getOrNull()
+        utxos.forEachIndexed { index, utxo ->
+            // Frigate never re-notifies when a mempool receive confirms — the
+            // scripthash history is the canonical source for confirmation
+            // height, so unconfirmed UTXOs must always be re-checked.
+            // Frigate never re-notifies on confirmation; the scripthash
+            // history is the only source. Always re-check unconfirmed UTXOs
+            // and UTXOs whose spend hasn't confirmed yet.
+            val needsConfirmCheck = utxo.height <= 0
+            val needsSpendCheck = !utxo.spent || utxo.spendTxid.isNullOrBlank()
+            val needsSpendConfirmCheck = utxo.spent && !utxo.spendTxid.isNullOrBlank() && utxo.spendHeight <= 0
+            // Confirmed spends are normally stable, but a reorg can evict the
+            // spending tx: without a re-check the UTXO stays spent=true
+            // forever and the funds become invisible/unspendable. Re-verify
+            // spends within the reorg window of the tip.
+            val needsSpendReorgCheck =
+                utxo.spent && !utxo.spendTxid.isNullOrBlank() && utxo.spendHeight > 0 &&
+                    tipHeight != null && (tipHeight - utxo.spendHeight) < SP_REORG_WINDOW_BLOCKS
+            // A confirmed receive whose tx vanished from scripthash history
+            // was reorged/double-spent away: keeping it overstates the balance
+            // and every spend attempt fails. Recheck confirmed receives within
+            // the window too so phantoms are pruned below.
+            val needsReceiveReorgCheck =
+                !utxo.spent && utxo.height > 0 &&
+                    tipHeight != null && (tipHeight - utxo.height) < SP_REORG_WINDOW_BLOCKS
+            val needsTimestamp = (utxo.timestamp ?: 0L) <= 0L
+            val needsSpendTimestamp = utxo.spent && (utxo.spendTimestamp ?: 0L) <= 0L
+            if (!needsConfirmCheck && !needsSpendCheck && !needsSpendConfirmCheck && !needsSpendReorgCheck && !needsReceiveReorgCheck && !needsTimestamp && !needsSpendTimestamp) {
+                return@forEachIndexed
+            }
+            val scriptHash =
+                runCatching { BitcoinUtils.computeScriptHash(utxo.scriptPubKeyHex.hexToByteArray()) }
+                    .getOrNull() ?: return@forEachIndexed
+            val history = proxy.getScriptHashHistory(scriptHash) ?: return@forEachIndexed
+            val confirmedHeight =
+                history.firstOrNull { (txid, _) -> txid.equals(utxo.txid, ignoreCase = true) }
+                    ?.second?.takeIf { it > 0 }
+            val newHeight = maxOf(utxo.height, confirmedHeight ?: 0)
+            val spendEntry =
+                history.firstOrNull { (txid, _) -> !txid.equals(utxo.txid, ignoreCase = true) }
+            val receiveEntry =
+                history.firstOrNull { (txid, _) -> txid.equals(utxo.txid, ignoreCase = true) }
+            // Prune reorged-out receives: history fetch succeeded but the
+            // receive tx is entirely absent. Fail closed on two axes: only
+            // prune recent receives (deep disappearance more likely indicates
+            // a faulty server than a reorg, and a false prune outside the
+            // backfill window would hide funds until manual rescan), and only
+            // when the BDK wallet doesn't know the tx either (our own sends
+            // are always known even if Electrum lags).
+            val inPruneWindow =
+                tipHeight != null && (tipHeight - utxo.height) < SP_REORG_WINDOW_BLOCKS
+            if (receiveEntry == null && utxo.height > 0 && inPruneWindow) {
+                val receiveStillKnown =
+                    runCatching {
+                        val id = org.bitcoindevkit.Txid.fromString(utxo.txid)
+                        wallet?.getTx(id) != null
+                    }.getOrDefault(true)
+                if (!receiveStillKnown) {
+                    phantomTxids += utxo.txid
+                    changed = true
+                    return@forEachIndexed
+                }
+            }
+            val spendTxid = spendEntry?.first
+            // Reconcile optimistic spends: markSilentPaymentUtxosSpent flips
+            // spent=true at broadcast with spendHeight=0. If the spend never
+            // confirms and vanishes from both Electrum history and the BDK
+            // wallet (evicted/abandoned broadcast), un-spend so the UTXO
+            // becomes spendable again instead of stuck forever. The same
+            // applies to confirmed spends evicted by a reorg: history is only
+            // fetched for in-window spends (see needsSpendReorgCheck), so
+            // reaching here with no spend in history means the recorded spend
+            // is gone and the wallet doesn't know it either.
+            if (spendTxid == null && utxo.spent && !utxo.spendTxid.isNullOrBlank()) {
+                val spendStillKnown =
+                    runCatching {
+                        val id = org.bitcoindevkit.Txid.fromString(utxo.spendTxid)
+                        wallet?.getTx(id) != null
+                    }.getOrDefault(true)
+                if (!spendStillKnown) {
+                    utxos[index] =
+                        utxo.copy(
+                            spent = false,
+                            spendTxid = null,
+                            spendFeeSats = null,
+                            spendAddress = null,
+                            spendTimestamp = null,
+                            spendHeight = 0,
+                        )
+                    changed = true
+                    return@forEachIndexed
+                }
+            }
+            val spendHeight = maxOf(utxo.spendHeight, spendEntry?.second?.takeIf { it > 0 } ?: 0)
+            val receiveJson = if ((utxo.timestamp ?: 0L) <= 0L) proxy.getVerboseTransaction(utxo.txid) else null
+            val receiveTs =
+                receiveJson?.let(::verboseTxTimestamp)
+                    ?: resolveSilentPaymentTimestamp(utxo.timestamp, newHeight, unconfirmedFallback = true)
+            val spendMeta =
+                if (spendTxid != null) {
+                    hydrateSilentPaymentSpend(proxy, utxos, spendTxid)
+                } else {
+                    null
+                }
+            if (spendTxid == null && receiveTs == null && newHeight <= utxo.height && spendHeight <= utxo.spendHeight) {
+                return@forEachIndexed
+            }
+            // Prefer the block timestamp once confirmed; the mempool first-seen
+            // value stays only while unconfirmed.
+            val confirmedTs =
+                if (newHeight > 0 && newHeight != utxo.height) {
+                    silentPaymentTimestampForHeight(newHeight)
+                } else {
+                    null
+                }
+            // Electrum-detected spends have no local broadcast time; stamp
+            // newly discovered spends with now (mempool) or block time
+            // (confirmed) so history never shows a blank date.
+            var spendTs = spendMeta?.third ?: utxo.spendTimestamp
+            if ((spendTs ?: 0L) <= 0L && spendTxid != null) {
+                spendTs =
+                    if (spendHeight > 0) {
+                        silentPaymentTimestampForHeight(spendHeight)
+                    } else {
+                        System.currentTimeMillis() / 1000L
+                    }
+            }
+            utxos[index] =
+                utxo.copy(
+                    height = newHeight,
+                    spent = utxo.spent || spendTxid != null,
+                    timestamp = confirmedTs ?: receiveTs ?: utxo.timestamp,
+                    spendTxid = spendTxid ?: utxo.spendTxid,
+                    spendFeeSats = spendMeta?.first ?: utxo.spendFeeSats,
+                    spendAddress = spendMeta?.second ?: utxo.spendAddress,
+                    spendTimestamp = spendTs ?: utxo.spendTimestamp,
+                    spendHeight = spendHeight,
+                )
+            changed = true
+        }
+        if (phantomTxids.isNotEmpty()) {
+            val phantom = phantomTxids.map { it.lowercase() }.toSet()
+            utxos.removeAll { it.txid.lowercase() in phantom }
+        }
+        return changed
+    }
+
+    private fun hydrateSilentPaymentSpend(
+        proxy: CachingElectrumProxy,
+        utxos: List<SilentPaymentUtxo>,
+        spendTxid: String,
+    ): Triple<ULong?, String?, Long?>? {
+        val txJson = proxy.getVerboseTransaction(spendTxid) ?: return null
+        val timestamp = verboseTxTimestamp(txJson)
+        val vins = txJson.optJSONArray("vin")
+        val ourOutpoints = utxos.map { it.outpoint.lowercase() }.toSet()
+        val ourByOutpoint = utxos.associateBy { it.outpoint.lowercase() }
+        var ourInputSum = 0UL
+        var vinCount = 0
+        var ourVinCount = 0
+        if (vins != null) {
+            for (i in 0 until vins.length()) {
+                val vin = vins.optJSONObject(i) ?: continue
+                vinCount += 1
+                val prev = "${vin.optString("txid", "")}:${vin.optInt("vout", -1)}"
+                val ours = ourByOutpoint[prev.lowercase()] ?: continue
+                ourVinCount += 1
+                ourInputSum += ours.valueSats
+            }
+        }
+        val vouts = txJson.optJSONArray("vout")
+        var outputSum = 0UL
+        var firstExternal: String? = null
+        val network = wallet?.network()
+        if (vouts != null) {
+            for (i in 0 until vouts.length()) {
+                val vout = vouts.optJSONObject(i) ?: continue
+                outputSum += bitcoinJsonValueToSats(vout)
+                if (firstExternal == null && network != null) {
+                    val hex = vout.optJSONObject("scriptPubKey")?.optString("hex", "").orEmpty()
+                    if (hex.isNotBlank() && utxos.none { it.scriptPubKeyHex.equals(hex, ignoreCase = true) }) {
+                        firstExternal =
+                            runCatching {
+                                Address.fromScript(Script(hex.hexToByteArray()), network).toString()
+                            }.getOrNull()
+                    }
+                }
+            }
+        }
+        val fee =
+            if (vinCount > 0 && vinCount == ourVinCount && ourInputSum > outputSum) {
+                ourInputSum - outputSum
+            } else {
+                null
+            }
+        return Triple(fee, firstExternal, timestamp)
+    }
+
+    private fun scanSilentPaymentHistoryItem(
+        proxy: CachingElectrumProxy,
+        keys: SilentPayment.ReceiverKeys,
+        item: SilentPaymentHistoryItem,
+    ): List<SilentPaymentUtxo>? {
+        // Sparrow fetches raw (non-verbose) tx and re-scans client-side.
+        // Verbose JSON is unreliable for mempool txs on some Electrum servers.
+        val rawHex = proxy.getRawTransactionHex(item.txHash)
+        if (rawHex == null && BuildConfig.DEBUG) {
+            Log.d(TAG, "SP scan: raw tx fetch failed for ${item.txHash}")
+        }
+        val txJson = if (rawHex == null) proxy.getVerboseTransaction(item.txHash) else null
+        val outputs = silentPaymentOutputsFromTx(proxy, item.txHash, txJson, rawHex)
+        if (outputs == null) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "SP scan: could not parse outputs for ${item.txHash} (raw=${rawHex != null}, verbose=${txJson != null})")
+            }
+            return null
+        }
+        if (outputs.isEmpty()) {
+            // A real transaction always has outputs — empty means the fetch
+            // or parse came back hollow. Return null so the item is queued
+            // for retry instead of being accepted as "no match" forever.
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "SP scan: no outputs parsed for ${item.txHash} (retrying)")
+            }
+            return null
+        }
+        val tweak =
+            try {
+                item.tweakKey.hexToByteArray()
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.e(TAG, "SP scan: invalid tweak key for ${item.txHash}: ${item.tweakKey.take(20)}...", e)
+                }
+                return null
+            }
+        if (tweak.size != 33) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "SP scan: tweak key wrong size ${tweak.size} for ${item.txHash}")
+            }
+            return null
+        }
+        val found =
+            try {
+                SilentPayment.scanOutputs(
+                    tweakKey = tweak,
+                    scanPrivateKey = keys.scanPrivateKey,
+                    spendPrivateKey = keys.spendPrivateKey,
+                    spendPublicKey = keys.spendPublicKey,
+                    outputs = outputs,
+                )
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.e(TAG, "SP scan: scanOutputs failed for ${item.txHash}: ${e.message}", e)
+                }
+                return null
+            }
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "SP scan: ${item.txHash} outputs=${outputs.size} p2tr=${outputs.count { it.scriptPubKey.size == 34 }} found=${found.size}")
+        }
+        return found.map { found ->
+            SilentPaymentUtxo(
+                txid = item.txHash,
+                vout = found.vout,
+                valueSats = found.valueSats,
+                scriptPubKeyHex = found.scriptPubKey.joinToString("") { "%02x".format(it) },
+                tweakKeyHex = item.tweakKey,
+                tweakIndex = found.tweakIndex,
+                isChange = found.isChange,
+                height = item.height,
+                timestamp =
+                    resolveSilentPaymentTimestamp(
+                        stored = txJson?.let(::verboseTxTimestamp),
+                        height = item.height,
+                        unconfirmedFallback = true,
+                    ),
+            )
+        }
+    }
+
+    private fun silentPaymentOutputsFromTx(
+        proxy: CachingElectrumProxy,
+        txid: String,
+        txJson: JSONObject?,
+        rawHex: String? = null,
+    ): List<SilentPayment.TxOutput>? {
+        if (txJson != null) {
+            val vouts = txJson.optJSONArray("vout") ?: return null
+            val outputs = mutableListOf<SilentPayment.TxOutput>()
+            for (i in 0 until vouts.length()) {
+                val vout = vouts.optJSONObject(i) ?: continue
+                val hex = vout.optJSONObject("scriptPubKey")?.optString("hex", "").orEmpty()
+                if (hex.isBlank()) continue
+                outputs +=
+                    SilentPayment.TxOutput(
+                        scriptPubKey = hex.hexToByteArray(),
+                        valueSats = bitcoinJsonValueToSats(vout),
+                    )
+            }
+            return outputs
+        }
+        // Reuse the caller's raw fetch — refetching here doubled Tor cost on
+        // every cache miss during backfill scans.
+        val hex = rawHex ?: proxy.getRawTransactionHex(txid) ?: return null
+        val tx =
+            runCatching { Transaction(hex.hexToByteArray()) }.getOrNull() ?: return null
+        return tx.output().map { out ->
+            SilentPayment.TxOutput(
+                scriptPubKey = out.scriptPubkey.toBytes(),
+                valueSats = out.value.toSat(),
+            )
+        }
+    }
+
+    private fun verboseTxTimestamp(txJson: JSONObject): Long? {
+        val blocktime = txJson.optLong("blocktime", 0L)
+        if (blocktime > 0L) return blocktime
+        val time = txJson.optLong("time", 0L)
+        if (time > 0L) return time
+        val nested = txJson.optLong("block_time", 0L)
+        return nested.takeIf { it > 0L }
+    }
+
+    private fun silentPaymentTimestampForHeight(height: Int): Long? {
+        if (height <= 0) return null
+        silentPaymentBlockTimes[height]?.let { return it }
+        val fromClient =
+            runCatching { electrumClient?.blockHeader(height.toULong())?.time?.toLong() }
+                .getOrNull()
+                ?.takeIf { it > 0L }
+        val ts = fromClient ?: cachingProxy?.getBlockTimestamp(height) ?: return null
+        silentPaymentBlockTimes[height] = ts
+        return ts
+    }
+
+    private fun resolveSilentPaymentTimestamp(
+        stored: Long?,
+        height: Int,
+        unconfirmedFallback: Boolean,
+    ): Long? {
+        stored?.takeIf { it > 0L }?.let { return it }
+        silentPaymentTimestampForHeight(height)?.let { return it }
+        if (unconfirmedFallback && height <= 0) {
+            return System.currentTimeMillis() / 1000L
+        }
+        return null
+    }
+
+    private fun String.hexToByteArray(): ByteArray {
+        require(length % 2 == 0)
+        return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
+
+    private fun bitcoinJsonValueToSats(vout: JSONObject): ULong {
+        if (vout.has("valueSat") && !vout.isNull("valueSat")) {
+            return vout.optLong("valueSat", 0L).coerceAtLeast(0L).toULong()
+        }
+        val raw = vout.opt("value") ?: return 0UL
+        val text =
+            when (raw) {
+                is Number -> java.math.BigDecimal(raw.toString())
+                is String -> raw.trim().toBigDecimalOrNull()
+                else -> null
+            } ?: return 0UL
+        return text
+            .movePointRight(8)
+            .setScale(0, java.math.RoundingMode.HALF_UP)
+            .toLong()
+            .coerceAtLeast(0L)
+            .toULong()
+    }
+
+    // In-list variants below never touch storage themselves: callers must hold
+    // [spUtxoMutex] and persist the list once after all mutations.
+    private fun repairSilentPaymentUtxoAmountsInList(
+        proxy: CachingElectrumProxy,
+        utxos: MutableList<SilentPaymentUtxo>,
+    ): Boolean {
+        if (utxos.none { it.valueSats >= 100_000_000UL }) return false
+        var changed = false
+        utxos.forEachIndexed { index, utxo ->
+            if (utxo.valueSats < 100_000_000UL) return@forEachIndexed
+            val txJson = proxy.getVerboseTransaction(utxo.txid) ?: return@forEachIndexed
+            val vouts = txJson.optJSONArray("vout") ?: return@forEachIndexed
+            val vout = vouts.optJSONObject(utxo.vout) ?: return@forEachIndexed
+            val corrected = bitcoinJsonValueToSats(vout)
+            if (corrected > 0UL && corrected != utxo.valueSats) {
+                utxos[index] = utxo.copy(valueSats = corrected)
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    private fun fillSilentPaymentTimestampsInList(utxos: MutableList<SilentPaymentUtxo>): Boolean {
+        var changed = false
+        utxos.forEachIndexed { index, utxo ->
+            if ((utxo.timestamp ?: 0L) > 0L) return@forEachIndexed
+            val ts =
+                resolveSilentPaymentTimestamp(
+                    stored = null,
+                    height = utxo.height,
+                    unconfirmedFallback = true,
+                ) ?: return@forEachIndexed
+            utxos[index] = utxo.copy(timestamp = ts)
+            changed = true
+        }
+        return changed
+    }
+
+    private fun applySilentPaymentUtxos(builder: TxBuilder): TxBuilder {
+        val walletId = secureStorage.getActiveWalletId() ?: return builder
+        val keys = silentPaymentKeys ?: return builder
+        val frozen = frozenRefsForActiveWallet()
+        val selected = coinControlOutpoints.get()
+        val unspent =
+            secureStorage.getSilentPaymentUtxos(walletId).filter { utxo ->
+                !utxo.spent &&
+                    utxo.outpoint !in frozen &&
+                    (selected == null || utxo.outpoint in selected)
+            }
+        if (unspent.isEmpty()) return builder
+        var next = builder
+        unspent.forEach { utxo ->
+            next = addSilentPaymentForeignUtxo(next, utxo)
+        }
+        return next
+    }
+
+    private fun addSilentPaymentForeignUtxo(
+        builder: TxBuilder,
+        utxo: SilentPaymentUtxo,
+    ): TxBuilder {
+        val script = Script(utxo.scriptPubKeyHex.hexToByteArray())
+        val txout = TxOut(Amount.fromSat(utxo.valueSats), script)
+        val outpoint = OutPoint(Txid.fromString(utxo.txid), utxo.vout.toUInt())
+        wallet?.insertTxout(outpoint, txout)
+        // BDK's signer demands the full previous transaction
+        // (MissingNonWitnessUtxo otherwise), even for taproot inputs it
+        // cannot sign itself. Reuse the cached verbose fetch from scanning,
+        // falling back to a raw-tx fetch: most Electrum servers
+        // (ElectrumX/Fulcrum/Electrs) omit "hex" from verbose responses.
+        val nonWitnessUtxo = fetchSilentPaymentPrevTx(utxo.txid)
+        if (nonWitnessUtxo == null && BuildConfig.DEBUG) {
+            Log.w(TAG, "SP foreign UTXO ${utxo.outpoint} without prev tx — signer may reject")
+        }
+                val psbtInput =
+                    Input(
+                        nonWitnessUtxo = nonWitnessUtxo,
+                        witnessUtxo = txout,
+                partialSigs = emptyMap(),
+                sighashType = null,
+                redeemScript = null,
+                witnessScript = null,
+                bip32Derivation = emptyMap(),
+                finalScriptSig = null,
+                finalScriptWitness = null,
+                ripemd160Preimages = emptyMap(),
+                sha256Preimages = emptyMap(),
+                hash160Preimages = emptyMap(),
+                hash256Preimages = emptyMap(),
+                tapKeySig = null,
+                tapScriptSigs = emptyMap(),
+                tapScripts = emptyMap(),
+                tapKeyOrigins = emptyMap(),
+                tapInternalKey = null,
+                tapMerkleRoot = null,
+                proprietary = emptyMap(),
+                unknown = emptyMap(),
+            )
+        return builder.addForeignUtxo(outpoint, psbtInput, 230UL)
+    }
+
+    /**
+     * Fetch the full previous transaction for a silent-payment UTXO so BDK
+     * can sign the foreign input. Tries the cached verbose fetch first, then
+     * falls back to a raw-tx fetch (verbose responses usually lack "hex").
+     * Returns null when neither source yields a txid-matching transaction.
+     */
+    private fun fetchSilentPaymentPrevTx(txid: String): Transaction? {
+        val proxy = cachingProxy
+        val verboseHex =
+            runCatching {
+                proxy?.getVerboseTransaction(txid)?.optString("hex", "").orEmpty()
+            }.getOrNull().orEmpty()
+        val rawHex =
+            if (verboseHex.length >= 20) {
+                verboseHex
+            } else {
+                runCatching { proxy?.getRawTransactionHex(txid).orEmpty() }.getOrNull().orEmpty()
+            }
+        if (rawHex.length < 20) return null
+        return runCatching {
+            Transaction(rawHex.hexToByteArray()).takeIf {
+                it.computeTxid().toString().equals(txid, ignoreCase = true)
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * Sign every silent-payment input in [psbt] with a hand-rolled BIP-340
+     * signature over the BIP-341 key-path sighash, then inject
+     * `tap_internal_key`/`tap_key_sig`/`final_script_witness` via byte-level
+     * PSBT surgery. Miniscript cannot build a descriptor for foreign BIP-352
+     * P2TR (empty `tap_key_origins`), so the witness is attached directly and
+     * `finalize()` only covers remaining wallet-owned inputs.
+     *
+     * Returns a (possibly new) PSBT; callers must use the returned object.
+     */
+    @OptIn(ExperimentalUnsignedTypes::class)
+    private fun signSilentPaymentInputs(
+        psbt: Psbt,
+        walletId: String? = null,
+    ): Psbt {
+        // walletId pins the send flow's wallet so a mid-send wallet switch
+        // cannot mix another wallet's keys/records in. Null reads the current
+        // wallet and is only for fee-estimate dry-runs that never broadcast.
+        val resolvedWalletId = walletId ?: secureStorage.getActiveWalletId() ?: return psbt
+        val unsigned = runCatching { psbt.extractTx() }.getOrNull() ?: return psbt
+        // Lowercased: BDK renders txids lowercase while server-advertised
+        // hashes may differ in case; an exact-match miss here would leave a
+        // silent input unsigned and fail the send (fail closed, but noisy).
+        val spentOutpoints = unsigned.input().map { "${it.previousOutput.txid}:${it.previousOutput.vout}".lowercase() }.toSet()
+        // No `!it.spent` filter: an RBF replacement re-spends the same SP
+        // UTXOs the original already marked spent. Filtering them out here
+        // would leave the input unsigned and fail the bump at broadcast.
+        // Scope is already restricted to this transaction's inputs above.
+        val matching =
+            secureStorage.getSilentPaymentUtxos(resolvedWalletId).filter { it.outpoint.lowercase() in spentOutpoints }
+        if (matching.isEmpty()) return psbt
+        // SP inputs ARE being spent: missing keys/wallet must throw loudly
+        // instead of returning the PSBT unsigned (an unsigned SP input fails
+        // consensus at broadcast, but an explicit error names the cause).
+        val keys = silentPaymentKeys ?: throw IllegalStateException("Silent payment keys unavailable for signing")
+        val currentWallet = wallet ?: throw IllegalStateException("Wallet unavailable for SP signing")
+        val walletOutputsByOutpoint =
+            runCatching { currentWallet.listOutput() }.getOrNull()
+                ?.associateBy { "${it.outpoint.txid}:${it.outpoint.vout}" }
+                .orEmpty()
+        val spByOutpoint =
+            secureStorage.getSilentPaymentUtxos(resolvedWalletId).associateBy { it.outpoint.lowercase() }
+        val sighashInputs =
+            unsigned.input().map { txIn ->
+                val key = "${txIn.previousOutput.txid}:${txIn.previousOutput.vout}".lowercase()
+                val sp = spByOutpoint[key]
+                if (sp != null) {
+                    SilentPayment.SighashTxIn(
+                        txidHex = txIn.previousOutput.txid.toString(),
+                        vout = txIn.previousOutput.vout,
+                        sequence = txIn.sequence,
+                        prevScriptPubKey = sp.scriptPubKeyHex.hexToByteArray(),
+                        prevValueSats = sp.valueSats,
+                    )
+                } else {
+                    val local =
+                        walletOutputsByOutpoint[key]
+                            ?: throw IllegalStateException("Missing prevout data for $key")
+                    SilentPayment.SighashTxIn(
+                        txidHex = txIn.previousOutput.txid.toString(),
+                        vout = txIn.previousOutput.vout,
+                        sequence = txIn.sequence,
+                        prevScriptPubKey = local.txout.scriptPubkey.toBytes(),
+                        prevValueSats = local.txout.value.toSat(),
+                    )
+                }
+            }
+        val sighashOutputs =
+            unsigned.output().map { txOut ->
+                SilentPayment.SighashTxOut(
+                    valueSats = txOut.value.toSat(),
+                    scriptPubKey = txOut.scriptPubkey.toBytes(),
+                )
+            }
+        val injections = mutableMapOf<Int, Pair<ByteArray, ByteArray>>()
+        matching.forEach { utxo ->
+            val found =
+                SilentPayment.scanOutputs(
+                    tweakKey = utxo.tweakKeyHex.hexToByteArray(),
+                    scanPrivateKey = keys.scanPrivateKey,
+                    spendPrivateKey = keys.spendPrivateKey,
+                    spendPublicKey = keys.spendPublicKey,
+                    outputs =
+                        listOf(
+                            SilentPayment.TxOutput(
+                                scriptPubKey = utxo.scriptPubKeyHex.hexToByteArray(),
+                                valueSats = utxo.valueSats,
+                            ),
+                        ),
+                ).firstOrNull()
+                    ?: throw IllegalStateException("Could not rederive silent payment key for ${utxo.outpoint}")
+            val evenKey = SilentPayment.evenYPrivateKey(found.spendPrivateKey)
+            val inputIndex =
+                unsigned.input().indexOfFirst {
+                    "${it.previousOutput.txid}:${it.previousOutput.vout}".lowercase() == utxo.outpoint.lowercase()
+                }
+            if (inputIndex < 0) {
+                throw IllegalStateException("Silent payment input ${utxo.outpoint} missing from transaction")
+            }
+            val sighash =
+                SilentPayment.taprootKeySpendSighash(
+                    version = unsigned.version(),
+                    lockTime = unsigned.lockTime(),
+                    inputs = sighashInputs,
+                    outputs = sighashOutputs,
+                    inputIndex = inputIndex,
+                )
+            val sig = SilentPayment.schnorrSign(evenKey, sighash)
+            if (!SilentPayment.schnorrVerify(found.xOnlyPublicKey, sighash, sig)) {
+                throw IllegalStateException("Silent payment signature self-check failed for ${utxo.outpoint}")
+            }
+            injections[inputIndex] = found.xOnlyPublicKey to sig
+        }
+        val raw =
+            try {
+                android.util.Base64.decode(psbt.serialize(), android.util.Base64.DEFAULT)
+            } catch (e: Exception) {
+                throw IllegalStateException("Could not serialize PSBT for silent payment signing", e)
+            }
+        val modified =
+            try {
+                SilentPayment.psbtInjectTapKeySigs(raw, unsigned.input().size, injections)
+            } catch (e: Exception) {
+                throw IllegalStateException(
+                    "Silent payment PSBT injection failed: ${e.message?.ifBlank { null } ?: e::class.simpleName}",
+                    e,
+                )
+            }
+        val inputCount = unsigned.input().size
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "SP sign: injecting ${injections.size} tap sig(s) into $inputCount input(s)")
+        }
+        for ((index, _) in injections) {
+            if (!SilentPayment.psbtVerifyTapInjection(modified, inputCount, index)) {
+                throw IllegalStateException("Silent payment PSBT injection missing at input $index")
+            }
+        }
+        val rebuilt =
+            try {
+                Psbt(android.util.Base64.encodeToString(modified, android.util.Base64.NO_WRAP))
+            } catch (e: Exception) {
+                throw IllegalStateException("Silent payment PSBT rebuild failed", e)
+            }
+        if (BuildConfig.DEBUG) {
+            runCatching {
+                val dumped = rebuilt.jsonSerialize()
+                val forLog = dumped.replace(Regex("""("tap_key_sig":\s*")[^"]{8}[^"]*(")"""), "$1<sig>$2")
+                Log.d(TAG, "SP sign: rebuilt inputs=${rebuilt.input().size} tapFieldsPresent=${dumped.contains("tap_key_sig")}")
+                Log.d(TAG, "SP sign: PSBT JSON: $forLog")
+            }
+        }
+        if (injections.size == unsigned.input().size) {
+            return rebuilt
+        }
+        val finalized =
+            try {
+                rebuilt.finalize()
+            } catch (e: Exception) {
+                throw IllegalStateException(
+                    "Silent payment finalize failed: ${e.message?.ifBlank { null } ?: e::class.simpleName}",
+                    e,
+                )
+            }
+        if (!finalized.couldFinalize) {
+            runCatching { rebuilt.extractTx() }.getOrNull()
+                ?: throw IllegalStateException("Could not finalize silent payment inputs")
+            return rebuilt
+        }
+        return finalized.psbt
+    }
+
+    private suspend fun markSilentPaymentUtxosSpent(
+        tx: Transaction,
+        walletId: String? = null,
+    ) {
+        val resolvedWalletId = walletId ?: secureStorage.getActiveWalletId() ?: return
+        val spentOutpoints = tx.input().map { "${it.previousOutput.txid}:${it.previousOutput.vout}".lowercase() }.toSet()
+        spUtxoMutex.withLock {
+            val existing = secureStorage.getSilentPaymentUtxos(resolvedWalletId)
+            if (existing.none { it.outpoint.lowercase() in spentOutpoints && !it.spent }) return@withLock
+            val spendTxid = runCatching { tx.computeTxid().toString() }.getOrNull()
+            // Fee spans ALL inputs (silent + wallet-owned), not just the
+            // silent ones: under-reporting here corrupts spend metadata.
+            // Unknown prevout values fail the fee to null, never to a wrong
+            // number.
+            val inputValues =
+                spentOutpoints.map { outpoint ->
+                    existing.firstOrNull { it.outpoint.equals(outpoint, ignoreCase = true) }?.valueSats
+                        ?: runCatching {
+                            val parts = outpoint.split(":")
+                            val txid = org.bitcoindevkit.Txid.fromString(parts[0])
+                            val vout = parts[1].toUInt()
+                            wallet?.getUtxo(OutPoint(txid, vout))?.txout?.value?.toSat()
+                        }.getOrNull()
+                }
+            val outputSum = tx.output().fold(0UL) { acc, out -> acc + out.value.toSat() }
+            val spendFee =
+                if (inputValues.all { it != null }) {
+                    inputValues.filterNotNull().fold(0UL) { acc, value -> acc + value }
+                        .takeIf { it > outputSum }?.minus(outputSum)
+                } else {
+                    null
+                }
+            val network = wallet?.network()
+            val spendAddress =
+                if (network != null) {
+                    tx.output().firstOrNull()?.let { out ->
+                        runCatching { Address.fromScript(out.scriptPubkey, network).toString() }.getOrNull()
+                    }
+                } else {
+                    null
+                }
+            val now = System.currentTimeMillis() / 1000L
+            secureStorage.saveSilentPaymentUtxos(
+                resolvedWalletId,
+                existing.map { utxo ->
+                    if (utxo.outpoint.lowercase() in spentOutpoints) {
+                        utxo.copy(
+                            spent = true,
+                            spendTxid = spendTxid ?: utxo.spendTxid,
+                            spendFeeSats = spendFee ?: utxo.spendFeeSats,
+                            spendAddress = spendAddress ?: utxo.spendAddress,
+                            spendTimestamp = now,
+                            spendHeight = 0,
+                        )
+                    } else {
+                        utxo
+                    }
+                },
+            )
+        }
+        updateWalletState()
     }
 
     /**
@@ -5412,6 +7038,96 @@ class WalletRepository(context: Context) {
         }
     }
 
+    fun getSilentPaymentUtxosForWallet(walletId: String): List<SilentPaymentUtxo> =
+        secureStorage.getSilentPaymentUtxos(walletId)
+
+    fun saveSilentPaymentUtxosForWallet(
+        walletId: String,
+        utxos: List<SilentPaymentUtxo>,
+    ) {
+        secureStorage.saveSilentPaymentUtxos(walletId, utxos)
+    }
+
+    fun getSilentPaymentPendingForWallet(walletId: String): List<SilentPaymentPendingItem> =
+        secureStorage.getSilentPaymentPendingItems(walletId)
+
+    fun saveSilentPaymentPendingForWallet(
+        walletId: String,
+        items: List<SilentPaymentPendingItem>,
+    ) {
+        secureStorage.saveSilentPaymentPendingItems(walletId, items)
+    }
+
+    fun getSilentPaymentScanHeightForWallet(walletId: String): Int =
+        secureStorage.getSilentPaymentScanHeight(walletId)
+
+    fun setSilentPaymentScanHeightForWallet(
+        walletId: String,
+        height: Int,
+    ) {
+        secureStorage.setSilentPaymentScanHeight(walletId, height)
+    }
+
+    /** Txids with a known-non-SP (`[]`) marker — exported so restores keep the RBF distinction. */
+    fun getKnownNonSilentPaymentTxidsForWallet(walletId: String): List<String> =
+        secureStorage.getKnownNonSilentPaymentTxids(walletId)
+
+    fun saveKnownNonSilentPaymentMarkerForWallet(
+        walletId: String,
+        txid: String,
+    ) {
+        // Never overwrite a destinations record restored from the same
+        // backup (import restores destinations first, markers second).
+        if (!secureStorage.hasSilentPaymentRecord(walletId, txid)) {
+            secureStorage.saveNoSilentPaymentMarker(walletId, txid)
+        }
+    }
+
+    fun canReceiveSilentPayments(storedWallet: StoredWallet?): Boolean {
+        if (storedWallet == null) return false
+        if (storedWallet.isWatchOnly) return false
+        if (storedWallet.walletKind != WalletKind.BITCOIN) return false
+        if (storedWallet.policyType != WalletPolicyType.SINGLE_SIG) return false
+        if (storedWallet.derivationPath == "single") return false
+        val walletId = storedWallet.id
+        return secureStorage.getMnemonic(walletId) != null &&
+            !secureStorage.hasPrivateKey(walletId) &&
+            !secureStorage.hasExtendedKey(walletId)
+    }
+
+    fun silentPaymentAddressForActiveWallet(): String? = silentPaymentKeys?.address
+
+    fun isSilentPaymentsServerSupported(): Boolean? = silentPaymentsSupported
+
+    fun getSilentPaymentReceiveMode(): Boolean {
+        val walletId = secureStorage.getActiveWalletId() ?: return false
+        return secureStorage.getSilentPaymentReceiveMode(walletId)
+    }
+
+    fun setSilentPaymentReceiveMode(enabled: Boolean) {
+        val walletId = secureStorage.getActiveWalletId() ?: return
+        secureStorage.setSilentPaymentReceiveMode(walletId, enabled)
+    }
+
+    fun hasAcknowledgedSilentPaymentScanDisclosure(): Boolean {
+        if (secureStorage.hasAcknowledgedSilentPaymentScanDisclosureGlobal()) return true
+        // Legacy per-wallet flags (pre-global): an upgrader who already saw
+        // the popup must not be re-prompted.
+        val walletId = secureStorage.getActiveWalletId() ?: return true
+        return secureStorage.hasAcknowledgedSilentPaymentScanDisclosure(walletId)
+    }
+
+    fun acknowledgeSilentPaymentScanDisclosure() {
+        secureStorage.setSilentPaymentScanDisclosureAcknowledgedGlobal()
+    }
+
+    private fun silentPaymentUnspentSats(walletId: String?): ULong {
+        if (walletId.isNullOrBlank()) return 0UL
+        return secureStorage.getSilentPaymentUtxos(walletId)
+            .filter { !it.spent }
+            .fold(0UL) { acc, utxo -> acc + utxo.valueSats }
+    }
+
     fun getAllTransactionSourcesForWallet(walletId: String): Map<String, String> {
         val storedSources = secureStorage.getAllTransactionSources(walletId)
         val swapSources =
@@ -5563,15 +7279,8 @@ class WalletRepository(context: Context) {
 
     private fun resolveBip39SeedForArkBackup(walletId: String): ByteArray? {
         val raw = secureStorage.getMnemonic(walletId) ?: return null
-        val mnemonic =
-            raw
-                .trim()
-                .lowercase()
-                .split(Regex("\\s+"))
-                .filter { it.isNotBlank() }
-                .joinToString(" ")
-        if (mnemonic.isBlank()) return null
-        return ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, secureStorage.getPassphrase(walletId))
+        if (raw.isBlank()) return null
+        return bip39SeedCanonical(raw, secureStorage.getPassphrase(walletId))
     }
 
     fun saveSparkTransactionSourceForWallet(
@@ -5889,6 +7598,7 @@ class WalletRepository(context: Context) {
                     { it.chainPosition },
                 )
             val utxos = currentWallet.listUnspent()
+            val walletUtxos =
             utxos.mapNotNull { utxo ->
                 try {
                     val txid = utxo.outpoint.txid.toString()
@@ -5927,6 +7637,30 @@ class WalletRepository(context: Context) {
                     null
                 }
             }
+            val knownOutpoints = walletUtxos.map { it.outpoint }.toSet()
+            val silentUtxos =
+                secureStorage.getSilentPaymentUtxos(activeWalletId).mapNotNull { utxo ->
+                    if (utxo.spent || utxo.outpoint in knownOutpoints) return@mapNotNull null
+                    val address =
+                        runCatching {
+                            Address.fromScript(
+                                Script(utxo.scriptPubKeyHex.hexToByteArray()),
+                                network,
+                            ).toString()
+                        }.getOrNull() ?: return@mapNotNull null
+                    UtxoInfo(
+                        outpoint = utxo.outpoint,
+                        txid = utxo.txid,
+                        vout = utxo.vout.toUInt(),
+                        address = address,
+                        amountSats = utxo.valueSats,
+                        label = labels[address],
+                        isConfirmed = utxo.height > 0,
+                        isFrozen = frozenUtxos.contains(utxo.outpoint),
+                        isSilentPayment = true,
+                    )
+                }
+            walletUtxos + silentUtxos
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.e(TAG, "Error listing UTXOs: ${e.message}")
             emptyList()
@@ -5954,7 +7688,8 @@ class WalletRepository(context: Context) {
         selectedUtxos: List<UtxoInfo>? = null,
         applyManualSelection: ((TxBuilder) -> TxBuilder)? = null,
     ): ULong {
-        val currentWallet = wallet ?: return 0UL
+        return withSelectedUtxos(selectedUtxos) {
+        val currentWallet = wallet ?: return@withSelectedUtxos 0UL
         val recipientScript =
             buildSendRecipientScripts(
                 recipients = listOf(Recipient(recipientAddress, 0UL)),
@@ -5967,7 +7702,10 @@ class WalletRepository(context: Context) {
             selectedUtxos
                 ?.takeIf { it.isNotEmpty() }
                 ?.sumOf { it.amountSats.toLong() }
-                ?: currentWallet.balance().total.toSat().toLong()
+                ?: (
+                    currentWallet.balance().total.toSat().toLong() +
+                        silentPaymentUnspentSats(secureStorage.getActiveWalletId()).toLong()
+                    )
         if (availableSats <= 0L) return 0UL
 
         // Candidate must clear the same two-pass feeAbsolute path used by dry-run/send.
@@ -6008,7 +7746,8 @@ class WalletRepository(context: Context) {
             } else {
                 maxUnderPolicy(preferChangeOnly = null)
             }
-        return maxAmountSats.toULong()
+        return@withSelectedUtxos maxAmountSats.toULong()
+        }
     }
 
     private suspend fun prepareSingleRecipientTransaction(
@@ -6020,7 +7759,8 @@ class WalletRepository(context: Context) {
         precomputedFeeSats: ULong? = null,
         includePsbtDetails: Boolean = false,
     ): PreparedBitcoinSendCacheEntry? {
-        val currentWallet = wallet ?: return null
+        return withSelectedUtxos(selectedUtxos) {
+        val currentWallet = wallet ?: return@withSelectedUtxos null
         val cacheKey =
             buildSingleBitcoinSendPreparationKey(
                 state = currentBitcoinSendPreparationState(),
@@ -6105,7 +7845,8 @@ class WalletRepository(context: Context) {
                 psbtDetails = psbtDetails,
             )
         cachePreparedBitcoinSendEntry(entry)
-        return entry
+        return@withSelectedUtxos entry
+        }
     }
 
     private suspend fun prepareMultiRecipientTransaction(
@@ -6115,7 +7856,8 @@ class WalletRepository(context: Context) {
         precomputedFeeSats: ULong? = null,
         includePsbtDetails: Boolean = false,
     ): PreparedBitcoinSendCacheEntry? {
-        val currentWallet = wallet ?: return null
+        return withSelectedUtxos(selectedUtxos) {
+        val currentWallet = wallet ?: return@withSelectedUtxos null
         val cacheKey =
             buildMultiBitcoinSendPreparationKey(
                 state = currentBitcoinSendPreparationState(),
@@ -6178,7 +7920,8 @@ class WalletRepository(context: Context) {
                 psbtDetails = psbtDetails,
             )
         cachePreparedBitcoinSendEntry(entry)
-        return entry
+        return@withSelectedUtxos entry
+        }
     }
 
     /**
@@ -6198,8 +7941,9 @@ class WalletRepository(context: Context) {
         onProgress: (String) -> Unit = {},
     ): WalletResult<String> =
         withContext(Dispatchers.IO) {
-            val currentWallet = wallet ?: return@withContext WalletResult.Error("Wallet not initialized")
-            val client = electrumClient ?: return@withContext WalletResult.Error("Not connected to Electrum server")
+            withSelectedUtxos(selectedUtxos) {
+            val currentWallet = wallet ?: return@withSelectedUtxos WalletResult.Error("Wallet not initialized")
+            val client = electrumClient ?: return@withSelectedUtxos WalletResult.Error("Not connected to Electrum server")
 
             // Check if watch-only
             val activeWalletId = secureStorage.getActiveWalletId()
@@ -6210,6 +7954,11 @@ class WalletRepository(context: Context) {
             if (storedWallet?.isWatchOnly == true) {
                 return@withContext WalletResult.Error("Cannot send from watch-only wallet")
             }
+            // Pin the wallet for the whole flow: re-reading the active id
+            // later could mix another wallet's keys/records in after a
+            // mid-send wallet switch.
+            val sendWalletId = storedWallet?.id ?: activeWalletId
+                ?: return@withSelectedUtxos WalletResult.Error("Wallet not initialized")
 
             try {
                 onProgress("Building transaction...")
@@ -6308,6 +8057,7 @@ class WalletRepository(context: Context) {
                             storedWallet = storedWallet,
                             recipients = sendRecipients,
                             feeSats = psbt.fee(),
+                            walletId = sendWalletId,
                         )
                     } else {
                         psbt
@@ -6328,6 +8078,7 @@ class WalletRepository(context: Context) {
                                         storedWallet = storedWallet,
                                         recipients = sendRecipients,
                                         feeSats = fee,
+                                        walletId = sendWalletId,
                                     )
                                 } catch (_: Exception) {
                                     null
@@ -6343,19 +8094,22 @@ class WalletRepository(context: Context) {
                                 }
                             }
                         },
+                        spWalletId = sendWalletId,
                     ).tx
 
                 onProgress("Broadcasting to network...")
-                client.transactionBroadcast(tx)
-
+                // Journal the SP record BEFORE broadcast: a kill between
+                // broadcast and persist used to leave an on-chain SP tx with
+                // no record, permanently blocking RBF. A record for a txid
+                // that never broadcasts is harmless (bump fails at lookup).
                 val txid = tx.computeTxid().toString()
+                persistSilentPaymentRecipients(sendWalletId, txid, sendRecipients)
+                client.transactionBroadcast(tx)
+                markSilentPaymentUtxosSpent(tx, sendWalletId)
 
                 // Save transaction label if provided
-                if (activeWalletId != null) {
-                    if (!label.isNullOrBlank()) {
-                        saveBitcoinTransactionLabelIndexed(activeWalletId, txid, label)
-                    }
-                    persistSilentPaymentRecipients(activeWalletId, txid, sendRecipients)
+                if (!label.isNullOrBlank()) {
+                    saveBitcoinTransactionLabelIndexed(sendWalletId, txid, label)
                 }
 
                 // Invalidate pre-check cache so next background sync picks up the change
@@ -6363,9 +8117,247 @@ class WalletRepository(context: Context) {
 
                 WalletResult.Success(txid)
             } catch (e: Exception) {
-                WalletResult.Error("Transaction failed", e)
+                if (BuildConfig.DEBUG) Log.e(TAG, "sendBitcoin failed: ${e.message}", e)
+                WalletResult.Error(e.message?.ifBlank { null } ?: "Transaction failed", e)
+            }
             }
         }
+
+    /**
+     * Build and sign an Ark board funding transaction WITHOUT broadcasting it.
+     * Single-tx self-board path: the signed PSBT is handed to Bark `boardPsbt`
+     * first (Bark commits to this exact txid), then broadcast separately via
+     * [broadcastSignedBoardFundingTx]. Build/sign mirrors [sendBitcoin]
+     * (two-pass fee correction, manual coin selection, frozen-UTXO filter).
+     *
+     * Silent-payment destinations are rejected — boarding cannot rebuild SP outputs.
+     */
+    suspend fun buildSignedBoardFundingTx(
+        recipientAddress: String,
+        amountSats: ULong,
+        feeRateSatPerVb: Double = 1.0,
+        selectedUtxos: List<UtxoInfo>? = null,
+        isMaxSend: Boolean = false,
+        precomputedFeeSats: ULong? = null,
+        onProgress: (String) -> Unit = {},
+    ): WalletResult<SignedBoardFunding> =
+        withContext(Dispatchers.IO) {
+            withSelectedUtxos(selectedUtxos) {
+            val currentWallet = wallet ?: return@withSelectedUtxos WalletResult.Error("Wallet not initialized")
+            val activeWalletId = secureStorage.getActiveWalletId()
+            val storedWallet = activeWalletId?.let { secureStorage.getWalletMetadata(it) }
+            if (storedWallet?.policyType == WalletPolicyType.MULTISIG) {
+                return@withContext WalletResult.Error("Use PSBT signing for multisig wallets")
+            }
+            if (storedWallet?.isWatchOnly == true) {
+                return@withContext WalletResult.Error("Cannot send from watch-only wallet")
+            }
+            // Pin the wallet for the whole flow: re-reading the active id
+            // later could mix another wallet's keys/records in after a
+            // mid-send wallet switch.
+            val sendWalletId = storedWallet?.id ?: activeWalletId
+                ?: return@withSelectedUtxos WalletResult.Error("Wallet not initialized")
+
+            try {
+                onProgress("Building transaction...")
+                if (isSilentPaymentAddress(recipientAddress)) {
+                    return@withContext WalletResult.Error("Silent payments are not supported for boarding")
+                }
+                val applyManualSelection = buildManualSelectionApplier(currentWallet, selectedUtxos)
+                val resolvedAmountSats =
+                    if (isMaxSend) {
+                        resolveMaxExactBitcoinAmount(
+                            recipientAddress = recipientAddress,
+                            feeRateSatPerVb = feeRateSatPerVb,
+                            selectedUtxos = selectedUtxos,
+                            applyManualSelection = applyManualSelection,
+                        )
+                    } else {
+                        amountSats
+                    }
+                if (resolvedAmountSats == 0UL) {
+                    return@withContext WalletResult.Error("No spendable Bitcoin available")
+                }
+                val sendRecipients = listOf(Recipient(recipientAddress, resolvedAmountSats))
+                val recipientScripts = buildSendRecipientScripts(sendRecipients, currentWallet)
+                val feeRate = feeRateFromSatPerVb(feeRateSatPerVb)
+
+                // Helper to configure the TxBuilder with recipients, UTXOs, etc.
+                fun buildTx(builder: TxBuilder): TxBuilder {
+                    return applyManualSelection(
+                        addRecipientScripts(builder, recipientScripts),
+                    )
+                }
+
+                // When the dry-run already computed the exact fee, reuse it directly
+                // via feeAbsolute to guarantee the boarded txid matches the reviewed
+                // estimate. Otherwise fall back to the two-pass correction.
+                val (psbt, usedPreferChangeOnly) =
+                    withConsolidateFallback { preferChangeOnly ->
+                        val built =
+                            if (precomputedFeeSats != null) {
+                                try {
+                                    buildTx(
+                                        TxBuilder().applySendDefaults(preferChangeOnly)
+                                            .feeAbsolute(Amount.fromSat(precomputedFeeSats)),
+                                    ).finish(currentWallet)
+                                } catch (_: Exception) {
+                                    // Fallback: two-pass if feeAbsolute with precomputed fee fails
+                                    // (e.g. UTXO set changed between dry-run and send)
+                                    val pass1Psbt =
+                                        buildTx(
+                                            TxBuilder().applySendDefaults(preferChangeOnly).feeRate(feeRate),
+                                        ).finish(currentWallet)
+                                    val exactFeeResult =
+                                        computeExactFee(pass1Psbt, currentWallet, pass1Psbt.extractTx(), feeRateSatPerVb)
+                                    if (exactFeeResult != null) {
+                                        try {
+                                            buildTx(
+                                                TxBuilder().applySendDefaults(preferChangeOnly).feeAbsolute(
+                                                    Amount.fromSat(exactFeeResult.feeSats),
+                                                ),
+                                            ).finish(currentWallet)
+                                        } catch (_: Exception) {
+                                            pass1Psbt
+                                        }
+                                    } else {
+                                        pass1Psbt
+                                    }
+                                }
+                            } else {
+                                val pass1Psbt =
+                                    buildTx(
+                                        TxBuilder().applySendDefaults(preferChangeOnly).feeRate(feeRate),
+                                    ).finish(currentWallet)
+                                onProgress("Computing fee...")
+                                val exactFeeResult =
+                                    computeExactFee(pass1Psbt, currentWallet, pass1Psbt.extractTx(), feeRateSatPerVb)
+                                if (exactFeeResult != null) {
+                                    try {
+                                        buildTx(
+                                            TxBuilder().applySendDefaults(preferChangeOnly).feeAbsolute(
+                                                Amount.fromSat(exactFeeResult.feeSats),
+                                            ),
+                                        ).finish(currentWallet)
+                                    } catch (_: Exception) {
+                                        pass1Psbt
+                                    }
+                                } else {
+                                    pass1Psbt
+                                }
+                            }
+                        built to preferChangeOnly
+                    }
+
+                onProgress("Signing transaction...")
+                val signed =
+                    signWithFeeCorrection(
+                        initialPsbt = psbt,
+                        wallet = currentWallet,
+                        targetSatPerVb = feeRateSatPerVb,
+                        rebuildWithFee = { fee ->
+                            try {
+                                buildTx(
+                                    TxBuilder().applySendDefaults(usedPreferChangeOnly)
+                                        .feeAbsolute(Amount.fromSat(fee)),
+                                ).finish(currentWallet)
+                            } catch (_: Exception) {
+                                null
+                            }
+                        },
+                        spWalletId = sendWalletId,
+                    )
+
+                // Serialize AFTER signing: boardPsbt commits to this exact txid, so the
+                // PSBT handed to Bark must already carry final signatures (legacy
+                // scriptSig inputs change the txid when finalized).
+                val signedPsbtBase64 = signed.signedPsbt.serialize()
+                val txid = signed.tx.computeTxid().toString()
+                WalletResult.Success(
+                    SignedBoardFunding(
+                        signedPsbtBase64 = signedPsbtBase64,
+                        txid = txid,
+                        feeSats = signed.feeSats.toLong(),
+                        recipientAmountSats = resolvedAmountSats.toLong(),
+                    ),
+                )
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.e(TAG, "buildSignedBoardFundingTx failed: ${e.message}", e)
+                WalletResult.Error(e.message?.ifBlank { null } ?: "Transaction failed", e)
+            }
+            }
+        }
+
+    /**
+     * Broadcast a previously built board funding transaction (see
+     * [buildSignedBoardFundingTx]). Re-derives the transaction from the signed
+     * PSBT so the broadcast txid is guaranteed to match the boarded one.
+     *
+     * Broadcast-race tolerant: Bark may broadcast the finalized PSBT itself via
+     * Esplora before we get here. A broadcast failure is verified against the
+     * network ([confirmBoardFundingBroadcast]) before it is reported — if our
+     * exact txid is now known, the race was won and this returns success.
+     */
+    suspend fun broadcastSignedBoardFundingTx(
+        signedPsbtBase64: String,
+        onProgress: (String) -> Unit = {},
+    ): WalletResult<String> =
+        withContext(Dispatchers.IO) {
+            val client = electrumClient ?: return@withContext WalletResult.Error("Not connected to Electrum server")
+            try {
+                onProgress("Broadcasting to network...")
+                val tx = Psbt(signedPsbtBase64).extractTx()
+                require(tx.input().isNotEmpty() && tx.output().isNotEmpty()) {
+                    "Invalid funding transaction"
+                }
+                val txid = tx.computeTxid().toString()
+                try {
+                    client.transactionBroadcast(tx)
+                } catch (broadcastErr: Exception) {
+                    if (!confirmBoardFundingBroadcast(txid, broadcastErr)) throw broadcastErr
+                }
+                // Mirror sendBitcoin bookkeeping: SP inputs (if any) must be marked
+                // spent. SP *recipients* need no journaling — boarding destinations
+                // are rejected in buildSignedBoardFundingTx.
+                val activeWalletId = secureStorage.getActiveWalletId()
+                markSilentPaymentUtxosSpent(tx, activeWalletId)
+                clearScriptHashCache()
+                WalletResult.Success(txid)
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.e(TAG, "broadcastSignedBoardFundingTx failed: ${e.message}", e)
+                WalletResult.Error(e.message?.ifBlank { null } ?: "Broadcast failed", e)
+            }
+        }
+
+    /**
+     * Confirm a board funding tx reached the network after a broadcast failure.
+     *
+     * Returns true when [txid] is now known to our Electrum server (the broadcast
+     * raced with Bark's own Esplora broadcast and succeeded), or when our server
+     * explicitly rejected the broadcast as a duplicate (it holds the tx even if the
+     * follow-up lookup missed on a transient socket failure). Cross-backend
+     * propagation can lag, so presence is polled before giving up.
+     */
+    private suspend fun confirmBoardFundingBroadcast(txid: String, broadcastErr: Exception): Boolean {
+        val claimedDuplicate = isKnownTxBroadcastRejection(broadcastErr.message)
+        repeat(BOARD_BROADCAST_VERIFY_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(BOARD_BROADCAST_VERIFY_RETRY_MS)
+            val hex = runCatching { cachingProxy?.getRawTransactionHex(txid) }.getOrNull()
+            if (!hex.isNullOrBlank()) {
+                if (BuildConfig.DEBUG) {
+                    Log.i(TAG, "Board funding $txid confirmed on network after broadcast race")
+                }
+                return true
+            }
+        }
+        if (claimedDuplicate) {
+            if (BuildConfig.DEBUG) {
+                Log.i(TAG, "Board funding $txid rejected as duplicate; treating broadcast as won race")
+            }
+            return true
+        }
+        return false
+    }
 
     /**
      * Dry-run transaction build for accurate fee estimation.
@@ -6453,17 +8445,21 @@ class WalletRepository(context: Context) {
         onProgress: (String) -> Unit = {},
     ): WalletResult<String> =
         withContext(Dispatchers.IO) {
-            val currentWallet = wallet ?: return@withContext WalletResult.Error("Wallet not initialized")
-            val client = electrumClient ?: return@withContext WalletResult.Error("Not connected to Electrum server")
+            withSelectedUtxos(selectedUtxos) {
+            val currentWallet = wallet ?: return@withSelectedUtxos WalletResult.Error("Wallet not initialized")
+            val client = electrumClient ?: return@withSelectedUtxos WalletResult.Error("Not connected to Electrum server")
 
             val activeWalletId = secureStorage.getActiveWalletId()
             val storedWallet = activeWalletId?.let { secureStorage.getWalletMetadata(it) }
             if (storedWallet?.policyType == WalletPolicyType.MULTISIG) {
-                return@withContext WalletResult.Error("Use PSBT signing for multisig wallets")
+                return@withSelectedUtxos WalletResult.Error("Use PSBT signing for multisig wallets")
             }
             if (storedWallet?.isWatchOnly == true) {
-                return@withContext WalletResult.Error("Cannot send from watch-only wallet")
+                return@withSelectedUtxos WalletResult.Error("Cannot send from watch-only wallet")
             }
+            // Pin the wallet for the whole flow (see single-send).
+            val sendWalletId = storedWallet?.id ?: activeWalletId
+                ?: return@withSelectedUtxos WalletResult.Error("Wallet not initialized")
 
             try {
                 onProgress("Building transaction...")
@@ -6539,6 +8535,7 @@ class WalletRepository(context: Context) {
                             storedWallet = storedWallet,
                             recipients = recipients,
                             feeSats = psbt.fee(),
+                            walletId = sendWalletId,
                         )
                     } else {
                         psbt
@@ -6558,6 +8555,7 @@ class WalletRepository(context: Context) {
                                     storedWallet = storedWallet,
                                     recipients = recipients,
                                     feeSats = fee,
+                                    walletId = sendWalletId,
                                 )
                             } catch (_: Exception) {
                                 null
@@ -6573,18 +8571,18 @@ class WalletRepository(context: Context) {
                             }
                         }
                     },
+                    spWalletId = sendWalletId,
                 ).tx
 
                 onProgress("Broadcasting to network...")
-                client.transactionBroadcast(tx)
-
+                // Journal the SP record BEFORE broadcast (see single-send).
                 val txid = tx.computeTxid().toString()
+                persistSilentPaymentRecipients(sendWalletId, txid, recipients)
+                client.transactionBroadcast(tx)
+                markSilentPaymentUtxosSpent(tx, sendWalletId)
 
-                if (activeWalletId != null) {
-                    if (!label.isNullOrBlank()) {
-                        saveBitcoinTransactionLabelIndexed(activeWalletId, txid, label)
-                    }
-                    persistSilentPaymentRecipients(activeWalletId, txid, recipients)
+                if (!label.isNullOrBlank()) {
+                    saveBitcoinTransactionLabelIndexed(sendWalletId, txid, label)
                 }
 
                 // Invalidate pre-check cache so next background sync picks up the change
@@ -6592,7 +8590,9 @@ class WalletRepository(context: Context) {
 
                 WalletResult.Success(txid)
             } catch (e: Exception) {
-                WalletResult.Error("Transaction failed", e)
+                if (BuildConfig.DEBUG) Log.e(TAG, "sendBitcoin multi failed: ${e.message}", e)
+                WalletResult.Error(e.message?.ifBlank { null } ?: "Transaction failed", e)
+            }
             }
         }
 
@@ -6835,6 +8835,99 @@ class WalletRepository(context: Context) {
      * @param pendingLabel Optional label to apply to the transaction
      * @return Transaction ID
      */
+    /**
+     * Signs a PSBT built externally (Spark unilateral-exit CPFP set) with the
+     * active hot L1 wallet. Keys never leave the wallet: the SDK hands us the
+     * unsigned PSBT bytes and gets back signed PSBT bytes.
+     *
+     * Fund-safety verification before signing:
+     * - the wallet being signed with must be [expectedWalletId] (binds the
+     *   signature to the wallet the user reviewed — a wallet switch between
+     *   quote and sign fails loudly instead of signing with the wrong key);
+     * - every PSBT input that spends one of OUR wallet's UTXOs must be an
+     *   expected funding outpoint, or pay to an expected funding script
+     *   (covers SDK-derived reuse such as CPFP change back to the funding
+     *   address on resume builds). Tree/foreign inputs the wallet does not own
+     *   are left to the SDK. Without this, a buggy native lib could slip an
+     *   arbitrary L1 UTXO into the set and spend it with no change check.
+     *
+     * @throws IllegalStateException when no spend-capable wallet is loaded.
+     * @throws IllegalArgumentException when the PSBT touches unexpected funds
+     * or the active wallet does not match [expectedWalletId].
+     */
+    suspend fun signExitCpfpPsbt(
+        psbtBytes: ByteArray,
+        expectedOutpoints: Set<String>,
+        expectedScripts: Set<String>,
+        expectedWalletId: String,
+    ): ByteArray =
+        withContext(Dispatchers.IO) {
+            val activeWalletId = secureStorage.getActiveWalletId()
+                ?: throw IllegalStateException("No active wallet")
+            if (activeWalletId != expectedWalletId) {
+                throw IllegalArgumentException("Active wallet changed — re-quote the exit before signing")
+            }
+            val metadata = secureStorage.getWalletMetadata(activeWalletId)
+                ?: throw IllegalStateException("Wallet not found")
+            if (metadata.isWatchOnly) throw IllegalStateException("Cannot sign from watch-only wallet")
+            val hotWallet = wallet ?: throw IllegalStateException("L1 wallet is not loaded")
+            val normalizedExpected = expectedOutpoints.map { it.lowercase() }.toSet()
+            val normalizedScripts = expectedScripts.map { it.lowercase() }.toSet()
+            val base64 = android.util.Base64.encodeToString(psbtBytes, android.util.Base64.NO_WRAP)
+            val psbt = Psbt(base64)
+            val unsignedTx =
+                runCatching { psbt.extractTx() }.getOrElse {
+                    throw IllegalArgumentException("Exit CPFP PSBT is not parseable", it)
+                }
+            var walletOwnedInputs = 0
+            for (input in unsignedTx.input()) {
+                val prevOut = input.previousOutput
+                val known = runCatching { hotWallet.getUtxo(prevOut) }.getOrNull() ?: continue
+                walletOwnedInputs++
+                val outpoint = "${prevOut.txid}:${prevOut.vout}".lowercase()
+                if (outpoint in normalizedExpected) continue
+                val scriptHex =
+                    runCatching {
+                        val script = known.txout?.scriptPubkey ?: return@runCatching ""
+                        script.toBytes().joinToString("") { "%02x".format(it) }.lowercase()
+                    }.getOrDefault("")
+                if (scriptHex.isNotEmpty() && scriptHex in normalizedScripts) continue
+                throw IllegalArgumentException(
+                    "Exit CPFP PSBT spends unexpected wallet funds ($outpoint) — refusing to sign",
+                )
+            }
+            if (walletOwnedInputs == 0 && normalizedExpected.isNotEmpty()) {
+                throw IllegalArgumentException("Exit CPFP PSBT spends none of the selected funding UTXOs — refusing to sign")
+            }
+            hotWallet.sign(psbt)
+            android.util.Base64.decode(psbt.serialize(), android.util.Base64.DEFAULT)
+        }
+
+    /**
+     * Exact-match destination check for Spark exits: the address must parse
+     * for the loaded L1 wallet's network. Complements the checksum-aware
+     * plausibility gate in [SparkUnilateralExitPolicy] with a network binding,
+     * so a testnet address can never back a mainnet sweep.
+     */
+    fun isValidAddressForWallet(address: String): Boolean {
+        val hotWallet = wallet ?: return false
+        val trimmed = address.trim()
+        if (trimmed.isEmpty()) return false
+        return runCatching { Address(trimmed, hotWallet.network()); true }.getOrDefault(false)
+    }
+
+    /**
+     * Raw scriptPubkey hex for one of our L1 addresses, used to describe
+     * Spark exit funding inputs (native SegWit only). Null when unknown.
+     */
+    fun fundingScriptHexForAddress(address: String): String? {
+        val hotWallet = wallet ?: return null
+        return runCatching {
+            val parsed = Address(address, hotWallet.network())
+            parsed.scriptPubkey().toBytes().joinToString("") { "%02x".format(it) }
+        }.getOrNull()
+    }
+
     suspend fun broadcastSignedPsbt(
         psbtBase64: String,
         unsignedPsbtBase64: String? = null,
@@ -6959,6 +9052,22 @@ class WalletRepository(context: Context) {
             }
         }
 
+    private fun isAmbiguousHexBase64(trimmed: String): Boolean {
+        if (trimmed.length < 16 || trimmed.length > 300_000) return false
+        val noWs = trimmed.replace("\\s".toRegex(), "")
+        if (noWs.length % 2 != 0) return false
+        if (!noWs.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return false
+        if (noWs.length % 4 == 1) return false
+        if (!noWs.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '+' || it == '/' || it == '=' }) {
+            return false
+        }
+        return try {
+            android.util.Base64.decode(noWs, android.util.Base64.DEFAULT).size >= 5
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun verifyBroadcastTransactionMatchesOriginalPsbt(
         signedTx: Transaction,
         unsignedPsbtBase64: String,
@@ -7029,8 +9138,22 @@ class WalletRepository(context: Context) {
 
             try {
                 onProgress("Verifying transaction...")
-                val txBytes = txHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                val trimmedHex = txHex.trim()
+                require(trimmedHex.length % 2 == 0 && trimmedHex.length > 20) {
+                    "Invalid transaction hex"
+                }
+                require(trimmedHex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
+                    "Invalid transaction hex"
+                }
+                val txBytes = trimmedHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
                 val tx = Transaction(txBytes)
+                // Standalone manual broadcast has no originating PSBT by design
+                // (may not belong to any loaded wallet), so substitution binding
+                // applies only when the caller supplies one. Still fail closed
+                // on structurally invalid transactions.
+                require(tx.input().isNotEmpty() && tx.output().isNotEmpty()) {
+                    "Invalid transaction: missing inputs or outputs"
+                }
                 unsignedPsbtBase64?.let { originalPsbt ->
                     verifyBroadcastTransactionMatchesOriginalPsbt(tx, originalPsbt)?.let { return@withContext it }
                 }
@@ -7071,6 +9194,16 @@ class WalletRepository(context: Context) {
 
             try {
                 val trimmed = data.trim()
+                if (trimmed.isBlank()) {
+                    return@withContext WalletResult.Error("Empty transaction data")
+                }
+                // Fail closed on ambiguous encodings (same policy as TxFileParser):
+                // a payload valid as both hex and base64 must not be guessed.
+                if (isAmbiguousHexBase64(trimmed)) {
+                    return@withContext WalletResult.Error(
+                        "Ambiguous transaction data: valid as both hex and base64. Re-export in a single format.",
+                    )
+                }
                 val isHex = trimmed.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
                 if (isHex && trimmed.length % 2 == 0 && trimmed.length > 20) {
@@ -7450,6 +9583,9 @@ class WalletRepository(context: Context) {
             if (storedWallet?.isWatchOnly == true) {
                 return@withContext WalletResult.Error("Cannot bump fee from watch-only wallet")
             }
+            // Pin the wallet for the whole flow (see sendBitcoin).
+            val sendWalletId = storedWallet?.id ?: activeWalletId
+                ?: return@withContext WalletResult.Error(localizedString(R.string.speed_up_error_wallet_not_ready))
 
             try {
                 // Round up fee rate to ensure we meet the target
@@ -7461,10 +9597,20 @@ class WalletRepository(context: Context) {
                 val originalOutpoints =
                     originalTx.input().map { it.previousOutput.toFrozenRef() }.toSet()
                 val originalRecipients =
-                    activeWalletId
-                        ?.let { secureStorage.getSilentPaymentRecipients(it, txid) }
-                        .orEmpty()
+                    secureStorage.getSilentPaymentRecipients(sendWalletId, txid)
                 val usesSilentPayment = hasSilentPaymentRecipient(originalRecipients)
+                // Fail closed: a corrupt SP record (present but unparseable, not the
+                // known non-SP "[]" marker) must block the RBF. Without this, a
+                // corrupt record parses to empty, looks like non-SP, and the
+                // replacement would pay the stale output key (permanent loss).
+                if (!usesSilentPayment &&
+                    secureStorage.isSilentPaymentRecordCorrupt(sendWalletId, txid) &&
+                    originalTxHasExternalTaprootOutput(currentWallet, originalTx)
+                ) {
+                    return@withContext WalletResult.Error(
+                        "Cannot RBF — Silent Payment destinations unreadable",
+                    )
+                }
 
                 // Use BDK's bump fee builder — requires Txid type in BDK 2.x
                 val bumpFeeTxBuilder = BumpFeeTxBuilder(Txid.fromString(txid), feeRate)
@@ -7475,6 +9621,10 @@ class WalletRepository(context: Context) {
                     }
                 if (addedInputs &&
                     !usesSilentPayment &&
+                    // Known non-SP send (recorded at broadcast) — top-up inputs are
+                    // safe; only unknown/legacy txs with an external P2TR output must
+                    // stay conservative.
+                    secureStorage.hasSilentPaymentRecord(sendWalletId, txid) != true &&
                     originalTxHasExternalTaprootOutput(currentWallet, originalTx)
                 ) {
                     return@withContext WalletResult.Error(
@@ -7510,6 +9660,7 @@ class WalletRepository(context: Context) {
                             storedWallet = storedWallet,
                             recipients = originalRecipients,
                             feeSats = minReplacementFee,
+                            walletId = sendWalletId,
                             forceRbf = true,
                         )
                     } else {
@@ -7530,6 +9681,7 @@ class WalletRepository(context: Context) {
                                     storedWallet = storedWallet,
                                     recipients = originalRecipients,
                                     feeSats = clampedFee,
+                                    walletId = sendWalletId,
                                     forceRbf = true,
                                 )
                             } else {
@@ -7564,12 +9716,17 @@ class WalletRepository(context: Context) {
                             null
                         }
                     },
+                    spWalletId = sendWalletId,
                 )
                 val tx = result.tx
 
-                client.transactionBroadcast(tx)
-
+                // Journal the replacement SP record BEFORE broadcast so a kill
+                // cannot leave the replacement on-chain without destinations.
                 val newTxid = tx.computeTxid().toString()
+                persistSilentPaymentRecipients(sendWalletId, newTxid, originalRecipients)
+
+                client.transactionBroadcast(tx)
+                markSilentPaymentUtxosSpent(tx, sendWalletId)
 
                 // Mark the original transaction as evicted (replaced by RBF)
                 // so BDK removes it from the canonical tx set
@@ -7582,13 +9739,17 @@ class WalletRepository(context: Context) {
                 }
 
                 // Copy label from original transaction if exists
-                if (activeWalletId != null) {
-                    val originalLabel = secureStorage.getTransactionLabel(activeWalletId, txid)
-                    if (!originalLabel.isNullOrBlank()) {
-                        saveBitcoinTransactionLabelIndexed(activeWalletId, newTxid, originalLabel)
-                    }
-                    persistSilentPaymentRecipients(activeWalletId, newTxid, originalRecipients)
-                    secureStorage.savePendingReplacementTransaction(activeWalletId, txid, newTxid)
+                val originalLabel = secureStorage.getTransactionLabel(sendWalletId, txid)
+                if (!originalLabel.isNullOrBlank()) {
+                    saveBitcoinTransactionLabelIndexed(sendWalletId, newTxid, originalLabel)
+                }
+                secureStorage.savePendingReplacementTransaction(sendWalletId, txid, newTxid)
+                // The replacement carries its own copy of the destinations
+                // (journaled pre-broadcast above); drop the evicted txid's
+                // entry so RBF chains don't accumulate dead records.
+                if (newTxid != txid) {
+                    secureStorage.deleteSilentPaymentRecord(sendWalletId, txid)
+                    persistSilentPaymentRecipients(sendWalletId, newTxid, originalRecipients)
                 }
 
                 // Invalidate pre-check cache so next background sync picks up the change
@@ -7609,11 +9770,13 @@ class WalletRepository(context: Context) {
             val currentWallet = wallet ?: return@withContext WalletResult.Error("Wallet not initialized")
             try {
                 val feeRate = feeRateFromSatPerVb(newFeeRate)
-                val storedWallet = secureStorage.getActiveWalletId()?.let { secureStorage.getWalletMetadata(it) }
+                val activeWalletId = secureStorage.getActiveWalletId()
+                val storedWallet = activeWalletId?.let { secureStorage.getWalletMetadata(it) }
+                // Pin the wallet for the whole flow (see sendBitcoin).
+                val sendWalletId = storedWallet?.id ?: activeWalletId
+                    ?: return@withContext WalletResult.Error("Wallet not initialized")
                 val silentPaymentRecipients =
-                    secureStorage.getActiveWalletId()
-                        ?.let { secureStorage.getSilentPaymentRecipients(it, txid) }
-                        .orEmpty()
+                    secureStorage.getSilentPaymentRecipients(sendWalletId, txid)
                         .takeIf { hasSilentPaymentRecipient(it) }
                         .orEmpty()
                 val originalOutpoints =
@@ -7629,12 +9792,27 @@ class WalletRepository(context: Context) {
                     }
                 if (addedInputs &&
                     silentPaymentRecipients.isEmpty() &&
+                    (secureStorage.hasSilentPaymentRecord(sendWalletId, txid) != true ||
+                        secureStorage.isSilentPaymentRecordCorrupt(sendWalletId, txid)) &&
                     currentWallet.getTx(Txid.fromString(txid))?.transaction?.let {
                         originalTxHasExternalTaprootOutput(currentWallet, it)
                     } == true
                 ) {
                     return@withContext WalletResult.Error(
                         "Cannot RBF — Silent Payment destinations missing",
+                    )
+                }
+                // Mirror bumpFee: BumpFeeTxBuilder has no freeze API — refuse
+                // to hand out a PSBT that spends user-frozen coins.
+                val bumpInputs = psbt.extractTx().input()
+                val frozenFeeTopUp =
+                    bumpInputs.any { inp ->
+                        val ref = inp.previousOutput.toFrozenRef()
+                        ref !in originalOutpoints && ref in frozenRefsForActiveWallet()
+                    }
+                if (frozenFeeTopUp) {
+                    return@withContext WalletResult.Error(
+                        "Cannot RBF using frozen UTXOs for the fee top-up — unfreeze coins or lower the fee",
                     )
                 }
                 val finalPsbt =
@@ -7645,6 +9823,7 @@ class WalletRepository(context: Context) {
                             storedWallet = storedWallet,
                             recipients = silentPaymentRecipients,
                             feeSats = psbt.fee(),
+                            walletId = sendWalletId,
                             forceRbf = true,
                         )
                     } else {
@@ -7688,6 +9867,9 @@ class WalletRepository(context: Context) {
             if (storedWallet?.isWatchOnly == true) {
                 return@withContext WalletResult.Error("Cannot redirect from watch-only wallet")
             }
+            // Pin the wallet for the whole flow (see sendBitcoin).
+            val sendWalletId = storedWallet?.id ?: activeWalletId
+                ?: return@withContext WalletResult.Error("Wallet not initialized")
 
             try {
                 val transactions = currentWallet.transactions()
@@ -7748,6 +9930,17 @@ class WalletRepository(context: Context) {
                     builder: TxBuilder,
                     destinationScript: Script,
                 ): TxBuilder {
+                    // Fail closed: a freeze-while-pending must block Cancel —
+                    // `manuallySelectedOnly` pins these inputs even if frozen.
+                    val liveFrozen = frozenRefsForActiveWallet()
+                    if (liveFrozen.isNotEmpty()) {
+                        val frozenPinned =
+                            originalInputs.map { "${it.previousOutput.txid}:${it.previousOutput.vout}" }
+                                .filter { it in liveFrozen }
+                        require(frozenPinned.isEmpty()) {
+                            "Cannot cancel using frozen UTXOs — unfreeze coins or wait for confirmation"
+                        }
+                    }
                     var b = builder.applyOptInRbf()
                     for (inp in originalInputs) {
                         b = b.addUtxo(inp.previousOutput)
@@ -7766,6 +9959,7 @@ class WalletRepository(context: Context) {
                                 currentWallet = currentWallet,
                                 storedWallet = storedWallet,
                                 destinationAddress = trimmedDestinationAddress,
+                                walletId = sendWalletId,
                             )
                         } else {
                             redirectScript
@@ -7793,23 +9987,37 @@ class WalletRepository(context: Context) {
                             rebuildRedirectPsbtWithFee(fee, pass1Psbt)
                         } catch (_: Exception) { null }
                     },
+                    spWalletId = sendWalletId,
                 )
                 val tx = result.tx
 
-                client.transactionBroadcast(tx)
-
                 val newTxid = tx.computeTxid().toString()
+
+                // Journal the cancel record BEFORE broadcast (same kill
+                // window as sends). Persist the actual drained value, not
+                // 0, so a later fee-bump of the cancel rebuilds against a
+                // sane amount and backup import validation accepts it.
+                val spDest = trimmedDestinationAddress?.takeIf(::isSilentPaymentAddress)
+                if (spDest != null) {
+                    val drainedValue = tx.output().firstOrNull()?.value?.toSat() ?: 0UL
+                    persistSilentPaymentRecipients(
+                        sendWalletId,
+                        newTxid,
+                        listOf(Recipient(spDest, drainedValue)),
+                    )
+                }
+
+                client.transactionBroadcast(tx)
+                markSilentPaymentUtxosSpent(tx, sendWalletId)
 
                 // Persist after successful broadcast so the eviction is durable
                 walletPersister?.let { currentWallet.persist(it) }
 
-                if (activeWalletId != null) {
-                    val originalLabel = secureStorage.getTransactionLabel(activeWalletId, txid)
-                    if (!originalLabel.isNullOrBlank()) {
-                        saveBitcoinTransactionLabelIndexed(activeWalletId, newTxid, originalLabel)
-                    }
-                    secureStorage.savePendingReplacementTransaction(activeWalletId, txid, newTxid)
+                val originalLabel = secureStorage.getTransactionLabel(sendWalletId, txid)
+                if (!originalLabel.isNullOrBlank()) {
+                    saveBitcoinTransactionLabelIndexed(sendWalletId, newTxid, originalLabel)
                 }
+                secureStorage.savePendingReplacementTransaction(sendWalletId, txid, newTxid)
 
                 clearScriptHashCache()
 
@@ -7852,6 +10060,13 @@ class WalletRepository(context: Context) {
                 )
 
                 val trimmedDestinationAddress = destinationAddress?.trim()?.takeIf { it.isNotBlank() }
+                val isSilentPaymentRedirect =
+                    trimmedDestinationAddress?.let(::isSilentPaymentAddress) == true
+                // Non-null SP destination for the re-derive branch below.
+                val spRedirectDest = trimmedDestinationAddress?.takeIf { isSilentPaymentRedirect }
+                // SP outputs cannot be parsed by BDK's Address — start from a
+                // same-size placeholder and re-derive the tweak below, exactly
+                // like `redirectTransaction`.
                 val redirectScript =
                     if (trimmedDestinationAddress == null) {
                         // Mirror `redirectTransaction`: prefer the lowest-index
@@ -7871,6 +10086,8 @@ class WalletRepository(context: Context) {
                             currentWallet.revealNextAddress(KeychainKind.INTERNAL)
                         }
                         redirectAddress.address.scriptPubkey()
+                    } else if (isSilentPaymentRedirect) {
+                        scriptFromBytes(SilentPayment.placeholderScriptPubKey())
                     } else {
                         try {
                             Address(trimmedDestinationAddress, currentWallet.network()).scriptPubkey()
@@ -7885,7 +10102,36 @@ class WalletRepository(context: Context) {
                 for (input in originalInputs) {
                     builder = builder.addUtxo(input.previousOutput)
                 }
-                val psbt = builder.manuallySelectedOnly().drainTo(redirectScript).finish(currentWallet)
+                val pass1Psbt = builder.manuallySelectedOnly().drainTo(redirectScript).finish(currentWallet)
+                // Re-derive the real SP output from the placeholder's input
+                // set. Needs hot input keys — watch-only fails closed here
+                // with "Silent payments require a hot wallet".
+                val psbt =
+                    if (spRedirectDest != null) {
+                        val activeId = secureStorage.getActiveWalletId()
+                        val stored = activeId?.let { secureStorage.getWalletMetadata(it) }
+                        // Pin the wallet for key derivation (see sendBitcoin).
+                        val redirectWalletId = stored?.id ?: activeId
+                            ?: return@withContext WalletResult.Error("Wallet not initialized")
+                        val finalScript =
+                            buildSilentPaymentRedirectScript(
+                                placeholderPsbt = pass1Psbt,
+                                currentWallet = currentWallet,
+                                storedWallet = stored,
+                                destinationAddress = spRedirectDest,
+                                walletId = redirectWalletId,
+                            )
+                        var rebuilt =
+                            TxBuilder()
+                                .applyOptInRbf()
+                                .feeRate(feeRateFromSatPerVb(newFeeRate))
+                        for (input in originalInputs) {
+                            rebuilt = rebuilt.addUtxo(input.previousOutput)
+                        }
+                        rebuilt.manuallySelectedOnly().drainTo(finalScript).finish(currentWallet)
+                    } else {
+                        pass1Psbt
+                    }
                 WalletResult.Success(
                     maybeCreatePsbtSigningSession(
                         buildGenericPsbtDetails(
@@ -7898,6 +10144,8 @@ class WalletRepository(context: Context) {
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) Log.e(TAG, "createRedirectPsbt failed: ${e.message}", e)
                 val errorMsg = when {
+                    e.message?.contains("Silent payment") == true ->
+                        e.message?.take(200) ?: "Silent payment signing failed"
                     e.message?.contains("not found") == true -> "Transaction not found in wallet"
                     e.message?.contains("already confirmed") == true -> "Transaction is already confirmed"
                     e.message?.contains("rbf") == true || e.message?.contains("RBF") == true ->
@@ -7939,18 +10187,28 @@ class WalletRepository(context: Context) {
             if (storedWallet?.isWatchOnly == true) {
                 return@withContext WalletResult.Error("Cannot create CPFP from watch-only wallet")
             }
+            // Pin the wallet for the whole flow (see sendBitcoin).
+            val sendWalletId = storedWallet?.id ?: activeWalletId
+                ?: return@withContext WalletResult.Error(localizedString(R.string.speed_up_error_wallet_not_ready))
 
             try {
-                // Find UTXOs from the parent transaction
+                // Find UTXOs from the parent transaction: BDK-owned outputs
+                // plus unspent silent-payment receives, so incoming SP funds
+                // stuck unconfirmed can be sped up too.
                 val utxos = currentWallet.listUnspent()
-                val parentUtxos = utxos.filter { it.outpoint.txid.toString() == parentTxid }
+                val parentUtxos = utxos.filter { it.outpoint.txid.toString().equals(parentTxid, ignoreCase = true) }
+                val spParentUtxos = secureStorage.getSilentPaymentUtxos(sendWalletId)
+                    .filter { !it.spent && it.txid.equals(parentTxid, ignoreCase = true) }
 
-                if (parentUtxos.isEmpty()) {
+                if (parentUtxos.isEmpty() && spParentUtxos.isEmpty()) {
                     return@withContext WalletResult.Error(localizedString(R.string.speed_up_error_cpfp_no_outputs))
                 }
 
                 val frozenRefs = frozenRefsForActiveWallet()
-                if (parentUtxos.any { isFrozenOutpoint(it.outpoint, frozenRefs) }) {
+                val frozenLower = frozenRefs.map { it.lowercase() }.toSet()
+                if (parentUtxos.any { isFrozenOutpoint(it.outpoint, frozenRefs) } ||
+                    spParentUtxos.any { it.outpoint.lowercase() in frozenLower }
+                ) {
                     return@withContext WalletResult.Error(
                         "Cannot CPFP with frozen parent outputs — unfreeze them first",
                     )
@@ -7960,11 +10218,15 @@ class WalletRepository(context: Context) {
                 val changeAddress = currentWallet.revealNextAddress(KeychainKind.INTERNAL)
 
                 // Calculate total value of parent UTXOs
-                val totalValue = parentUtxos.sumOf { it.txout.value.toSat().toLong() }.toULong()
+                val totalValue = parentUtxos.sumOf { it.txout.value.toSat().toLong() }.toULong() +
+                    spParentUtxos.fold(0UL) { acc, utxo -> acc + utxo.valueSats }
 
                 // Package-aware fee accounting: miners evaluate parent+child TOGETHER,
                 // so the child must pay targetRate * (parentVsize + childVsize) minus
                 // whatever the parent already pays — not just targetRate * childVsize.
+                // For silent-payment parents the BDK graph has no fee data, so the
+                // parent contribution is approximated as zero (safe direction: the
+                // child alone still meets the target rate on its own vsize).
                 val parentTx =
                     currentWallet.getTx(Txid.fromString(parentTxid))?.transaction
                 val parentFeeSats =
@@ -7982,7 +10244,8 @@ class WalletRepository(context: Context) {
 
                 // Estimate child tx vsize (~150 vB for 1-in-1-out P2WPKH/P2TR)
                 // Add buffer for potential additional inputs
-                val estimatedVsize = 150L + (parentUtxos.size - 1) * 68L // ~68 vB per additional input
+                val parentCount = parentUtxos.size + spParentUtxos.size
+                val estimatedVsize = 150L + (parentCount - 1) * 68L // ~68 vB per additional input
                 val estimatedFee =
                     (kotlin.math.ceil(feeRate * (parentVsize + estimatedVsize)).toLong() - parentFeeSats)
                         .coerceAtLeast(estimatedVsize) // >= ~1 sat/vB relay floor
@@ -7994,7 +10257,7 @@ class WalletRepository(context: Context) {
                 if (BuildConfig.DEBUG) {
                     Log.d(
                         TAG,
-                        "CPFP: parentUtxos=${parentUtxos.size}, totalValue=$totalValue, feeRate=$feeRate, estimatedFee=$estimatedFee, canCoverFeeWithDust=$canCoverFeeWithDust",
+                        "CPFP: parentUtxos=${parentUtxos.size}+${spParentUtxos.size}sp, totalValue=$totalValue, feeRate=$feeRate, estimatedFee=$estimatedFee, canCoverFeeWithDust=$canCoverFeeWithDust",
                     )
                 }
 
@@ -8011,6 +10274,12 @@ class WalletRepository(context: Context) {
                             )
                         }
                         b = b.addUtxo(utxo.outpoint)
+                    }
+                    for (utxo in spParentUtxos) {
+                        if (BuildConfig.DEBUG) {
+                            Log.d(TAG, "CPFP: Adding required silent UTXO: ${utxo.outpoint}, value=${utxo.valueSats}")
+                        }
+                        b = addSilentPaymentForeignUtxo(b, utxo)
                     }
                     b = if (canCoverFeeWithDust) {
                         b.drainTo(changeAddress.address.scriptPubkey())
@@ -8059,10 +10328,12 @@ class WalletRepository(context: Context) {
                             null
                         }
                     },
+                    spWalletId = sendWalletId,
                 )
                 val tx = result.tx
 
                 client.transactionBroadcast(tx)
+                markSilentPaymentUtxosSpent(tx, sendWalletId)
 
                 val childTxid = tx.computeTxid().toString()
 
@@ -8083,9 +10354,24 @@ class WalletRepository(context: Context) {
         withContext(Dispatchers.IO) {
             val currentWallet = wallet ?: return@withContext WalletResult.Error("Wallet not initialized")
             try {
-                val parentUtxos = currentWallet.listUnspent().filter { it.outpoint.txid.toString() == parentTxid }
-                if (parentUtxos.isEmpty()) {
+                val activeWalletId = secureStorage.getActiveWalletId()
+                val parentUtxos = currentWallet.listUnspent().filter {
+                    it.outpoint.txid.toString().equals(parentTxid, ignoreCase = true)
+                }
+                val spParentCount = activeWalletId
+                    ?.let { secureStorage.getSilentPaymentUtxos(it) }
+                    .orEmpty()
+                    .count { !it.spent && it.txid.equals(parentTxid, ignoreCase = true) }
+                if (parentUtxos.isEmpty() && spParentCount == 0) {
                     return@withContext WalletResult.Error(localizedString(R.string.speed_up_error_cpfp_no_outputs))
+                }
+                if (spParentCount > 0) {
+                    // External signers cannot produce the BIP-340 signatures
+                    // silent inputs need (see signSilentPaymentInputs); the
+                    // hot-wallet CPFP flow signs them in software instead.
+                    return@withContext WalletResult.Error(
+                        "CPFP of silent-payment receives needs the hot-wallet flow, not a PSBT",
+                    )
                 }
                 val frozenRefs = frozenRefsForActiveWallet()
                 if (parentUtxos.any { isFrozenOutpoint(it.outpoint, frozenRefs) }) {
@@ -8175,14 +10461,23 @@ class WalletRepository(context: Context) {
                 val canonical =
                     currentWallet.transactions().find {
                         it.transaction.computeTxid().toString() == txid
-                    } ?: return@withWalletReadLock false
-                val isOutgoing = isOutgoingWalletTransaction(currentWallet, canonical.transaction)
-                computeCanCpfp(
-                    chainPos = canonical.chainPosition,
-                    isSentTx = isOutgoing,
-                    txid = txid,
-                    cpfpParentTxids = cpfpEligibleParentTxids(currentWallet),
-                )
+                    }
+                if (canonical != null) {
+                    val isOutgoing = isOutgoingWalletTransaction(currentWallet, canonical.transaction)
+                    computeCanCpfp(
+                        chainPos = canonical.chainPosition,
+                        isSentTx = isOutgoing,
+                        txid = txid,
+                        cpfpParentTxids = cpfpEligibleParentTxids(currentWallet),
+                    )
+                } else {
+                    // Silent-payment receives live outside the BDK graph: an
+                    // unconfirmed, unspent SP output can still be CPFP'd.
+                    val walletId = secureStorage.getActiveWalletId() ?: return@withWalletReadLock false
+                    secureStorage.getSilentPaymentUtxos(walletId).any {
+                        !it.spent && it.txid.equals(txid, ignoreCase = true) && it.height <= 0
+                    }
+                }
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) Log.e(TAG, "Error checking CPFP eligibility: ${e.message}")
                 false
@@ -8210,7 +10505,14 @@ class WalletRepository(context: Context) {
 
     private fun cpfpEligibleParentTxids(currentWallet: Wallet): Set<String> =
         try {
-            currentWallet.listUnspent().map { it.outpoint.txid.toString() }.toSet()
+            val bdk = currentWallet.listUnspent().map { it.outpoint.txid.toString() }.toSet()
+            val sp = secureStorage.getActiveWalletId()
+                ?.let { secureStorage.getSilentPaymentUtxos(it) }
+                .orEmpty()
+                .filter { !it.spent }
+                .map { it.txid }
+                .toSet()
+            bdk + sp
         } catch (_: Exception) {
             emptySet()
         }
@@ -8249,26 +10551,103 @@ class WalletRepository(context: Context) {
         return txid in cpfpParentTxids
     }
 
+    fun canEditDerivationPath(walletId: String): Boolean {
+        val storedWallet = secureStorage.getWalletMetadata(walletId) ?: return false
+        if (!storedWallet.canEditDerivationPath()) return false
+        if (secureStorage.hasWatchAddress(walletId) || secureStorage.hasPrivateKey(walletId)) {
+            return false
+        }
+        if (secureStorage.getMnemonic(walletId) != null) return true
+        if (!secureStorage.hasExtendedKey(walletId)) return false
+        val extendedKey = secureStorage.getExtendedKey(walletId) ?: return false
+        val input = extendedKey.trim().lowercase()
+        val descriptorPrefixes = listOf("pkh(", "wpkh(", "tr(", "wsh(", "sh(wsh(")
+        return descriptorPrefixes.none { input.startsWith(it) }
+    }
+
     /**
-     * Edit wallet metadata (name and optionally fingerprint for watch-only)
+     * Edit wallet metadata (name and optionally fingerprint for watch-only).
+     * Changing a BIP39 derivation path deletes the BDK DB and rebuilds descriptors.
      */
-    fun editWallet(
+    suspend fun editWallet(
         walletId: String,
         newName: String,
         newGapLimit: Int,
         newFingerprint: String? = null,
-    ) {
-        if (secureStorage.editWallet(walletId, newName, newGapLimit, newFingerprint)) {
-            if (walletId == secureStorage.getActiveWalletId()) {
-                wallet?.let { currentWallet ->
-                    if (revealConfiguredGapLimit(currentWallet, walletId)) {
-                        subscribeNewlyRevealedAddresses()
+        newDerivationPath: String? = null,
+        newAddressType: AddressType? = null,
+    ): WalletResult<Boolean> =
+        withContext(Dispatchers.IO) {
+            val storedWallet =
+                secureStorage.getWalletMetadata(walletId)
+                    ?: return@withContext WalletResult.Error("Wallet not found")
+            val canEditPath = canEditDerivationPath(walletId)
+            val persistablePath =
+                if (newDerivationPath != null && canEditPath) {
+                    try {
+                        BitcoinUtils.persistableDerivationPath(
+                            newDerivationPath,
+                            storedWallet.defaultDerivationPath(),
+                            storedWallet.derivationPath,
+                        )
+                    } catch (e: Exception) {
+                        return@withContext WalletResult.Error(
+                            e.message ?: "Invalid derivation path",
+                            e,
+                        )
+                    }
+                } else {
+                    null
+                }
+            val persistableAddressType = if (canEditPath) newAddressType else null
+            val pathChanged =
+                persistablePath != null && persistablePath != storedWallet.derivationPath
+            val addressTypeChanged =
+                persistableAddressType != null && persistableAddressType != storedWallet.addressType
+            val descriptorsChanged = pathChanged || addressTypeChanged
+            walletLoadMutex.withLock {
+                val wasActive = walletId == secureStorage.getActiveWalletId()
+                if (descriptorsChanged) {
+                    if (wasActive) {
+                        clearLoadedWallet()
+                        clearScriptHashCache()
+                    }
+                    if (!deleteSqliteArtifacts(getWalletDbPath(walletId))) {
+                        if (wasActive) {
+                            loadWalletByIdLocked(walletId)
+                        }
+                        return@withLock WalletResult.Error("Failed to rebuild wallet database")
+                    }
+                    secureStorage.clearL1ReceiveAddress(walletId)
+                    secureStorage.setNeedsFullSync(walletId, true)
+                }
+                if (!secureStorage.editWallet(
+                        walletId,
+                        newName,
+                        newGapLimit,
+                        newFingerprint,
+                        persistablePath,
+                        persistableAddressType,
+                    )
+                ) {
+                    return@withLock WalletResult.Error("Wallet not found")
+                }
+                if (descriptorsChanged && wasActive) {
+                    when (val loadResult = loadWalletByIdLocked(walletId)) {
+                        is WalletResult.Error -> return@withLock loadResult
+                        is WalletResult.Success -> Unit
+                    }
+                } else if (wasActive) {
+                    wallet?.let { currentWallet ->
+                        if (revealConfiguredGapLimit(currentWallet, walletId)) {
+                            subscribeNewlyRevealedAddresses()
+                        }
                     }
                 }
+                refreshWalletListMetadata()
+                WalletResult.Success(descriptorsChanged)
             }
-            refreshWalletListMetadata()
         }
-    }
 
     /**
      * Set whether a wallet requires app authentication before opening.
@@ -8325,6 +10704,11 @@ class WalletRepository(context: Context) {
                 // Delete BDK database files
                 deleteWalletDatabase(walletId)
                 deleteLiquidWalletDatabase(walletId)
+                // Defensive L2 cleanup: the UI normally fans out to each L2
+                // ViewModel first, but direct repository callers must not
+                // orphan per-wallet SDK state (stale Spark sessions reuse the
+                // same filesDir/spark/<walletId> path on re-import).
+                deleteSparkWalletData(walletId)
 
                 if (wasActive && nextActiveWalletId != null) {
                     walletLoadMutex.withLock {
@@ -8379,6 +10763,7 @@ class WalletRepository(context: Context) {
 
     private fun abortElectrumTransportLocked() {
         stopNotificationCollector()
+        resetSilentPaymentsCapability()
         electrumClient = null
         cachingProxy?.stop()
         cachingProxy = null
@@ -8563,7 +10948,43 @@ class WalletRepository(context: Context) {
             seedDefaultServers()
             return secureStorage.getAllElectrumServers()
         }
-        return servers
+        ensureFrigateServerPresent()
+        return secureStorage.getAllElectrumServers()
+    }
+
+    private fun ensureFrigateServerPresent() {
+        ensureDefaultServersPresent()
+    }
+
+    /**
+     * One-time migration ensuring the three bundled defaults (SethForPrivacy Tor,
+     * Bull Bitcoin, Frigate) exist for installs seeded before they were all bundled.
+     * Runs once; afterwards user deletions are respected.
+     */
+    private fun ensureDefaultServersPresent() {
+        if (secureStorage.hasDefaultElectrumV2Migrated() && secureStorage.hasFrigateMigrated()) return
+        val servers = secureStorage.getAllElectrumServers()
+        val missing =
+            DEFAULT_ELECTRUM_SERVERS.filter { default ->
+                servers.none {
+                    it.cleanUrl().equals(default.url, ignoreCase = true) && it.port == default.port
+                }
+            }
+        // Backfill useTor on the Seth onion entry for installs seeded before it was set.
+        servers
+            .filter {
+                it.cleanUrl().equals(SETH_TOR_HOST, ignoreCase = true) && !it.useTor
+            }.forEach { existing ->
+                secureStorage.saveElectrumServer(existing.copy(useTor = true))
+            }
+        for (config in missing) {
+            secureStorage.saveElectrumServer(config)
+        }
+        secureStorage.setFrigateMigrated(true)
+        secureStorage.setDefaultElectrumV2Migrated(true)
+        if (BuildConfig.DEBUG && missing.isNotEmpty()) {
+            Log.d(TAG, "Backfilled missing default servers: ${missing.map { it.name }}")
+        }
     }
 
     /**
@@ -8571,26 +10992,13 @@ class WalletRepository(context: Context) {
      * Sets the seeded flag so defaults won't be re-added if user deletes them.
      */
     private fun seedDefaultServers() {
-        val defaults =
-            listOf(
-                ElectrumConfig(
-                    name = "SethForPrivacy (Tor)",
-                    url = "iuo6acfdicxhrovyqrekefh4rg2b7vgmzeeohc5cbwegawwhqpdxkgad.onion",
-                    port = 50002,
-                    useSsl = true,
-                ),
-                ElectrumConfig(
-                    name = "Bull Bitcoin",
-                    url = "electrum.bullbitcoin.com",
-                    port = 50002,
-                    useSsl = true,
-                ),
-            )
-        for (config in defaults) {
+        for (config in DEFAULT_ELECTRUM_SERVERS) {
             secureStorage.saveElectrumServer(config)
         }
         secureStorage.setDefaultServersSeeded(true)
-        if (BuildConfig.DEBUG) Log.d(TAG, "Seeded ${defaults.size} default servers")
+        secureStorage.setFrigateMigrated(true)
+        secureStorage.setDefaultElectrumV2Migrated(true)
+        if (BuildConfig.DEBUG) Log.d(TAG, "Seeded ${DEFAULT_ELECTRUM_SERVERS.size} default servers")
     }
 
     /**
@@ -9481,7 +11889,116 @@ class WalletRepository(context: Context) {
             electrumCache.putConfirmedTransactionDetails(activeWalletId, descriptorCacheKey, newlyBuiltConfirmedDetails)
         }
 
-        return transactions.sortedByDescending { it.timestamp ?: Long.MAX_VALUE }
+        return mergeSilentPaymentHistory(transactions, currentWallet, activeWalletId)
+            .sortedByDescending { it.timestamp ?: Long.MAX_VALUE }
+    }
+
+    private fun mergeSilentPaymentHistory(
+        transactions: List<TransactionDetails>,
+        currentWallet: Wallet,
+        walletId: String?,
+    ): List<TransactionDetails> {
+        if (walletId.isNullOrBlank()) return transactions
+        // Pure read: all persistence happens in mutex-held refresh paths, so a
+        // state rebuild can never clobber a concurrent SP save.
+        val utxos = secureStorage.getSilentPaymentUtxos(walletId)
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "SP merge: wallet=${walletId.take(8)} utxos=${utxos.size}")
+        }
+        if (utxos.isEmpty()) return transactions
+        val network = currentWallet.network()
+        val byTxid = utxos.groupBy { it.txid.lowercase() }
+        val patched =
+            transactions.map { tx ->
+                val group = byTxid[tx.txid.lowercase()] ?: return@map tx
+                val received = group.sumOf { it.valueSats.toLong() }
+                if (received <= 0L) return@map tx
+                val address =
+                    group.firstOrNull()?.let { utxo ->
+                        runCatching {
+                            Address.fromScript(
+                                Script(utxo.scriptPubKeyHex.hexToByteArray()),
+                                network,
+                            ).toString()
+                        }.getOrNull()
+                    }
+                tx.copy(
+                    amountSats = tx.amountSats + received,
+                    isSelfTransfer = true,
+                    address = address ?: tx.address,
+                    addressAmount = received.toULong(),
+                    timestamp = tx.timestamp ?: group.maxOfOrNull { it.timestamp ?: 0L }?.takeIf { it > 0L },
+                )
+            }
+        val knownTxids = patched.map { it.txid.lowercase() }.toSet()
+        val receiveExtras =
+            byTxid
+                .filterKeys { it !in knownTxids }
+                .map { (_, group) ->
+                    val received = group.sumOf { it.valueSats.toLong() }
+                    val height = group.maxOf { it.height }
+                    val address =
+                        group.firstOrNull()?.let { utxo ->
+                            runCatching {
+                                Address.fromScript(
+                                    Script(utxo.scriptPubKeyHex.hexToByteArray()),
+                                    network,
+                                ).toString()
+                            }.getOrNull()
+                        }
+                    val timestamp =
+                        resolveSilentPaymentTimestamp(
+                            stored = group.maxOfOrNull { it.timestamp ?: 0L }?.takeIf { it > 0L },
+                            height = height,
+                            unconfirmedFallback = true,
+                        )
+                    TransactionDetails(
+                        txid = group.first().txid,
+                        amountSats = received,
+                        fee = null,
+                        confirmationTime =
+                            if (height > 0) {
+                                ConfirmationTime(height = height.toUInt(), timestamp = (timestamp ?: 0L).toULong())
+                            } else {
+                                null
+                            },
+                        isConfirmed = height > 0,
+                        timestamp = timestamp,
+                        address = address,
+                        addressAmount = received.toULong(),
+                    )
+                }
+        val spendExtras =
+            utxos
+                .filter { it.spent && !it.spendTxid.isNullOrBlank() }
+                .groupBy { it.spendTxid!!.lowercase() }
+                .filterKeys { it !in knownTxids }
+                .map { (_, group) ->
+                    val spent = group.sumOf { it.valueSats.toLong() }
+                    val fee = group.mapNotNull { it.spendFeeSats }.maxOrNull()
+                    val recipient = (spent - (fee?.toLong() ?: 0L)).coerceAtLeast(0L)
+                    val timestamp = group.maxOfOrNull { it.spendTimestamp ?: 0L }?.takeIf { it > 0L }
+                    val spendHeight = group.maxOf { it.spendHeight }
+                    TransactionDetails(
+                        txid = group.first().spendTxid!!,
+                        amountSats = -spent,
+                        fee = fee,
+                        confirmationTime =
+                            if (spendHeight > 0) {
+                                ConfirmationTime(height = spendHeight.toUInt(), timestamp = (timestamp ?: 0L).toULong())
+                            } else {
+                                null
+                            },
+                        isConfirmed = spendHeight > 0,
+                        timestamp = timestamp,
+                        address = group.firstNotNullOfOrNull { it.spendAddress },
+                        addressAmount = recipient.toULong(),
+                    )
+                }
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "SP merge: receiveExtras=${receiveExtras.size} spendExtras=${spendExtras.size}")
+        }
+        return patched + receiveExtras + spendExtras
     }
 
     private fun hasWarmTransactionHistoryCache(
@@ -9594,13 +12111,16 @@ class WalletRepository(context: Context) {
                     isInitialized = true,
                     wallets = allWallets,
                     activeWallet = activeWallet,
-                    balanceSats = amountToSats(balance.total),
+                    balanceSats = amountToSats(balance.total) + silentPaymentUnspentSats(activeWalletId),
                     pendingIncomingSats = if (shouldPreserveDerivedState) previousState.pendingIncomingSats else 0UL,
                     pendingOutgoingSats = if (shouldPreserveDerivedState) previousState.pendingOutgoingSats else 0UL,
                     isTransactionHistoryLoading = true,
                     transactions = if (shouldPreserveDerivedState) previousState.transactions else emptyList(),
                     currentAddress = lastAddress,
                     currentAddressInfo = currentAddressInfo,
+                    silentPaymentAddress = silentPaymentKeys?.address,
+                    silentPaymentsSupported = silentPaymentsSupported,
+                    canReceiveSilentPayments = canReceiveSilentPayments(activeWallet),
                     lastSyncTimestamp = lastSyncTime,
                     blockHeight = latestBlockHeight,
                     error = null,
@@ -9788,7 +12308,11 @@ class WalletRepository(context: Context) {
                     activeWalletId,
                     filterPendingReplacementTransactions(activeWalletId, transactions),
                 )
-            val stateChecksum = buildWalletStateChecksum(amountToSats(balance.total), visibleTransactions)
+            val stateChecksum =
+                buildWalletStateChecksum(
+                    amountToSats(balance.total) + silentPaymentUnspentSats(activeWalletId),
+                    visibleTransactions,
+                )
             if (BuildConfig.DEBUG) {
                 Log.d(
                     TAG,
@@ -9831,6 +12355,9 @@ class WalletRepository(context: Context) {
                     transactions = visibleTransactions,
                     currentAddress = lastAddress,
                     currentAddressInfo = currentAddressInfo,
+                    silentPaymentAddress = silentPaymentKeys?.address,
+                    silentPaymentsSupported = silentPaymentsSupported,
+                    canReceiveSilentPayments = canReceiveSilentPayments(activeWallet),
                     lastSyncTimestamp = lastSyncTime,
                     blockHeight = latestBlockHeight,
                     error = null,
@@ -10017,13 +12544,16 @@ class WalletRepository(context: Context) {
 
             _walletState.value =
                 existingState.copy(
-                    balanceSats = checksum.balanceSats,
+                    balanceSats = checksum.balanceSats + silentPaymentUnspentSats(activeWalletId),
                     pendingIncomingSats = checksum.pendingIncomingSats,
                     pendingOutgoingSats = checksum.pendingOutgoingSats,
                     isTransactionHistoryLoading = false,
                     transactions = sortedTransactions,
                     currentAddress = lastAddress,
                     currentAddressInfo = currentAddressInfo,
+                    silentPaymentAddress = silentPaymentKeys?.address,
+                    silentPaymentsSupported = silentPaymentsSupported,
+                    canReceiveSilentPayments = canReceiveSilentPayments(existingState.activeWallet),
                     lastSyncTimestamp = lastSyncTime,
                     blockHeight = latestBlockHeight,
                 )
@@ -10052,8 +12582,11 @@ class WalletRepository(context: Context) {
     /**
      * Set the security method
      */
-    fun setSecurityMethod(method: SecureStorage.SecurityMethod) {
-        secureStorage.setSecurityMethod(method)
+    fun setSecurityMethod(
+        method: SecureStorage.SecurityMethod,
+        acknowledgedDowngradeRisk: Boolean = false,
+    ) {
+        secureStorage.setSecurityMethod(method, acknowledgedDowngradeRisk)
         if (method == SecureStorage.SecurityMethod.NONE && secureStorage.clearWalletLocks()) {
             updateWalletState()
         }
@@ -10192,6 +12725,47 @@ class WalletRepository(context: Context) {
                     electrumCache.clearAllWalletActivityData()
                     deleteWalletDatabase(duressWalletId)
                     deleteLiquidWalletDatabase(duressWalletId)
+                    // Decoy Spark unilateral-exit residue (tx hex, destination,
+                    // funding, backup blob) must not survive even when the
+                    // L2-data callback was not wired by the caller.
+                    runCatching { secureStorage.clearSparkExitTxSet(duressWalletId) }
+                    runCatching { secureStorage.clearSparkExitFunding(duressWalletId) }
+                    runCatching { secureStorage.clearSparkExitBackup(duressWalletId) }
+                    runCatching { java.io.File(sparkDbDir, duressWalletId).deleteRecursively() }
+                    // Decoy Ark state must not survive "disable duress" (plausible
+                    // deniability): mirror ArkRepository.deleteWalletData scrub —
+                    // session DB, orphan/import-tmp dirs, safety-copy backups,
+                    // labels/addresses/funding/backup markers, and caches.
+                    // (External SAF auto-backup folder is user-owned and stays.)
+                    runCatching {
+                        java.io.File(java.io.File(appContext.cacheDir, "ark-session"), duressWalletId)
+                            .takeIf { it.exists() }?.deleteRecursively()
+                    }
+                    runCatching {
+                        java.io.File(appContext.cacheDir, "ark-session")
+                            .listFiles()
+                            ?.filter { it.isDirectory && it.name.startsWith("$duressWalletId-") }
+                            ?.forEach { it.deleteRecursively() }
+                    }
+                    runCatching {
+                        java.io.File(appContext.filesDir, "ark")
+                            .let { java.io.File(it, duressWalletId) }
+                            .takeIf { it.exists() }?.deleteRecursively()
+                    }
+                    runCatching {
+                        java.io.File(appContext.cacheDir, "ark-session-backups")
+                            .listFiles()
+                            ?.filter { it.isDirectory && it.name.startsWith("$duressWalletId-") }
+                            ?.forEach { it.deleteRecursively() }
+                    }
+                    runCatching { secureStorage.clearArkWalletStateCache(duressWalletId) }
+                    runCatching { secureStorage.clearArkMovementJournal(duressWalletId) }
+                    runCatching { secureStorage.clearArkExitClaimHistory(duressWalletId) }
+                    runCatching { secureStorage.clearArkPendingClaim(duressWalletId) }
+                    runCatching { secureStorage.clearArkMovementDestinations(duressWalletId) }
+                    runCatching { secureStorage.setArkFundingTxids(duressWalletId, emptyList()) }
+                    runCatching { secureStorage.clearArkAutoDbBackupLastInfo(duressWalletId) }
+                    runCatching { secureStorage.clearAllArkWalletData(duressWalletId) }
                 }
                 secureStorage.clearDuressData()
                 updateWalletState()
@@ -10315,6 +12889,45 @@ class WalletRepository(context: Context) {
     }
 
     /**
+     * Best-effort secure delete: overwrite file contents before unlinking so a
+     * simple forensic carve of freed blocks does not recover wallet DBs.
+     * NAND wear-leveling means this cannot guarantee erasure — Keystore-backed
+     * secrets and the verification pass remain the real assurance.
+     */
+    private fun secureDeleteRecursively(root: java.io.File): Boolean {
+        try {
+            if (root.isFile) {
+                overwriteFileContents(root)
+            } else if (root.isDirectory) {
+                root.walkTopDown().filter { it.isFile }.forEach { overwriteFileContents(it) }
+            }
+        } catch (_: Exception) {
+            // Overwrite is best-effort; fall through to delete.
+        }
+        return root.deleteRecursively()
+    }
+
+    private fun overwriteFileContents(file: java.io.File) {
+        try {
+            val length = file.length()
+            if (length <= 0) return
+            // Single zero pass, capped to avoid stalling on huge files.
+            val capped = minOf(length, 8L * 1024L * 1024L)
+            java.io.RandomAccessFile(file, "rw").use { raf ->
+                val zeros = ByteArray(4096)
+                var remaining = capped
+                while (remaining > 0) {
+                    val chunk = minOf(remaining, zeros.size.toLong()).toInt()
+                    raf.write(zeros, 0, chunk)
+                    remaining -= chunk
+                }
+                raf.fd.sync()
+            }
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
      * Result of [wipeAllData]: which discrete steps failed.
      *
      * The caller may use this to decide whether to retry, log, or warn the user
@@ -10394,15 +13007,15 @@ class WalletRepository(context: Context) {
             }
 
             step("delete-bdk-dir") {
-                if (bdkDbDir.exists() && !bdkDbDir.deleteRecursively()) {
-                    error("bdkDbDir.deleteRecursively returned false")
+                if (bdkDbDir.exists() && !secureDeleteRecursively(bdkDbDir)) {
+                    error("bdkDbDir.secureDeleteRecursively returned false")
                 }
                 bdkDbDir.mkdirs()
             }
 
             step("delete-lwk-dir") {
-                if (lwkDbDir.exists() && !lwkDbDir.deleteRecursively()) {
-                    error("lwkDbDir.deleteRecursively returned false")
+                if (lwkDbDir.exists() && !secureDeleteRecursively(lwkDbDir)) {
+                    error("lwkDbDir.secureDeleteRecursively returned false")
                 }
                 lwkDbDir.mkdirs()
             }
@@ -10410,29 +13023,37 @@ class WalletRepository(context: Context) {
             step("delete-spark-dir") {
                 // Spark SDK keeps per-wallet state under filesDir/spark/<walletId>.
                 // Without this the "full wipe" leaves rich Layer-2 metadata behind.
-                if (sparkDbDir.exists() && !sparkDbDir.deleteRecursively()) {
-                    error("sparkDbDir.deleteRecursively returned false")
+                if (sparkDbDir.exists() && !secureDeleteRecursively(sparkDbDir)) {
+                    error("sparkDbDir.secureDeleteRecursively returned false")
+                }
+            }
+
+            step("delete-spark-exit-backup-dir") {
+                // Opaque exit-state blobs disclose balance and history.
+                if (sparkExitBackupDir.exists() && !secureDeleteRecursively(sparkExitBackupDir)) {
+                    error("sparkExitBackupDir.secureDeleteRecursively returned false")
                 }
             }
 
             step("delete-ark-dir") {
                 // Legacy durable Bark path (pre session-only); scrub residue if present.
-                if (arkDbDir.exists() && !arkDbDir.deleteRecursively()) {
-                    error("arkDbDir.deleteRecursively returned false")
+                if (arkDbDir.exists() && !secureDeleteRecursively(arkDbDir)) {
+                    error("arkDbDir.secureDeleteRecursively returned false")
                 }
             }
 
             step("delete-ark-session-dir") {
                 // Per-wallet Bark session dirs under cacheDir/ark-session.
-                if (arkSessionDir.exists() && !arkSessionDir.deleteRecursively()) {
-                    error("arkSessionDir.deleteRecursively returned false")
+                if (arkSessionDir.exists() && !secureDeleteRecursively(arkSessionDir)) {
+                    error("arkSessionDir.secureDeleteRecursively returned false")
                 }
             }
 
             step("delete-ark-auto-backup-dir") {
-                // Legacy in-app auto-backup only; external SAF folder is user-owned.
-                if (arkAutoBackupDir.exists() && !arkAutoBackupDir.deleteRecursively()) {
-                    error("arkAutoBackupDir.deleteRecursively returned false")
+                // Legacy in-app auto-backup only; external SAF folder is user-owned
+                // and intentionally survives (user-owned durable copy).
+                if (arkAutoBackupDir.exists() && !secureDeleteRecursively(arkAutoBackupDir)) {
+                    error("arkAutoBackupDir.secureDeleteRecursively returned false")
                 }
             }
 
@@ -10510,9 +13131,20 @@ class WalletRepository(context: Context) {
         check("residue-bdk-dir") { bdkDirHasFiles() }
         check("residue-lwk-dir") { lwkDirHasFiles() }
         check("residue-spark-dir") { sparkDbDir.exists() && sparkDbDir.walk().any { it.isFile } }
+        check("residue-spark-exit-backup-dir") {
+            sparkExitBackupDir.exists() && sparkExitBackupDir.walk().any { it.isFile }
+        }
         check("residue-ark-dir") { arkDbDir.exists() && arkDbDir.walk().any { it.isFile } }
         check("residue-ark-auto-backup-dir") {
             arkAutoBackupDir.exists() && arkAutoBackupDir.walk().any { it.isFile }
+        }
+        check("residue-ark-session-dir") {
+            val dir = java.io.File(appContext.cacheDir, "ark-session")
+            dir.exists() && dir.walk().any { it.isFile }
+        }
+        check("residue-ark-session-backup-dir") {
+            val dir = java.io.File(appContext.cacheDir, "ark-session-backups")
+            dir.exists() && dir.walk().any { it.isFile }
         }
 
         // Wallet ids should be unreachable after secure prefs are cleared.

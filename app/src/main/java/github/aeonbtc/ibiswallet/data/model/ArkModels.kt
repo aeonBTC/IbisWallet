@@ -97,6 +97,12 @@ data class ArkWalletState(
     val exitVtxos: List<ArkExitVtxo> = emptyList(),
     val claimableExitVtxos: List<ArkExitVtxo> = emptyList(),
     val hasPendingExits: Boolean = false,
+    /** Bark bundled on-chain wallet is open (boarding + unilateral exit). */
+    val onchainWalletOpen: Boolean = false,
+    /** Last resolved CPFP fee rate for exit progress (sat/vB). */
+    val exitFeeRateSatPerVb: Long = 0L,
+    /** Auto refresh skipped or failed; Balance should still show the due banner. */
+    val autoRefreshNeedsAttention: Boolean = false,
     val nextRefreshHeight: Int? = null,
     val firstExpiringHeight: Int? = null,
     /** Optional tip estimate (when known from exit progress / cache); used for distance UI. */
@@ -127,6 +133,22 @@ data class ArkWalletState(
      * ([uniffi.bark.ArkInfo.requiredBoardConfirmations]); null until known.
      */
     val requiredBoardConfirmations: Int? = null,
+    /**
+     * ASP unilateral-exit relative timelock in blocks
+     * ([uniffi.bark.ArkInfo.vtxoExitDelta]); null until known.
+     */
+    val exitDeltaBlocks: Int? = null,
+    /**
+     * ASP round cadence in seconds ([uniffi.bark.ArkInfo.roundIntervalSecs]);
+     * null until known. Operator-configured — when the next round runs.
+     */
+    val roundIntervalSecs: Long? = null,
+    /**
+     * Exited VTXO ids the seed-mailbox scan reported but this session cannot find
+     * live, progressing, or claimed. Restore the database backup to manage them.
+     * Transient: recomputed every refresh, never cached.
+     */
+    val unrecoveredExitIds: List<String> = emptyList(),
 ) {
     val onchainTotalSats: Long
         get() = onchainConfirmedSats + onchainPendingSats
@@ -250,6 +272,23 @@ data class ArkExitClaimHistory(
     val createdAt: String,
 )
 
+/**
+ * Durable pre-broadcast claim attempt. Written before `signExitClaimInputs` returns
+ * control to the network so a crash between sign and history-save never loses the
+ * txid — it is derivable from [signedHex] and reconciled on the next load.
+ */
+data class ArkPendingClaim(
+    val vtxoIds: List<String>,
+    val destinationAddress: String,
+    val amountSats: Long,
+    val feeSats: Long,
+    val feeRateSatPerVb: Long,
+    val psbtBase64: String,
+    val signedHex: String? = null,
+    val txid: String? = null,
+    val createdAt: String,
+)
+
 /** Unspent output on a Bark on-chain deposit address (Esplora-sourced). */
 data class ArkOnchainUtxo(
     val txid: String,
@@ -294,6 +333,7 @@ data class ArkExitVtxo(
     val amountSats: Long,
     val state: String,
     val isClaimable: Boolean,
+    val exitTxWeightWu: Long = 0L,
 )
 
 data class ArkExitProgress(
@@ -307,6 +347,23 @@ enum class ArkReceiveKind {
     BOLT11_INVOICE,
     BITCOIN_ADDRESS,
 }
+
+/**
+ * Dialog-independent authoritative unilateral-exit cost from Bark
+ * `Wallet.estimateEmergencyExitFee` (bark-ffi 0.23+/bark 0.6.2+). The broadcast
+ * leg is paid now from confirmed on-chain funds; the claim leg is deducted
+ * later from the recovered value. Null legs mean the quote failed.
+ */
+data class ArkEmergencyExitFeeQuote(
+    val vtxoIds: List<String>,
+    val broadcastFeeSats: Long?,
+    val claimFeeSats: Long?,
+    val totalFeeSats: Long?,
+    val feeRateSatPerVb: Long?,
+    val txsToBroadcast: Long?,
+    val fundable: Boolean?,
+    val isQuoting: Boolean,
+)
 
 sealed interface ArkSendState {
     data object Idle : ArkSendState
@@ -388,16 +445,34 @@ sealed interface ArkTransferState {
 
     data object Preparing : ArkTransferState
 
+    /**
+     * Board funding destination minted by Bark for an externally-funded
+     * (single-tx) board. The scalars must be echoed back unchanged to
+     * `boardPsbt`, including on retries.
+     */
+    data class BoardFundingInfo(
+        val address: String,
+        val keypairIndex: UInt,
+        val expiryHeight: UInt,
+    )
+
     data class BoardPreview(
         val amountSats: Long,
         val feeSats: Long?,
         val netAmountSats: Long?,
         val boardAll: Boolean,
-        /** Bark on-chain Bitcoin address used as the BTC→Ark deposit target. */
+        /** Bark funding target: single-tx board funding address, or legacy on-chain deposit. */
         val bitcoinDepositAddress: String? = null,
         /** sat/vB inferred from fee when weight is known; otherwise null. */
         val feeRateSatPerVb: Double? = null,
         val grossAmountSats: Long? = null,
+        /**
+         * Present for single-tx boards: funding destination + echo-back scalars
+         * for `boardPsbt`. Null means legacy 2-tx (fund deposit, board later).
+         */
+        val boardFunding: BoardFundingInfo? = null,
+        /** Bark board fee component (ASP sweep + server fee) for fee breakdown. */
+        val boardFeeSats: Long? = null,
     ) : ArkTransferState
 
     data class OffboardPreview(
@@ -421,6 +496,24 @@ sealed interface ArkTransferState {
     ) : ArkTransferState
 }
 
+/**
+ * Pure policy for the board fee breakdown shown on the swap review dialog:
+ * Layer 1 mining fee plus the Bark board fee component (ASP sweep + service
+ * fee). No breakdown when the board component is absent or zero.
+ */
+object ArkBoardFeePolicy {
+    /** True when a separate board-fee row should be shown. */
+    fun hasBoardFeeBreakdown(boardFeeSats: Long?): Boolean = boardFeeSats != null && boardFeeSats > 0L
+
+    /** Combined total shown in the review header/total rows. */
+    fun combinedTotalFeeSats(l1FeeSats: Long, boardFeeSats: Long?): Long =
+        if (hasBoardFeeBreakdown(boardFeeSats)) {
+            l1FeeSats + (boardFeeSats ?: 0L)
+        } else {
+            l1FeeSats
+        }
+}
+
 sealed interface ArkLifecycleState {
     data object Idle : ArkLifecycleState
 
@@ -428,11 +521,14 @@ sealed interface ArkLifecycleState {
 
     data class RefreshPreview(
         val vtxoIds: List<String>,
+        /** Immediate (next-round) fee quote; null while quoting or on failure. */
         val feeSats: Long?,
         val netAmountSats: Long?,
         val refreshAll: Boolean,
         /** When set, confirm uses Bark scheduled delegated refresh at this height. */
         val scheduledHeight: Int? = null,
+        /** Server-schedule fee quote at [scheduledHeight]; null when no schedule or quote failed. */
+        val scheduledFeeSats: Long? = null,
     ) : ArkLifecycleState
 
     data class ExitStarted(
@@ -450,6 +546,8 @@ sealed interface ArkLifecycleState {
         val feeSats: Long,
         val feeRateSatPerVb: Long,
         val psbtBase64: String,
+        /** Claimable total at quote time; ledger fallback if the live query fails. */
+        val claimAmountSats: Long? = null,
     ) : ArkLifecycleState
 
     data object InProgress : ArkLifecycleState
@@ -524,6 +622,26 @@ sealed class ArkEvent {
         val supported: Boolean,
     ) : ArkEvent()
 
+    /**
+     * Post-sync drift check found previously-known spendable VTXOs vanished
+     * without local trace (another device moved this seed's funds). A mailbox
+     * rescan was triggered to converge; [vanishedCount] is informational.
+     */
+    data class CrossDeviceDriftRescan(
+        val vanishedCount: Int,
+    ) : ArkEvent()
+
+    /** A mailbox rescan started (manual or after repeated stale-input proof). */
+    data object MailboxRescanStarted : ArkEvent()
+
+    /**
+     * A mailbox rescan was refused (wipe skipped) to protect in-flight
+     * activity — pending refresh round, exit, board, or Lightning flow.
+     */
+    data class MailboxRescanBlocked(
+        val message: String,
+    ) : ArkEvent()
+
     data object ArkDbExported : ArkEvent()
 
     data object ArkDbImported : ArkEvent()
@@ -555,17 +673,6 @@ sealed class ArkEvent {
      * Esplora host). BTC→Ark boarding is disabled until a re-open succeeds.
      */
     data class OnchainUnavailable(
-        val message: String,
-    ) : ArkEvent()
-
-    /**
-     * Confirmed Bark on-chain deposit is below ASP min board amount.
-     * [shortfallSats] is how much more is needed to meet the min (null if unknown).
-     */
-    data class BoardBelowMinimum(
-        val onchainConfirmedSats: Long,
-        val minBoardAmountSats: Long,
-        val shortfallSats: Long?,
         val message: String,
     ) : ArkEvent()
 

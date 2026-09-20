@@ -17,11 +17,11 @@ object ArkDepositPolicy {
     /** Synthetic pending on-chain deposit row id (ArkRepository) — legacy single-row id. */
     const val PENDING_ONCHAIN_DEPOSIT_MOVEMENT_ID: Int = -1
 
-    /** History status: confirmed on-chain but below ASP min board amount. */
-    const val STATUS_BELOW_MIN: String = "below_min"
-
     /** History status: below-min deposit swept back to Layer 1. */
     const val STATUS_RECOVERED_L1: String = "recovered_l1"
+
+    /** Max rows kept in the per-wallet SecureStorage movement journal. */
+    const val MOVEMENT_JOURNAL_MAX_ROWS: Int = 200
 
     /** Synthetic recovered-deposit row ids are negative and not equal to [PENDING_ONCHAIN_DEPOSIT_MOVEMENT_ID]. */
     fun recoveredOnchainMovementId(fundingTxid: String): Int {
@@ -59,9 +59,6 @@ object ArkDepositPolicy {
     fun isRecoveredOnchainMovement(movement: ArkMovement): Boolean =
         movement.status.equals(STATUS_RECOVERED_L1, ignoreCase = true)
 
-    fun isBelowMinOnchainMovement(movement: ArkMovement): Boolean =
-        movement.status.equals(STATUS_BELOW_MIN, ignoreCase = true)
-
     /**
      * Whether [amountSats] is below the ASP board minimum.
      * Null/non-positive [minBoardAmountSats] means the limit is unknown — not below.
@@ -72,30 +69,6 @@ object ArkDepositPolicy {
     ): Boolean {
         val min = minBoardAmountSats?.takeIf { it > 0L } ?: return false
         return amountSats > 0L && amountSats < min
-    }
-
-    /**
-     * Confirmed Bark on-chain funds that cannot board (below ASP min) and are not already
-     * in a pending board. Caller can top up or recover on-chain to Layer 1.
-     */
-    fun isStuckBelowMinBoard(
-        onchainConfirmedSats: Long,
-        pendingBoardSats: Long,
-        minBoardAmountSats: Long?,
-    ): Boolean {
-        if (pendingBoardSats > 0L) return false
-        return isBelowMinBoardAmount(onchainConfirmedSats, minBoardAmountSats)
-    }
-
-    /** Sats still needed so confirmed on-chain total meets [minBoardAmountSats]. */
-    fun shortfallToMinBoard(
-        onchainConfirmedSats: Long,
-        minBoardAmountSats: Long?,
-    ): Long? {
-        val min = minBoardAmountSats?.takeIf { it > 0L } ?: return null
-        val confirmed = onchainConfirmedSats.coerceAtLeast(0L)
-        if (confirmed <= 0L || confirmed >= min) return null
-        return min - confirmed
     }
     /**
      * Best-known deposit depth for UI (never hide funding behind board=0).
@@ -131,22 +104,25 @@ object ArkDepositPolicy {
                 ?: depositDepthConfirmations(boardConfirmations, fundingConfirmations)
         }
 
-    /** ASP board-tx threshold only — never treat funding depth as board confs met. */
+    /** ASP board-tx threshold only — never treat funding depth as board confs met.
+     * A required value of 0 is valid (ASP registers once the board tx is seen,
+     * even in mempool); only negative is invalid. Mirrors Bark run_confirm,
+     * which registers once `confs >= ark_info.required_board_confirmations`. */
     fun boardConfirmationsMet(
         boardConfirmations: Int?,
         requiredBoardConfirmations: Int,
     ): Boolean {
-        val required = requiredBoardConfirmations.takeIf { it > 0 } ?: return false
-        return (boardConfirmations ?: -1) >= required
+        if (requiredBoardConfirmations < 0) return false
+        return (boardConfirmations ?: -1) >= requiredBoardConfirmations
     }
 
     fun boardProgressLabel(
         depthConfirmations: Int?,
         requiredBoardConfirmations: Int,
     ): String? {
-        val required = requiredBoardConfirmations.takeIf { it > 0 } ?: return null
+        if (requiredBoardConfirmations < 0) return null
         val depth = depthConfirmations ?: return null
-        return "${depth.coerceAtMost(required)}/$required"
+        return "${depth.coerceAtMost(requiredBoardConfirmations)}/$requiredBoardConfirmations"
     }
 
     /**
@@ -239,20 +215,87 @@ object ArkDepositPolicy {
     }
 
     /**
+     * Identity for history union + UI keys. Bark movement ids are per-DB row ids:
+     * any session-DB recreation (forced rescan wipe, cache eviction, import)
+     * restarts the id space, so a bare id is not a stable cross-session identity
+     * and a new payment can evict an old row with a colliding id. The fingerprint
+     * covers creation-time facts only: settlement mutates a row in place
+     * (status pending→finished, effective 0→final, output VTXOs/txids filled in,
+     * fees revealed), so anything assigned at completion is excluded — otherwise
+     * a send paints twice, once Pending and once finished. Mutable enrichment
+     * (labels, address annotations, Esplora-derived board/fee fields) is excluded
+     * too, so updates still replace instead of duplicating.
+     */
+    fun movementUnionKey(movement: ArkMovement): String =
+        listOf(
+            movement.id.toString(),
+            movement.createdAt.trim(),
+            movement.intendedBalanceSats.toString(),
+            movement.paymentHash.orEmpty().trim().lowercase(Locale.US),
+            movement.lightningInvoice.orEmpty().trim(),
+            movement.lightningOffer.orEmpty().trim(),
+            movement.subsystemName.trim().lowercase(Locale.US),
+            movement.subsystemKind.trim().lowercase(Locale.US),
+        ).joinToString("|")
+
+    /**
+     * Rank for collapsing duplicate rows: Bark can return the same movement
+     * twice in one history() call (stale pending ghost + settled row, same id),
+     * and older paints may have journaled/cached both copies. Settled beats
+     * pending; ties keep Bark's newest-first order.
+     */
+    fun movementSettledRank(status: String): Int =
+        if (status.trim().equals("pending", ignoreCase = true)) 0 else 1
+
+    /**
+     * Paint-boundary sanitizer: collapse same-fingerprint rows to one (settled
+     * wins) and return newest-first order. LazyColumn keys are fatal on
+     * duplicates, so every path that can paint movements — merge output,
+     * wallet-state cache, journal, backup sidecar — must go through this, not
+     * just the merge. Stored copies self-heal on the next persist.
+     */
+    fun distinctPaintedMovements(movements: List<ArkMovement>): List<ArkMovement> {
+        if (movements.isEmpty()) return movements
+        val deduped =
+            movements
+                .groupBy(::movementUnionKey)
+                .values
+                .map { rows ->
+                    rows.maxByOrNull { movementSettledRank(it.status) } ?: rows.first()
+                }
+        return sortMovementsChronologically(deduped)
+    }
+
+    /**
      * Union live Bark/history rows with previously painted movements.
-     * Live wins on id collision. Drops stale synthetic pending-deposit (-1) when live
-     * already has a real board row or no longer needs the placeholder.
+     * Live wins on fingerprint collision (status/enrichment update of the same
+     * payment). Duplicate live rows (pending ghost + settled copy) collapse to
+     * the settled one so UI keys stay unique. Drops stale synthetic
+     * pending-deposit (-1) when live already has a real board row or no longer
+     * needs the placeholder.
      * Always returns newest-first chronological order (pending is not pinned).
      */
     fun mergePreservedMovements(
         live: List<ArkMovement>,
         previous: List<ArkMovement>,
     ): List<ArkMovement> {
-        if (previous.isEmpty()) return sortMovementsChronologically(live)
+        // Collapse same-fingerprint live rows first: same payment observed twice
+        // (e.g. pending ghost + finished settlement) must paint once, and the
+        // settled copy must win regardless of Bark's return order.
+        val dedupedLive =
+            live
+                .groupBy(::movementUnionKey)
+                .values
+                .map { rows ->
+                    // Settled beats pending; ties keep the first row, preserving
+                    // Bark's newest-first order (maxByOrNull keeps first max).
+                    rows.maxByOrNull { movementSettledRank(it.status) } ?: rows.first()
+                }
+        if (previous.isEmpty()) return sortMovementsChronologically(dedupedLive)
         // Mailbox recovery restores VTXOs, not history — keep prior rows until Bark has any.
-        if (live.isEmpty()) return sortMovementsChronologically(previous)
+        if (dedupedLive.isEmpty()) return sortMovementsChronologically(previous)
 
-        val liveIds = live.mapTo(HashSet(live.size)) { it.id }
+        val liveKeys = dedupedLive.mapTo(HashSet(dedupedLive.size)) { movementUnionKey(it) }
         val liveRecoveredFunding =
             live
                 .filter { isRecoveredOnchainMovement(it) }
@@ -261,7 +304,7 @@ object ArkDepositPolicy {
                 .toHashSet()
         val preserved =
             previous.filter { prior ->
-                if (prior.id in liveIds) return@filter false
+                if (movementUnionKey(prior) in liveKeys) return@filter false
                 // Synthetic pending deposits are always rebuilt on refresh — never preserve stale.
                 if (isSyntheticPendingOnchainDeposit(prior)) return@filter false
                 // Drop pending-era board placeholders once funding was recovered to L1.
@@ -277,17 +320,55 @@ object ArkDepositPolicy {
                 if (isRecoveredOnchainMovement(prior)) return@filter true
                 true
             }
-        return sortMovementsChronologically(if (preserved.isEmpty()) live else live + preserved)
+        return distinctPaintedMovements(
+            if (preserved.isEmpty()) dedupedLive else dedupedLive + preserved,
+        )
     }
 
     /**
      * Newest first by movement time. Pending status must not float rows above newer txs.
      * Prefer createdAt, then completedAt, then updatedAt; tie-break on id.
+     *
+     * Causality anchor: a row funded by another row's on-chain spend (self-transfer
+     * receive sighted after its send) sorts just above that send even when Bark
+     * movement clocks and first-sighting clocks disagree by seconds — otherwise
+     * causal pairs invert in the newest-first list. Anchors are outbound spends
+     * only, matched by on-chain txid (never addresses: reuse would false-link).
+     * Displayed times are untouched; only order is adjusted.
      */
     fun sortMovementsChronologically(movements: List<ArkMovement>): List<ArkMovement> {
         if (movements.size <= 1) return movements
+        val outboundMillisByTxid = HashMap<String, Pair<Long, String>>()
+        movements.forEach { candidate ->
+            if (candidate.effectiveBalanceSats < 0L) {
+                val millis = movementSortMillis(candidate)
+                if (millis > Long.MIN_VALUE) {
+                    val key = movementUnionKey(candidate)
+                    movementChainTxids(candidate).forEach { txid ->
+                        val current = outboundMillisByTxid[txid]
+                        if (current == null || millis > current.first) {
+                            outboundMillisByTxid[txid] = millis to key
+                        }
+                    }
+                }
+            }
+        }
+        fun effectiveMillis(movement: ArkMovement): Long {
+            val own = movementSortMillis(movement)
+            val selfKey = movementUnionKey(movement)
+            var best = own
+            movementChainTxids(movement).forEach { txid ->
+                val anchor = outboundMillisByTxid[txid] ?: return@forEach
+                // Same-fingerprint duplicates (pending ghost + settled copy) must
+                // not anchor each other — dedupe handles those.
+                if (anchor.second != selfKey && anchor.first > Long.MIN_VALUE) {
+                    best = maxOf(best, anchor.first + 1)
+                }
+            }
+            return best
+        }
         return movements.sortedWith(
-            compareByDescending<ArkMovement> { movementSortMillis(it) }
+            compareByDescending<ArkMovement> { effectiveMillis(it) }
                 .thenByDescending { it.id },
         )
     }

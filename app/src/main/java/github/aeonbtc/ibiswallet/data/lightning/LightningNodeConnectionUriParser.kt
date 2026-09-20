@@ -323,6 +323,7 @@ object LightningNodeConnectionUriParser {
                     tlsCertPem = certPem,
                     useTls = useTls,
                     allowInsecureTls = false,
+                    acknowledgedInsecure = false,
                 ),
             type = LightningNodeConnectionType.LND_REST,
         )
@@ -418,6 +419,7 @@ object LightningNodeConnectionUriParser {
                     tlsCertPem = tlsMaterial,
                     useTls = useTls,
                     allowInsecureTls = false,
+                    acknowledgedInsecure = false,
                 ),
             type = LightningNodeConnectionType.CLN_REST,
         )

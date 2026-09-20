@@ -60,7 +60,20 @@ sealed class ElectrumNotification {
 
     /** Subscription socket detected the server connection is dead. */
     data object ConnectionLost : ElectrumNotification()
+
+    data class SilentPaymentsUpdate(
+        val address: String,
+        val startHeight: Int,
+        val progress: Double,
+        val history: List<SilentPaymentHistoryItem>,
+    ) : ElectrumNotification()
 }
+
+data class SilentPaymentHistoryItem(
+    val height: Int,
+    val txHash: String,
+    val tweakKey: String,
+)
 
 /**
  * Protocol-aware local TCP proxy between a local Electrum consumer (Bitcoin
@@ -145,6 +158,8 @@ class CachingElectrumProxy(
         /** How long to wait for directLock before assuming the connection is
          *  alive (another operation is actively using the socket). */
         private const val PING_LOCK_TIMEOUT_MS = 3_000L
+        private const val ELECTRUM_PROTOCOL_MIN = "1.4"
+        private const val ELECTRUM_PROTOCOL_MAX = "1.4.2"
     }
 
     private val endpointLabel = "$targetHost:$targetPort"
@@ -754,27 +769,7 @@ class CachingElectrumProxy(
         reader: BufferedReader,
     ): Boolean {
         return try {
-            val req =
-                JSONObject().apply {
-                    put("id", directRequestId++)
-                    put("method", "server.version")
-                    put(
-                        "params",
-                        JSONArray().apply {
-                            put("IbisWallet")
-                            put("1.4")
-                        },
-                    )
-                }
-            writer.println(req.toString())
-            writer.flush()
-
-            // Read response, skipping push notifications
-            while (true) {
-                val line = reader.readLineBounded() ?: return false
-                if (!isServerPushNotification(line)) break
-            }
-
+            if (!sendVersionHandshake(writer, reader, directRequestId++)) return false
             directHandshakeDone = true
             if (BuildConfig.DEBUG) Log.d(TAG, "${roleTag("direct")} Handshake completed")
             true
@@ -791,12 +786,7 @@ class CachingElectrumProxy(
         params: JSONArray,
     ): String? {
         val id = directRequestId++
-        val req =
-            JSONObject().apply {
-                put("id", id)
-                put("method", method)
-                put("params", params)
-            }
+        val req = electrumRequest(id, method, params)
 
         writer.println(req.toString())
         writer.flush()
@@ -831,10 +821,20 @@ class CachingElectrumProxy(
     private fun isServerPushNotification(line: String): Boolean {
         return try {
             val json = JSONObject(line)
-            json.has("method") && (!json.has("id") || json.isNull("id"))
+            // A push has "method" and no "result"/"error"; a response has
+            // "result"/"error" and no "method". Frigate (simplejsonrpc) pushes
+            // also carry an "id", so id must NOT disqualify a push.
+            isServerPushNotification(json)
         } catch (_: Exception) {
             false
         }
+    }
+
+    private fun isServerPushNotification(json: JSONObject): Boolean {
+        if (!json.has("method")) return false
+        if (json.has("result") && !json.isNull("result")) return false
+        if (json.has("error") && !json.isNull("error")) return false
+        return true
     }
 
     /**
@@ -857,11 +857,11 @@ class CachingElectrumProxy(
                         val id = directRequestId++
                         idToScriptHash[id] = scriptHash
                         val req =
-                            JSONObject().apply {
-                                put("id", id)
-                                put("method", "blockchain.scripthash.subscribe")
-                                put("params", JSONArray().apply { put(scriptHash) })
-                            }
+                            electrumRequest(
+                                id,
+                                "blockchain.scripthash.subscribe",
+                                JSONArray().apply { put(scriptHash) },
+                            )
                         writer.println(req.toString())
                     }
                     writer.flush()
@@ -1037,27 +1037,7 @@ class CachingElectrumProxy(
         reader: BufferedReader,
     ): Boolean {
         return try {
-            val req =
-                JSONObject().apply {
-                    put("id", subRequestId++)
-                    put("method", "server.version")
-                    put(
-                        "params",
-                        JSONArray().apply {
-                            put("IbisWallet")
-                            put("1.4")
-                        },
-                    )
-                }
-            writer.println(req.toString())
-            writer.flush()
-
-            // Read response, skipping any stale push notifications
-            while (true) {
-                val line = reader.readLineBounded() ?: return false
-                if (!isServerPushNotification(line)) break
-            }
-
+            if (!sendVersionHandshake(writer, reader, subRequestId++)) return false
             subHandshakeDone = true
             if (BuildConfig.DEBUG) Log.d(TAG, "${roleTag("subscription")} Handshake completed")
             true
@@ -1081,6 +1061,13 @@ class CachingElectrumProxy(
      */
     fun startSubscriptions(scriptHashes: List<String>): Map<String, String?> {
         return subLock.withLock {
+            // A previous listener may still be blocked in readLine() (blocking
+            // IO is not cancellable by coroutine cancel). Tear it down first —
+            // two concurrent readers split the stream mid-line, which corrupts
+            // JSON parsing and kills the subscription with EOF.
+            if (subListenerJob?.isActive == true) {
+                stopSubscriptionListener()
+            }
             if (!ensureSubConnectionLocked()) return@withLock emptyMap()
             val writer = subWriter ?: return@withLock emptyMap()
             val reader = subReader ?: return@withLock emptyMap()
@@ -1088,11 +1075,7 @@ class CachingElectrumProxy(
             try {
                 // 1. Subscribe to block headers
                 val headersReq =
-                    JSONObject().apply {
-                        put("id", subRequestId++)
-                        put("method", "blockchain.headers.subscribe")
-                        put("params", JSONArray())
-                    }
+                    electrumRequest(subRequestId++, "blockchain.headers.subscribe", JSONArray())
                 writer.println(headersReq.toString())
 
                 writer.flush()
@@ -1129,11 +1112,11 @@ class CachingElectrumProxy(
                         val id = subRequestId++
                         idToScriptHash[id] = scriptHash
                         val req =
-                            JSONObject().apply {
-                                put("id", id)
-                                put("method", "blockchain.scripthash.subscribe")
-                                put("params", JSONArray().apply { put(scriptHash) })
-                            }
+                            electrumRequest(
+                                id,
+                                "blockchain.scripthash.subscribe",
+                                JSONArray().apply { put(scriptHash) },
+                            )
                         writer.println(req.toString())
                     }
                     writer.flush()
@@ -1169,7 +1152,6 @@ class CachingElectrumProxy(
 
                 if (BuildConfig.DEBUG) Log.d(TAG, "${roleTag("subscription")} Subscribed ${results.size} script hashes")
 
-                // 5. Start the notification listener coroutine
                 startNotificationListener(reader)
 
                 results
@@ -1208,11 +1190,11 @@ class CachingElectrumProxy(
             for (chunk in scriptHashes.chunked(SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE)) {
                 for (scriptHash in chunk) {
                     val req =
-                        JSONObject().apply {
-                            put("id", subRequestId++)
-                            put("method", "blockchain.scripthash.subscribe")
-                            put("params", JSONArray().apply { put(scriptHash) })
-                        }
+                        electrumRequest(
+                            subRequestId++,
+                            "blockchain.scripthash.subscribe",
+                            JSONArray().apply { put(scriptHash) },
+                        )
                     writer.println(req.toString())
                 }
                 writer.flush()
@@ -1243,6 +1225,169 @@ class CachingElectrumProxy(
                 val buffered = pausedPushNotifications.poll() ?: break
                 runCatching { dispatchPushNotification(buffered) }
             }
+        }
+    }
+
+    /**
+     * Tri-state SP capability: true/false from a definitive `server.features`
+     * answer, null when the query itself failed (socket hiccup, timeout).
+     * Callers must keep previous state on null so a transient failure does
+     * not flap the receive-screen warning.
+     */
+    fun supportsSilentPayments(): Boolean? {
+        return directLock.withLock {
+            if (!ensureDirectConnectionLocked()) return@withLock null
+            val writer = directWriter ?: return@withLock null
+            val reader = directReader ?: return@withLock null
+            try {
+                val response =
+                    sendDirectRequestLocked(
+                        writer,
+                        reader,
+                        "server.features",
+                        JSONArray(),
+                    ) ?: return@withLock null
+                val json = JSONObject(response)
+                if (json.has("error") && !json.isNull("error")) {
+                    if (BuildConfig.DEBUG) {
+                        Log.w(TAG, "server.features error: ${json.opt("error")}")
+                    }
+                    return@withLock null
+                }
+                val result = json.optJSONObject("result") ?: return@withLock null
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "server.features silent_payments=${result.opt("silent_payments")}")
+                }
+                silentPaymentsAdvertised(result)
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Silent payments features query failed: ${e.message}")
+                null
+            }
+        }
+    }
+
+    private fun silentPaymentsAdvertised(features: JSONObject): Boolean {
+        if (!features.has("silent_payments") || features.isNull("silent_payments")) return false
+        val versions = features.opt("silent_payments")
+        return when (versions) {
+            is JSONArray ->
+                (0 until versions.length()).any { i ->
+                    versions.optInt(i, Int.MIN_VALUE) == 0 ||
+                        versions.optString(i, "") == "0"
+                }
+            is Number -> versions.toInt() == 0
+            // Exact match only: a substring check would treat a future
+            // version "10" as advertising v0 support.
+            is String -> versions.trim() == "0"
+            else -> false
+        }
+    }
+
+    private fun sendVersionHandshake(
+        writer: PrintWriter,
+        reader: BufferedReader,
+        id: Int,
+    ): Boolean {
+        val req = electrumRequest(id, "server.version", electrumVersionParams())
+        writer.println(req.toString())
+        writer.flush()
+        while (true) {
+            val line = reader.readLineBounded() ?: return false
+            if (isServerPushNotification(line)) continue
+            val json = JSONObject(line)
+            if (json.optInt("id", Int.MIN_VALUE) != id && json.has("id") && !json.isNull("id")) {
+                continue
+            }
+            if (json.has("error") && !json.isNull("error")) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "server.version error: ${json.opt("error")}")
+                return false
+            }
+            return json.has("result") && !json.isNull("result")
+        }
+    }
+
+    private fun electrumVersionParams(): JSONArray =
+        JSONArray().apply {
+            put("IbisWallet")
+            put(
+                JSONArray().apply {
+                    put(ELECTRUM_PROTOCOL_MIN)
+                    put(ELECTRUM_PROTOCOL_MAX)
+                },
+            )
+        }
+
+    private fun electrumRequest(
+        id: Int,
+        method: String,
+        params: JSONArray,
+    ): JSONObject =
+        JSONObject().apply {
+            put("jsonrpc", "2.0")
+            put("id", id)
+            put("method", method)
+            put("params", params)
+        }
+
+    fun subscribeSilentPayments(
+        scanPrivateKeyHex: String,
+        spendPublicKeyHex: String,
+        startHeight: Int,
+    ): Boolean {
+        val writer = subWriter ?: return false
+        val socket = subSocket ?: return false
+        if (socket.isClosed || !socket.isConnected) return false
+        // Fire-and-forget on purpose: the subscription socket has a single
+        // long-running reader (the notification listener). Reading a response
+        // here would race it for lines and corrupt both streams. Frigate
+        // confirms via push notifications, which the listener dispatches.
+        subListenerPaused = true
+        try {
+            val req =
+                electrumRequest(
+                    subRequestId++,
+                    "blockchain.silentpayments.subscribe",
+                    JSONArray().apply {
+                        put(scanPrivateKeyHex)
+                        put(spendPublicKeyHex)
+                        put(startHeight)
+                    },
+                )
+            writer.println(req.toString())
+            writer.flush()
+            return true
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) Log.w(TAG, "Silent payments subscribe failed")
+            return false
+        } finally {
+            subListenerPaused = false
+            while (true) {
+                val buffered = pausedPushNotifications.poll() ?: break
+                runCatching { dispatchPushNotification(buffered) }
+            }
+        }
+    }
+
+    fun unsubscribeSilentPayments(
+        scanPrivateKeyHex: String,
+        spendPublicKeyHex: String,
+    ) {
+        val writer = subWriter ?: return
+        val socket = subSocket ?: return
+        if (socket.isClosed || !socket.isConnected) return
+        try {
+            val req =
+                electrumRequest(
+                    subRequestId++,
+                    "blockchain.silentpayments.unsubscribe",
+                    JSONArray().apply {
+                        put(scanPrivateKeyHex)
+                        put(spendPublicKeyHex)
+                    },
+                )
+            writer.println(req.toString())
+            writer.flush()
+        } catch (_: Exception) {
         }
     }
 
@@ -1351,33 +1496,98 @@ class CachingElectrumProxy(
      */
     private fun dispatchPushNotification(json: JSONObject) {
         val method = json.optString("method", "")
-        val params = json.optJSONArray("params") ?: return
+        // Electrum servers send positional params (array); Frigate via
+        // simplejsonrpc sends named params (object). Accept both.
+        val params = json.opt("params") ?: return
 
         when (method) {
             "blockchain.scripthash.subscribe" -> {
-                if (params.length() >= 2) {
-                    val scriptHash = params.optString(0, "")
-                    val status: String? = if (params.isNull(1)) null else params.optString(1)
-                    if (scriptHash.isNotEmpty()) {
-                        _notifications.tryEmit(ElectrumNotification.ScriptHashChanged(scriptHash, status))
-                        if (BuildConfig.DEBUG) Log.d(TAG, "Push: script hash changed $scriptHash")
+                var scriptHash = ""
+                var status: String? = null
+                when (params) {
+                    is JSONArray -> {
+                        if (params.length() >= 2) {
+                            scriptHash = params.optString(0, "")
+                            status = if (params.isNull(1)) null else params.optString(1)
+                        }
                     }
+                    is JSONObject -> {
+                        scriptHash = params.optString("scripthash", "")
+                        status = if (params.isNull("status")) null else params.optString("status")
+                    }
+                }
+                if (scriptHash.isNotEmpty()) {
+                    _notifications.tryEmit(ElectrumNotification.ScriptHashChanged(scriptHash, status))
+                    if (BuildConfig.DEBUG) Log.d(TAG, "Push: script hash changed $scriptHash")
                 }
             }
             "blockchain.headers.subscribe" -> {
-                if (params.length() >= 1) {
-                    val headerObj = params.optJSONObject(0)
-                    if (headerObj != null) {
-                        val height = headerObj.optInt("height", -1)
-                        val hex = headerObj.optString("hex", "")
-                        if (height > 0) {
-                            _notifications.tryEmit(ElectrumNotification.NewBlockHeader(height, hex))
-                            if (BuildConfig.DEBUG) Log.d(TAG, "Push: new block at height $height")
-                        }
+                val headerObj =
+                    when (params) {
+                        is JSONArray -> if (params.length() >= 1) params.optJSONObject(0) else null
+                        is JSONObject -> params.optJSONObject("header")
+                        else -> null
+                    }
+                if (headerObj != null) {
+                    val height = headerObj.optInt("height", -1)
+                    val hex = headerObj.optString("hex", "")
+                    if (height > 0) {
+                        _notifications.tryEmit(ElectrumNotification.NewBlockHeader(height, hex))
+                        if (BuildConfig.DEBUG) Log.d(TAG, "Push: new block at height $height")
                     }
                 }
             }
+            "blockchain.silentpayments.subscribe" -> {
+                parseSilentPaymentsNotification(params)?.let { _notifications.tryEmit(it) }
+            }
         }
+    }
+
+    private fun parseSilentPaymentsNotification(params: Any?): ElectrumNotification.SilentPaymentsUpdate? {
+        return when (params) {
+            is JSONArray -> {
+                if (params.length() < 3) return null
+                val subscription = params.optJSONObject(0) ?: return null
+                val address = subscription.optString("address", "")
+                if (address.isBlank()) return null
+                ElectrumNotification.SilentPaymentsUpdate(
+                    address = address,
+                    startHeight = subscription.optInt("start_height", 0),
+                    progress = params.optDouble(1, 0.0),
+                    history = parseSilentPaymentsHistory(params.optJSONArray(2) ?: JSONArray()),
+                )
+            }
+            is JSONObject -> {
+                // Frigate sends named params: {"subscription": {...}, "progress": x, "history": [...]}
+                val subscription = params.optJSONObject("subscription") ?: return null
+                val address = subscription.optString("address", "")
+                if (address.isBlank()) return null
+                ElectrumNotification.SilentPaymentsUpdate(
+                    address = address,
+                    startHeight = subscription.optInt("start_height", 0),
+                    progress = params.optDouble("progress", 0.0),
+                    history = parseSilentPaymentsHistory(params.optJSONArray("history") ?: JSONArray()),
+                )
+            }
+            else -> null
+        }
+    }
+
+    private fun parseSilentPaymentsHistory(historyArr: JSONArray): List<SilentPaymentHistoryItem> {
+        val history = mutableListOf<SilentPaymentHistoryItem>()
+        for (i in 0 until historyArr.length()) {
+            val item = historyArr.optJSONObject(i) ?: continue
+            val txHash = item.optString("tx_hash", "")
+            val tweakKey = item.optString("tweak_key", "")
+            if (txHash.isBlank() || tweakKey.isBlank()) continue
+            history +=
+                SilentPaymentHistoryItem(
+                    height = item.optInt("height", 0),
+                    txHash = txHash,
+                    tweakKey = tweakKey,
+                )
+        }
+        return history
     }
 
     /**
@@ -1461,11 +1671,12 @@ class CachingElectrumProxy(
         for (txid in txids) {
             val id = directRequestId++
             idToTxid[id] = txid
-            val req = JSONObject().apply {
-                put("id", id)
-                put("method", "blockchain.transaction.get")
-                put("params", JSONArray().apply { put(txid) })
-            }
+            val req =
+                electrumRequest(
+                    id,
+                    "blockchain.transaction.get",
+                    JSONArray().apply { put(txid) },
+                )
             writer.println(req.toString())
         }
         writer.flush()
@@ -1906,6 +2117,82 @@ class CachingElectrumProxy(
                 history
             } catch (e: Exception) {
                 if (BuildConfig.DEBUG) Log.w(TAG, "Script hash history query failed: ${e.message}")
+                closeDirectConnectionLocked()
+                null
+            }
+        }
+    }
+
+    fun getVerboseTransaction(txid: String): JSONObject? = getVerboseTxJson(txid)
+
+    fun getBlockTimestamp(height: Int): Long? {
+        if (height <= 0) return null
+        return directLock.withLock {
+            if (!ensureDirectConnectionLocked()) return@withLock null
+            val writer = directWriter ?: return@withLock null
+            val reader = directReader ?: return@withLock null
+            try {
+                val response =
+                    sendDirectRequestLocked(
+                        writer,
+                        reader,
+                        "blockchain.block.header",
+                        JSONArray().apply { put(height) },
+                    ) ?: return@withLock null
+                val json = JSONObject(response)
+                if (json.has("error") && !json.isNull("error")) return@withLock null
+                val hex =
+                    when (val result = json.opt("result")) {
+                        is String -> result
+                        is JSONObject -> result.optString("hex", "")
+                        else -> ""
+                    }
+                parseBlockHeaderTimestamp(hex)
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Block header query failed for $height: ${e.message}")
+                closeDirectConnectionLocked()
+                null
+            }
+        }
+    }
+
+    private fun parseBlockHeaderTimestamp(hex: String): Long? {
+        if (hex.length < 160) return null
+        val bytes =
+            runCatching {
+                hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+            }.getOrNull() ?: return null
+        if (bytes.size < 80) return null
+        var ts = 0L
+        for (i in 0 until 4) {
+            ts = ts or ((bytes[68 + i].toLong() and 0xFF) shl (8 * i))
+        }
+        return ts.takeIf { it > 0L }
+    }
+
+    fun getRawTransactionHex(txid: String): String? {
+        cache?.getRawTx(txid)?.takeIf { it.isNotBlank() }?.let { return it }
+        return directLock.withLock {
+            if (!ensureDirectConnectionLocked()) return@withLock null
+            val writer = directWriter ?: return@withLock null
+            val reader = directReader ?: return@withLock null
+            try {
+                val response =
+                    sendDirectRequestLocked(
+                        writer,
+                        reader,
+                        "blockchain.transaction.get",
+                        JSONArray().apply { put(txid) },
+                    ) ?: return@withLock null
+                val json = JSONObject(response)
+                if (json.has("error") && !json.isNull("error")) return@withLock null
+                val hex = json.optString("result", "")
+                if (hex.isBlank() || hex.length < 20) return@withLock null
+                if (!rawTxHexMatchesTxid(txid, hex)) return@withLock null
+                cache?.putRawTx(txid, hex)
+                hex
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Raw tx query failed for $txid: ${e.message}")
                 closeDirectConnectionLocked()
                 null
             }

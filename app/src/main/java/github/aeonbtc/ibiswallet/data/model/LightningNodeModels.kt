@@ -43,15 +43,25 @@ data class LightningNodeConfig(
     val tlsCertPem: String = "",
      /**
       * When true, connect over HTTPS and pin [tlsCertPem].
-      * When false, connect over explicit cleartext HTTP (never auto-probed with credentials).
-      * [allowInsecureTls] is only for already-saved no-cert HTTPS until resaved.
+      * When false, connect over explicit cleartext HTTP. Cleartext (and
+      * trust-all TLS) on clearnet hosts requires [acknowledgedInsecure];
+      * credentials are never auto-probed over unauthenticated transports.
+      * [allowInsecureTls] is a legacy alias kept for backup compat and mirrors
+      * [acknowledgedInsecure] on save; auth decisions use [acknowledgedInsecure].
       */
      val useTls: Boolean = false,
      /** Legacy: trust-all TLS when no cert is pasted. New UI never sets this. */
      val allowInsecureTls: Boolean = false,
+     /**
+      * Explicit per-host acknowledgment that credentials may travel without
+      * certificate verification (clearnet HTTP or trust-all HTTPS). Set only
+      * via the setup-screen checkbox. Never inferred or auto-probed.
+      * Not required for `.onion` hosts where Tor authenticates the endpoint.
+      */
+     val acknowledgedInsecure: Boolean = false,
     /**
      * Last transport that successfully opened getinfo for this host/port.
-     * Speed hint only — TLS off still probes HTTPS then HTTP.
+     * Legacy speed hint, retained for migration compat; no auto-upgrade.
      * Does not affect the TLS toggle / [useTls] preference shown in UI.
      */
     val preferSessionTls: Boolean = false,
@@ -94,15 +104,29 @@ data class LightningNodeConfig(
     }
 
     /**
-     * TLS on uses this config as-is.
-     * TLS off probes HTTPS (insecure, no cert) then falls back to HTTP.
+     * TLS on uses this config as-is. TLS off is explicit cleartext HTTP only —
+     * no trust-all HTTPS probe, no plaintext fallback. Callers fail closed
+     * (before any credential use) unless the transport is authenticated
+     * (pinned cert, Tor onion) or [acknowledgedInsecure] is set.
      */
-    fun connectCandidates(): List<LightningNodeConfig> {
-        if (useTls) return listOf(this)
-        return listOf(
-            copy(useTls = true, allowInsecureTls = true),
-            copy(useTls = false, allowInsecureTls = false),
-        )
+    fun connectCandidates(): List<LightningNodeConfig> = listOf(this)
+
+    /** True for `.onion` hosts, where Tor authenticates the endpoint. */
+    fun isOnionHost(): Boolean = host.trim().endsWith(".onion", ignoreCase = true)
+
+    /**
+     * True when this config may carry credentials: Tor onion, pinned-cert TLS,
+     * or explicitly acknowledged insecure clearnet transport.
+     */
+    fun isCredentialTransportAuthorized(): Boolean {
+        if (type != LightningNodeConnectionType.LND_REST &&
+            type != LightningNodeConnectionType.CLN_REST
+        ) {
+            return true
+        }
+        if (isOnionHost()) return true
+        if (useTls) return tlsCertPem.isNotBlank() || acknowledgedInsecure
+        return acknowledgedInsecure
     }
 
     /** Short type label for wallet lists (no secrets). Protocol tokens stay English. */
@@ -470,6 +494,8 @@ sealed interface LightningNodeSendState {
         val destination: String?,
         val maxFeePercent: Double? = null,
         val feeSats: Long? = null,
+        val expirySeconds: Long? = null,
+        val preparedAtMs: Long = System.currentTimeMillis(),
     ) : LightningNodeSendState
 
     data class Paying(

@@ -29,6 +29,21 @@ object ArkRefreshPolicy {
         refreshSoon: Boolean,
     ): Boolean = needsRefresh || refreshSoon
 
+    /**
+     * Null fee quotes skip auto refresh in the "soon" window.
+     * When VTXOs are already due, still attempt so expiry cannot stall on a quote failure.
+     */
+    fun shouldSkipAutoRefreshForFee(
+        feeSats: Long?,
+        needsRefresh: Boolean,
+        maxFeeSats: Long,
+        dailyRemainingSats: Long,
+    ): Boolean {
+        if (dailyRemainingSats <= 0L) return true
+        if (feeSats == null) return !needsRefresh
+        return feeSats > maxFeeSats || feeSats > dailyRemainingSats
+    }
+
     fun autoRefreshTargets(
         dueVtxos: Collection<ArkVtxo>,
         allVtxos: Collection<ArkVtxo>,

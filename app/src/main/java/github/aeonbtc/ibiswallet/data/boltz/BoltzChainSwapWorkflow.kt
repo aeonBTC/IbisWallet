@@ -27,6 +27,16 @@ class BoltzChainSwapWorkflow(
 
     fun canReuseDraft(draft: BoltzChainSwapDraft?): Boolean {
         val candidate = draft ?: return false
+        return canReuseDraftFor(candidate, candidate)
+    }
+
+    /**
+     * Amount/direction-bound reuse: an existing draft may be reused only when it
+     * matches the current request (requestKey, direction, amount, max flag).
+     * Prevents funding a stale lockup address after the user edits the amount.
+     */
+    fun canReuseDraftFor(existing: BoltzChainSwapDraft?, creating: BoltzChainSwapDraft): Boolean {
+        val candidate = existing ?: return false
         val reusableState =
             when (candidate.state) {
                 BoltzChainSwapDraftState.CREATED_UNREVIEWED,
@@ -35,10 +45,15 @@ class BoltzChainSwapWorkflow(
                     candidate.reviewExpiresAt <= 0L || nowMs() <= candidate.reviewExpiresAt
                 else -> false
             }
-        return reusableState &&
-            !candidate.swapId.isNullOrBlank() &&
-            !candidate.depositAddress.isNullOrBlank() &&
-            !candidate.snapshot.isNullOrBlank()
+        if (!reusableState) return false
+        if (candidate.swapId.isNullOrBlank()) return false
+        if (candidate.depositAddress.isNullOrBlank()) return false
+        if (candidate.snapshot.isNullOrBlank()) return false
+        if (candidate.requestKey != creating.requestKey) return false
+        if (candidate.direction != creating.direction) return false
+        if (candidate.sendAmount != creating.sendAmount) return false
+        if (candidate.usesMaxAmount != creating.usesMaxAmount) return false
+        return true
     }
 
     suspend fun createOrRecoverDraft(
@@ -55,7 +70,7 @@ class BoltzChainSwapWorkflow(
                 "existing=${existingDraft?.state?.name ?: "none"}",
         )
         existingDraft
-            ?.takeIf(::canReuseDraft)
+            ?.takeIf { canReuseDraftFor(it, creatingDraft) }
             ?.let {
                 logDebug(
                     "Reusing existing draft requestKey=${it.requestKey} swapId=${it.swapId} state=${it.state} " +

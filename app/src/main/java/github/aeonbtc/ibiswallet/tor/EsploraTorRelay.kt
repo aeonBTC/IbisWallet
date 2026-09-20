@@ -28,6 +28,7 @@ import kotlin.concurrent.thread
 class EsploraTorRelay(
     private val onionHost: String,
     private val onionPort: Int = DEFAULT_ONION_PORT,
+    private val apiPathPrefix: String = DEFAULT_API_PATH,
     private val torSocksHost: String = "127.0.0.1",
     private val torSocksPortProvider: () -> Int = { TorManager.socksPort() },
 ) {
@@ -39,11 +40,12 @@ class EsploraTorRelay(
 
     fun isRunning(): Boolean = running.get()
 
-    /** Base Esplora URL for Bark Config (`.../api`). */
+    /** Base Esplora URL for Bark Config (preserves upstream api path). */
     fun apiBaseUrl(): String {
         val port = boundPort
         check(port > 0) { "EsploraTorRelay not started" }
-        return "http://$LOOPBACK_HOST:$port/api"
+        val path = apiPathPrefix.ifBlank { DEFAULT_API_PATH }
+        return "http://$LOOPBACK_HOST:$port$path"
     }
 
     fun start(): String =
@@ -259,6 +261,7 @@ class EsploraTorRelay(
         private const val TAG = "EsploraTorRelay"
         private const val LOOPBACK_HOST = "127.0.0.1"
         private const val DEFAULT_ONION_PORT = 80
+        private const val DEFAULT_API_PATH = "/api"
         private const val BACKLOG = 32
         private const val CONNECT_TIMEOUT_MS = 60_000
         private const val READ_TIMEOUT_MS = 120_000
@@ -274,5 +277,42 @@ class EsploraTorRelay(
                     )
                 uri.host?.takeIf { it.endsWith(".onion", ignoreCase = true) }
             }.getOrNull()
+
+        data class OnionTarget(
+            val host: String,
+            val port: Int,
+            val pathPrefix: String,
+        )
+
+        fun parseOnionTarget(url: String): OnionTarget? =
+            runCatching {
+                val uri = java.net.URI(if ("://" in url) url else "http://$url")
+                val host = uri.host?.takeIf { it.endsWith(".onion", ignoreCase = true) }
+                    ?: return@runCatching null
+                val scheme = uri.scheme?.lowercase().orEmpty()
+                val port =
+                    when {
+                        uri.port > 0 -> uri.port
+                        scheme == "https" -> 443
+                        else -> DEFAULT_ONION_PORT
+                    }
+                val path = uri.rawPath.orEmpty().trimEnd('/').ifBlank { DEFAULT_API_PATH }
+                OnionTarget(host = host, port = port, pathPrefix = path)
+            }.getOrNull()
+
+        fun fromUrl(
+            url: String,
+            torSocksHost: String = "127.0.0.1",
+            torSocksPortProvider: () -> Int = { TorManager.socksPort() },
+        ): EsploraTorRelay? {
+            val target = parseOnionTarget(url) ?: return null
+            return EsploraTorRelay(
+                onionHost = target.host,
+                onionPort = target.port,
+                apiPathPrefix = target.pathPrefix,
+                torSocksHost = torSocksHost,
+                torSocksPortProvider = torSocksPortProvider,
+            )
+        }
     }
 }
