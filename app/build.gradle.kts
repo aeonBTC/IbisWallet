@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "github.aeonbtc.ibiswallet"
-    compileSdk = 36
+    compileSdk = 37
     val sparkApiKey = providers
         .gradleProperty("SPARK_API_KEY")
         .orElse(providers.environmentVariable("SPARK_API_KEY"))
@@ -17,8 +17,8 @@ android {
         applicationId = "github.aeonbtc.ibiswallet"
         minSdk = 26
         targetSdk = 36
-        versionCode = 21
-        versionName = "4.7.1-beta"
+        versionCode = 22
+        versionName = "5.0-beta"
 
         vectorDrawables {
             useSupportLibrary = true
