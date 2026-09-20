@@ -231,7 +231,7 @@ Optional dedicated PIN that **erases all app data** when entered on the lock scr
 
 - Same PBKDF2 + salt scheme as unlock PIN  
 - Must differ from unlock, duress, and cloak unlock codes  
-- Verified even during lockout  
+- Blocked during lockout like any other PIN (uniform response — no oracle for which PIN is decoy)  
 - Does **not** unlock spend secrets  
 
 ---
@@ -244,7 +244,7 @@ Typical destructive steps include:
 
 - Disconnect network / unload wallets / prepare L2 wipe hooks  
 - Delete BDK wallet databases and `filesDir` BDK tree  
-- Delete LWK (`lwk/`), Spark (`spark/`), Ark (`ark/`) trees and legacy in-app Ark auto-backup dir  
+- Delete LWK (`lwk/`), Spark (`spark/`), Ark session (`cacheDir/ark-session/`, `cacheDir/ark-session-backups/`) trees plus legacy `filesDir/ark/` and in-app `ark_auto_backup` residue  
 - Clear Electrum cache SQLite  
 - Clear clipboard  
 - Stop Tor and wipe Tor data (`app_torservice`)  
@@ -345,7 +345,7 @@ Clearnet Electrum SSL uses `TofuTrustManager`:
 | Fingerprint match | Accept |
 | Fingerprint change | `CertificateMismatchException` → warn (possible MITM) |
 
-Approved fingerprints are stored for later sessions. Verbose tx cache entries are rejected if the server’s reported txid does not match the requested txid.
+Approved fingerprints are stored for later sessions. Verbose tx cache entries are rejected if the server’s reported txid does not match the requested txid. First-use vs changed-certificate approval is surfaced via `CertificateDialog` (first-use approval vs MITM-change warning).
 
 ### URL validation
 
@@ -457,7 +457,7 @@ Import sanitizes labels; BIP329 `spendable` flags only apply to valid Bitcoin ou
 |------|-------------------------|
 | Liquid (LWK) | Seed-derived; Signer in memory; DB under `filesDir/lwk/`; CT descriptor as spend secret when stored |
 | Spark | Seed wallets; SDK data under `filesDir/spark/<walletId>` |
-| Ark | Bark data under `filesDir/ark/<walletId>`; encrypted external DB backups; native handle open/close serialized |
+| Ark | Bark session data under `cacheDir/ark-session/<walletId>` (pre-open safety copies under `cacheDir/ark-session-backups/`); legacy `filesDir/ark` trees are scrub-only, never opened; encrypted external DB backups; native handle open/close serialized |
 | Lightning Node | Remote auth secrets in SecureStorage; not a local hot LN keystore for NWC/LND/CLN credentials beyond what you paste |
 
 Swaps (Boltz, SideSwap, etc.) involve third-party coordinators—standard swap counterparty and privacy tradeoffs apply. Loopback Tor relays may be used for onion Boltz/Esplora where bindings lack SOCKS.
