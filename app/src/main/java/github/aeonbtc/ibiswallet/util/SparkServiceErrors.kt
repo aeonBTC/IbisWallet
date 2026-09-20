@@ -27,6 +27,7 @@ object SparkServiceErrors {
 
         val lower = details.lowercase()
         return when {
+            isSelfPayment(lower) -> localizer.get(R.string.spark_send_self_payment)
             isGeoOrCdnBlocked(lower) -> localizer.get(R.string.spark_error_unavailable)
             isConnectionFailure(lower) -> localizer.get(R.string.spark_error_connection)
             isRawTransportPayload(details, lower) -> localizer.get(R.string.spark_error_connection)
@@ -41,6 +42,22 @@ object SparkServiceErrors {
             }
             .distinct()
             .joinToString(separator = " | ")
+
+    /**
+     * The SDK rejects sends to the wallet's own identity/address (Spark has
+     * no self-transfer). Surfaced with consolidation guidance instead of the
+     * raw SDK text: withdrawing everything to L1 and re-depositing in one
+     * on-chain deposit collapses dust leaves into a single fresh leaf.
+     */
+    private fun isSelfPayment(lower: String): Boolean =
+        lower.contains("send to self") ||
+            lower.contains("sending to self") ||
+            lower.contains("to yourself") ||
+            lower.contains("self-payment") ||
+            lower.contains("self payment") ||
+            lower.contains("selfpayment") ||
+            lower.contains("self_payment") ||
+            lower.contains("own identity")
 
     private fun isGeoOrCdnBlocked(lower: String): Boolean =
         lower.contains("cloudfront") ||

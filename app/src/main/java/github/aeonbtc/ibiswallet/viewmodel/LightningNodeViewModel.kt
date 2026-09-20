@@ -708,7 +708,6 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
             connected = false,
             usesTor = false,
         )
-        super.onCleared()
     }
 
     companion object {

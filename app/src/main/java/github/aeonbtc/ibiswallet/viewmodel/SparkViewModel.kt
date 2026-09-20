@@ -1,11 +1,16 @@
 package github.aeonbtc.ibiswallet.viewmodel
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.SparkEvent
+import github.aeonbtc.ibiswallet.data.model.SparkExitFlowState
+import github.aeonbtc.ibiswallet.data.model.SparkExitFundingUtxo
+import github.aeonbtc.ibiswallet.data.model.SparkExitLeafScope
+import github.aeonbtc.ibiswallet.data.model.SparkExitQuote
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeSpeed
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.SparkSendState
@@ -16,10 +21,13 @@ import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy
 import github.aeonbtc.ibiswallet.util.Bip329LabelNetwork
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.Bip329Labels
+import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.SparkNetworkMonitor
+import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -28,6 +36,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 class SparkViewModel(application: Application) : AndroidViewModel(application) {
@@ -38,6 +47,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     val sparkState = repository.sparkState
     val sendState = repository.sendState
     val receiveState = repository.receiveState
+    val pendingLnInvoice = repository.pendingLnInvoice
     val events: SharedFlow<SparkEvent> = repository.events
     val sparkTransactionLabels = repository.sparkTransactionLabels
     val sparkAddressLabels = repository.sparkAddressLabels
@@ -45,6 +55,8 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     val loadedWalletId = repository.loadedWalletId
     val isSparkConnected = repository.isConnected
     val isSparkConnecting = repository.isConnecting
+    val exitFlow = repository.exitFlow
+    val isExitBackupStale = repository.isExitBackupStale
 
     private val _isSparkLayer2Enabled = MutableStateFlow(secureStorage.isSparkLayer2Enabled())
     val isSparkLayer2Enabled: StateFlow<Boolean> = _isSparkLayer2Enabled.asStateFlow()
@@ -160,7 +172,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
 
                     val alive =
                         withTimeoutOrNull(HEARTBEAT_PING_TIMEOUT_MS) {
-                            runCatching { repository.refreshStateForHeartbeat() }.isSuccess &&
+                            runCatching { repository.refreshStateForHeartbeat() }.getOrDefault(false) &&
                                 isSparkConnected.value
                         } ?: false
 
@@ -247,6 +259,12 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     suspend fun prepareForFullWipe() {
+        // Join the in-flight load (bounded) before detaching: cancelling
+        // without joining races unload against a connect still opening the
+        // SDK session (same class of race as the wallet-switch guard).
+        runCatching {
+            withTimeoutOrNull(SPARK_WALLET_SWITCH_CANCEL_TIMEOUT_MS) { walletLifecycleJob?.cancelAndJoin() }
+        }
         walletLifecycleJob?.cancel()
         repository.unloadWallet()
     }
@@ -280,6 +298,10 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         reconnectJob?.cancel()
         reconnectJob =
             viewModelScope.launch(Dispatchers.IO) {
+                // Force still honors the min-interval throttle: concurrent
+                // triggers (heartbeat loss + foreground + button) share one
+                // reconnect instead of stacking three.
+                if (!reconnectDebouncer.tryRecordForceReconnect()) return@launch
                 runReconnectAttempt()
             }
     }
@@ -295,38 +317,19 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun syncWallet(walletId: String) {
-        val visibleWalletId = pendingWalletLoadId ?: loadedWalletId.value
-        if (visibleWalletId != null && visibleWalletId != walletId) {
-            // Don't blank Balance: loadWallet applies SecureStorage history cache next.
-            resetSparkUiState()
-        }
-
-        val previousLifecycleJob = walletLifecycleJob
-        pendingWalletLoadId = walletId
-        walletLifecycleJob = viewModelScope.launch(Dispatchers.IO) {
-            try {
-                previousLifecycleJob?.cancelAndJoinWithinSwitchTimeout()
-                runCatching {
-                    if (loadedWalletId.value == walletId && isSparkConnected.value) {
-                        repository.refreshState()
-                    } else {
-                        repository.loadWallet(walletId)
-                    }
-                }.onFailure { error ->
+        // Never pull a background wallet into the foreground SDK session (cf.
+        // Ark): a ManageWallets full-sync for a non-visible wallet must not
+        // detach the wallet the user is looking at. Only refresh in place.
+        if (loadedWalletId.value != walletId || !isSparkConnected.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.refreshState() }
+                .onFailure { error ->
                     if (error is CancellationException) throw error
                     repository.markLoadFailed(
                         walletId = walletId,
                         message = error.message?.takeIf { it.isNotBlank() } ?: "Spark wallet sync failed",
                     )
                 }
-            } finally {
-                if (pendingWalletLoadId == walletId) {
-                    pendingWalletLoadId = null
-                }
-                if (walletLifecycleJob?.isActive != true) {
-                    walletLifecycleJob = null
-                }
-            }
         }
     }
 
@@ -361,15 +364,19 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         amountSats: Long?,
         onchainFeeSpeed: SparkOnchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
         useAllFunds: Boolean = false,
+        label: String? = null,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.prepareSend(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds)
+            repository.prepareSend(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds, label)
         }
     }
 
-    fun prepareSendMany(recipients: List<Pair<String, Long>>) {
+    fun prepareSendMany(
+        recipients: List<Pair<String, Long>>,
+        label: String? = null,
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.prepareSendMany(recipients)
+            repository.prepareSendMany(recipients, label)
         }
     }
 
@@ -384,8 +391,9 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         amountSats: Long?,
         onchainFeeSpeed: SparkOnchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
         useAllFunds: Boolean = false,
+        label: String? = null,
     ): SparkSendState.Preview =
-        repository.prepareSendPreview(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds)
+        repository.prepareSendPreview(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds, label)
 
     suspend fun getOnchainFeeQuotes(
         paymentRequest: String,
@@ -415,12 +423,133 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun sendPreparedNow(): String? = repository.sendPreparedNow()
 
+    suspend fun sendSparkWithdrawal(
+        destinationAddress: String,
+        amountSats: Long?,
+        onchainFeeSpeed: SparkOnchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
+        useAllFunds: Boolean = false,
+    ): String? =
+        repository.sendSparkWithdrawal(destinationAddress, amountSats, onchainFeeSpeed, useAllFunds)
+
+    // ---- Unilateral exit (emergency on-chain recovery) ----
+
+    suspend fun quoteSparkExit(
+        feeRateSatPerVb: Long,
+        destination: String,
+        leafScope: SparkExitLeafScope = SparkExitLeafScope.AUTO,
+        leafIds: List<String> = emptyList(),
+        fundingScriptHex: String? = null,
+        fundingWeight: Long? = null,
+    ): SparkExitQuote =
+        repository.quoteSparkExit(
+            feeRateSatPerVb,
+            destination,
+            leafScope,
+            leafIds,
+            fundingScriptHex,
+            fundingWeight,
+        )
+
+    suspend fun buildSparkExit(
+        fundingInputs: List<SparkExitFundingUtxo>,
+        reviewedQuote: SparkExitQuote,
+        liveUtxos: List<github.aeonbtc.ibiswallet.data.model.SparkExitLiveUtxo>,
+        signPsbt: suspend (ByteArray) -> ByteArray,
+    ): SparkExitFlowState.InProgress = repository.buildSparkExit(fundingInputs, reviewedQuote, liveUtxos, signPsbt)
+
+    suspend fun rebuildSparkExit(
+        feeRateSatPerVb: Long,
+        destination: String,
+        leafIds: List<String>,
+        fundingInputs: List<SparkExitFundingUtxo>,
+        liveUtxos: List<github.aeonbtc.ibiswallet.data.model.SparkExitLiveUtxo>,
+        signPsbt: suspend (ByteArray) -> ByteArray,
+    ): SparkExitFlowState.InProgress =
+        repository.rebuildSparkExit(feeRateSatPerVb, destination, leafIds, fundingInputs, liveUtxos, signPsbt)
+
+    fun getPersistedExitFunding(): List<SparkExitFundingUtxo> = repository.getPersistedExitFunding()
+
+    /**
+     * Follow-up loop: reads the persisted exit against the chain and paints
+     * the result (progress / completed / rebuild-required). Call after
+     * broadcasts and whenever the exit screen opens on existing progress.
+     */
+    suspend fun checkSparkExit(): SparkExitFlowState = repository.checkSparkExit()
+
+    /**
+     * Instant-claim quote for a pending deposit; null when the provider
+     * offers no early claim.
+     */
+    suspend fun fetchDepositClaimQuote(
+        txid: String,
+        vout: UInt,
+    ): github.aeonbtc.ibiswallet.data.model.SparkDepositClaimQuote? =
+        repository.fetchDepositClaimQuote(txid, vout)
+
+    /**
+     * Claims a pending deposit immediately at the reviewed quote's fee
+     * ceiling. Call behind spend auth.
+     */
+    suspend fun claimDepositNow(
+        txid: String,
+        vout: UInt,
+        amountSats: Long,
+        maxFeeSats: Long,
+    ) = repository.claimDepositNow(txid, vout, amountSats, maxFeeSats)
+
+    fun clearSparkExit() {
+        repository.clearSparkExit()
+    }
+
+    fun restoreSparkExit() {
+        repository.restoreSparkExit()
+    }
+
+    suspend fun exportSparkExitBackup(): Long = repository.exportSparkExitBackup()
+
+    /**
+     * Writes the current SDK exit-state blob to a user-chosen document (the
+     * portable copy of [exportSparkExitBackup]'s private snapshot — the one
+     * that can actually leave the device).
+     */
+    suspend fun exportExitCopyToUri(uri: Uri) {
+        val hex = repository.exportExitStateHex()
+        withContext(Dispatchers.IO) {
+            appContext.contentResolver.openOutputStream(uri)?.use { out ->
+                out.write(hex.toByteArray(Charsets.UTF_8))
+                out.flush()
+            } ?: throw IllegalStateException("Could not write the selected file")
+        }
+    }
+
+    /**
+     * Imports an exit-state blob from a user-chosen document. The hex is
+     * size-capped on read and validated before reaching the SDK; the result
+     * counts are returned for user-facing reporting.
+     */
+    suspend fun importExitBackupFromUri(uri: Uri): SparkRepository.SparkExitImportResult =
+        withContext(Dispatchers.IO) {
+            val bytes =
+                appContext.contentResolver.openInputStream(uri)?.use { input ->
+                    input.readBytesWithLimit(InputLimits.BACKUP_FILE_BYTES)
+                } ?: throw IllegalStateException("Could not read the selected file")
+            if (bytes.isEmpty()) throw IllegalArgumentException("Selected file is empty")
+            repository.importSparkExitBackup(bytes.toString(Charsets.UTF_8))
+        }
+
+    suspend fun importSparkExitBackup(stateHex: String): SparkRepository.SparkExitImportResult =
+        repository.importSparkExitBackup(stateHex)
+
     fun resetSendState() {
         repository.resetSendState()
     }
 
     fun resetReceiveState() {
         repository.resetReceiveState()
+    }
+
+    fun primeLnInvoiceFromCache() {
+        repository.primeLnInvoiceFromCache()
     }
 
     private fun resetSparkUiState() {
@@ -545,7 +674,6 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
             context = appContext,
             connected = false,
         )
-        super.onCleared()
     }
 
     companion object {

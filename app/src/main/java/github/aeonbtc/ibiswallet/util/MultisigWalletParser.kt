@@ -180,6 +180,15 @@ object MultisigWalletParser {
             input.lineSequence()
                 .map { BitcoinUtils.stripDescriptorChecksum(it).trim() }
                 .filter { isMultisigDescriptor(it) }
+                .flatMap { descriptor ->
+                    // Expand BIP389 multipath lines so two-line multipath pairs
+                    // (and mixed multipath/split inputs) resolve to branches.
+                    if (BitcoinUtils.isBip389Multipath(descriptor)) {
+                        deriveDescriptorPair(descriptor).toList()
+                    } else {
+                        listOf(descriptor)
+                    }
+                }
                 .toList()
         if (descriptors.isEmpty()) return null
         if (descriptors.size >= 2) {
@@ -241,6 +250,14 @@ object MultisigWalletParser {
         val threshold = extractThreshold(externalDescriptor) ?: return null
         val total = extractTotalCosigners(externalDescriptor)
         if (total < threshold || total <= 1) return null
+        // A repeated key degrades the quorum (dup-key sortedmulti is
+        // effectively a lower threshold) — reject instead of weakening.
+        val cosigners = extractCosigners(externalDescriptor)
+        if (cosigners.size != total || hasDuplicateKeys(cosigners)) return null
+        // Fail closed: the change (internal) descriptor must mirror the receive
+        // (external) descriptor — same policy, same key set, differing only in
+        // branch (0 vs 1). Otherwise change outputs are silently routed away.
+        if (!descriptorsMatch(externalDescriptor, internalDescriptor)) return null
         return MultisigWalletConfig(
             name = name,
             threshold = threshold,
@@ -249,9 +266,155 @@ object MultisigWalletParser {
             isSorted = externalDescriptor.contains("sortedmulti(", ignoreCase = true),
             externalDescriptor = externalDescriptor,
             internalDescriptor = internalDescriptor,
-            cosigners = extractCosigners(externalDescriptor),
+            cosigners = cosigners,
             sourceFormat = sourceFormat,
         )
+    }
+
+    /**
+     * Returns true when the internal (change) descriptor mirrors the external
+     * (receive) descriptor: same threshold, same total, same script wrapper,
+     * same sorted/unsorted policy, same cosigner set (fingerprint + path + xpub),
+     * differing only in branch (0 vs 1). Never throws.
+     */
+    fun descriptorsMatch(externalDescriptor: String, internalDescriptor: String): Boolean {
+        return runCatching {
+            val externalThreshold = extractThreshold(externalDescriptor) ?: return false
+            val internalThreshold = extractThreshold(internalDescriptor) ?: return false
+            if (externalThreshold != internalThreshold) return false
+
+            val externalTotal = extractTotalCosigners(externalDescriptor)
+            val internalTotal = extractTotalCosigners(internalDescriptor)
+            if (externalTotal != internalTotal) return false
+            if (externalTotal < externalThreshold || externalTotal <= 1) return false
+
+            if (detectScriptType(externalDescriptor) != detectScriptType(internalDescriptor)) return false
+
+            val externalSorted = externalDescriptor.contains("sortedmulti(", ignoreCase = true)
+            val internalSorted = internalDescriptor.contains("sortedmulti(", ignoreCase = true)
+            if (externalSorted != internalSorted) return false
+
+            val externalCosigners = extractCosigners(externalDescriptor)
+            val internalCosigners = extractCosigners(internalDescriptor)
+            if (externalCosigners.size != externalTotal || internalCosigners.size != internalTotal) return false
+            if (externalCosigners.isEmpty()) return false
+
+            val toTriple = { c: MultisigCosigner -> Triple(c.fingerprint, c.derivationPath, c.xpub) }
+            if (externalSorted) {
+                if (externalCosigners.map(toTriple).toSet() != internalCosigners.map(toTriple).toSet()) return false
+            } else {
+                if (externalCosigners.map(toTriple) != internalCosigners.map(toTriple)) return false
+            }
+
+            // Branch markers must be disjoint: external on /0/*, internal on /1/*.
+            val externalHas0 = externalDescriptor.contains("/0/*")
+            val externalHas1 = externalDescriptor.contains("/1/*")
+            val internalHas0 = internalDescriptor.contains("/0/*")
+            val internalHas1 = internalDescriptor.contains("/1/*")
+            if (!externalHas0 || externalHas1) return false
+            if (!internalHas1 || internalHas0) return false
+
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
+     * True when two cosigners carry the same extended public key (after SLIP-132
+     * version normalization). Duplicate keys degrade the quorum, so callers
+     * reject the config instead of building a weaker wallet. Duplicate
+     * fingerprints with distinct keys (same device, two accounts) are allowed.
+     */
+    private fun hasDuplicateKeys(cosigners: List<MultisigCosigner>): Boolean {
+        val normalized =
+            cosigners.map { cosigner ->
+                runCatching { BitcoinUtils.convertToXpub(cosigner.xpub) }.getOrDefault(cosigner.xpub)
+            }
+        return normalized.size != normalized.toSet().size
+    }
+
+    /**
+     * Replace every `[fingerprint/path]xprv...` key in [text] with the matching
+     * `[fingerprint/path]xpub...` form (origins and branch suffixes preserved).
+     * Returns null when any private key fails to decode. Never throws.
+     */
+    fun normalizePrivateKeysToPublic(text: String): String? {
+        return runCatching {
+            val matches = privateKeyOriginRegex.findAll(text).toList()
+            if (matches.isEmpty()) return text
+            var normalized = text
+            matches.map { it.groupValues[3] }.toSet().forEach { xprv ->
+                normalized = normalized.replace(xprv, ElectrumSeedUtil.xpubFromXprv(xprv))
+            }
+            normalized
+        }.getOrNull()
+    }
+
+    /**
+     * Returns true when a local-signer descriptor pair (already normalized to
+     * public form) describes the SAME quorum as [config]: same threshold,
+     * total, script wrapper, sorted policy, and same cosigner key set
+     * (fingerprint + path + xpub, branch ignored). Guards the repository
+     * override path so signer material from a different wallet can never
+     * silently redefine the wallet's addresses. Never throws.
+     */
+    fun overrideMatchesConfig(
+        externalDescriptor: String,
+        internalDescriptor: String,
+        config: MultisigWalletConfig,
+    ): Boolean {
+        return runCatching {
+            if (!descriptorsMatch(externalDescriptor, internalDescriptor)) return false
+            val threshold = extractThreshold(externalDescriptor) ?: return false
+            if (threshold != config.threshold) return false
+            if (extractTotalCosigners(externalDescriptor) != config.totalCosigners) return false
+            if (detectScriptType(externalDescriptor) != config.scriptType) return false
+            val sorted = externalDescriptor.contains("sortedmulti(", ignoreCase = true)
+            if (sorted != config.isSorted) return false
+
+            val toTriple = { c: MultisigCosigner -> Triple(c.fingerprint, c.derivationPath, c.xpub) }
+            val overrideKeys = extractCosigners(externalDescriptor).map(toTriple)
+            val configKeys =
+                config.cosigners.map { cosigner ->
+                    Triple(
+                        cosigner.fingerprint.lowercase(),
+                        normalizePath(cosigner.derivationPath),
+                        runCatching { BitcoinUtils.convertToXpub(cosigner.xpub) }.getOrDefault(cosigner.xpub),
+                    )
+                }
+            if (overrideKeys.size != config.totalCosigners || configKeys.size != config.totalCosigners) return false
+            if (sorted) {
+                overrideKeys.toSet() == configKeys.toSet()
+            } else {
+                overrideKeys == configKeys
+            }
+        }.getOrDefault(false)
+    }
+
+    private val privateKeyOriginRegex =
+        Regex("""\[([0-9a-fA-F]{8})/([^]]+)]((?:[xyz]prv)[1-9A-HJ-NP-Za-km-z]+)""")
+
+    /**
+     * Fingerprints (lowercased) of every `[fingerprint/path]xprv...` origin in
+     * [text] — i.e. the cosigner slots backed by private key material. Never
+     * throws; returns an empty set when there is no private key material.
+     */
+    fun privateKeyFingerprints(text: String): Set<String> {
+        return runCatching {
+            privateKeyOriginRegex.findAll(text).map { it.groupValues[1].lowercase() }.toSet()
+        }.getOrDefault(emptySet())
+    }
+
+    /**
+     * True when [xprv] derives to [expectedXpub] (SLIP-132 versions normalized).
+     * Proves a pasted origin-xprv belongs to the listed cosigner instead of
+     * trusting the fingerprint string alone. Never throws.
+     */
+    fun localXprvMatchesCosigner(xprv: String, expectedXpub: String): Boolean {
+        return runCatching {
+            val derived = ElectrumSeedUtil.xpubFromXprv(xprv)
+            val expected = BitcoinUtils.convertToXpub(expectedXpub.trim())
+            derived.equals(expected, ignoreCase = true)
+        }.getOrDefault(false)
     }
 
     private fun fromCosigners(
@@ -263,6 +426,7 @@ object MultisigWalletParser {
         sourceFormat: String,
     ): MultisigWalletConfig? {
         if (threshold <= 0 || cosigners.size < threshold || cosigners.size <= 1) return null
+        if (hasDuplicateKeys(cosigners)) return null
         val functionName = if (sorted) "sortedmulti" else "multi"
         val externalKeys = cosigners.joinToString(",") { it.keyExpression(branch = 0) }
         val internalKeys = cosigners.joinToString(",") { it.keyExpression(branch = 1) }

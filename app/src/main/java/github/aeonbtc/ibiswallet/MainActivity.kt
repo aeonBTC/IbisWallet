@@ -38,6 +38,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProvider
@@ -102,6 +103,7 @@ class MainActivity : FragmentActivity() {
     private var isUnlocked by mutableStateOf(false)
     private var appUnlockCounter by mutableIntStateOf(0)
     private var cloakBypassed by mutableStateOf(false)
+    private var showBiometricEnrollmentWarning by mutableStateOf(false)
     private var biometricPrompt: BiometricPrompt? = null
     private var wasInBackground = false
     private var skipBackgroundLockUntilElapsedMs = 0L
@@ -147,7 +149,10 @@ class MainActivity : FragmentActivity() {
         val sendInput = readSendInputFromTag(tag) ?: return@ReaderCallback
         NfcRuntimeStatus.markReaderPayloadReceived()
         runOnUiThread {
-            walletViewModel.setPendingSendInput(sendInput)
+            walletViewModel.setPendingSendInput(
+                sendInput,
+                WalletViewModel.PendingSendOrigin.NFC,
+            )
         }
     }
 
@@ -660,33 +665,61 @@ class MainActivity : FragmentActivity() {
                             LockScreen(
                                 securityMethod = secMethod,
                                 onPinEntered = { pin ->
-                                // For PIN mode: check real PIN first, then duress PIN
-                                // For BIOMETRIC mode with duress: only duress PIN works
-                                //   (real wallet accessed via biometric through the C button)
-                                val isRealPin =
+                                // Route via side-effect-free hash probes so duress/wipe
+                                // entries never ratchet the real-PIN failure counter that
+                                // auto-wipe depends on. The kept PIN wrap is a documented
+                                // fallback: accept the real PIN when biometric is active
+                                // (except in duress mode, where the real PIN is hidden and
+                                // only the decoy PIN works at the pad).
+                                val allowRealPin =
+                                    secMethod == SecureStorage.SecurityMethod.PIN ||
+                                        (
+                                            secMethod == SecureStorage.SecurityMethod.BIOMETRIC &&
+                                                !isDuressEnabled
+                                        )
+                                val (isRealPin, isDuressPin, isWipePin) =
                                     withContext(Dispatchers.Default) {
-                                        secMethod == SecureStorage.SecurityMethod.PIN &&
-                                            secureStorage.verifyPin(pin)
+                                        // All three probes run unconditionally so entry
+                                        // type is not leaked via timing.
+                                        val matchesReal =
+                                            allowRealPin && secureStorage.pinMatchesCurrent(pin)
+                                        val matchesDuress =
+                                            isDuressEnabled && secureStorage.pinMatchesDuress(pin)
+                                        val matchesWipe = secureStorage.pinMatchesWipe(pin)
+                                        when {
+                                            // Hash matched above; verify performs the unlock
+                                            // side effects. No failure was recorded.
+                                            matchesReal ->
+                                                Triple(secureStorage.verifyPin(pin), false, false)
+                                            matchesDuress ->
+                                                Triple(
+                                                    false,
+                                                    secureStorage.verifyDuressPin(
+                                                        pin,
+                                                        incrementFailedAttempts = false,
+                                                    ),
+                                                    false,
+                                                )
+                                            matchesWipe ->
+                                                Triple(false, false, secureStorage.verifyWipePin(pin))
+                                            else -> {
+                                                // Wrong PIN — record exactly one failed attempt.
+                                                if (allowRealPin) {
+                                                    Triple(secureStorage.verifyPin(pin), false, false)
+                                                } else {
+                                                    Triple(
+                                                        false,
+                                                        isDuressEnabled &&
+                                                            secureStorage.verifyDuressPin(
+                                                                pin,
+                                                                incrementFailedAttempts = true,
+                                                            ),
+                                                        false,
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
-                                // When verifyPin already ran and failed, it incremented
-                                // the shared counter — don't double-count in verifyDuressPin
-                                val realPinWasTried = secMethod == SecureStorage.SecurityMethod.PIN
-                                val isDuressPin =
-                                    !isRealPin && isDuressEnabled &&
-                                        withContext(Dispatchers.Default) {
-                                            secureStorage.verifyDuressPin(
-                                                pin,
-                                                incrementFailedAttempts = !realPinWasTried,
-                                            )
-                                        }
-                                // Wipe PIN is checked after real/duress so a shared value
-                                // never wipes when it should unlock. Correct wipe PIN always
-                                // wipes even during lockout.
-                                val isWipePin =
-                                    !isRealPin && !isDuressPin &&
-                                        withContext(Dispatchers.Default) {
-                                            secureStorage.verifyWipePin(pin)
-                                        }
 
                                 when {
                                     isRealPin -> {
@@ -721,6 +754,31 @@ class MainActivity : FragmentActivity() {
                                 isBiometricAvailable = isBiometricAvailable,
                                 randomizePinPad = secureStorage.getRandomizePinPad(),
                                 isDuressWithBiometric = isDuressWithBiometric,
+                            )
+                        }
+
+                        if (showBiometricEnrollmentWarning) {
+                            androidx.compose.material3.AlertDialog(
+                                onDismissRequest = { showBiometricEnrollmentWarning = false },
+                                title = {
+                                    androidx.compose.material3.Text(
+                                        stringResource(R.string.biometric_enrollment_changed_title),
+                                    )
+                                },
+                                text = {
+                                    androidx.compose.material3.Text(
+                                        stringResource(R.string.biometric_enrollment_changed_message),
+                                    )
+                                },
+                                confirmButton = {
+                                    androidx.compose.material3.TextButton(
+                                        onClick = { showBiometricEnrollmentWarning = false },
+                                    ) {
+                                        androidx.compose.material3.Text(
+                                            stringResource(R.string.biometric_enrollment_changed_dismiss),
+                                        )
+                                    }
+                                },
                             )
                         }
                     }
@@ -811,7 +869,8 @@ class MainActivity : FragmentActivity() {
             return
         }
         if (isActivityResultLockSkipActive()) {
-            skipBackgroundLockUntilElapsedMs = 0L
+            // Keep the skip window alive until it expires naturally — zeroing it here
+            // would let the screen-off receiver lock mid-picker and drop the result.
             return
         }
         skipBackgroundLockUntilElapsedMs = 0L
@@ -930,7 +989,10 @@ class MainActivity : FragmentActivity() {
                 "lightning",
                 "liquidnetwork",
                 "liquid",
-                -> walletViewModel.setPendingSendInput(data.toString())
+                -> walletViewModel.setPendingSendInput(
+                    data.toString(),
+                    WalletViewModel.PendingSendOrigin.DEEP_LINK,
+                )
             }
         }
     }
@@ -987,10 +1049,16 @@ class MainActivity : FragmentActivity() {
                         runCatching {
                             result.cryptoObject?.cipher?.let(secureStorage::unlockSpendSecretsWithBiometric)
                         }.onFailure {
+                            val messageRes =
+                                if (it is SecureStorage.BiometricEnrollmentChangedException) {
+                                    R.string.biometric_enrollment_changed_use_pin
+                                } else {
+                                    R.string.loc_0039435a
+                                }
                             Toast.makeText(
                                 this@MainActivity,
-                                getString(R.string.loc_0039435a),
-                                Toast.LENGTH_SHORT,
+                                getString(messageRes),
+                                Toast.LENGTH_LONG,
                             ).show()
                             return
                         }
@@ -998,6 +1066,9 @@ class MainActivity : FragmentActivity() {
                         lifecycleScope.launch {
                             walletViewModel.exitDuressMode()
                             unlockApp(incrementCounter = true)
+                            if (secureStorage.consumeBiometricEnrollmentWarning()) {
+                                showBiometricEnrollmentWarning = true
+                            }
                         }
                     }
 

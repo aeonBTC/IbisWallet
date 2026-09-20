@@ -104,7 +104,11 @@ object ArkBackupCrypto {
             throw WrongWalletException()
         } catch (e: Exception) {
             if (e is WrongWalletException || e is InvalidPayloadException) throw e
-            throw WrongWalletException()
+            // Non-AEAD failures (truncation edge, provider error, corrupt block
+            // surfacing as BadPadding/IllegalBlockSize) are corruption, not proof
+            // of a foreign wallet — report invalid so the user re-copies the file
+            // instead of retrying other wallets.
+            throw InvalidPayloadException("Invalid Ark backup payload")
         } finally {
             keyBytes.fill(0)
         }

@@ -20,12 +20,20 @@ object ArkWalletDataPack {
      * into SecureStorage on import.
      */
     const val HISTORY_ENTRY = "ibis-ark-history.json"
+    /**
+     * Ibis exit-claim ledger JSON array. The claim txid is an on-chain fact that
+     * survives a session-DB loss; without it a broadcast claim goes invisible.
+     * Written beside db.sqlite in export/auto-backup zips and restored into
+     * SecureStorage on import. Absent in legacy zips (treated as empty).
+     */
+    const val CLAIMS_ENTRY = "ibis-ark-claims.json"
     const val DB_FILE_NAME = "db.sqlite"
     private val SQLITE_HEADER = "SQLite format 3".toByteArray(Charsets.US_ASCII)
 
     data class Manifest(
         val version: Int = 1,
         val seedFingerprint: String,
+        /** Diagnostic only — never used for ownership checks (reimports get a new id). */
         val walletId: String,
         val movementCount: Int,
         val maxMovementId: Int,
@@ -68,10 +76,14 @@ object ArkWalletDataPack {
         manifest: Manifest? = null,
         /** JSON array of ArkMovement objects (Ibis history sidecar). */
         historyJson: String? = null,
+        /** JSON array of ArkExitClaimHistory objects (Ibis claim-ledger sidecar). */
+        claimsJson: String? = null,
     ): ByteArray? {
         if (!dir.isDirectory) return null
         val files = dir.walkTopDown().filter { it.isFile }.toList()
-        if (files.isEmpty() && manifest == null && historyJson.isNullOrBlank()) return null
+        if (files.isEmpty() && manifest == null && historyJson.isNullOrBlank() && claimsJson.isNullOrBlank()) {
+            return null
+        }
         return try {
             val baos = ByteArrayOutputStream()
             ZipOutputStream(baos).use { zos ->
@@ -86,10 +98,20 @@ object ArkWalletDataPack {
                     zos.write(history.toByteArray(Charsets.UTF_8))
                     zos.closeEntry()
                 }
+                val claims = claimsJson?.takeIf { it.isNotBlank() }
+                if (claims != null) {
+                    zos.putNextEntry(ZipEntry(CLAIMS_ENTRY))
+                    zos.write(claims.toByteArray(Charsets.UTF_8))
+                    zos.closeEntry()
+                }
                 for (file in files) {
                     val entryName = file.relativeTo(dir).invariantSeparatorsPath
-                    if (entryName == MANIFEST_ENTRY || entryName == HISTORY_ENTRY) continue
-                    if (entryName.endsWith("/$MANIFEST_ENTRY") || entryName.endsWith("/$HISTORY_ENTRY")) {
+                    if (entryName == MANIFEST_ENTRY || entryName == HISTORY_ENTRY || entryName == CLAIMS_ENTRY) {
+                        continue
+                    }
+                    if (entryName.endsWith("/$MANIFEST_ENTRY") || entryName.endsWith("/$HISTORY_ENTRY") ||
+                        entryName.endsWith("/$CLAIMS_ENTRY")
+                    ) {
                         continue
                     }
                     zos.putNextEntry(ZipEntry(entryName))
@@ -102,7 +124,6 @@ object ArkWalletDataPack {
             null
         }
     }
-
     fun readManifest(zipBytes: ByteArray): Manifest? {
         return runCatching {
             ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
@@ -121,6 +142,21 @@ object ArkWalletDataPack {
         }.getOrNull()
     }
 
+    /**
+     * True when [manifest] belongs to this seed: only the seed fingerprint binds.
+     * walletId is informational/diagnostic only and is never enforced — a reimport
+     * of the same seed creates a new wallet id, and the wallet display name may
+     * also change. Returns true for manifests with no usable binding (pre-manifest
+     * era) — callers must force a mailbox scan instead of trusting the DB.
+     */
+    fun isManifestBoundToWallet(
+        manifest: Manifest,
+        expectedFingerprint: String,
+    ): Boolean {
+        if (manifest.seedFingerprint.isBlank()) return true
+        return manifest.seedFingerprint.equals(expectedFingerprint, ignoreCase = true)
+    }
+
     /** Ibis movement history JSON from an export/auto-backup zip, if present. */
     fun readHistoryJson(zipBytes: ByteArray): String? {
         return runCatching {
@@ -128,6 +164,25 @@ object ArkWalletDataPack {
                 var entry = zis.nextEntry
                 while (entry != null) {
                     if (!entry.isDirectory && isMetaEntry(entry.name, HISTORY_ENTRY)) {
+                        val text = zis.readBytes().toString(Charsets.UTF_8)
+                        zis.closeEntry()
+                        return@use text.takeIf { it.isNotBlank() }
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
+                }
+                null
+            }
+        }.getOrNull()
+    }
+
+    /** Ibis exit-claim ledger JSON from an export/auto-backup zip, if present. */
+    fun readClaimsJson(zipBytes: ByteArray): String? {
+        return runCatching {
+            ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (!entry.isDirectory && isMetaEntry(entry.name, CLAIMS_ENTRY)) {
                         val text = zis.readBytes().toString(Charsets.UTF_8)
                         zis.closeEntry()
                         return@use text.takeIf { it.isNotBlank() }
@@ -157,10 +212,11 @@ object ArkWalletDataPack {
             var entry = zis.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory) {
-                    // Manifest / history are Ibis metadata only — not Bark files.
+                    // Manifest / history / claims are Ibis metadata only — not Bark files.
                     if (
                         isMetaEntry(entry.name, MANIFEST_ENTRY) ||
-                        isMetaEntry(entry.name, HISTORY_ENTRY)
+                        isMetaEntry(entry.name, HISTORY_ENTRY) ||
+                        isMetaEntry(entry.name, CLAIMS_ENTRY)
                     ) {
                         zis.closeEntry()
                         entry = zis.nextEntry
@@ -284,7 +340,9 @@ object ArkWalletDataPack {
             throw e
         } finally {
             runCatching { if (tempDir.exists()) tempDir.deleteRecursively() }
-            runCatching { if (preImportDir.exists()) preImportDir.deleteRecursively() }
+            // Do NOT delete preImportDir here: on failure paths above it is the
+            // last good copy (restored or awaiting restore). Success already
+            // dropped it; failure must keep it for forensics/retry.
         }
     }
 

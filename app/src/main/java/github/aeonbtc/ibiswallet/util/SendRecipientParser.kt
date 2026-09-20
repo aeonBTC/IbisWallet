@@ -135,6 +135,13 @@ private fun parseSendRecipientInternal(
         )
     }
 
+    BitcoinUtils.unsupportedNonMainnetLiquidReason(trimmed)?.let {
+        return ParsedSendRecipient.Unknown(
+            rawInput = trimmed,
+            errorMessage = it,
+        )
+    }
+
     if (trimmed.startsWith("tark1", ignoreCase = true)) {
         return ParsedSendRecipient.Unknown(
             rawInput = trimmed,
@@ -145,9 +152,18 @@ private fun parseSendRecipientInternal(
     }
 
     if (trimmed.startsWith("ark1", ignoreCase = true)) {
+        val address = trimmed.substringBefore('?').trim()
+        val queryParams =
+            try {
+                parseUriQueryParameters(trimmed)
+            } catch (_: IllegalArgumentException) {
+                emptyMap()
+            }
         return ParsedSendRecipient.Ark(
             rawInput = trimmed,
-            address = trimmed,
+            address = address,
+            amountSats = queryParams["amount"]?.let(::parseBitcoinAmountToSats),
+            label = queryParams["label"]?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -244,17 +260,31 @@ private fun parseSendRecipientInternal(
             } ?: fallbackBitcoin
         }
         PaymentKind.LIQUID_ADDRESS -> {
+            val address = payment.liquidAddress()?.toString().orEmpty()
+            BitcoinUtils.unsupportedNonMainnetLiquidReason(address)?.let {
+                return ParsedSendRecipient.Unknown(
+                    rawInput = trimmed,
+                    errorMessage = it,
+                )
+            }
             ParsedSendRecipient.Liquid(
                 rawInput = trimmed,
-                address = payment.liquidAddress()?.toString().orEmpty(),
+                address = address,
             )
         }
         PaymentKind.LIQUID_BIP21 -> {
             val liquidBip21 = payment.liquidBip21()
                 ?: return ParsedSendRecipient.Unknown(trimmed, "Invalid Liquid address")
+            val address = liquidBip21.address.toString()
+            BitcoinUtils.unsupportedNonMainnetLiquidReason(address)?.let {
+                return ParsedSendRecipient.Unknown(
+                    rawInput = trimmed,
+                    errorMessage = it,
+                )
+            }
             ParsedSendRecipient.Liquid(
                 rawInput = trimmed,
-                address = liquidBip21.address.toString(),
+                address = address,
                 amountSats = liquidBip21.satoshi.toLongFitting(),
                 label = queryParams["label"],
                 message = queryParams["message"],
@@ -482,10 +512,12 @@ internal fun layer2RecipientValidationError(
                     )
             }
         is ParsedSendRecipient.Liquid ->
-            if (provider == null || provider == Layer2Provider.LIQUID) {
-                null
-            } else {
+            if (provider != null && provider != Layer2Provider.LIQUID) {
                 s(R.string.l2_error_liquid_not_supported, "Liquid requests are not supported here")
+            } else if (!BitcoinUtils.isLiquidMainnetAddress(parsed.address)) {
+                s(R.string.l2_error_liquid_mainnet_only, "Only Liquid mainnet is supported.")
+            } else {
+                null
             }
         is ParsedSendRecipient.Spark ->
             if (provider == null || provider == Layer2Provider.SPARK) {
@@ -804,6 +836,9 @@ private fun parseOpaqueLiquidRecipient(
 
     val address = input.substringAfter(':').substringBefore('?').trim()
     if (address.isBlank()) {
+        return null
+    }
+    if (!BitcoinUtils.isLiquidMainnetAddress(address)) {
         return null
     }
 

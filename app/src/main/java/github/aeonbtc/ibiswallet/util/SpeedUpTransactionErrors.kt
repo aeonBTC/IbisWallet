@@ -60,6 +60,15 @@ object SpeedUpTransactionErrors {
             return genericFailure(localizer, R.string.speed_up_error_cpfp_generic, details)
         }
 
+        // Silent-payment failures already carry precise, user-actionable
+        // messages ("require an eligible compressed input",
+        // "cannot recover input keys for unknown outpoints", ...). Surface
+        // them verbatim instead of burying the cause in a generic RBF string.
+        if (lower.contains("silent payment")) {
+            return sanitizedDetail(details)?.take(200)
+                ?: localizer.get(R.string.speed_up_error_rbf_build_failed)
+        }
+
         mapRbfPattern(localizer, lower, classNames)?.let { return it }
         return genericFailure(localizer, R.string.speed_up_error_rbf_generic, details)
     }

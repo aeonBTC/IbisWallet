@@ -25,6 +25,16 @@ enum class TxFileFormat {
 
     /** Text content (base64 PSBT/PSET, hex tx, or plain text), returned as-is trimmed */
     TEXT,
+
+    /** Input is ambiguous (valid as both hex and base64) — caller must reject. */
+    AMBIGUOUS,
+}
+
+/** Which network a parsed transaction payload belongs to. */
+enum class TxFileNetwork {
+    BITCOIN,
+    LIQUID,
+    UNKNOWN,
 }
 
 /**
@@ -73,6 +83,14 @@ fun parseTxFileBytes(bytes: ByteArray): TxFileResult? {
         }
 
     if (text != null) {
+        // Fail closed on ambiguous encodings: a payload that decodes as both
+        // plausible hex and plausible base64 must not be guessed — the caller
+        // rejects AMBIGUOUS and asks the user to re-export in a single format.
+        // This prevents a crafted file/QR from flipping between BTC and Liquid
+        // parsing or between PSBT and raw-tx handling.
+        if (isPlausibleHex(text) && isPlausibleBase64(text)) {
+            return TxFileResult(text, TxFileFormat.AMBIGUOUS)
+        }
         return TxFileResult(text, TxFileFormat.TEXT)
     }
 
@@ -87,4 +105,49 @@ private fun ByteArray.hasMagicPrefix(vararg magic: Int): Boolean {
         if (this[i] != magic[i].toByte()) return false
     }
     return true
+}
+
+/**
+ * Network binding for a parsed payload so L1 PSBT flows never accept a Liquid
+ * PSET and vice versa. Binary magics are authoritative; text payloads are
+ * classified by distinctive prefixes (psbt/pset base64 magics) and hex length.
+ */
+fun TxFileResult.detectedNetwork(): TxFileNetwork =
+    when (format) {
+        TxFileFormat.PSBT_BINARY -> TxFileNetwork.BITCOIN
+        TxFileFormat.PSET_BINARY -> TxFileNetwork.LIQUID
+        TxFileFormat.RAW_TX_BINARY -> TxFileNetwork.UNKNOWN
+        TxFileFormat.AMBIGUOUS -> TxFileNetwork.UNKNOWN
+        TxFileFormat.TEXT -> {
+            val t = data.trim()
+            // Base64 of binary PSBT starts with "cHNidP8=" ("psbt\xff"); PSET with "cHNldP8=".
+            when {
+                t.startsWith("cHNidP8=") -> TxFileNetwork.BITCOIN
+                t.startsWith("cHNldP8=") -> TxFileNetwork.LIQUID
+                else -> TxFileNetwork.UNKNOWN
+            }
+        }
+    }
+
+/** True when the payload must be rejected before sign/broadcast. */
+fun TxFileResult.requiresRejection(): Boolean = format == TxFileFormat.AMBIGUOUS || data.isBlank()
+
+private fun isPlausibleHex(text: String): Boolean {
+    val t = text.trim()
+    if (t.length < 16 || t.length % 2 != 0 || t.length > 200_000) return false
+    return t.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+}
+
+private fun isPlausibleBase64(text: String): Boolean {
+    val t = text.trim().replace("\\s".toRegex(), "")
+    if (t.length < 16 || t.length % 4 == 1 || t.length > 300_000) return false
+    if (!t.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '+' || it == '/' || it == '=' }) {
+        return false
+    }
+    return try {
+        val decoded = Base64.decode(t, Base64.DEFAULT)
+        decoded.size >= 5
+    } catch (_: Exception) {
+        false
+    }
 }

@@ -2,6 +2,7 @@ package github.aeonbtc.ibiswallet.util
 
 import github.aeonbtc.ibiswallet.data.model.AddressType
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
+import kotlin.math.roundToLong
 
 /**
  * Pure-logic Bitcoin utility functions extracted from WalletRepository
@@ -16,6 +17,16 @@ object BitcoinUtils {
         "Nested SegWit is not supported. Use Legacy, SegWit, or Taproot."
     const val UNSUPPORTED_NON_MAINNET_MESSAGE =
         "Only Bitcoin mainnet is supported."
+    const val UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE =
+        "Only Liquid mainnet is supported."
+
+    // Liquid mainnet params (elements AddressParams::LIQUID):
+    // bech32 ex (unconfidential) / lq (confidential), base58 57/39/12.
+    // Testnet is tex/tlq (36/19/23), regtest/elements is ert/el (235/75/4).
+    private val LIQUID_MAINNET_BECH32_PREFIXES = listOf("ex1", "lq1")
+    private val LIQUID_NON_MAINNET_BECH32_PREFIXES = listOf("tex1", "tlq1", "ert1", "el1")
+    private val LIQUID_MAINNET_VERSION_BYTES = setOf(57, 39, 12)
+    private val LIQUID_NON_MAINNET_VERSION_BYTES = setOf(36, 19, 23, 235, 75, 4)
 
     private const val BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
     private val supportedDescriptorPrefixes = listOf("pkh(", "wpkh(", "tr(", "wsh(", "sh(wsh(")
@@ -129,6 +140,58 @@ object BitcoinUtils {
             return false
         }
         return input.length in 51..52 && input.all { it in BASE58_ALPHABET }
+    }
+
+    /**
+     * True only for Liquid mainnet addresses: bech32 ex1/lq1 or
+     * Base58Check with version byte 57/39/12. Everything else
+     * (including testnet tex1/tlq1 and regtest ert1/el1) returns false
+     * so cross-network drains can never be built.
+     */
+    fun isLiquidMainnetAddress(address: String): Boolean {
+        val trimmed = address.trim()
+        if (trimmed.isEmpty()) return false
+        val lowered = trimmed.lowercase()
+        if (LIQUID_MAINNET_BECH32_PREFIXES.any { lowered.startsWith(it) }) return true
+        if (LIQUID_NON_MAINNET_BECH32_PREFIXES.any { lowered.startsWith(it) }) return false
+        return runCatching {
+            val decoded = Base58.decodeChecked(trimmed)
+            if (decoded.isEmpty()) false else {
+                val version = decoded[0].toUByte().toInt()
+                version in LIQUID_MAINNET_VERSION_BYTES
+            }
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Explicit reject reason for cross-network Liquid input, mirroring
+     * [unsupportedNonMainnetReason] on the Bitcoin side. Handles
+     * liquid:/liquidnetwork: URIs plus bare testnet/regtest addresses.
+     */
+    fun unsupportedNonMainnetLiquidReason(input: String): String? {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return null
+        val lowered = trimmed.lowercase()
+        if (lowered.startsWith("liquid:") || lowered.startsWith("liquidnetwork:")) {
+            val address = trimmed.substringAfter(':').substringBefore('?').trim()
+            if (address.isBlank()) return null
+            if (isLiquidMainnetAddress(address)) return null
+            return UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
+        }
+        if (LIQUID_NON_MAINNET_BECH32_PREFIXES.any { lowered.startsWith(it) }) {
+            return UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
+        }
+        return runCatching {
+            val decoded = Base58.decodeChecked(trimmed)
+            if (decoded.isEmpty()) null else {
+                val version = decoded[0].toUByte().toInt()
+                if (version in LIQUID_NON_MAINNET_VERSION_BYTES) {
+                    UNSUPPORTED_NON_MAINNET_LIQUID_MESSAGE
+                } else {
+                    null
+                }
+            }
+        }.getOrDefault(null)
     }
 
 
@@ -444,6 +507,10 @@ object BitcoinUtils {
      * Result is clamped to at least 1 (minimum relay fee).
      */
     fun feeRateToSatPerKwu(satPerVb: Double): ULong {
+        // Fail closed on non-finite / out-of-range rates: NaN must not become 1,
+        // Inf must not become Long.MAX. Clamp to relay minimum .. max policy.
+        if (!satPerVb.isFinite() || satPerVb <= 0.0) return 1UL
+        if (satPerVb > MAX_FEE_RATE_SAT_VB) return (MAX_FEE_RATE_SAT_VB * 250.0).roundToLong().toULong()
         return kotlin.math.round(satPerVb * 250.0)
             .toLong()
             .coerceAtLeast(1L)
@@ -457,7 +524,9 @@ object BitcoinUtils {
      * Returns null if vsize <= 0 or resulting fee <= 0.
      */
     fun computeExactFeeSats(targetSatPerVb: Double, vsize: Double): ULong? {
-        if (vsize <= 0.0) return null
+        if (!targetSatPerVb.isFinite() || !vsize.isFinite()) return null
+        if (vsize <= 0.0 || vsize > 1_000_000.0) return null
+        if (targetSatPerVb <= 0.0 || targetSatPerVb > MAX_FEE_RATE_SAT_VB) return null
         val exactFee = kotlin.math.round(targetSatPerVb * vsize).toLong()
         return if (exactFee > 0) exactFee.toULong() else null
     }
@@ -506,7 +575,11 @@ object BitcoinUtils {
     ): String {
         val effectiveFingerprint = fingerprint ?: "00000000"
         val path = derivationPath ?: addressType.accountPath
-        return "[$effectiveFingerprint/$path]$xpubKey"
+        return if (path.isEmpty()) {
+            "[$effectiveFingerprint]$xpubKey"
+        } else {
+            "[$effectiveFingerprint/$path]$xpubKey"
+        }
     }
 
     /**
@@ -1001,6 +1074,96 @@ object BitcoinUtils {
             hourFee = normalizedHour,
             minimumFee = normalizedMinimum,
         )
+    }
+
+    fun normalizeBip39DerivationPath(rawPath: String): String {
+        var normalized =
+            rawPath.trim()
+                .replace(" ", "")
+                .replace('h', '\'')
+                .replace('H', '\'')
+                .removeSuffix("/")
+        if (normalized.startsWith("M/")) {
+            normalized = "m/" + normalized.removePrefix("M/")
+        }
+        if (normalized.equals("m", ignoreCase = true)) return "m"
+        if (!normalized.startsWith("m/")) {
+            normalized = "m/$normalized"
+        }
+        return normalized
+    }
+
+    fun bip39AccountDerivationPath(rawPath: String): String {
+        val normalized = normalizeBip39DerivationPath(rawPath)
+        if (normalized == "m") return "m"
+        val segments = normalized.removePrefix("m/").split("/")
+        require(segments.isNotEmpty() && segments.all { it.matches(Regex("^\\d+'?$")) }) {
+            "Invalid derivation path: $rawPath"
+        }
+        require(segments.size <= 16) {
+            "Invalid derivation path: $rawPath"
+        }
+        val accountSegments =
+            if (segments.last() == "0" || segments.last() == "1") {
+                segments.dropLast(1)
+            } else {
+                segments
+            }
+        return if (accountSegments.isEmpty()) "m" else "m/" + accountSegments.joinToString("/")
+    }
+
+    fun isValidBip39DerivationPath(rawPath: String): Boolean =
+        try {
+            bip39AccountDerivationPath(rawPath)
+            true
+        } catch (_: Exception) {
+            false
+        }
+
+    fun persistableDerivationPath(
+        rawPath: String,
+        defaultPath: String,
+        currentPath: String? = null,
+    ): String {
+        if (rawPath.isBlank()) return defaultPath
+        val normalized = normalizeBip39DerivationPath(rawPath)
+        val account = bip39AccountDerivationPath(normalized)
+        val defaultAccount = bip39AccountDerivationPath(defaultPath)
+        if (account == defaultAccount) return defaultPath
+        if (currentPath != null) {
+            val currentAccount = bip39AccountDerivationPath(currentPath)
+            if (account == currentAccount) return currentPath
+        }
+        return normalized
+    }
+
+    fun persistableBip39DerivationPath(
+        rawPath: String,
+        addressType: AddressType,
+        currentPath: String? = null,
+    ): String =
+        persistableDerivationPath(
+            rawPath = rawPath,
+            defaultPath = addressType.defaultPath,
+            currentPath = currentPath,
+        )
+
+    fun originPathFromDerivationPath(rawPath: String): String {
+        val account = bip39AccountDerivationPath(rawPath)
+        return if (account == "m") "" else account.removePrefix("m/")
+    }
+
+    fun matchingAddressTypeForPath(rawPath: String): AddressType? {
+        if (rawPath.isBlank()) return null
+        val account =
+            try {
+                bip39AccountDerivationPath(rawPath)
+            } catch (_: Exception) {
+                return null
+            }
+        return AddressType.entries.firstOrNull {
+            bip39AccountDerivationPath(it.defaultPath) == account
+        }
     }
 
     const val MAX_FEE_RATE_SAT_VB = 2_000.0

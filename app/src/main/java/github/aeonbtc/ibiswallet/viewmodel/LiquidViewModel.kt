@@ -602,7 +602,6 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
             electrumUsesTor = false,
             externalTorRequired = false,
         )
-        super.onCleared()
     }
 
     private fun syncForegroundConnectivityPolicy() {

@@ -83,6 +83,82 @@ object BiometricCrypto {
         keyGen.generateKey()
     }
 
+    // ==================== Enrollment-change tripwire ====================
+
+    /** Tripwire probe result. UNKNOWN means the Keystore could not be read. */
+    enum class TripwireStatus {
+        OK,
+        CHANGED,
+        UNKNOWN,
+    }
+
+    /**
+     * Canary key with setInvalidatedByBiometricEnrollment(true). It wraps NOTHING,
+     * so its invalidation can never destroy wallet data — it only signals that the
+     * device's fingerprint enrollment changed since [armTripwire] last ran.
+     */
+    fun isEnrollmentChanged(): Boolean = tripwireStatus() == TripwireStatus.CHANGED
+
+    fun tripwireStatus(): TripwireStatus =
+        try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            if (!keyStore.containsAlias(SecureStorage.BIOMETRIC_TRIPWIRE_ALIAS)) {
+                TripwireStatus.OK
+            } else {
+                val cipher =
+                    Cipher.getInstance(
+                        "${KeyProperties.KEY_ALGORITHM_AES}/${KeyProperties.BLOCK_MODE_CBC}/${KeyProperties.ENCRYPTION_PADDING_PKCS7}",
+                    )
+                cipher.init(
+                    Cipher.ENCRYPT_MODE,
+                    keyStore.getKey(SecureStorage.BIOMETRIC_TRIPWIRE_ALIAS, null) as SecretKey,
+                )
+                TripwireStatus.OK
+            }
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            TripwireStatus.CHANGED
+        } catch (e: Exception) {
+            // Fail closed — callers decide whether to block or retry. Never report
+            // a possibly-changed enrollment as OK.
+            TripwireStatus.UNKNOWN
+        }
+
+    /**
+     * (Re)baseline the tripwire to the current fingerprint enrollment state.
+     * The tripwire wraps nothing, so deleting/recreating it is always safe.
+     */
+    fun armTripwire() {
+        try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            runCatching { keyStore.deleteEntry(SecureStorage.BIOMETRIC_TRIPWIRE_ALIAS) }
+            val keyGen =
+                KeyGenerator.getInstance(
+                    KeyProperties.KEY_ALGORITHM_AES,
+                    "AndroidKeyStore",
+                )
+            keyGen.init(
+                KeyGenParameterSpec.Builder(
+                    SecureStorage.BIOMETRIC_TRIPWIRE_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT,
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_CBC)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_PKCS7)
+                    .setInvalidatedByBiometricEnrollment(true)
+                    .build(),
+            )
+            keyGen.generateKey()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun disarmTripwire() {
+        try {
+            val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            keyStore.deleteEntry(SecureStorage.BIOMETRIC_TRIPWIRE_ALIAS)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun Cipher.initKey(
         keyStore: KeyStore,
         keyAlias: String,

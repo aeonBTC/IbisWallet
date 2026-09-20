@@ -10,10 +10,16 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.ArkAutoDbBackupInfo
 import github.aeonbtc.ibiswallet.data.model.ArkEvent
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveKind
+import github.aeonbtc.ibiswallet.data.model.ArkTransferState
 import github.aeonbtc.ibiswallet.data.model.Layer2Provider
+import android.os.SystemClock
+import github.aeonbtc.ibiswallet.data.repository.ArkConnectionPolicy
 import github.aeonbtc.ibiswallet.data.repository.ArkRepository
 import github.aeonbtc.ibiswallet.data.repository.ArkUnilateralExitPolicy
 import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy
+import github.aeonbtc.ibiswallet.tor.TorManager
+import github.aeonbtc.ibiswallet.tor.TorState
+import github.aeonbtc.ibiswallet.tor.TorStatus
 import github.aeonbtc.ibiswallet.util.Bip329LabelNetwork
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.Bip329Labels
@@ -35,12 +41,18 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = getApplication<Application>()
     private val secureStorage = SecureStorage.getInstance(application)
     private val repository = ArkRepository(application, secureStorage)
+    private val torManager = TorManager.getInstance(application)
+
+    /** Shared singleton Tor state — drives the Settings onion indicator. */
+    val torState: StateFlow<TorState> = torManager.torState
 
     val arkState = repository.arkState
     val sendState = repository.sendState
     val receiveState = repository.receiveState
     val transferState = repository.transferState
     val lifecycleState = repository.lifecycleState
+    val mailboxRescanBlocked = repository.mailboxRescanBlocked
+    val emergencyExitFeeQuote = repository.emergencyExitFeeQuote
     val events = repository.events
     val arkMovementLabels = repository.arkMovementLabels
     val arkAddressLabels = repository.arkAddressLabels
@@ -73,6 +85,12 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     private val _latestAutoDbBackup = MutableStateFlow<ArkAutoDbBackupInfo?>(null)
     val latestAutoDbBackup: StateFlow<ArkAutoDbBackupInfo?> = _latestAutoDbBackup.asStateFlow()
 
+    /** True while the external-folder snapshot scan is running (SAF can stall). */
+    private val _autoDbBackupLoading = MutableStateFlow(false)
+    val autoDbBackupLoading: StateFlow<Boolean> = _autoDbBackupLoading.asStateFlow()
+
+    private var autoDbBackupMetaJob: Job? = null
+
     /** Bumps when backup protection state may have changed (export / folder / toggle). */
     private val _dbBackupProtectionRevision = MutableStateFlow(0L)
     val dbBackupProtectionRevision: StateFlow<Long> = _dbBackupProtectionRevision.asStateFlow()
@@ -84,6 +102,15 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     private val _backupAlertDismissedWalletIds = MutableStateFlow<Set<String>>(emptySet())
     val backupAlertDismissedWalletIds: StateFlow<Set<String>> =
         _backupAlertDismissedWalletIds.asStateFlow()
+
+    /**
+     * Process-lifetime only: per-wallet epoch-ms until which the VTXO refresh
+     * popup stays snoozed. Unlike backup dismiss (gone for the session), a due
+     * refresh re-nags after the snooze lapses so expiry can't be slept through.
+     */
+    private val _refreshAlertSnoozeUntilMs = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val refreshAlertSnoozeUntilMs: StateFlow<Map<String, Long>> =
+        _refreshAlertSnoozeUntilMs.asStateFlow()
 
     private val _sendDraft = MutableStateFlow(SendScreenDraft())
     val sendDraft: StateFlow<SendScreenDraft> = _sendDraft.asStateFlow()
@@ -105,6 +132,8 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingWalletLoadId: String? = null
     private var heartbeatJob: Job? = null
     private var maintenanceJob: Job? = null
+    /** Monotonic ms of the last silent auto-reconnect (cooldown in [ArkConnectionPolicy]). */
+    private var lastAutoReconnectElapsedMs: Long = 0L
     private var isAppInBackground = false
 
     private val lifecycleCoordinator =
@@ -134,7 +163,10 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
                 ) {
                     if (isArkConnected.value) {
                         startHeartbeat()
-                        requestMaintenance()
+                        // Full validate, not bare maintenance: hydrate exercises the
+                        // transport and the failure streak flips a dead session so
+                        // the auto-reconnect below can reload it.
+                        validateSession()
                     } else {
                         loadedWalletId.value?.let { loadArkWallet(it) }
                     }
@@ -158,6 +190,30 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
                         stopMaintenanceLoop()
                     }
                 }
+        }
+        // Silent reconnect: the repository flips connected=false after sustained
+        // transport failure. Reload once per episode (cooldown-guarded) instead of
+        // leaving the session wedged until the next manual refresh.
+        viewModelScope.launch {
+            isArkConnected.collect { connected ->
+                if (connected) return@collect
+                val id = loadedWalletId.value ?: pendingWalletLoadId ?: return@collect
+                val elapsed = SystemClock.elapsedRealtime() - lastAutoReconnectElapsedMs
+                if (
+                    ArkConnectionPolicy.shouldAutoReconnect(
+                        connected = false,
+                        connecting = isArkConnecting.value,
+                        walletPresent = true,
+                        arkEnabled = isArkLayer2Enabled.value,
+                        foregrounded = !isAppInBackground,
+                        cooldownElapsedMs = elapsed,
+                    )
+                ) {
+                    lastAutoReconnectElapsedMs = SystemClock.elapsedRealtime()
+                    SecureLog.w(TAG, "Ark auto-reconnect after transport failure")
+                    loadArkWallet(id)
+                }
+            }
         }
         viewModelScope.launch {
             loadedWalletId.collect { id ->
@@ -199,16 +255,41 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         _backupAlertDismissedWalletIds.value = _backupAlertDismissedWalletIds.value + walletId
     }
 
+    /** True when the refresh popup was snoozed for [walletId] and it hasn't lapsed. */
+    fun isRefreshAlertSnoozed(walletId: String?): Boolean {
+        if (walletId.isNullOrBlank()) return false
+        return (_refreshAlertSnoozeUntilMs.value[walletId] ?: 0L) > System.currentTimeMillis()
+    }
+
+    /** Snooze the VTXO refresh popup for [walletId] (default 30 minutes). */
+    fun snoozeRefreshAlert(walletId: String?, durationMs: Long = 30L * 60L * 1000L) {
+        if (walletId.isNullOrBlank()) return
+        _refreshAlertSnoozeUntilMs.value =
+            _refreshAlertSnoozeUntilMs.value + (walletId to System.currentTimeMillis() + durationMs)
+    }
+
     private fun refreshAutoDbBackupMeta(walletId: String?) {
+        autoDbBackupMetaJob?.cancel()
         if (walletId.isNullOrBlank()) {
             _autoDbBackupLastMs.value = 0L
             _latestAutoDbBackup.value = null
+            _autoDbBackupLoading.value = false
             return
         }
-        val info = repository.getLatestAutoDbBackupInfo(walletId)
-        _latestAutoDbBackup.value = info
-        val stored = secureStorage.getArkAutoDbBackupLastMs(walletId)
-        _autoDbBackupLastMs.value = maxOf(info?.timestampMs ?: 0L, stored)
+        // SAF folder scan blocks: run off Main and paint a spinner meanwhile.
+        // Stale results are dropped — only the currently visible wallet paints.
+        _autoDbBackupLoading.value = true
+        autoDbBackupMetaJob =
+            viewModelScope.launch(Dispatchers.IO) {
+                val info = runCatching { repository.getLatestAutoDbBackupInfo(walletId) }.getOrNull()
+                val stored = secureStorage.getArkAutoDbBackupLastMs(walletId)
+                if (loadedWalletId.value != walletId && secureStorage.getActiveWalletId() != walletId) {
+                    return@launch
+                }
+                _latestAutoDbBackup.value = info
+                _autoDbBackupLastMs.value = maxOf(info?.timestampMs ?: 0L, stored)
+                _autoDbBackupLoading.value = false
+            }
     }
 
     private fun isBackgroundKeepAliveActive(): Boolean =
@@ -231,7 +312,40 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         if (url.isBlank()) return false
         return runCatching {
             java.net.URI(url).host?.endsWith(".onion", ignoreCase = true) == true
-        }.getOrDefault(url.contains(".onion", ignoreCase = true))
+        }.getOrDefault(false)
+    }
+
+    /** True when the configured Ark Esplora needs Tor (.onion). */
+    fun isArkEsploraOnion(): Boolean = arkEsploraUsesTor()
+
+    /**
+     * Start Tor up front when the configured Esplora is .onion — mirroring
+     * `WalletViewModel.ensureTorReadyForBitcoin`. Tor used to start only deep
+     * inside `ArkRepository.resolveBarkEsploraEndpoint`, so picking onion in
+     * Settings with no wallet loaded (or any early load return) never started
+     * Tor at all and the "will start automatically" hint was a lie.
+     * @return false when Tor failed to bootstrap (caller must abort the load).
+     */
+    private suspend fun ensureTorReadyForArk(): Boolean {
+        if (!arkEsploraUsesTor()) return true
+        if (torManager.isReady()) return true
+        torManager.start()
+        if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
+            val msg =
+                if (torState.value.status == TorStatus.ERROR) {
+                    "Tor failed to start: ${torState.value.statusMessage}"
+                } else {
+                    appContext.getString(R.string.ark_error_tor_bootstrap_timeout)
+                }
+            SecureLog.w(TAG, "Ark Tor bootstrap failed: $msg")
+            val failedId = loadedWalletId.value ?: pendingWalletLoadId
+            if (!failedId.isNullOrBlank()) {
+                repository.markLoadFailed(walletId = failedId, message = msg)
+            }
+            return false
+        }
+        delay(TOR_POST_BOOTSTRAP_DELAY_MS)
+        return true
     }
 
     private fun startHeartbeat() {
@@ -266,13 +380,38 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         maintenanceJob = null
     }
 
-    private fun requestMaintenance() {
+    /** Foreground return re-validates the transport with a full refresh probe.
+     * Hydrate alone can mask refreshServer degradation (sync success heals the
+     * pill), so when the pill already flipped to disconnected, reload instead
+     * of re-hydrating a dead session. Expiry-critical VTXOs cannot wait for the
+     * 3-strike background window. */
+    fun validateSession() {
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching { repository.maintenance() }
+            val walletId = loadedWalletId.value ?: arkState.value.walletId
+            runCatching { repository.refreshState() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                }
+            // Full probe done: if transport flipped to disconnected, reload now
+            // (foreground, user-visible) instead of waiting for maintenance ticks.
+            if (!isArkConnected.value && !walletId.isNullOrBlank() &&
+                walletId == secureStorage.getActiveWalletId()
+            ) {
+                loadArkWallet(walletId)
+            }
         }
     }
 
     fun loadArkWallet(walletId: String) {
+        // Only the selected (active) wallet may hold a native Bark session. Refuse loads for
+        // background wallets (e.g. list-wide full sync) and kill a stale session of the
+        // requested id instead of leaving it alive.
+        if (walletId != secureStorage.getActiveWalletId()) {
+            if (loadedWalletId.value == walletId || pendingWalletLoadId == walletId) {
+                unloadArkWallet()
+            }
+            return
+        }
         if (pendingWalletLoadId == walletId && walletLifecycleJob?.isActive == true) {
             return
         }
@@ -302,13 +441,23 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
                         // Stale job after switch: do not load a superseded walletId.
                         return@launch
                     }
+                    // Onion Esplora needs Tor before Bark can dial it — start here
+                    // (not deep in the repo open path) so an early load return or a
+                    // fresh Settings pick still bootstraps Tor visibly.
+                    if (!ensureTorReadyForArk()) {
+                        if (pendingWalletLoadId == walletId) pendingWalletLoadId = null
+                        return@launch
+                    }
+                    if (pendingWalletLoadId != walletId) {
+                        return@launch
+                    }
                     runCatching { repository.loadWallet(walletId) }
                         .onFailure { error ->
                             if (error is CancellationException) throw error
                             if (pendingWalletLoadId == walletId) {
                                 repository.markLoadFailed(
                                     walletId = walletId,
-                                    message = error.message?.takeIf { it.isNotBlank() } ?: "Ark wallet load failed",
+                                    message = error.message?.takeIf { it.isNotBlank() } ?: appContext.getString(R.string.ark_error_load_failed),
                                 )
                             }
                         }
@@ -389,7 +538,18 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Wallet Management full sync, including Bark's seed-mailbox recovery report. */
-    fun fullSyncMailboxRecovery(walletId: String) {
+    fun fullSyncMailboxRecovery(
+        walletId: String,
+        forceMailbox: Boolean = false,
+    ) {
+        // Same active-wallet invariant as loadArkWallet: never pull a background wallet's
+        // Bark session in (it would evict the selected wallet). Sync it after selecting it.
+        if (walletId != secureStorage.getActiveWalletId()) {
+            if (loadedWalletId.value == walletId || pendingWalletLoadId == walletId) {
+                unloadArkWallet()
+            }
+            return
+        }
         val previous = walletLifecycleJob
         val previousWalletId = pendingWalletLoadId ?: loadedWalletId.value
         pendingWalletLoadId = walletId
@@ -401,14 +561,26 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch(Dispatchers.IO) {
                 try {
                     previous?.cancelAndJoinForWalletSwitch(previousWalletId, walletId)
-                    runCatching { repository.loadWallet(walletId) }
+                    if (forceMailbox) {
+                        _dbTransferInProgress.value = ArkDbTransferProgress.RESCANNING
+                    }
+                    runCatching { repository.loadWallet(walletId, forceMailbox = forceMailbox) }
                         .onFailure { error ->
                             if (error is CancellationException) throw error
                             // Only mark failed if this load is still the intended one.
                             if (pendingWalletLoadId == walletId) {
+                                val message =
+                                    error.message?.takeIf { it.isNotBlank() }
+                                        ?: appContext.getString(R.string.ark_error_load_failed)
                                 repository.markLoadFailed(
                                     walletId = walletId,
-                                    message = error.message?.takeIf { it.isNotBlank() } ?: "Ark wallet load failed",
+                                    message = message,
+                                )
+                                repository.emitArkEvent(
+                                    ArkEvent.MailboxRecoveryFailed(
+                                        message = message,
+                                        supported = true,
+                                    ),
                                 )
                             }
                             return@launch
@@ -424,8 +596,38 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
                         if (pendingWalletLoadId == walletId) pendingWalletLoadId = null
                         walletLifecycleJob = null
                     }
+                    if (forceMailbox &&
+                        _dbTransferInProgress.value == ArkDbTransferProgress.RESCANNING
+                    ) {
+                        _dbTransferInProgress.value = null
+                    }
                 }
             }
+    }
+
+    /**
+     * Manual Rescan button: non-destructive sidecar merge into the live
+     * session (never wipes). Safe to run mid-round; blocked-round and
+     * limbo outputs are picked up here automatically once the ASP announces
+     * them (Bark delegated-refresh recovery).
+     */
+    fun rescanMailbox(walletId: String) {
+        if (walletId != secureStorage.getActiveWalletId()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                if (_dbTransferInProgress.value != null) return@launch
+                _dbTransferInProgress.value = ArkDbTransferProgress.RESCANNING
+                runCatching { repository.sidecarMailboxRescan(walletId) }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        SecureLog.w(TAG, "Ark sidecar rescan failed: ${error.message}")
+                    }
+            } finally {
+                if (_dbTransferInProgress.value == ArkDbTransferProgress.RESCANNING) {
+                    _dbTransferInProgress.value = null
+                }
+            }
+        }
     }
 
     fun receive(
@@ -502,6 +704,23 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     fun completeLayer1Funding(fundingTxid: String) {
         repository.completeLayer1Funding(fundingTxid)
     }
+
+    /**
+     * Register a signed single-tx board funding PSBT with Bark.
+     * Returns the board funding txid, or failure (caller falls back to legacy 2-tx).
+     */
+    suspend fun boardSingleTxFunding(
+        signedPsbtBase64: String,
+        funding: ArkTransferState.BoardFundingInfo,
+    ): Result<String> = repository.boardSingleTxFunding(signedPsbtBase64, funding)
+
+    /** Single-tx board funding broadcast finished — complete transfer UI, track board. */
+    fun completeSingleTxBoard(fundingTxid: String) {
+        repository.completeSingleTxBoard(fundingTxid)
+    }
+
+    /** Deposit address for legacy-fallback sends. Null when no 2-tx path exists. */
+    suspend fun legacyDepositAddressForFallback(): String? = repository.legacyDepositAddressForFallback()
 
     /** Retry boarding any BTC still on Bark's on-chain deposit wallet (auto-board path). */
     fun retryBoardPendingDeposits() {
@@ -596,10 +815,15 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         repository.prepareRefresh(vtxoIds)
     }
 
+    /** Exit review: debounced authoritative Bark exit-cost quote for the selection. */
+    fun refreshEmergencyExitFeeQuote(vtxoIds: List<String>) {
+        repository.refreshEmergencyExitFeeQuote(vtxoIds)
+    }
+
     /** Lifecycle confirm — prefers ASP-delegated (same path as auto opt-in). */
-    fun executeRefresh(delegated: Boolean = true) {
+    fun executeRefresh(delegated: Boolean = true, useScheduled: Boolean = true) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.executeRefresh(delegated = delegated)
+            repository.executeRefresh(delegated = delegated, useScheduled = useScheduled)
         }
     }
 
@@ -610,6 +834,16 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     fun quickRefreshVtxos() {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.quickRefreshVtxos() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                }
+        }
+    }
+
+    /** Review dialogs: refresh the live CPFP rate so the fee preview matches spend. */
+    fun refreshExitFeeRate() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.refreshExitFeeRate() }
                 .onFailure { error ->
                     if (error is CancellationException) throw error
                 }
@@ -633,10 +867,16 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun cancelUnilateralExits(vtxoIds: List<String> = emptyList()) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.cancelUnilateralExits(vtxoIds)
+        }
+    }
+
     fun prepareClaimExits(
         destinationAddress: String,
         vtxoIds: List<String> = emptyList(),
-        feeRateSatPerVb: Long = ArkUnilateralExitPolicy.DEFAULT_EXIT_FEE_RATE_SAT_VB,
+        feeRateSatPerVb: Long? = null,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.prepareClaimExits(
@@ -941,6 +1181,7 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setArkEnabledForWallet(walletId: String, enabled: Boolean) {
+        val firstEnable = enabled && !isArkEnabledForWallet(walletId)
         if (enabled) {
             secureStorage.setArkLayer2Enabled(true)
             _isArkLayer2Enabled.value = true
@@ -954,9 +1195,9 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
             }
         if (!enabled && loadedWalletId.value == walletId) {
             unloadArkWallet()
+        } else if (firstEnable) {
+            fullSyncMailboxRecovery(walletId, forceMailbox = true)
         } else if (enabled) {
-            // Force full reopen path (cancel any half-started job) so empty Bark
-            // dirs after seed restore always run ASP recover.
             loadArkWallet(walletId)
         }
     }
@@ -965,6 +1206,7 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         secureStorage.getLayer2ProviderForWallet(walletId)
 
     fun setLayer2ProviderForWallet(walletId: String, provider: Layer2Provider) {
+        val firstEnable = provider == Layer2Provider.ARK && !isArkEnabledForWallet(walletId)
         secureStorage.setLayer2ProviderForWallet(walletId, provider)
         if (provider == Layer2Provider.ARK) {
             _isArkLayer2Enabled.value = true
@@ -975,7 +1217,9 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
             _arkEnabledWallets.value.toMutableMap().apply {
                 put(walletId, provider == Layer2Provider.ARK)
             }
-        if (provider == Layer2Provider.ARK) {
+        if (firstEnable) {
+            fullSyncMailboxRecovery(walletId, forceMailbox = true)
+        } else if (provider == Layer2Provider.ARK) {
             loadArkWallet(walletId)
         }
     }
@@ -985,6 +1229,10 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     fun setArkServerAddress(address: String) {
         val normalized = github.aeonbtc.ibiswallet.util.ArkEndpointValidator.normalize(address)
         if (!github.aeonbtc.ibiswallet.util.ArkEndpointValidator.isValid(normalized)) return
+        // Bark always opens Network.BITCOIN: a testnet ASP paired with a mainnet
+        // Esplora can never open, so refuse to save the mismatch at the source.
+        val currentEsplora = secureStorage.getArkEsploraAddress()
+        if (!github.aeonbtc.ibiswallet.util.ArkEndpointValidator.isConsistentPair(normalized, currentEsplora)) return
         secureStorage.setArkServerAddress(normalized)
     }
 
@@ -993,6 +1241,13 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     fun setArkEsploraAddress(address: String) {
         val normalized = github.aeonbtc.ibiswallet.util.ArkEndpointValidator.normalize(address)
         if (!github.aeonbtc.ibiswallet.util.ArkEndpointValidator.isValid(normalized)) return
+        if (!github.aeonbtc.ibiswallet.util.ArkEndpointValidator.isConsistentPair(
+                secureStorage.getArkServerAddress(),
+                normalized,
+            )
+        ) {
+            return
+        }
         secureStorage.setArkEsploraAddress(normalized)
         _arkEsploraAddress.value = secureStorage.getArkEsploraAddress()
         syncForegroundConnectivityPolicy()
@@ -1002,13 +1257,34 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     fun setArkEsploraAddressAndReload(address: String) {
         val normalized = github.aeonbtc.ibiswallet.util.ArkEndpointValidator.normalize(address)
         if (!github.aeonbtc.ibiswallet.util.ArkEndpointValidator.isValid(normalized)) return
+        if (!github.aeonbtc.ibiswallet.util.ArkEndpointValidator.isConsistentPair(
+                secureStorage.getArkServerAddress(),
+                normalized,
+            )
+        ) {
+            return
+        }
         secureStorage.setArkEsploraAddress(normalized)
         _arkEsploraAddress.value = secureStorage.getArkEsploraAddress()
         syncForegroundConnectivityPolicy()
+        // Start Tor immediately on an onion pick — even with no wallet loaded yet —
+        // so the Settings indicator leaves DISCONNECTED instead of implying Tor runs.
+        if (isArkEsploraOnion()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                runCatching { ensureTorReadyForArk() }
+            }
+        }
         val walletId = loadedWalletId.value ?: pendingWalletLoadId
         if (walletId != null && isArkLayer2Enabled.value) {
             loadArkWallet(walletId)
         }
+    }
+
+    /** Whether Ark may auto-fall-back to another clearnet Esplora host. */
+    fun getArkEsploraAutoFallback(): Boolean = secureStorage.getArkEsploraAutoFallback()
+
+    fun setArkEsploraAutoFallback(enabled: Boolean) {
+        secureStorage.setArkEsploraAutoFallback(enabled)
     }
 
     /** True when the wallet has a BIP39 passphrase (Bark on-chain boarding unavailable). */
@@ -1077,13 +1353,14 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { repository.unloadWallet() }
         }
-        super.onCleared()
     }
 
     companion object {
         private const val TAG = "ArkViewModel"
         private const val MAINTENANCE_INTERVAL_MS = 5 * 60_000L
         private const val ARK_WALLET_SWITCH_CANCEL_TIMEOUT_MS = 2_000L
+        private const val TOR_BOOTSTRAP_TIMEOUT_MS = 90_000L
+        private const val TOR_POST_BOOTSTRAP_DELAY_MS = 1_500L
     }
 }
 
@@ -1091,6 +1368,7 @@ enum class ArkDbTransferProgress {
     EXPORTING,
     IMPORTING,
     RESTORING,
+    RESCANNING,
 }
 
 internal object ArkRestoredSettings {

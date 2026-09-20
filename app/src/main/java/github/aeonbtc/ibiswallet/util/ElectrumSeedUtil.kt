@@ -1,5 +1,6 @@
 package github.aeonbtc.ibiswallet.util
 
+import github.aeonbtc.ibiswallet.data.model.AddressType
 import java.math.BigInteger
 import java.security.MessageDigest
 import java.text.Normalizer
@@ -53,6 +54,48 @@ object ElectrumSeedUtil {
 
     // SLIP-132 zpub version bytes (mainnet, signals BIP84/P2WPKH)
     private val ZPUB_VERSION = byteArrayOf(0x04, 0xB2.toByte(), 0x47.toByte(), 0x46)
+
+    // SLIP-132 zprv version bytes (mainnet extended private key, BIP84 flavor)
+    private val ZPRV_VERSION = byteArrayOf(0x04, 0xB2.toByte(), 0x43.toByte(), 0x0C)
+
+    /**
+     * Derive the `xpub` string for an `xprv`/`zprv` extended private key.
+     *
+     * Used to verify that a pasted local-signer key actually belongs to the
+     * listed multisig cosigner (same key, not just a matching fingerprint
+     * string) before it can redefine wallet descriptors. Only mainnet
+     * private versions are accepted; anything else throws.
+     */
+    fun xpubFromXprv(xprv: String): String {
+        val decoded = BitcoinUtils.Base58.decodeChecked(xprv.trim())
+        require(decoded.size == 78) { "Invalid extended private key length" }
+        val version = decoded.copyOfRange(0, 4)
+        require(version.contentEquals(XPRV_VERSION) || version.contentEquals(ZPRV_VERSION)) {
+            "Unsupported extended private key version"
+        }
+        val depth = decoded[4].toInt() and 0xFF
+        val parentFingerprint = decoded.copyOfRange(5, 9)
+        val childNumber =
+            ((decoded[9].toLong() and 0xFF) shl 24) or
+                ((decoded[10].toLong() and 0xFF) shl 16) or
+                ((decoded[11].toLong() and 0xFF) shl 8) or
+                (decoded[12].toLong() and 0xFF)
+        val chainCode = decoded.copyOfRange(13, 45)
+        require(decoded[45] == 0.toByte()) { "Invalid extended private key payload" }
+        val privateKey = decoded.copyOfRange(46, 78)
+        val keyInt = BigInteger(1, privateKey)
+        require(keyInt > BigInteger.ZERO && keyInt < CURVE_ORDER) {
+            "Invalid private key (outside curve order)"
+        }
+        return encodeXpub(
+            version = XPUB_VERSION,
+            depth = depth,
+            parentFingerprint = parentFingerprint,
+            childNumber = childNumber,
+            chainCode = chainCode,
+            publicKey = publicKeyFromPrivate(privateKey),
+        )
+    }
 
     // ── Electrum Seed Type Detection ─────────────────────────────────
 
@@ -139,8 +182,15 @@ object ElectrumSeedUtil {
     /**
      * Derive a standard BIP39 seed using PBKDF2-HMAC-SHA512 with salt
      * "mnemonic" + normalized passphrase.
+     *
+     * BIP-352 fund safety: the input MUST already be canonicalized through
+     * BDK's `Mnemonic` parser (see `WalletRepository.bip39SeedCanonical`):
+     * rust-bip39 normalizes whitespace/case on parse, so feeding the raw
+     * stored string here instead would derive a different seed and burn SP
+     * outputs. Do NOT call this with uncanonicalized user input for SP paths.
      */
     fun bip39MnemonicToSeed(mnemonic: String, passphrase: String? = null): ByteArray {
+        require(mnemonic.isNotBlank()) { "Empty mnemonic" }
         val canonicalMnemonic = mnemonic.trim().replace(Regex("\\s+"), " ")
         val normalizedMnemonic = Normalizer.normalize(canonicalMnemonic, Normalizer.Form.NFKD)
         val normalizedPassphrase = Normalizer.normalize(passphrase.orEmpty(), Normalizer.Form.NFKD)
@@ -317,26 +367,63 @@ object ElectrumSeedUtil {
     fun buildDescriptorStrings(
         seed: ByteArray,
         seedType: ElectrumSeedType,
+        customPath: String? = null,
+        addressType: AddressType? = null,
     ): Pair<String, String> {
         val fingerprint = computeMasterFingerprint(seed)
-
-        return when (seedType) {
-            ElectrumSeedType.STANDARD -> {
-                // P2PKH at m/0 (receive) and m/1 (change)
-                // Electrum standard: master key directly, children at m/{change}/{index}
-                val masterXprv = deriveXprv(seed, "m")
-                val external = "pkh([$fingerprint]$masterXprv/0/*)"
-                val internal = "pkh([$fingerprint]$masterXprv/1/*)"
-                Pair(external, internal)
+        val defaultPath =
+            when (seedType) {
+                ElectrumSeedType.STANDARD -> "m"
+                ElectrumSeedType.SEGWIT -> "m/0'"
             }
-            ElectrumSeedType.SEGWIT -> {
-                // P2WPKH at m/0'/0 (receive) and m/0'/1 (change)
-                val childXprv = deriveXprv(seed, "m/0'")
-                val external = "wpkh([$fingerprint/0']$childXprv/0/*)"
-                val internal = "wpkh([$fingerprint/0']$childXprv/1/*)"
-                Pair(external, internal)
+        val accountPath =
+            if (customPath.isNullOrBlank()) {
+                defaultPath
+            } else {
+                BitcoinUtils.bip39AccountDerivationPath(customPath)
+            }
+        val isDefault =
+            BitcoinUtils.bip39AccountDerivationPath(accountPath) ==
+                BitcoinUtils.bip39AccountDerivationPath(defaultPath)
+        if (isDefault) {
+            return when (seedType) {
+                ElectrumSeedType.STANDARD -> {
+                    val masterXprv = deriveXprv(seed, "m")
+                    Pair(
+                        "pkh([$fingerprint]$masterXprv/0/*)",
+                        "pkh([$fingerprint]$masterXprv/1/*)",
+                    )
+                }
+                ElectrumSeedType.SEGWIT -> {
+                    val childXprv = deriveXprv(seed, "m/0'")
+                    Pair(
+                        "wpkh([$fingerprint/0']$childXprv/0/*)",
+                        "wpkh([$fingerprint/0']$childXprv/1/*)",
+                    )
+                }
             }
         }
+        val accountXprv = deriveXprv(seed, accountPath)
+        val origin =
+            if (accountPath == "m") {
+                fingerprint
+            } else {
+                "$fingerprint/${accountPath.removePrefix("m/")}"
+            }
+        val function =
+            when (addressType) {
+                AddressType.LEGACY -> "pkh"
+                AddressType.TAPROOT -> "tr"
+                AddressType.SEGWIT, null ->
+                    when (seedType) {
+                        ElectrumSeedType.STANDARD -> "pkh"
+                        ElectrumSeedType.SEGWIT -> "wpkh"
+                    }
+            }
+        return Pair(
+            "$function([$origin]$accountXprv/0/*)",
+            "$function([$origin]$accountXprv/1/*)",
+        )
     }
 
     /**

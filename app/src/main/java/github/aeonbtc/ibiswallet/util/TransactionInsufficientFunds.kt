@@ -10,11 +10,15 @@ fun Throwable.isTransactionInsufficientFundsError(): Boolean {
         details.contains("not enough", ignoreCase = true) ||
         details.contains("coin selection", ignoreCase = true) ||
         details.contains("insufficientfunds", ignoreCase = true) ||
-        details.contains("missing_sats", ignoreCase = true)
+        details.contains("missing_sats", ignoreCase = true) ||
+        // Breez 0.25 exit underfunding: `InsufficientCpfpFunds(requiredSat=N)`
+        // carries no "insufficient" prose, only the required amount.
+        details.contains("requiredsat", ignoreCase = true)
     ) {
         return true
     }
     return generateSequence(this) { it.cause }.any { t ->
-        t::class.java.simpleName.contains("InsufficientFunds", ignoreCase = true)
+        t::class.java.simpleName.contains("InsufficientFunds", ignoreCase = true) ||
+            t::class.java.simpleName.contains("InsufficientCpfp", ignoreCase = true)
     }
 }

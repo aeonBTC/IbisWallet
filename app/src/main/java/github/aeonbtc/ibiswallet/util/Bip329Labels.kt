@@ -237,11 +237,12 @@ object Bip329Labels {
 
             val csvResult = parseElectrumCsvLine(trimmed)
             if (csvResult != null) {
+                val sanitized = BitcoinUtils.sanitizeExternalLabel(csvResult.second) ?: continue
                 when (defaultNetwork(defaultScope)) {
-                    Bip329LabelNetwork.BITCOIN -> bitcoinTransactionLabels[csvResult.first] = csvResult.second
-                    Bip329LabelNetwork.LIQUID -> liquidTransactionLabels[csvResult.first] = csvResult.second
-                    Bip329LabelNetwork.SPARK -> sparkTransactionLabels[csvResult.first] = csvResult.second
-                    Bip329LabelNetwork.ARK -> arkTransactionLabels[csvResult.first] = csvResult.second
+                    Bip329LabelNetwork.BITCOIN -> bitcoinTransactionLabels[csvResult.first] = sanitized
+                    Bip329LabelNetwork.LIQUID -> liquidTransactionLabels[csvResult.first] = sanitized
+                    Bip329LabelNetwork.SPARK -> sparkTransactionLabels[csvResult.first] = sanitized
+                    Bip329LabelNetwork.ARK -> arkTransactionLabels[csvResult.first] = sanitized
                 }
                 continue
             }
@@ -331,7 +332,7 @@ object Bip329Labels {
                 normalized.startsWith("vj") || normalized.startsWith("ct") ||
                 normalized.startsWith("liquidnetwork:") -> Bip329LabelNetwork.LIQUID
 
-            normalized.startsWith("spark") || normalized.startsWith("sp1") -> Bip329LabelNetwork.SPARK
+            normalized.startsWith("spark") -> Bip329LabelNetwork.SPARK
 
             // Mainnet Ark addresses (Ibis is mainnet-only for Ark).
             normalized.startsWith("ark1") -> Bip329LabelNetwork.ARK

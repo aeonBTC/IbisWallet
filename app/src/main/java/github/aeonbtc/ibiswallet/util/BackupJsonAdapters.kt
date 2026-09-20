@@ -202,6 +202,7 @@ object BackupJsonAdapters {
             .put("timestamp", timestamp ?: JSONObject.NULL)
             .put("address", address ?: JSONObject.NULL)
             .put("claimError", claimError ?: JSONObject.NULL)
+            .put("isSwapDeposit", isSwapDeposit)
 
     private fun JSONArray?.toPendingDeposits(): List<SparkUnclaimedDeposit> {
         if (this == null) return emptyList()
@@ -235,6 +236,7 @@ object BackupJsonAdapters {
                                 } else {
                                     it.optString("claimError")
                                 },
+                            isSwapDeposit = it.optBoolean("isSwapDeposit", false),
                         )
                     }
                 }
