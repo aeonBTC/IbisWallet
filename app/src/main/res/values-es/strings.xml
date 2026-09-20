@@ -1,4 +1,4 @@
-<resources>
+﻿<resources>
     <string name="app_name">Ibis Wallet</string>
     <string name="wallet_added">Billetera agregada</string>
     <string name="cloak_calculator_label">Calculadora</string>
@@ -15,7 +15,7 @@
     <string name="update_popup_changelog">Changelog</string>
     <string name="update_popup_changelog_expand">Expandir changelog</string>
     <string name="update_popup_changelog_collapse">Contraer changelog</string>
-    <string name="app_update_opt_in_title">Â¿Buscar actualizaciones de la app en GitHub?</string>
+    <string name="app_update_opt_in_title">¿Buscar actualizaciones de la app en GitHub?</string>
     <string name="app_update_opt_in_message">Esta opción se puede activar o desactivar en Acerca de.</string>
     <string name="app_update_opt_in_enable">Activar</string>
     <string name="app_update_opt_in_not_now">Ahora no</string>
@@ -28,15 +28,20 @@
     <string name="settings_language_spanish_description">Usar español</string>
     <string name="settings_language_brazilian_portuguese">Português (Brasil)</string>
     <string name="settings_language_brazilian_portuguese_description">Usar portugués de Brasil</string>
-    <string name="settings_language_russian">Ð ÑÑÑÐºÐ¸Ð¹</string>
+    <string name="settings_language_russian">Русский</string>
     <string name="settings_language_russian_description">Usar ruso</string>
-    <string name="wallet_delete_watch_only_message">Â¿Quitar "%1$s"? Puedes reimportarla después con el mismo xpub.</string>
-    <string name="wallet_delete_irreversible_message">Â¿Seguro que quieres eliminar "%1$s"? Esta acción no se puede deshacer. Asegúrate de haber respaldado tu frase de recuperación.</string>
+    <string name="settings_language_french">Francés</string>
+    <string name="settings_language_french_description">Usar francés</string>
+    <string name="settings_language_german">Alemán</string>
+    <string name="settings_language_german_description">Usar alemán</string>
+    <string name="wallet_delete_watch_only_message">¿Quitar "%1$s"? Puedes reimportarla después con el mismo xpub.</string>
+    <string name="wallet_delete_irreversible_message">¿Seguro que quieres eliminar "%1$s"? Esta acción no se puede deshacer. Asegúrate de haber respaldado tu frase de recuperación.</string>
     <string name="wallet_delete_confirm_removal_label">Confirmar eliminación</string>
     <string name="wallet_delete_irreversible_ack_label">Entiendo que no se puede deshacer</string>
     <string name="wallet_delete_ark_pending_exit">Ark tiene un exit unilateral pendiente o reclamable. Termina el claim del exit antes de borrar este monedero: la seed sola no recupera exits en curso.</string>
     <string name="wallet_delete_ark_no_backup">Este monedero tiene actividad de VTXO Ark y no hay copia de la DB Ark. BIP39 seed recuperará los fondos Ark mientras el ASP esté disponible; si el ASP se desconecta se necesita una copia de la DB Ark para recuperar.</string>
     <string name="wallet_delete_ark_has_funds">Este monedero tiene fondos Ark. Borrar elimina la base Bark local. BIP39 seed recuperará los fondos Ark mientras el ASP esté disponible; si el ASP se desconecta se necesita una copia de la DB Ark para recuperar.</string>
+    <string name="wallet_delete_ark_offchain_only">La billetera on-chain de Ark no está disponible — el embarque y el exit unilateral la necesitan. Borrar ahora elimina la base local mientras el exit es imposible.</string>
     <string name="wallet_delete_ark_blocked_ack">Resuelve los exits de Ark antes de borrar</string>
     <string name="wallet_view_sensitive_info_message">Vas a ver información sensible de "%1$s".</string>
     <string name="key_material_scan_qr_format">Escanea este QR para importar %1$s</string>
@@ -80,6 +85,53 @@
     <string name="spark_enable_info_title">Layer 2 es modular</string>
     <string name="spark_enable_info_message">Abre la pantalla de gestión de billeteras para activar Spark en las billeteras que quieras.\n\n*Spark solo se puede activar en billeteras semilla BIP39.</string>
     <string name="spark_enable_info_confirm">Entendido</string>
+    <string name="spark_exit_open">Salida de emergencia</string>
+    <string name="spark_exit_title">Exit Unilateral</string>
+    <string name="spark_exit_intro">Saca fondos Spark on-chain sin cooperación de los operadores. Paga comisiones de mineros desde L1 y bloquea fondos tras timelocks de salida. Último recurso, prefiere un retiro normal cuando esté disponible.</string>
+    <string name="spark_exit_destination">Destino (dirección L1)</string>
+    <string name="spark_exit_get_quote">Cotizar</string>
+    <string name="spark_exit_recoverable">Recuperable</string>
+    <string name="spark_exit_fee">Comisión de salida</string>
+    <string name="spark_exit_funding_needed">Fondeo necesario</string>
+    <string name="spark_exit_empty">Nada rentable para salir con esta comisión.</string>
+    <string name="spark_exit_not_worth_it">Las comisiones superan lo recuperable. Sube el valor de las hojas, usa fondeo por rama o espera comisiones más bajas.</string>
+    <string name="spark_exit_pick_funding">Elegir UTXO de fondeo</string>
+    <string name="spark_exit_funding_button">UTXO de fondeo</string>
+    <string name="spark_exit_build_button">Construir</string>
+    <string name="spark_exit_stale_hint">%1$s de tu saldo está en hojas demasiado pequeñas para salir y quedó fuera. Solo un Intercambio cooperativo de ida y vuelta en un único depósito puede consolidarlas. Si no, esos fondos se pierden.</string>
+    <string name="spark_exit_unclaimed_format">Los depósitos sin reclamar (%1$s) no se pueden retirar hasta reclamarlos o que maduren.</string>
+    <string name="spark_exit_view_balance">Ver saldo</string>
+    <string name="spark_exit_funding_hint">Solo SegWit nativo (SegWit o Taproot). UTXOs legacy rechazados.</string>
+    <string name="spark_exit_funding_none">Sin UTXO SegWit adecuado. Fondea L1 primero.</string>
+    <string name="spark_exit_broadcast_hint">Transmite cada par (tx + hija CPFP) junto con un nodo package-relay (p. ej. Bitcoin Core submitpackage). Fan-out y sweep pagan su propia comisión y van solos. Espera confirmación entre pasos; los refunds esperan su timelock.</string>
+    <string name="spark_exit_check_status">Comprobar estado</string>
+    <string name="spark_exit_ready">Listo para transmitir</string>
+    <string name="spark_exit_confirmed">Confirmado</string>
+    <string name="spark_exit_wait_deps">Esperando dependencias</string>
+    <string name="spark_exit_wait_timelock">Esperando el timelock</string>
+    <string name="spark_exit_wait_timelock_at_format">Disponible desde el bloque %1$d</string>
+    <string name="spark_exit_wait_timelock_countdown_format">Disponible en el bloque %1$d (actual %2$d)</string>
+    <string name="spark_exit_unverified">Estado desconocido: vuelve a comprobarlo</string>
+    <string name="spark_exit_sweep_fee">Comisión del sweep</string>
+    <string name="spark_exit_you_receive">Recibes</string>
+    <string name="spark_exit_fee_cpfp">Comisiones CPFP</string>
+    <string name="spark_exit_fee_fanout">Comisión de fan-out</string>
+    <string name="spark_exit_redo_diverged">El estado en cadena ha divergido: reconstruye el exit para continuar. Los fondos no se han perdido.</string>
+    <string name="spark_exit_redo_upgraded">Datos de exit actualizados: reconstruye para continuar con el nuevo formato.</string>
+    <string name="spark_exit_start_over">Empezar de nuevo</string>
+    <string name="spark_exit_fee_floor_note">Mínimo %1$s sat/vB — exigido por Spark</string>
+    <string name="spark_exit_import">Importar datos de exit</string>
+    <string name="spark_exit_save_copy">Guardar copia</string>
+    <string name="spark_exit_import_ok_format">Datos de exit importados: %1$d hojas (%2$d ajenas, %3$d cadenas, %4$d en conflicto omitidas)</string>
+    <string name="spark_exit_done">Salida completa. Verifica el sweep on-chain.</string>
+    <string name="spark_exit_fee_bump">Subir comisión</string>
+    <string name="spark_exit_discard">Descartar salida</string>
+    <string name="spark_exit_backup">Respaldar datos de salida</string>
+    <string name="spark_exit_backup_saved">Datos de salida respaldados. Re-exporta tras más actividad en Spark.</string>
+    <string name="spark_exit_backup_stale">Respaldo de salida desactualizado — re-exporta.</string>
+    <string name="spark_exit_tx_cpfp_copy">Copiar hija CPFP</string>
+    <string name="spark_exit_tx_depends_format">Depende de %1$d</string>
+    <string name="spark_exit_tx_csv_format">Timelock +%1$d bloques</string>
     <string name="ln_node_enable_info_title">Lightning Node</string>
     <string name="ln_node_enable_info_message">Conéctate a un nodo remoto (LND, CLN o NWC) desde la pantalla Configurar nodo. Cada nodo se añade como su propia billetera.</string>
     <string name="ln_node_enable_info_confirm">Entendido</string>
@@ -112,10 +164,10 @@
     <string name="ln_node_wallet_added_format">Se añadió "%1$s". Configura otro nodo si lo deseas.</string>
     <string name="ln_node_onchain_unavailable">Monedero on-chain no disponible</string>
     <string name="ln_node_onchain_no_transactions">Sin transacciones on-chain</string>
-    <string name="ln_node_onchain_connecting_wait">Conectando al nodoâ¦</string>
-    <string name="ln_node_connecting_to_format">Conectando a %1$sâ¦</string>
+    <string name="ln_node_onchain_connecting_wait">Conectando al nodo...</string>
+    <string name="ln_node_connecting_to_format">Conectando a %1$s...</string>
     <string name="ln_node_onchain_waiting_connection">Esperando conexión del nodo</string>
-    <string name="ln_node_onchain_loading_history">Cargando historial on-chainâ¦</string>
+    <string name="ln_node_onchain_loading_history">Cargando historial on-chain...</string>
     <string name="ln_node_onchain_change_unavailable">Las direcciones de cambio no están disponibles en monederos Lightning Node remotos.</string>
     <string name="ln_node_onchain_change_assigned_on_send">Nodo al enviar</string>
     <string name="ln_node_onchain_channel_badge">Canal</string>
@@ -142,7 +194,7 @@
     <string name="ln_node_channels_state_opening">OPENING</string>
     <string name="ln_node_channels_state_onchain">ONCHAIN</string>
     <string name="ln_node_onchain_fee_rate_format">Tarifa: %1$s sat/vB</string>
-    <string name="ln_node_onchain_sent_format">Enviado %1$sâ¦</string>
+    <string name="ln_node_onchain_sent_format">Enviado %1$s...</string>
     <string name="ln_node_onchain_bump_submitted">Aumento de tarifa enviado al nodo</string>
     <string name="ln_node_no_payments">Aún no hay pagos</string>
     <string name="ln_node_payment_hash">Payment hash</string>
@@ -157,7 +209,7 @@
     <string name="ln_node_status_failed">Fallido</string>
     <string name="ln_node_failure_reason">Motivo del fallo</string>
     <string name="ln_node_copy_payment_hash">Copiar Payment Hash</string>
-    <string name="ln_node_status_connecting">Conectandoâ¦</string>
+    <string name="ln_node_status_connecting">Conectando...</string>
     <string name="ln_node_connection_title">Conexión Lightning Node</string>
     <string name="ln_node_connection_type">Tipo de conexión</string>
     <string name="ln_node_lnd_rest_hint">Conéctate vía LND REST (puerto 8080 por defecto). Escanea un QR lndconnect o pega host, macaroon de admin (hex o base64) y certificado TLS PEM si es necesario.</string>
@@ -167,7 +219,7 @@
     <string name="ln_node_host">Host</string>
     <string name="ln_node_qr_scan_cd">Escanear QR de conexión</string>
     <string name="ln_node_qr_import_success">Conexión importada</string>
-    <string name="ln_node_qr_import_error">QR no compatible â usa Connection URL clnrest+/lndconnect/NWC (no solo certificados TLS)</string>
+    <string name="ln_node_qr_import_error">QR no compatible - usa Connection URL clnrest+/lndconnect/NWC (no solo certificados TLS)</string>
     <string name="ln_node_port">Puerto</string>
     <string name="ln_node_macaroon">Macaroon</string>
     <string name="ln_node_cln_rune">Rune</string>
@@ -175,26 +227,28 @@
     <string name="ln_node_nwc_uri">URI NWC</string>
     <string name="ln_node_use_tor">Enrutar por Tor</string>
     <string name="ln_node_enable_tls">Activar TLS</string>
+    <string name="ln_node_insecure_ack_title">Permitir transporte inseguro</string>
+    <string name="ln_node_insecure_ack_desc">Envía credenciales sin verificar el certificado. Solo LAN.</string>
     <string name="ln_node_test_connection">Probar conexión</string>
     <string name="ln_node_test_success_title">Conexión exitosa</string>
-    <string name="ln_node_test_success_body">El nodo respondió. Â¿Guardar esta conexión Lightning Node?</string>
+    <string name="ln_node_test_success_body">El nodo respondió. ¿Guardar esta conexión Lightning Node?</string>
     <string name="ln_node_test_success_type_format">Tipo: %1$s</string>
     <string name="ln_node_test_success_alias_format">Alias: %1$s</string>
     <string name="ln_node_test_success_network_format">Red: %1$s</string>
     <string name="ln_node_test_success_channels_format">Canales: %1$d</string>
     <string name="ln_node_test_success_balance_format">Saldo: %1$s</string>
     <string name="ln_node_test_success_pubkey_format">Pubkey: %1$s</string>
-    <string name="ln_node_test_success_default_name_format">El nombre por defecto será â%1$sâ (cámbialo en Administración de monederos).</string>
+    <string name="ln_node_test_success_default_name_format">El nombre por defecto será "%1$s" (cámbialo en Administración de monederos).</string>
     <string name="ln_node_manage_rename_hint">Renombra este monedero de nodo. La conexión se configura aparte.</string>
     <string name="ln_node_wallet_name_optional">Nombre del monedero (opcional)</string>
-    <string name="ln_node_test_success_save_prompt">Â¿Guardar conexión?</string>
+    <string name="ln_node_test_success_save_prompt">¿Guardar conexión?</string>
     <string name="ln_node_test_success_save">Guardar</string>
     <string name="ln_node_test_success_later">Después</string>
-    <string name="ln_node_test_phase_preparing">Preparandoâ¦</string>
-    <string name="ln_node_test_phase_starting_tor">Iniciando Torâ¦</string>
-    <string name="ln_node_test_phase_waiting_tor">Esperando Torâ¦</string>
-    <string name="ln_node_test_phase_connecting">Conectandoâ¦</string>
-    <string name="ln_node_test_phase_fetching_balance">Obteniendo saldoâ¦</string>
+    <string name="ln_node_test_phase_preparing">Preparando...</string>
+    <string name="ln_node_test_phase_starting_tor">Iniciando Tor...</string>
+    <string name="ln_node_test_phase_waiting_tor">Esperando Tor...</string>
+    <string name="ln_node_test_phase_connecting">Conectando...</string>
+    <string name="ln_node_test_phase_fetching_balance">Obteniendo saldo...</string>
     <string name="ln_node_save">Guardar</string>
     <string name="ln_node_receive_tab_invoice">Factura</string>
     <string name="ln_node_receive_tab_address">Lightning Address</string>
@@ -231,8 +285,8 @@
     <string name="ln_node_setup_connection">Configurar nodo</string>
     <string name="liquid_not_connected">No conectado</string>
     <string name="liquid_not_connected_hint">Conéctate a un servidor Liquid Electrum para sincronizar tu monedero y enviar transacciones.</string>
-    <string name="liquid_status_connecting">Conectandoâ¦</string>
-    <string name="liquid_connecting_hint">Conectando a Liquid Electrumâ¦</string>
+    <string name="liquid_status_connecting">Conectando...</string>
+    <string name="liquid_connecting_hint">Conectando a Liquid Electrum...</string>
     <string name="liquid_connect_server">Conectar</string>
     <string name="electrum_not_connected">Sin conexión</string>
     <string name="electrum_not_connected_hint">Conéctate a un servidor Electrum para sincronizar tu monedero y enviar transacciones.</string>
@@ -245,6 +299,7 @@
     <string name="privacy_mode_hint_message">Los saldos están ocultos. Mantén pulsado el icono de privacidad para desactivarlo.</string>
     <string name="common_copy_with_label">Copiar %1$s</string>
     <string name="common_show_all_remaining_format">Mostrar todo (%1$d restantes)</string>
+    <string name="common_show_less">Mostrar menos</string>
     <string name="editable_label_chip_add" formatted="false">+ Etiqueta</string>
     <string name="spark_search_history_placeholder">Buscar etiquetas, ID de pago, método o fecha...</string>
     <string name="spark_loading_wallet_message">Spark se está cargando para esta billetera</string>
@@ -254,7 +309,14 @@
     <string name="spark_deposit_note_message">Los depósitos on-chain de Spark necesitan 3 confirmaciones antes de acreditarse en tu saldo Spark.</string>
     <string name="spark_deposit_note_confirmed_message">Los depósitos on-chain confirmados se acreditan automáticamente en tu saldo Spark.</string>
     <string name="spark_deposit_claim_title">Reclamar</string>
+    <string name="spark_deposit_claim_section_title">Reclamación inmediata</string>
     <string name="spark_deposit_claim_manual_needed">Puede ser necesario reclamar manualmente</string>
+    <string name="spark_deposit_claim_checking">Comprobando reclamación inmediata…</string>
+    <string name="spark_deposit_claim_credit">Recibes</string>
+    <string name="spark_deposit_claim_fee">Comisión de reclamación</string>
+    <string name="spark_deposit_claim_fee_note">La comisión la deduce del depósito la transacción de reclamación.</string>
+    <string name="spark_deposit_claim_estimated">Comisión estimada</string>
+    <string name="spark_deposit_claim_done">Depósito reclamado</string>
     <string name="spark_payment_id_title">ID de pago</string>
     <string name="spark_payment_id_copy_label">ID de pago de Spark</string>
     <string name="spark_deposit_txid_copy_label">ID de transacción del depósito de Spark</string>
@@ -285,22 +347,22 @@
     <string name="l1_send_status_step_broadcast_title">Transmitiendo transacción</string>
     <string name="l1_send_status_step_broadcast_detail">Enviando la transacción firmada a la red.</string>
     <string name="send_estimated_vbytes_format">(%1$s vB)</string>
-    <string name="coin_control_selected_summary_format">%1$d seleccionados â¢ %2$s</string>
+    <string name="coin_control_selected_summary_format">%1$d seleccionados - %2$s</string>
     <string name="swap_coin_control_utxo_badge_format">UTXOs (%1$d)</string>
-    <string name="all_addresses_keychain_index_format">%1$s n.Âº %2$d</string>
+    <string name="all_addresses_keychain_index_format">%1$s n.º %2$d</string>
     <string name="utxo_list_summary_with_frozen">%1$d UTXO (%2$d congelados)</string>
     <string name="utxo_list_search_matches">%1$d coincidencias / %2$d en total</string>
     <string name="import_multisig_policy_line">%1$s multifirma</string>
     <string name="import_wallet_cosigners_line">Cosignadores: %1$d</string>
-    <string name="import_backup_labels_line">Etiquetas: %1$s Â· %2$s</string>
-    <string name="import_backup_server_settings_line">Ajustes del servidor: %1$s</string>
-    <string name="import_wallet_address_line_watch">%1$s (%2$s)</string>
+    <string name="import_multisig_mismatch">El descriptor de cambio no coincide con el descriptor de recepción</string>
+    <string name="psbt_change_address_label">Dirección de cambio</string>
+    <string name="psbt_change_not_mine_warning">El cambio no es de esta billetera — no transmitir</string>
     <string name="wallet_address_type_legacy_title">Legacy</string>
     <string name="wallet_address_type_segwit_title">SegWit</string>
     <string name="wallet_address_type_taproot_title">Taproot</string>
-    <string name="wallet_address_type_legacy_description">P2PKH â direcciones legacy empiezan por 1</string>
-    <string name="wallet_address_type_segwit_description">P2WPKH â SegWit nativo empieza por bc1q</string>
-    <string name="wallet_address_type_taproot_description">P2TR â Taproot empieza por bc1p</string>
+    <string name="wallet_address_type_legacy_description">P2PKH - direcciones legacy empiezan por 1</string>
+    <string name="wallet_address_type_segwit_description">P2WPKH - SegWit nativo empieza por bc1q</string>
+    <string name="wallet_address_type_taproot_description">P2TR - Taproot empieza por bc1p</string>
     <string name="wallet_auto_name_watch_format">Watch %1$s</string>
     <string name="wallet_auto_name_key_format">Key %1$s</string>
     <string name="wallet_electrum_seed_variant_standard">Standard</string>
@@ -430,7 +492,6 @@
     <string name="loc_1b684325" formatted="false">Pendiente</string>
     <string name="loc_03b82433" formatted="false">Lightning</string>
     <string name="loc_fd030147" formatted="false">Direccion de solo lectura</string>
-    <string name="loc_25d748f3" formatted="false">Solo lectura</string>
     <string name="loc_24d8d452" formatted="false">Frase semilla</string>
     <string name="loc_27bd3430" formatted="false">Bloquear</string>
     <string name="loc_f08db23b" formatted="false">Sinc. completa</string>
@@ -669,15 +730,12 @@
     <string name="loc_e81bc2a8" formatted="false">Crear</string>
     <string name="loc_a34ad456" formatted="false">12 palabras</string>
     <string name="loc_4e15e68f" formatted="false">24 palabras</string>
-    <string name="loc_53017e88" formatted="false">No se pudo leer el archivo de copia</string>
     <string name="loc_e61e3fea" formatted="false">No se pudo leer el archivo</string>
     <string name="loc_74b37443" formatted="false">Par de descriptores Liquid inválido. Pega un descriptor ct(...) combinado o un par /0/* y /1/* correspondiente.</string>
     <string name="loc_a8d202fe" formatted="false">Descriptor Liquid inválido.</string>
     <string name="loc_964abaa1" formatted="false">Checksum inválido</string>
     <string name="loc_6dfe3462" formatted="false">Multisig</string>
     <string name="loc_c821b501" formatted="false">Liquid_WatchOnly</string>
-    <string name="loc_94b6dca8" formatted="false">Contraseña incorrecta</string>
-    <string name="loc_20968582" formatted="false">Falló el descifrado</string>
     <string name="loc_aeabc606" formatted="false">Importar</string>
     <string name="loc_7c2117d5" formatted="false">Importación manual</string>
     <string name="loc_9ae2cb2b" formatted="false">Importar</string>
@@ -708,25 +766,8 @@
     <string name="loc_255d09fd" formatted="false">Billetera multisig</string>
     <string name="loc_7999830a" formatted="false">Importa un archivo de configuración o introduce cosignatarios manualmente</string>
     <string name="loc_1db77587" formatted="false">o</string>
-    <string name="loc_0e42bd4f" formatted="false">Restaurar archivo de billetera</string>
-    <string name="loc_0eeb7864" formatted="false">Importa un archivo de copia de Ibis Wallet</string>
-    <string name="loc_e4783294" formatted="false">Seleccionar archivo de copia</string>
-    <string name="loc_5bc64b9b" formatted="false">Leyendo archivo de copia...</string>
-    <string name="loc_ab6580da" formatted="false">Revisar copia seleccionada</string>
     <string name="loc_380cec3b" formatted="false">Barrer clave privada</string>
     <string name="loc_ba4c3466" formatted="false">Clave WIF de entrada</string>
-    <string name="loc_3de64ebf" formatted="false">Copia lista para restaurar</string>
-    <string name="loc_929a5c05" formatted="false">block explorer</string>
-    <string name="loc_90799139" formatted="false">fee source</string>
-    <string name="loc_52640f61" formatted="false">Liquid explorer</string>
-    <string name="loc_b61cfdd3" formatted="false">Liquid connectivity</string>
-    <string name="loc_82807e0f" formatted="false">Importar ajustes del servidor</string>
-    <string name="loc_997e26df" formatted="false">Servidores Electrum y servicios externos</string>
-    <string name="loc_867cb15f" formatted="false">Copia cifrada</string>
-    <string name="loc_bf01e3a2" formatted="false">Introduce la contraseña para descifrar y revisar esta copia.</string>
-    <string name="loc_7a2478a8" formatted="false">Restaurar billetera</string>
-    <string name="loc_f73683e2" formatted="false">Descifrar copia</string>
-    <string name="loc_e18f112a" formatted="false">Elegir otro archivo</string>
     <string name="loc_68a4806d" formatted="false">Multisig manual</string>
     <string name="loc_698ba835" formatted="false">Umbral</string>
     <string name="loc_ab662431" formatted="false">Ruta</string>
@@ -740,7 +781,6 @@
     <string name="loc_d44eca4c" formatted="false">Frase semilla o [huella/ruta]xprv...</string>
     <string name="loc_5237cff5" formatted="false">Usa una semilla BIP39 o un xprv con origen que coincida con la huella de un cosignatario.</string>
     <string name="loc_acfc8aab" formatted="false">Use</string>
-    <string name="loc_a422f393">Nombre: %1$s</string>
     <string name="loc_1bdca9b7" formatted="false">Filtrar transacciones Liquid</string>
     <string name="loc_ce31119b" formatted="false">Filtrar transacciones Lightning</string>
     <string name="loc_2fd2faaa" formatted="false">Liquid se está cargando para esta billetera</string>
@@ -786,7 +826,7 @@
     <string name="loc_777771dd" formatted="false">Nueva factura</string>
     <string name="loc_91a0293c" formatted="false">Generar factura</string>
     <string name="pending_lightning_invoices_title" formatted="false">Facturas pendientes</string>
-    <string name="pending_lightning_invoice_delete_title" formatted="false">Â¿Eliminar factura pendiente?</string>
+    <string name="pending_lightning_invoice_delete_title" formatted="false">¿Eliminar factura pendiente?</string>
     <string name="pending_lightning_invoice_delete_message" formatted="false">Esto elimina la factura pendiente de la lista. Si ya fue pagada pero no recibida, aún podrías tener que reclamarla.</string>
     <string name="pending_lightning_invoice_boltz_id" formatted="false">ID de Boltz</string>
     <string name="pending_lightning_invoice_last_claim_format">Último reclamo: %1$s</string>
@@ -966,7 +1006,7 @@
     <string name="loc_f7b9c073" formatted="false">Todos los datos de la billetera se borrarán de forma permanente tras varios fallos de desbloqueo. No se puede deshacer.</string>
     <string name="loc_5ed5bb5d" formatted="false">Asegúrate de tener respaldo de tus frases semilla. Sin copia, perderás los fondos permanentemente.</string>
     <string name="loc_c47ba42d" formatted="false">Desactivar seguridad?</string>
-    <string name="loc_38a084fc" formatted="false">Cualquiera con acceso a tu dispositivo podrá abrir la app.</string>
+    <string name="loc_38a084fc" formatted="false">Cualquiera con acceso a tu dispositivo podrá abrir la app. Los secretos del monedero dejarán de usar el cifrado de sesión y dependerán solo del cifrado del dispositivo.</string>
     <string name="loc_40a878b7" formatted="false">Crear PIN</string>
     <string name="loc_c3d36da0" formatted="false">Confirmar PIN</string>
     <string name="loc_c3c70203" formatted="false">Introduce el PIN de nuevo para confirmar</string>
@@ -1121,7 +1161,7 @@
     <string name="loc_6203b65d" formatted="false">Comisiones de transferencia del proveedor</string>
     <string name="loc_00a16e52" formatted="false">Comisiones</string>
     <string name="loc_7d9effcf" formatted="false">Comisiones totales (est.)</string>
-    <string name="swap_review_approx_fee_rate">â %1$s %2$s</string>
+    <string name="swap_review_approx_fee_rate">~ %1$s %2$s</string>
     <string name="loc_94bea00f" formatted="false">Enviando intercambio...</string>
     <string name="loc_7a4eb12d" formatted="false">Confirmar intercambio</string>
     <string name="loc_75935701" formatted="false">Resumen del intercambio</string>
@@ -1194,7 +1234,7 @@
     <string name="balance_have_output_wallet_format">Tiene: %1$s %2$s (salida + billetera)</string>
     <string name="balance_insufficient_funds_available_format">Fondos insuficientes (Disponible: %1$s %2$s)</string>
     <string name="liquid_fee_sats_format">Comisión: %1$s sats</string>
-    <string name="liquid_fee_rate_vbytes_format">%1$s sat/vB â¢ %2$s vB</string>
+    <string name="liquid_fee_rate_vbytes_format">%1$s sat/vB - %2$s vB</string>
     <string name="liquid_source_chain_swap">Intercambio en cadena BTC/L-BTC</string>
     <string name="liquid_source_lightning_receive_swap">Intercambio Lightning entrante de Boltz</string>
     <string name="liquid_source_lightning_send_swap">Intercambio Lightning saliente de Boltz</string>
@@ -1230,11 +1270,11 @@
     <string name="security_randomize_pin_subtitle">Barajar los dígitos del teclado al desbloquear</string>
     <string name="security_enter_pin_range_format">Ingresa un PIN de %1$d-%2$d dígitos</string>
     <string name="security_cloak_restart_message">Reinicia la app para activar el modo camuflaje.&#10;&#10;Introduce tu PIN camuflado en la calculadora y pulsa la tecla = para desbloquear.</string>
-    <string name="server_delete_confirmation_format">Â¿Seguro que quieres eliminar "%1$s"?</string>
+    <string name="server_delete_confirmation_format">¿Seguro que quieres eliminar "%1$s"?</string>
     <string name="settings_spark_subtitle">Statechain con confianza minimizada</string>
     <string name="settings_ark_subtitle">VTXOs con confianza minimizada</string>
     <string name="settings_ark_external_services_title">Servicios externos de Ark</string>
-    <string name="settings_ark_auto_delegated_refresh_title">Refresh automático</string>
+    <string name="settings_ark_auto_delegated_refresh_title">Refresh Automático</string>
     <string name="settings_ark_auto_delegated_refresh_subtitle">Programa refreshes antes de que las salidas venzan.</string>
     <string name="settings_lightning_subtitle">Canales de pago sin confianza</string>
     <string name="settings_custom_server_placeholder">http://192.168... o http://...onion</string>
@@ -1321,7 +1361,7 @@
 <!-- End generated UI localization strings. -->
     <string name="ark_title">Ark</string>
     <string name="ark_quick_receive_title">Dirección Ark</string>
-    <string name="ark_pending_breakdown_format">Pendiente · round %1$s · depósito %2$s · exit %3$s</string>
+    <string name="ark_balance_pending_refresh_format">Refresh pendiente: %1$s</string>
     <string name="ark_history_empty">Aún no hay historial de Ark</string>
     <string name="ark_send_destination_hint">Bitcoin, Ark, BOLT 11, BOLT 12, or LNURL</string>
     <string name="ark_available_format">Disponible %1$s</string>
@@ -1331,6 +1371,7 @@
     <string name="ark_send_status_submitting">Enviando…</string>
     <string name="ark_send_status_sent_title">Pago Ark enviado</string>
     <string name="ark_send_status_failed_title">Pago Ark fallido</string>
+    <string name="ark_send_input_not_spendable">Pago fallido: los fondos ya no están disponibles. Sincronizado — reintenta.</string>
     <string name="ark_send_status_message">Revisión confirmada. Ark está ejecutando la transferencia.</string>
     <string name="ark_send_status_step_review_title">Revisión confirmada</string>
     <string name="ark_send_status_step_review_detail">Se aprobaron monto, destinatario y tarifa.</string>
@@ -1382,11 +1423,11 @@
     <string name="ark_refresh_needed_format">%1$d VTXO(s) pendientes de refresh</string>
     <string name="ark_refresh_action">Refresh</string>
     <string name="ark_refresh_quote">Refresh manual</string>
+    <string name="ark_refresh_all">Refresh todo</string>
     <string name="ark_refresh_confirm">Confirmar refresh</string>
-    <string name="ark_refresh_review_title">Revisión de refresh</string>
     <string name="ark_refresh_review_count_format">%1$d VTXO(s) seleccionados</string>
     <string name="ark_refresh_scheduled_height_format">Programado en el bloque %1$d</string>
-    <string name="ark_ln_receive_fee_format">Comisión de recepción %1$s</string>
+    <string name="ark_ln_receive_fee_format">Comisión de recepción %1$s (descontada al reclamar)</string>
     <string name="ark_refresh_empty">Ningún VTXO necesita refresh</string>
     <string name="ark_vtxo_needs_refresh">Pendiente de refresh</string>
     <string name="ark_refresh_all_vtxos">Todos los VTXOs</string>
@@ -1394,8 +1435,6 @@
     <string name="ark_exit_start_all">Salir todos</string>
     <string name="ark_exit_confirm_title">¿Iniciar exit unilateral?</string>
     <string name="ark_exit_confirm_action">Iniciar exit</string>
-    <string name="ark_exit_confirm_all_body">Saca on-chain todos los VTXO gastables. Emite transacciones, paga comisiones de minero y bloquea fondos tras el timelock del exit.</string>
-    <string name="ark_exit_confirm_selected_body">Saca on-chain %1$d VTXO(s) seleccionados. Emite transacciones, paga comisiones de minero y bloquea fondos tras el timelock del exit.</string>
     <string name="ark_exit_confirm_amount_format">Monto: %1$s</string>
     <string name="ark_exit_confirm_irreversible">Irreversible cuando se emita la tx de exit. Reclama a una dirección Bitcoin verificada cuando esté lista.</string>
     <string name="ark_error_refresh_delegated_failed">Falló el refresh delegado</string>
@@ -1408,24 +1447,25 @@
     <string name="ark_refresh_next_blocks_only_format">Próximo refresh requerido en %1$d bloques</string>
     <string name="ark_refresh_next_blocks_format">Próximo refresh requerido en %1$d bloques (bloque %2$d)</string>
     <string name="ark_refresh_tip_and_required_format">Punta de cadena %1$d | requerido en el bloque %2$d</string>
-    <string name="ark_refresh_earliest_expiry_format">El VTXO mas cercano expira en %1$d bloques</string>
+    <string name="ark_refresh_earliest_expiry_format">El VTXO más cercano expira en %1$d bloques</string>
     <string name="ark_vtxo_expiry_blocks_short_format">Expira en %1$d bloques</string>
     <string name="ark_vtxo_expiry_now_short">Expirando ahora</string>
-    <string name="ark_refresh_current">Ningun VTXO necesita refresh aun</string>
+    <string name="ark_refresh_current">Ningún VTXO necesita refresh aún</string>
     <string name="ark_refresh_no_outputs">No hay salidas gastables</string>
-    <string name="ark_refresh_review_action">Revisar refresh</string>
-    <string name="ark_refresh_auto_short">Programa antes de que las salidas venzan.</string>
+    <string name="ark_refresh_auto_short">Refresca los VTXO(s) automáticamente ~144 bloques antes de que venzan. Solo funciona con la billetera abierta. Omite el refresh automático si la tarifa supera los 5000 sats.</string>
     <string name="ark_refresh_review_outputs">Salidas</string>
     <string name="ark_refresh_review_mode">Modo</string>
     <string name="ark_refresh_review_block">Bloque programado</string>
     <string name="ark_refresh_review_fee">Comisión</string>
     <string name="ark_refresh_mode_scheduled">Programado</string>
     <string name="ark_refresh_mode_next_round">Próxima ronda</string>
-    <string name="ark_refresh_scheduled_fee_note">Estimada con la tabla de comisiones del servidor para ese bloque.</string>
+    <string name="ark_refresh_next_round_note">Se ejecuta en la próxima ronda del ASP.</string>
+    <string name="ark_refresh_next_round_interval_format">Se ejecuta en la próxima ronda del ASP (aprox. cada %1$d min).</string>
     <string name="ark_refresh_scheduled_title">Refresh programado</string>
     <string name="ark_refresh_scheduled_body">Programado para el bloque %1$d. Ark lo completará automáticamente.</string>
     <string name="ark_refresh_submitted_title">Refresh enviado</string>
     <string name="ark_refresh_submitted_body">Esperando la próxima ronda Ark.</string>
+    <string name="ark_refresh_round_failed">Falló la ronda Ark. Revisa y reintenta el refresh.</string>
     <string name="ark_refresh_scheduled_inline">Programado para el bloque %1$d</string>
     <string name="ark_refresh_pending_inline">Enviado a la próxima ronda</string>
     <string name="ark_vtxo_state_locked">Round pendiente</string>
@@ -1438,7 +1478,8 @@
     <string name="ark_exit_claimable_format">%1$d reclamable(s) · %2$s</string>
     <string name="ark_exit_status_claimable_suffix"> · reclamable</string>
     <string name="ark_exit_destination_hint">Dirección Bitcoin de claim</string>
-    <string name="ark_exit_warning">Recupera fondos Ark on-chain si el ASP desaparece</string>
+    <string name="ark_exit_claim_fee_rate_hint">Comisión sat/vB (vacío = auto)</string>
+    <string name="ark_exit_warning">Recupera fondos Ark on-chain si el ASP desaparece. Mueve los fondos a una dirección Bitcoin bajo tu control, pero tarda varios bloques y cuesta comisiones on-chain.</string>
     <string name="ark_exit_active_format">%1$d pendientes · %2$s</string>
     <string name="ark_exit_ready_to_broadcast">Listo para transmitir</string>
     <string name="ark_exit_waiting_short">Esperando confirmaciones</string>
@@ -1447,14 +1488,23 @@
     <string name="ark_exit_broadcast_review_title">Revisar transmisión</string>
     <string name="ark_exit_broadcast_action">Transmitir</string>
     <string name="ark_exit_broadcasting">Transmitiendo…</string>
-    <string name="ark_exit_review_funds">Fondos</string>
-    <string name="ark_exit_review_count">Salidas</string>
-    <string name="ark_exit_review_fee">Comisión minera estimada</string>
-    <string name="ark_exit_review_required">Fondos confirmados necesarios</string>
-    <string name="ark_exit_review_available">Fondos confirmados para comisión</string>
-    <string name="ark_exit_review_add_funds_format">Añade %1$s</string>
-    <string name="ark_exit_review_add_funds_hint">Recibe fondos on-chain en Ark y espera la confirmación.</string>
-    <string name="ark_exit_review_irreversible">La transmisión inicia un exit on-chain irreversible.</string>
+    <string name="ark_exit_review_funds">Saliendo</string>
+    <string name="ark_exit_review_count">VTXO(s)</string>
+    <string name="ark_exit_review_fee">Comisión estimada</string>
+    <string name="ark_exit_review_total_estimate">Sobrecoste requerido</string>
+    <string name="ark_exit_review_total_fee">Comisión de broadcast</string>
+    <string name="ark_exit_review_claim_fee">Comisión de reclamo</string>
+    <string name="ark_exit_fee_calculating">Calculando…</string>
+    <string name="ark_exit_review_required">Comisión necesaria</string>
+    <string name="ark_exit_review_available">Fondos disponibles</string>
+    <string name="ark_exit_emergency_fee_unfundable">Las estimaciones de comisión del broadcast del exit necesitan más fondos on-chain confirmados de los disponibles.</string>
+    <string name="ark_exit_fee_requirement_note">Las comisiones salen del saldo confirmado on-chain, no de los VTXO en salida. Si falta, recarga tu dirección BTC on-chain de Ark y espera la confirmación.</string>
+    <string name="ark_exit_backup_ack_warning">No hay copia de seguridad de la base de datos configurada. Si el dispositivo pierde los datos del wallet a mitad de la salida, los fondos podrían no recuperarse solo con la frase semilla.</string>
+    <string name="ark_exit_backup_ack_check">Acepto el riesgo</string>
+    <string name="ark_exit_recovery_required_format">%1$d VTXO(s) en salida no se recuperaron. Restaura la copia de la base de datos para gestionarlos.</string>
+    <string name="ark_exit_review_eta">Se completa en</string>
+    <string name="ark_exit_eta_blocks_format">~%1$d bloques</string>
+    <string name="ark_exit_review_irreversible">Iniciar registra el exit y aún se puede cancelar antes del broadcast. Después del broadcast es irreversible.</string>
     <string name="ark_exit_fee_unavailable">No disponible</string>
     <string name="ark_exit_claim_review_title">Revisar claim</string>
     <string name="ark_exit_no_outputs">No hay salidas gastables</string>
@@ -1489,18 +1539,26 @@
     <string name="ark_mailbox_recovery_completed">Recovery del mailbox completada</string>
     <string name="ark_mailbox_recovery_no_report">La recovery del mailbox no se ejecutó. Prueba Full Sync de nuevo.</string>
     <string name="ark_mailbox_recovery_not_applied">El mailbox recuperó VTXOs pero no aparecen. Prueba Full Sync de nuevo.</string>
-    <string name="ark_mailbox_recovery_report_format">VTXOs: recuperados %1$d · omitidos %2$d (gastados/reemplazados) · fallidos %3$d · ajenos %4$d · salidos %5$d</string>
+    <string name="ark_mailbox_recovery_scan_failed">Falló el escaneo de recovery — pueden faltar fondos. Reintenta Full Sync.</string>
+    <string name="ark_drift_rescan_notice">Actividad de otro dispositivo detectada — reescaneando el monedero.</string>
+    <string name="ark_mailbox_rescan_action">Reescanear Mailbox</string>
+    <string name="ark_mailbox_rescan_subtitle">Revisa el mailbox del ASP por fondos perdidos.</string>
+    <string name="ark_mailbox_rescan_result_title">Último escaneo del mailbox</string>
+    <string name="ark_mailbox_rescan_started">Datos desactualizados detectados - reescaneando mailbox.</string>
+    <string name="ark_mailbox_rescan_blocked">Rescan no disponible mientras un refresh, exit o board esté en curso.</string>
+    <string name="ark_mailbox_recovery_report_format">VTXOs: recuperados %1$d, omitidos %2$d (gastados/reemplazados), fallidos %3$d, ajenos %4$d, salidos %5$d</string>
     <string name="ark_onchain_unavailable">Wallet on-chain de Ark no disponible — los depósitos de BTC no se acreditan. Revisa Esplora y actualiza.</string>
     <string name="ark_mailbox_recovery_failed_format">Falló la recovery del mailbox: %1$s</string>
     <string name="ark_db_backup_title">Ark Backup</string>
     <string name="ark_db_backup_subtitle">Exporta o importa la base de datos Bark local de este monedero (VTXO). Cifrada con la seed del monedero: solo este monedero puede restaurarla. La misma seed ya debe estar cargada antes de importar.</string>
     <string name="ark_db_backup_warning">BIP39 seed recuperará los fondos Ark mientras el ASP esté disponible; si el ASP se desconecta se necesita una copia de la DB Ark para recuperar. Las copias externas sobreviven al borrar el monedero y al auto-wipe.</string>
     <string name="ark_db_backup_encrypted_note">Las copias se cifran con una clave derivada de la seed de este monedero.</string>
-    <string name="ark_db_auto_backup_title">Copia automática</string>
+    <string name="full_backup_excludes_ark_db">La copia completa no incluye las bases de datos Ark — respáldalas desde la pestaña Ark Backup.</string>
+    <string name="ark_db_auto_backup_title">Copia Automática</string>
     <string name="ark_db_auto_backup_subtitle">Instantánea cifrada automática de la DB Ark en una carpeta externa tras actividad de VTXO.</string>
     <string name="ark_db_auto_backup_last_format">Última instantánea: %1$s</string>
     <string name="ark_db_auto_backup_last_never">Aún no hay instantánea</string>
-    <string name="ark_db_auto_backup_latest_title">Última instantánea</string>
+    <string name="ark_db_auto_backup_latest_title">Última Instantánea</string>
     <string name="ark_db_auto_backup_detail_when">Cuándo</string>
     <string name="ark_db_auto_backup_detail_file">Archivo</string>
     <string name="ark_db_auto_backup_detail_size">Tamaño</string>
@@ -1524,6 +1582,7 @@
     <string name="ark_db_export_progress">Exportando DB Ark…</string>
     <string name="ark_db_import_progress">Importando DB Ark…</string>
     <string name="ark_db_restore_progress">Restaurando DB Ark…</string>
+    <string name="ark_db_rescan_progress">Reescaneando mailbox…</string>
     <string name="ark_db_export_done">DB Ark cifrada exportada</string>
     <string name="ark_db_import_done">DB Ark importada</string>
     <string name="ark_db_export_empty">No hay datos Ark locales para exportar</string>
@@ -1569,39 +1628,31 @@
     <string name="ark_transfer_withdrawal_fee">Tarifa de retiro</string>
     <string name="ark_transfer_deposit_fee_note">Tarifa de fondeo Layer 1 para depósito Ark</string>
     <string name="ark_transfer_withdrawal_fee_note">Tarifa de retiro cooperativo fijada por el ASP</string>
-    <string name="ark_transfer_min_board_format">Mín %1$s</string>
-    <string name="ark_transfer_below_min_board_format">Por debajo del mínimo del ASP (%1$s)</string>
-    <string name="ark_receive_onchain_min_board_format">Depósito mínimo del ASP %1$s</string>
-    <string name="ark_receive_onchain_min_label">Depósito mínimo del ASP</string>
-    <string name="ark_board_below_min_format">%1$s on-chain está por debajo del depósito mínimo ASP de %2$s y no se puede acreditar en Ark. Recupéralo a Layer 1.</string>
-    <string name="ark_board_below_min_shortfall_format">%1$s on-chain está por debajo del depósito mínimo ASP de %2$s (faltan %3$s) y no se puede acreditar en Ark. Recupéralo a Layer 1.</string>
-    <string name="ark_stuck_below_min_banner_format">%1$s está por debajo del depósito mínimo de %2$s y no se puede acreditar en Ark.</string>
-    <string name="ark_stuck_below_min_top_up">Añadir</string>
-    <string name="ark_stuck_below_min_recover">Recuperar a L1</string>
-    <string name="ark_boarding_below_min_actions_note">Añade más BTC hasta que el depósito alcance el mínimo, o envía todos los fondos confirmados de vuelta a tu monedero Layer 1.</string>
+    <string name="ark_transfer_board_fee">Tarifa de board de Ark</string>
+    <string name="ark_transfer_board_fee_note">Tarifa de barrido + servicio del ASP para el board</string>
+    <string name="ark_boarding_recover_to_l1">Recuperar todo a L1</string>
     <string name="ark_boarding_recover_dialog_title">Recuperar a L1</string>
-    <string name="ark_boarding_recover_dialog_body">Todos los fondos on-chain confirmados en Ark se enviarán a tu dirección de recepción Layer 1. Esto no se puede deshacer.</string>
+    <string name="ark_boarding_recover_dialog_body">Todos los fondos on-chain confirmados en Ark se enviarán a tu dirección de recepción Layer 1.</string>
     <string name="ark_boarding_recover_dialog_address_label">Destino</string>
     <string name="ark_boarding_recover_dialog_confirm">Confirmar recuperación</string>
     <string name="ark_boarding_recover_dialog_no_address">Genera primero una dirección Layer 1</string>
-    <string name="ark_boarding_top_up_note">Envía más BTC a esta dirección on-chain hasta alcanzar el mínimo.</string>
     <string name="ark_boarding_recover_note">Envía todos los fondos on-chain confirmados de vuelta a tu monedero Layer 1.</string>
-    <string name="ark_boarding_board_note">Acredita este depósito en Ark como saldo gastable.</string>
     <string name="ark_manage_tab_boarding">Boarding</string>
-    <string name="ark_boarding_title">Depósitos on-chain</string>
+    <string name="ark_boarding_title">Depósitos On-Chain</string>
     <string name="ark_boarding_empty">Sin depósitos on-chain</string>
     <string name="ark_boarding_auto_title">Auto-board</string>
-    <string name="ark_boarding_auto_note">Si está activo, los depósitos confirmados que alcanzan el mínimo se depositan en Ark automáticamente.</string>
-    <string name="ark_boarding_auto_note_format">Si está activo, los depósitos confirmados que alcanzan el mínimo se depositan en Ark automáticamente.</string>
-    <string name="ark_boarding_auto_note_unknown_min">Si está activo, los depósitos confirmados que alcanzan el mínimo se depositan en Ark automáticamente.</string>
+    <string name="ark_boarding_auto_note">Los depósitos confirmados son depositados en Ark automáticamente una vez alcanzado el mínimo del ASP.</string>
     <string name="ark_boarding_disabled_exit">Boarding desactivado mientras hay un exit unilateral en curso.</string>
     <string name="ark_board_disabled_exit">Boarding desactivado mientras hay un exit unilateral en curso.</string>
     <string name="ark_board_failed_generic">Boarding fallido</string>
+    <string name="ark_board_no_fallback_address">Board fallido y no hay dirección de depósito disponible</string>
+    <string name="ark_board_broadcast_mismatch">Verificación del broadcast fallida — reintenta</string>
     <string name="ark_board_success_format">Depositado %1$s</string>
     <string name="ark_boarding_board">Board</string>
-    <string name="ark_boarding_board_all">Depositar todo listo</string>
-    <string name="ark_boarding_min_format">Mín. ASP %1$s</string>
-    <string name="ark_boarding_shortfall_format">Faltan %1$s para el boarding</string>
+    <string name="ark_boarding_board_all">Depositar todo</string>
+    <string name="ark_boarding_board_selected">Depositar seleccionados</string>
+    <string name="ark_boarding_min_format">Mínimo de boarding ASP: %1$s</string>
+    <string name="ark_boarding_below_min_actions_note">Deposita más BTC en tu dirección on-chain de Ark hasta alcanzar el mínimo, o devuelve todos los fondos confirmados a tu monedero Layer 1.</string>
     <string name="ark_boarding_confirmations_format">%1$d confirmaciones</string>
     <string name="ark_boarding_confirmations_one">1 confirmación</string>
     <string name="ark_boarding_unconfirmed">Sin confirmar</string>
@@ -1609,11 +1660,7 @@
     <string name="ark_boarding_badge_ready">Listo</string>
     <string name="ark_boarding_badge_unconfirmed">Sin confirmar</string>
     <string name="ark_boarding_balance_banner_format">%1$s on-chain sin depositar</string>
-    <string name="ark_boarding_balance_banner_below_min_format">%1$s on-chain sin depositar (mín. ASP %2$s)</string>
-    <string name="ark_boarding_balance_banner_action">Gestionar boarding</string>
     <string name="ark_boarding_amount_select_note">Bark deposita por importe (no por outpoint).</string>
-    <string name="ark_history_badge_below_min">Por debajo del mínimo</string>
-    <string name="ark_history_status_below_min">Por debajo del mínimo</string>
     <string name="ark_history_badge_recovered_l1">Recuperado a L1</string>
     <string name="ark_history_title_recovered">Recuperado</string>
     <string name="ark_history_recovered_to">Recuperado a</string>
@@ -1642,6 +1689,7 @@
     <string name="ark_deposit_note_confirmed">El depósito alcanzó el umbral de confirmaciones. Ark acredita el saldo gastable cuando termina el depósito.</string>
     <string name="ark_deposit_note_pending_format">Los depósitos Bitcoin on-chain pueden necesitar hasta %1$d confirmaciones antes de que el ASP los acredite en Ark.</string>
     <string name="ark_deposit_note_confirmed_format">El depósito alcanzó %1$d confirmaciones. Ark acredita el saldo gastable cuando termina el depósito.</string>
+    <string name="ark_deposit_note_preboard_format">Fondos confirmados on-chain, el boarding aún no ha empezado. La transacción de board necesita %1$d confirmaciones antes de que Ark acredite los fondos.</string>
     <string name="ark_deposit_status_awaiting_confirmations">Esperando 3 confirmaciones</string>
     <string name="ark_withdrawal_note">Los retiros cooperativos se liquidan en Bitcoin a la dirección de destino.</string>
     <string name="ark_review_fee_bitcoin">Tarifa de red Bitcoin:</string>
@@ -1664,6 +1712,7 @@
     <string name="ark_error_silent_payments">Silent payments no son compatibles</string>
     <string name="ark_error_nothing_prepared">Nada preparado</string>
     <string name="ark_error_amount_required">Se requiere un monto</string>
+    <string name="ark_error_exit_in_progress">Salida en curso — inténtalo de nuevo enseguida</string>
     <string name="ark_send_may_have_completed_format">El pago puede haberse completado — verifica antes de reintentar. %1$s</string>
     <string name="ark_send_lightning_timeout">El pago Lightning agotó el tiempo de espera</string>
     <string name="ark_send_lightning_settled_detail">Pago liquidado</string>
@@ -1688,10 +1737,15 @@
     <string name="ark_error_esplora_dns">DNS de Esplora falló — prueba otra red o configura una URL Esplora alcanzable</string>
     <string name="ark_error_chain_source">Fuente on-chain no disponible — revisa URL Esplora / red</string>
     <string name="ark_error_asp_unreachable">Servidor Ark inalcanzable</string>
+    <string name="ark_error_fee_unavailable">Cotización de comisión no disponible - inténtalo de nuevo</string>
+    <string name="ark_error_tor_clearnet_blocked">Tor activado: Esplora clearnet bloqueado. Usa un Esplora onion o desactiva Tor.</string>
+    <string name="ark_error_tor_bootstrap_timeout">Tiempo de espera de Tor agotado para Esplora onion</string>
+    <string name="ark_tor_asp_direct_note">El servidor Ark siempre conecta directo, aun con Tor. Solo Esplora onion usa Tor.</string>
     <string name="ark_error_datadir_locked">El monedero Ark está cerrando una sesión anterior — inténtalo de nuevo en un momento</string>
     <string name="l2_error_silent_payments">Silent payments no son compatibles aquí</string>
     <string name="l2_error_bitcoin_not_on_liquid">Las direcciones Bitcoin no son compatibles en el envío Liquid</string>
     <string name="l2_error_liquid_not_supported">Las solicitudes Liquid no son compatibles aquí</string>
+    <string name="l2_error_liquid_mainnet_only">Solo se admite Liquid mainnet.</string>
     <string name="l2_error_spark_not_supported">Las solicitudes Spark no son compatibles aquí</string>
     <string name="l2_error_ark_not_supported">Las direcciones Ark no son compatibles aquí</string>
     <string name="l2_error_amountless_invoice">Las facturas Lightning sin monto no son compatibles</string>
@@ -1707,6 +1761,81 @@
     <string name="spark_error_connection">Fallo de conexión Spark</string>
     <string name="spark_error_unavailable">Servicio Spark no disponible</string>
     <string name="spark_error_generic">Solicitud Spark fallida</string>
+    <string name="spark_send_session_expired">El pago Spark caducó. Revísalo de nuevo.</string>
+    <string name="spark_send_self_payment">Spark no permite enviar a tu propia dirección. Para consolidar hojas pequeñas, lleva todo a Layer 1 con un Intercambio y devuélvelo en un único depósito.</string>
+    <string name="spark_transfer_withdrawal_failed">Retiro Spark fallido</string>
     <string name="layer1_address_not_ready">Dirección Layer 1 no lista</string>
     <string name="ark_error_testnet_address">Las direcciones Ark de testnet no son compatibles</string>
+    <string name="update_popup_changelog_show_more">Mostrar más</string>
+    <string name="update_popup_changelog_show_less">Mostrar menos</string>
+    <string name="wallet_settings_derivation_path">Ruta de derivación</string>
+    <string name="wallet_settings_derivation_path_invalid">Ruta de derivación no válida</string>
+    <string name="biometric_enrollment_changed_use_pin" formatted="false">Las huellas de este dispositivo cambiaron. Introduce el PIN para desbloquear.</string>
+    <string name="biometric_enrollment_changed_title" formatted="false">Huellas cambiadas</string>
+    <string name="biometric_enrollment_changed_message" formatted="false">Las huellas de este dispositivo cambiaron desde que se configuró el desbloqueo biométrico. Si no hiciste este cambio, el dispositivo puede estar comprometido. El desbloqueo biométrico se reaseguró con las huellas actuales — configura un PIN en Seguridad como respaldo independiente.</string>
+    <string name="biometric_enrollment_changed_dismiss" formatted="false">Entendido</string>
+    <string name="key_material_unavailable" formatted="false">El material de claves no está disponible para esta billetera</string>
+    <string name="send_disable_multiple_recipients">Desactivar varios destinatarios</string>
+    <string name="send_add_recipient">Añadir destinatario</string>
+    <string name="ark_exit_cancel_action">Cancelar salida</string>
+    <string name="ark_exit_cancel_title">¿Cancelar salida?</string>
+    <string name="ark_exit_cancel_body">Detiene la salida antes de transmitir la primera transacción on-chain. Demasiado tarde después del broadcast.</string>
+    <string name="ark_exit_cancel_none">Nada que cancelar</string>
+    <string name="ark_exit_cancel_done_format">Cancelada(s) %1$d salida(s)</string>
+    <string name="ark_exit_cancel_not_exiting">No hay salida en curso</string>
+    <string name="ark_exit_cancel_too_late">Demasiado tarde para cancelar</string>
+    <string name="ark_exit_cancel_broadcast">La salida ya se transmitió</string>
+    <string name="ark_error_session_db">Base de datos de sesión Ark no disponible — recuperando</string>
+    <string name="ark_receive_title">Recibir Ark</string>
+    <string name="ark_receive_no_request">No se generó ninguna solicitud</string>
+    <string name="ark_receive_request_copied">Solicitud copiada</string>
+    <string name="ark_receive_hidden">Oculto</string>
+    <string name="ark_receive_generate_request">Generar solicitud</string>
+    <string name="ark_receive_generating">Generando...</string>
+    <string name="ark_receive_label_saved">Etiqueta guardada</string>
+    <string name="ark_receive_label_with_invoice">La etiqueta se guardará con la factura</string>
+    <string name="ark_receive_qr_cd">QR de recepción</string>
+    <string name="ark_send_multi_retry">Reintentar restantes</string>
+    <string name="ark_error_passphrase_exit_unavailable">Iniciar o avanzar una salida necesita la billetera on-chain — no disponible con BIP39 passphrase. Reclamar una salida existente sigue funcionando.</string>
+    <string name="receive_silent">Silent Payments</string>
+    <string name="receive_silent_server_unavailable">El servidor Electrum actual no admite el escaneo SP</string>
+    <string name="receive_silent_disclosure_message">Para encontrar tus pagos, esta billetera comparte su clave de rastreo con el servidor Electrum. Puede ver y vincular lo que recibes, pero nunca gastar. Para máxima privacidad, usa tu propio servidor Electrum con Frigate y añádelo en los ajustes del servidor.</string>
+    <string name="receive_silent_disclosure_ok">Entendido</string>
+    <string name="loc_7f2c91aa" formatted="false">Generador de checksum 12/24</string>
+    <string name="loc_3d8b44f1" formatted="false">Introduce 11 o 23 palabras para encontrar la 12.ª o 24.ª palabra checksum válida.</string>
+    <string name="loc_9a1e70c4" formatted="false">Buscar palabra checksum</string>
+    <string name="loc_51f0b823" formatted="false">Semilla de 12 palabras</string>
+    <string name="loc_62d4e917" formatted="false">Semilla de 24 palabras</string>
+    <string name="loc_08c3f5a2" formatted="false">Introduce tus 11 o 23 palabras</string>
+    <string name="loc_c42d17b5" formatted="false">Palabras semilla</string>
+    <string name="loc_40e6c1b9">%1$d palabras checksum válidas</string>
+    <string name="loc_2b7d93e0" formatted="false">Toca una palabra para elegirla</string>
+    <string name="loc_6e91a045" formatted="false">Elegir al azar</string>
+    <string name="loc_8d2f5b10" formatted="false">Copiar / QR</string>
+    <string name="loc_1c4f82d7" formatted="false">Elegir de nuevo</string>
+    <string name="loc_d5a03768" formatted="false">Usar entropía de dados</string>
+    <string name="loc_19e4a0d3" formatted="false">Tira un dado de 6 caras 5 veces y escribe cada resultado. El resultado se combina con hash para elegir tu palabra checksum al azar.</string>
+    <string name="loc_77b2e4f3" formatted="false">Tiradas de D6, mínimo 5 dígitos (p. ej. 63214)</string>
+    <string name="loc_f04c98ab" formatted="false">Introduce al menos 5 dígitos, solo 1-6</string>
+    <string name="loc_5a83d2c6" formatted="false">Frase semilla elegida</string>
+    <string name="loc_b9e614f0" formatted="false">Usar en la importación</string>
+    <string name="loc_e1c7405d" formatted="false">Introduce 11 o 23 palabras BIP39 válidas arriba para ver candidatas</string>
+    <string name="loc_93d6a8b2">Palabra desconocida: %1$s</string>
+    <string name="loc_4b7e2c19" formatted="false">Tiradas de dados (opcional)</string>
+    <string name="loc_8f1d6a33">Tira un dado de 6 caras al menos %1$d veces y escribe cada resultado. La semilla se deriva solo de tus tiradas — no se mezcla aleatoriedad del teléfono. Usa dados justos.</string>
+    <string name="loc_2e9c5f07">Introduce al menos %1$d dígitos, solo 1-6</string>
+    <string name="loc_71aa30d4" formatted="false">Escribe los resultados (p. ej. 63214)</string>
+    <string name="ark_balance_jargon_deposit" formatted="false">Depósito</string>
+    <string name="ark_balance_jargon_withdrawal" formatted="false">Retiro</string>
+    <string name="ark_balance_jargon_deposit_all" formatted="false">depositar todo</string>
+    <string name="ark_balance_jargon_withdraw_all" formatted="false">retirar todo</string>
+    <string name="ark_balance_jargon_boarding" formatted="false">depósito</string>
+    <string name="ark_balance_jargon_offboarding" formatted="false">retiro</string>
+    <string name="ark_balance_jargon_offboard" formatted="false">retirar</string>
+    <string name="ark_balance_jargon_board" formatted="false">depositar</string>
+    <string name="ark_send_badge_ln_address" formatted="false">Dirección LN</string>
+    <string name="ark_transfer_sent_txid_format">Enviado %1$s</string>
+    <string name="ark_transfer_funded_txid_format">Fondeado %1$s — boarding pendiente</string>
+    <string name="ark_transfer_fee_rate_approx_format">≈ %1$s sat/vB</string>
+    <string name="ark_error_load_failed" formatted="false">No se pudo cargar la billetera Ark</string>
 </resources>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="import_backup_electrum_servers">
+        <item quantity="one">%d Electrum-Server</item>
+        <item quantity="other">%d Electrum-Server</item>
+    </plurals>
+    <plurals name="import_backup_liquid_servers">
+        <item quantity="one">%d Liquid-Server</item>
+        <item quantity="other">%d Liquid-Server</item>
+    </plurals>
+    <plurals name="import_seed_invalid_title">
+        <item quantity="one">%d ungültiges Wort</item>
+        <item quantity="other">%d ungültige Wörter</item>
+    </plurals>
+    <plurals name="import_seed_invalid_more">
+        <item quantity="one"> +%d weiteres</item>
+        <item quantity="other"> +%d weitere</item>
+    </plurals>
+    <plurals name="import_seed_words_entered">
+        <item quantity="one">%d Wort eingegeben</item>
+        <item quantity="other">%d Wörter eingegeben</item>
+    </plurals>
+    <plurals name="fee_estimate_approx_blocks">
+        <item quantity="one">~%d Block</item>
+        <item quantity="other">~%d Blöcke</item>
+    </plurals>
+</resources>

@@ -1,15 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <plurals name="import_backup_label_address_count">
-        <item quantity="one">%d dirección</item>
-        <item quantity="many">%d direcciones</item>
-        <item quantity="other">%d direcciones</item>
-    </plurals>
-    <plurals name="import_backup_label_transaction_count">
-        <item quantity="one">%d transacción</item>
-        <item quantity="many">%d transacciones</item>
-        <item quantity="other">%d transacciones</item>
-    </plurals>
     <plurals name="import_backup_electrum_servers">
         <item quantity="one">%d servidor Electrum</item>
         <item quantity="many">%d servidores Electrum</item>

@@ -1,17 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <plurals name="import_backup_label_address_count">
-        <item quantity="one">%d адрес</item>
-        <item quantity="few">%d адреса</item>
-        <item quantity="many">%d адресов</item>
-        <item quantity="other">%d адресов</item>
-    </plurals>
-    <plurals name="import_backup_label_transaction_count">
-        <item quantity="one">%d транзакция</item>
-        <item quantity="few">%d транзакции</item>
-        <item quantity="many">%d транзакций</item>
-        <item quantity="other">%d транзакций</item>
-    </plurals>
     <plurals name="import_backup_electrum_servers">
         <item quantity="one">%d сервер Electrum</item>
         <item quantity="few">%d сервера Electrum</item>

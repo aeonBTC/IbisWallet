@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="import_backup_electrum_servers">
+        <item quantity="one">%d serveur Electrum</item>
+        <item quantity="many">%d serveurs Electrum</item>
+        <item quantity="other">%d serveurs Electrum</item>
+    </plurals>
+    <plurals name="import_backup_liquid_servers">
+        <item quantity="one">%d serveur Liquid</item>
+        <item quantity="many">%d serveurs Liquid</item>
+        <item quantity="other">%d serveurs Liquid</item>
+    </plurals>
+    <plurals name="import_seed_invalid_title">
+        <item quantity="one">%d mot invalide</item>
+        <item quantity="many">%d mots invalides</item>
+        <item quantity="other">%d mots invalides</item>
+    </plurals>
+    <plurals name="import_seed_invalid_more">
+        <item quantity="one"> +%d autre</item>
+        <item quantity="many"> +%d autres</item>
+        <item quantity="other"> +%d autres</item>
+    </plurals>
+    <plurals name="import_seed_words_entered">
+        <item quantity="one">%d mot saisi</item>
+        <item quantity="many">%d mots saisis</item>
+        <item quantity="other">%d mots saisis</item>
+    </plurals>
+    <plurals name="fee_estimate_approx_blocks">
+        <item quantity="one">~%d bloc</item>
+        <item quantity="many">~%d blocs</item>
+        <item quantity="other">~%d blocs</item>
+    </plurals>
+</resources>

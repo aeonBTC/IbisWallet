@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Ibis Wallet</string>
     <string name="wallet_added">Кошелек добавлен</string>
@@ -31,6 +31,10 @@
     <string name="settings_language_brazilian_portuguese_description">Использовать бразильский португальский</string>
     <string name="settings_language_russian">Русский</string>
     <string name="settings_language_russian_description">Использовать русский</string>
+    <string name="settings_language_french">Français</string>
+    <string name="settings_language_french_description">Использовать французский</string>
+    <string name="settings_language_german">Deutsch</string>
+    <string name="settings_language_german_description">Использовать немецкий</string>
     <string name="wallet_delete_watch_only_message">Удалить "%1$s"? Позже его можно импортировать снова с тем же xpub.</string>
     <string name="wallet_delete_irreversible_message">Удалить "%1$s"? Это действие необратимо. Убедитесь, что сид-фраза сохранена.</string>
     <string name="wallet_delete_confirm_removal_label">Подтвердить удаление</string>
@@ -38,6 +42,7 @@
     <string name="wallet_delete_ark_pending_exit">У Ark есть незавершённый или готовый к claim unilateral exit. Завершите claim до удаления кошелька — одной seed недостаточно для in-progress exits.</string>
     <string name="wallet_delete_ark_no_backup">У этого кошелька есть активность VTXO Ark и нет бэкапа DB Ark. BIP39 seed восстановит средства Ark, пока ASP доступен; если ASP станет недоступен, для восстановления нужен бэкап DB Ark.</string>
     <string name="wallet_delete_ark_has_funds">В этом кошельке есть средства Ark. Удаление стирает локальную БД Bark. BIP39 seed восстановит средства Ark, пока ASP доступен; если ASP станет недоступен, для восстановления нужен бэкап DB Ark.</string>
+    <string name="wallet_delete_ark_offchain_only">Ark on-chain-кошелёк недоступен — для boarding и одностороннего выхода он нужен. Удаление сейчас сотрёт локальную базу, пока выход невозможен.</string>
     <string name="wallet_delete_ark_blocked_ack">Завершите exits Ark перед удалением</string>
     <string name="loc_b6f847eb" formatted="false">Убрать кошелёк только для просмотра</string>
     <string name="loc_9f4e5e7c" formatted="false">Удалить кошелёк</string>
@@ -114,6 +119,53 @@
     <string name="spark_enable_info_title">Уровень 2 модульный</string>
     <string name="spark_enable_info_message">Откройте экран управления кошельками, чтобы включить Spark для нужных кошельков.\n\n*Spark доступен только для seed-кошельков BIP39.</string>
     <string name="spark_enable_info_confirm">Понятно</string>
+    <string name="spark_exit_open">Аварийный выход</string>
+    <string name="spark_exit_title">Unilateral Exit</string>
+    <string name="spark_exit_intro">Вывод средств Spark ончейн без участия операторов. Оплачивает комиссии майнеров из L1, средства блокируются за таймлоками выхода. Последнее средство, предпочтительнее обычный вывод, когда доступен.</string>
+    <string name="spark_exit_destination">Назначение (L1-адрес)</string>
+    <string name="spark_exit_get_quote">Запросить квоту</string>
+    <string name="spark_exit_recoverable">К возврату</string>
+    <string name="spark_exit_fee">Комиссия выхода</string>
+    <string name="spark_exit_funding_needed">Нужно финансирования</string>
+    <string name="spark_exit_empty">Нечего выводить при такой комиссии.</string>
+    <string name="spark_exit_not_worth_it">Комиссии превышают возврат. Увеличьте стоимость листьев, используйте финансирование по веткам или дождитесь низких комиссий.</string>
+    <string name="spark_exit_pick_funding">Выбрать UTXO финансирования</string>
+    <string name="spark_exit_funding_button">UTXO финансирования</string>
+    <string name="spark_exit_build_button">Построить</string>
+    <string name="spark_exit_stale_hint">%1$s вашего баланса находится в листьях, слишком мелких для выхода, и исключено из расчёта. Объединить их может только кооперативный обмен туда и обратно одним депозитом. Иначе эти средства потеряны.</string>
+    <string name="spark_exit_unclaimed_format">Неполученные депозиты (%1$s) нельзя вывести, пока вы их не заберёте или они не созреют.</string>
+    <string name="spark_exit_view_balance">К балансу</string>
+    <string name="spark_exit_funding_hint">Только нативный SegWit (SegWit или Taproot). Legacy UTXO отклоняются.</string>
+    <string name="spark_exit_funding_none">Нет подходящего SegWit UTXO. Сначала пополните L1.</string>
+    <string name="spark_exit_broadcast_hint">Транслируйте каждую пару (tx + CPFP-потомок) вместе через ноду с package-relay (напр. Bitcoin Core submitpackage). Fan-out и sweep платят свою комиссию и идут поодиночке. Ждите подтверждения между шагами; refund ждут свой таймлок.</string>
+    <string name="spark_exit_check_status">Проверить статус</string>
+    <string name="spark_exit_ready">Готово к отправке</string>
+    <string name="spark_exit_confirmed">Подтверждено</string>
+    <string name="spark_exit_wait_deps">Ожидание зависимостей</string>
+    <string name="spark_exit_wait_timelock">Ожидание таймлока</string>
+    <string name="spark_exit_wait_timelock_at_format">Доступно с блока %1$d</string>
+    <string name="spark_exit_wait_timelock_countdown_format">Доступно в блоке %1$d (текущий %2$d)</string>
+    <string name="spark_exit_unverified">Статус неизвестен — проверьте позже</string>
+    <string name="spark_exit_sweep_fee">Комиссия sweep</string>
+    <string name="spark_exit_you_receive">Вы получите</string>
+    <string name="spark_exit_fee_cpfp">Комиссии CPFP</string>
+    <string name="spark_exit_fee_fanout">Комиссия fan-out</string>
+    <string name="spark_exit_redo_diverged">Ончейн-состояние разошлось — пересоберите exit, чтобы продолжить. Средства не потеряны.</string>
+    <string name="spark_exit_redo_upgraded">Данные exit обновлены — пересоберите, чтобы продолжить в новом формате.</string>
+    <string name="spark_exit_start_over">Начать заново</string>
+    <string name="spark_exit_fee_floor_note">Минимум %1$s sat/vB — требование Spark</string>
+    <string name="spark_exit_import">Импортировать данные exit</string>
+    <string name="spark_exit_save_copy">Сохранить копию</string>
+    <string name="spark_exit_import_ok_format">Данные exit импортированы: листьев %1$d (пропущено: чужих %2$d, цепочек %3$d, конфликтных %4$d)</string>
+    <string name="spark_exit_done">Выход завершён. Проверьте sweep ончейн.</string>
+    <string name="spark_exit_fee_bump">Повысить комиссию</string>
+    <string name="spark_exit_discard">Отменить выход</string>
+    <string name="spark_exit_backup">Сохранить данные выхода</string>
+    <string name="spark_exit_backup_saved">Данные выхода сохранены. Переэкспортируйте после активности в Spark.</string>
+    <string name="spark_exit_backup_stale">Бэкап выхода устарел — переэкспортируйте.</string>
+    <string name="spark_exit_tx_cpfp_copy">Скопировать CPFP-потомка</string>
+    <string name="spark_exit_tx_depends_format">Зависит от %1$d</string>
+    <string name="spark_exit_tx_csv_format">Таймлок +%1$d блоков</string>
     <string name="ln_node_enable_info_title">Lightning Node</string>
     <string name="ln_node_enable_info_message">Подключитесь к удалённой ноде (LND, CLN или NWC) на экране «Настроить ноду». Каждая нода добавляется как отдельный кошелёк.</string>
     <string name="ln_node_enable_info_confirm">Понятно</string>
@@ -209,6 +261,8 @@
     <string name="ln_node_nwc_uri">URI NWC</string>
     <string name="ln_node_use_tor">Через Tor</string>
     <string name="ln_node_enable_tls">Включить TLS</string>
+    <string name="ln_node_insecure_ack_title">Разрешить незащищённое соединение</string>
+    <string name="ln_node_insecure_ack_desc">Отправляет учётные данные без проверки сертификата. Только LAN.</string>
     <string name="ln_node_test_connection">Проверить подключение</string>
     <string name="ln_node_test_success_title">Подключение успешно</string>
     <string name="ln_node_test_success_body">Нода ответила. Сохранить это подключение Lightning Node?</string>
@@ -279,6 +333,7 @@
     <string name="privacy_mode_hint_message">Балансы скрыты. Нажмите и удерживайте значок приватности, чтобы отключить.</string>
     <string name="common_copy_with_label">Копировать %1$s</string>
     <string name="common_show_all_remaining_format">Показать все (осталось %1$d)</string>
+    <string name="common_show_less">Показать меньше</string>
     <string name="editable_label_chip_add" formatted="false">+ Метка</string>
     <string name="spark_search_history_placeholder">Поиск по меткам, ID платежа, способу или дате...</string>
     <string name="spark_loading_wallet_message">Spark загружается для этого кошелька</string>
@@ -288,7 +343,14 @@
     <string name="spark_deposit_note_message">Ончейн-депозитам Spark нужно 3 подтверждения перед зачислением на баланс Spark.</string>
     <string name="spark_deposit_note_confirmed_message">Подтвержденные ончейн-депозиты автоматически зачисляются на баланс Spark.</string>
     <string name="spark_deposit_claim_title">Получение</string>
+    <string name="spark_deposit_claim_section_title">Мгновенное получение</string>
     <string name="spark_deposit_claim_manual_needed">Может потребоваться ручное получение</string>
+    <string name="spark_deposit_claim_checking">Проверка мгновенного клейма…</string>
+    <string name="spark_deposit_claim_credit">Вы получите</string>
+    <string name="spark_deposit_claim_fee">Комиссия получения</string>
+    <string name="spark_deposit_claim_fee_note">Комиссия вычитается из депозита транзакцией получения.</string>
+    <string name="spark_deposit_claim_estimated">Комиссия примерная</string>
+    <string name="spark_deposit_claim_done">Депозит получен</string>
     <string name="spark_payment_id_title">ID платежа</string>
     <string name="spark_payment_id_copy_label">ID платежа Spark</string>
     <string name="spark_deposit_txid_copy_label">ID транзакции депозита Spark</string>
@@ -625,7 +687,7 @@
     <string name="loc_f7b9c073" formatted="false">Все данные кошельков будут безвозвратно удалены после повторных неудачных попыток разблокировки. Это действие нельзя отменить.</string>
     <string name="loc_5ed5bb5d" formatted="false">Убедитесь, что у вас есть резервные копии seed-фраз. Без резервной копии средства будут безвозвратно потеряны.</string>
     <string name="loc_c47ba42d" formatted="false">Отключить защиту?</string>
-    <string name="loc_38a084fc" formatted="false">Любой, у кого есть доступ к вашему устройству, сможет открыть приложение.</string>
+    <string name="loc_38a084fc" formatted="false">Любой, у кого есть доступ к вашему устройству, сможет открыть приложение. Секреты кошелька больше не будут использовать сессионное шифрование и будут защищены только шифрованием устройства.</string>
     <string name="loc_40a878b7" formatted="false">Создать PIN</string>
     <string name="loc_c3d36da0" formatted="false">Подтвердить PIN</string>
     <string name="loc_c3c70203" formatted="false">Введите PIN еще раз для подтверждения</string>
@@ -643,9 +705,9 @@
     <string name="utxo_list_search_matches">%1$d совпадений из %2$d</string>
     <string name="import_multisig_policy_line">%1$s мультисиг</string>
     <string name="import_wallet_cosigners_line">Со-подписанты: %1$d</string>
-    <string name="import_backup_labels_line">Метки: %1$s · %2$s</string>
-    <string name="import_backup_server_settings_line">Настройки сервера: %1$s</string>
-    <string name="import_wallet_address_line_watch">%1$s (%2$s)</string>
+    <string name="import_multisig_mismatch">Дескриптор сдачи не совпадает с дескриптором получения</string>
+    <string name="psbt_change_address_label">Адрес сдачи</string>
+    <string name="psbt_change_not_mine_warning">Сдача не из этого кошелька — не транслируйте</string>
     <string name="wallet_address_type_legacy_title">Legacy</string>
     <string name="wallet_address_type_segwit_title">SegWit</string>
     <string name="wallet_address_type_taproot_title">Taproot</string>
@@ -678,16 +740,10 @@
     <string name="loc_75923525" formatted="false">BIP39 Passphrase</string>
     <string name="loc_e8a4f395" formatted="false">Введите парольную фразу</string>
     <string name="loc_01fca34c" formatted="false">Свой путь деривации</string>
-    <string name="loc_a422f393">Имя: %1$s</string>
     <string name="loc_629b9e5b" formatted="false">Неизвестно</string>
-    <string name="loc_25d748f3" formatted="false">Только просмотр</string>
     <string name="loc_729b34d2" formatted="false">Свернуть</string>
     <string name="loc_b47e7391" formatted="false">Развернуть</string>
     <string name="loc_7c63b77c" formatted="false">Перегенерировать сид-фразу</string>
-    <string name="loc_929a5c05" formatted="false">обозреватель блоков</string>
-    <string name="loc_90799139" formatted="false">источник комиссий</string>
-    <string name="loc_52640f61" formatted="false">обозреватель Liquid</string>
-    <string name="loc_b61cfdd3" formatted="false">подключение Liquid</string>
     <string name="loc_5d00536d" formatted="false">Скопировано</string>
     <string name="loc_fceb7ead" formatted="false">Копировать сид-фразу</string>
     <string name="loc_e3f2267c" formatted="false">Нет подходящих адресов</string>
@@ -781,7 +837,7 @@
     <string name="settings_spark_subtitle">Statechain с минимальным доверием</string>
     <string name="settings_ark_subtitle">VTXO с минимизированным доверием</string>
     <string name="settings_ark_external_services_title">Внешние сервисы Ark</string>
-    <string name="settings_ark_auto_delegated_refresh_title">Авто refresh</string>
+    <string name="settings_ark_auto_delegated_refresh_title">Авто Refresh</string>
     <string name="settings_ark_auto_delegated_refresh_subtitle">Планирует refresh до наступления срока выходов.</string>
     <string name="settings_lightning_subtitle">Бестрастовые платёжные каналы</string>
     <string name="settings_custom_server_placeholder">http://192.168... или http://...onion</string>
@@ -1058,12 +1114,9 @@
     <string name="loc_d83b7198" formatted="false">Порт должен быть от 1 до 65535</string>
     <string name="loc_a8fc5dd4" formatted="false">Использовать SSL/TLS</string>
     <string name="loc_209e3dd7" formatted="false">Шифровать соединение</string>
-    <string name="loc_53017e88" formatted="false">Не удалось прочитать файл резервной копии</string>
     <string name="loc_e61e3fea" formatted="false">Не удалось прочитать файл</string>
     <string name="loc_74b37443" formatted="false">Недопустимая пара дескрипторов Liquid. Вставьте один объединенный дескриптор ct(...) или подходящую пару /0/* и /1/*.</string>
     <string name="loc_a8d202fe" formatted="false">Недопустимый дескриптор Liquid.</string>
-    <string name="loc_94b6dca8" formatted="false">Неверный пароль</string>
-    <string name="loc_20968582" formatted="false">Не удалось расшифровать</string>
     <string name="loc_aeabc606" formatted="false">Импорт кошелька</string>
     <string name="loc_7c2117d5" formatted="false">Ручной импорт</string>
     <string name="loc_f986ec47" formatted="false">BIP39 seed, Electrum seed, WIF private key, xpub/zpub, дескриптор или адрес</string>
@@ -1093,21 +1146,8 @@
     <string name="loc_255d09fd" formatted="false">Multisig-кошелек</string>
     <string name="loc_7999830a" formatted="false">Импортируйте файл конфигурации или введите cosigner-ов вручную</string>
     <string name="loc_1db77587" formatted="false">или</string>
-    <string name="loc_0e42bd4f" formatted="false">Восстановить из файла резервной копии</string>
-    <string name="loc_0eeb7864" formatted="false">Импортировать файл резервной копии кошелька Ibis</string>
-    <string name="loc_e4783294" formatted="false">Выбрать файл резервной копии</string>
-    <string name="loc_5bc64b9b" formatted="false">Чтение файла резервной копии...</string>
-    <string name="loc_ab6580da" formatted="false">Проверить выбранную резервную копию</string>
     <string name="loc_380cec3b" formatted="false">Перевести с приватного ключа</string>
     <string name="loc_ba4c3466" formatted="false">Ввести WIF-ключ</string>
-    <string name="loc_3de64ebf" formatted="false">Резервная копия готова к восстановлению</string>
-    <string name="loc_82807e0f" formatted="false">Импортировать настройки серверов</string>
-    <string name="loc_997e26df" formatted="false">Серверы Electrum и внешние сервисы</string>
-    <string name="loc_867cb15f" formatted="false">Зашифрованная резервная копия</string>
-    <string name="loc_bf01e3a2" formatted="false">Введите пароль, чтобы расшифровать и просмотреть эту резервную копию.</string>
-    <string name="loc_7a2478a8" formatted="false">Восстановить кошелек</string>
-    <string name="loc_f73683e2" formatted="false">Расшифровать резервную копию</string>
-    <string name="loc_e18f112a" formatted="false">Выбрать другой файл</string>
     <string name="loc_68a4806d" formatted="false">Ручной мультисиг</string>
     <string name="loc_698ba835" formatted="false">Порог</string>
     <string name="loc_ab662431" formatted="false">Путь</string>
@@ -1322,7 +1362,7 @@
     <string name="quick_receive_address_title">Адрес получения</string>
     <string name="ark_title">Ark</string>
     <string name="ark_quick_receive_title">Адрес Ark</string>
-    <string name="ark_pending_breakdown_format">В ожидании · round %1$s · депозит %2$s · exit %3$s</string>
+    <string name="ark_balance_pending_refresh_format">Ожидает refresh: %1$s</string>
     <string name="ark_history_empty">Истории Ark пока нет</string>
     <string name="ark_send_destination_hint">Bitcoin, Ark, BOLT 11, BOLT 12, or LNURL</string>
     <string name="ark_available_format">Доступно %1$s</string>
@@ -1332,6 +1372,7 @@
     <string name="ark_send_status_submitting">Отправка…</string>
     <string name="ark_send_status_sent_title">Платёж Ark отправлен</string>
     <string name="ark_send_status_failed_title">Платёж Ark не выполнен</string>
+    <string name="ark_send_input_not_spendable">Платёж не удался: средства больше недоступны. Синхронизировано — повторите.</string>
     <string name="ark_send_status_message">Подтверждено. Ark выполняет перевод.</string>
     <string name="ark_send_status_step_review_title">Подтверждено</string>
     <string name="ark_send_status_step_review_detail">Сумма, получатель и комиссия одобрены.</string>
@@ -1383,11 +1424,11 @@
     <string name="ark_refresh_needed_format">%1$d VTXO пора обновить (refresh)</string>
     <string name="ark_refresh_action">Refresh</string>
     <string name="ark_refresh_quote">Ручной refresh</string>
+    <string name="ark_refresh_all">Refresh всех</string>
     <string name="ark_refresh_confirm">Подтвердить refresh</string>
-    <string name="ark_refresh_review_title">Проверка refresh</string>
     <string name="ark_refresh_review_count_format">Выбрано VTXO: %1$d</string>
     <string name="ark_refresh_scheduled_height_format">Запланировано на блок %1$d</string>
-    <string name="ark_ln_receive_fee_format">Комиссия получения %1$s</string>
+    <string name="ark_ln_receive_fee_format">Комиссия получения %1$s (вычитается при claim)</string>
     <string name="ark_refresh_empty">Нет VTXO, которым нужен refresh</string>
     <string name="ark_vtxo_needs_refresh">Пора refresh</string>
     <string name="ark_refresh_all_vtxos">Все VTXO</string>
@@ -1395,8 +1436,6 @@
     <string name="ark_exit_start_all">Выход всех</string>
     <string name="ark_exit_confirm_title">Начать unilateral exit?</string>
     <string name="ark_exit_confirm_action">Начать exit</string>
-    <string name="ark_exit_confirm_all_body">Вывести on-chain все spendable VTXO. Будут отправлены транзакции, уплачены miner fees, средства окажутся за timelock exit.</string>
-    <string name="ark_exit_confirm_selected_body">Вывести on-chain %1$d выбранных VTXO. Будут отправлены транзакции, уплачены miner fees, средства окажутся за timelock exit.</string>
     <string name="ark_exit_confirm_amount_format">Сумма: %1$s</string>
     <string name="ark_exit_confirm_irreversible">Необратимо после broadcast exit tx. Claim на проверенный Bitcoin-адрес, когда будет готово.</string>
     <string name="ark_error_refresh_delegated_failed">Сбой delegated refresh</string>
@@ -1414,19 +1453,20 @@
     <string name="ark_vtxo_expiry_now_short">Истекает сейчас</string>
     <string name="ark_refresh_current">Пока ни один VTXO не требует refresh</string>
     <string name="ark_refresh_no_outputs">Нет доступных выходов</string>
-    <string name="ark_refresh_review_action">Проверить refresh</string>
-    <string name="ark_refresh_auto_short">Планирует до наступления срока выходов.</string>
+    <string name="ark_refresh_auto_short">Автоматически обновляет VTXO примерно за 144 блока до истечения. Работает только при открытом кошельке. Пропускает авто-refresh, если комиссия выше 5000 sats.</string>
     <string name="ark_refresh_review_outputs">Выходы</string>
     <string name="ark_refresh_review_mode">Режим</string>
     <string name="ark_refresh_review_block">Запланированный блок</string>
     <string name="ark_refresh_review_fee">Комиссия</string>
     <string name="ark_refresh_mode_scheduled">Запланирован</string>
     <string name="ark_refresh_mode_next_round">Следующий раунд</string>
-    <string name="ark_refresh_scheduled_fee_note">Расчёт по тарифам сервера для этого блока.</string>
+    <string name="ark_refresh_next_round_note">Выполнится в следующем раунде ASP.</string>
+    <string name="ark_refresh_next_round_interval_format">Выполнится в следующем раунде ASP (примерно каждые %1$d мин).</string>
     <string name="ark_refresh_scheduled_title">Refresh запланирован</string>
     <string name="ark_refresh_scheduled_body">Запланирован на блок %1$d. Ark завершит его автоматически.</string>
     <string name="ark_refresh_submitted_title">Refresh отправлен</string>
     <string name="ark_refresh_submitted_body">Ожидание следующего раунда Ark.</string>
+    <string name="ark_refresh_round_failed">Раунд Ark завершился ошибкой. Проверьте и повторите refresh.</string>
     <string name="ark_refresh_scheduled_inline">Запланирован на блок %1$d</string>
     <string name="ark_refresh_pending_inline">Отправлен в следующий раунд</string>
     <string name="ark_vtxo_state_locked">Ожидающий round</string>
@@ -1439,7 +1479,8 @@
     <string name="ark_exit_claimable_format">%1$d к claim · %2$s</string>
     <string name="ark_exit_status_claimable_suffix"> · claimable</string>
     <string name="ark_exit_destination_hint">Bitcoin-адрес для claim</string>
-    <string name="ark_exit_warning">Вернуть средства Ark on-chain, если ASP недоступен</string>
+    <string name="ark_exit_claim_fee_rate_hint">Комиссия sat/vB (пусто = авто)</string>
+    <string name="ark_exit_warning">Вернуть средства Ark on-chain, если ASP недоступен. Переводит средства на ваш Bitcoin-адрес, но занимает несколько блоков и оплачивается on-chain-комиссией.</string>
     <string name="ark_exit_active_format">В процессе: %1$d · %2$s</string>
     <string name="ark_exit_ready_to_broadcast">Готово к отправке</string>
     <string name="ark_exit_waiting_short">Ожидание подтверждений</string>
@@ -1448,14 +1489,23 @@
     <string name="ark_exit_broadcast_review_title">Проверка отправки</string>
     <string name="ark_exit_broadcast_action">Отправить</string>
     <string name="ark_exit_broadcasting">Отправка…</string>
-    <string name="ark_exit_review_funds">Средства</string>
-    <string name="ark_exit_review_count">Выходы</string>
-    <string name="ark_exit_review_fee">Расчётная комиссия майнеру</string>
-    <string name="ark_exit_review_required">Нужно подтверждённых средств</string>
-    <string name="ark_exit_review_available">Подтверждённые средства для комиссии</string>
-    <string name="ark_exit_review_add_funds_format">Добавьте %1$s</string>
-    <string name="ark_exit_review_add_funds_hint">Получите on-chain средства в Ark и дождитесь подтверждения.</string>
-    <string name="ark_exit_review_irreversible">Отправка запускает необратимый on-chain exit.</string>
+    <string name="ark_exit_review_funds">Вывод</string>
+    <string name="ark_exit_review_count">VTXO</string>
+    <string name="ark_exit_review_fee">Расчётная комиссия</string>
+    <string name="ark_exit_review_total_fee">Комиссия broadcast</string>
+    <string name="ark_exit_review_claim_fee">Комиссия claim</string>
+    <string name="ark_exit_fee_calculating">Расчёт…</string>
+    <string name="ark_exit_review_required">Требуется на комиссию</string>
+    <string name="ark_exit_review_total_estimate">Накладные расходы</string>
+    <string name="ark_exit_review_available">Доступные средства</string>
+    <string name="ark_exit_emergency_fee_unfundable">Оценки комиссии броадкаста exit требуют больше подтверждённых on-chain средств, чем доступно.</string>
+    <string name="ark_exit_fee_requirement_note">Комиссии берутся из подтверждённого on-chain-баланса, а не из выходящих VTXO. При нехватке пополните ваш Ark on-chain BTC-адрес и дождитесь подтверждения.</string>
+    <string name="ark_exit_backup_ack_warning">Резервная копия базы данных не настроена. Если устройство потеряет данные кошелька во время выхода, средства могут быть невосстановимы только по сид-фразе.</string>
+    <string name="ark_exit_backup_ack_check">Я принимаю риск</string>
+    <string name="ark_exit_recovery_required_format">Не восстановлено выходящих VTXO: %1$d. Восстановите резервную копию базы данных, чтобы управлять ими.</string>
+    <string name="ark_exit_review_eta">Завершится через</string>
+    <string name="ark_exit_eta_blocks_format">~%1$d блоков</string>
+    <string name="ark_exit_review_irreversible">Старт регистрирует exit, его можно отменить до broadcast. После broadcast необратимо.</string>
     <string name="ark_exit_fee_unavailable">Недоступно</string>
     <string name="ark_exit_claim_review_title">Проверка claim</string>
     <string name="ark_exit_no_outputs">Нет доступных выходов</string>
@@ -1490,18 +1540,26 @@
     <string name="ark_mailbox_recovery_completed">Mailbox recovery завершён</string>
     <string name="ark_mailbox_recovery_no_report">Mailbox recovery не запускался. Повторите Full Sync.</string>
     <string name="ark_mailbox_recovery_not_applied">Mailbox восстановил VTXO, но они не появились. Повторите Full Sync.</string>
-    <string name="ark_mailbox_recovery_report_format">VTXO: восстановлено %1$d · пропущено %2$d (потрачены/заменены) · с ошибкой %3$d · чужих %4$d · выведено %5$d</string>
+    <string name="ark_mailbox_recovery_scan_failed">Сканирование recovery завершилось ошибкой — средства могут отсутствовать. Повторите Full Sync.</string>
+    <string name="ark_drift_rescan_notice">Обнаружена активность с другого устройства — повторное сканирование кошелька.</string>
+    <string name="ark_mailbox_rescan_action">Пересканировать Mailbox</string>
+    <string name="ark_mailbox_rescan_subtitle">Проверяет mailbox ASP на наличие пропавших средств.</string>
+    <string name="ark_mailbox_rescan_result_title">Последнее сканирование mailbox</string>
+    <string name="ark_mailbox_rescan_started">Обнаружены устаревшие данные - пересканирование mailbox.</string>
+    <string name="ark_mailbox_rescan_blocked">Rescan недоступен во время активного refresh, exit или board.</string>
+    <string name="ark_mailbox_recovery_report_format">VTXO: восстановлено %1$d, пропущено %2$d (потрачены/заменены), с ошибкой %3$d, чужих %4$d, выведено %5$d</string>
     <string name="ark_onchain_unavailable">On-chain кошелёк Ark недоступен — депозиты BTC не зачисляются. Проверьте Esplora и обновите.</string>
     <string name="ark_mailbox_recovery_failed_format">Ошибка mailbox recovery: %1$s</string>
     <string name="ark_db_backup_title">Ark Backup</string>
     <string name="ark_db_backup_subtitle">Экспорт или импорт локальной БД Bark этого кошелька (VTXO). Шифруется seed кошелька — восстановить может только этот кошелёк. Перед импортом та же seed уже должна быть загружена.</string>
     <string name="ark_db_backup_warning">BIP39 seed восстановит средства Ark, пока ASP доступен; если ASP станет недоступен, для восстановления нужен бэкап DB Ark. Внешние копии сохраняются после удаления кошелька и auto-wipe.</string>
     <string name="ark_db_backup_encrypted_note">Копии шифруются ключом, производным от seed этого кошелька.</string>
+    <string name="full_backup_excludes_ark_db">Полная копия не включает базы данных Ark — сохраните их на вкладке Ark Backup.</string>
     <string name="ark_db_auto_backup_title">Автобэкап</string>
     <string name="ark_db_auto_backup_subtitle">Автоснимок зашифрованной DB Ark во внешнюю папку после активности VTXO.</string>
     <string name="ark_db_auto_backup_last_format">Последний снимок: %1$s</string>
     <string name="ark_db_auto_backup_last_never">Снимков пока нет</string>
-    <string name="ark_db_auto_backup_latest_title">Последний снимок</string>
+    <string name="ark_db_auto_backup_latest_title">Последний Снимок</string>
     <string name="ark_db_auto_backup_detail_when">Когда</string>
     <string name="ark_db_auto_backup_detail_file">Файл</string>
     <string name="ark_db_auto_backup_detail_size">Размер</string>
@@ -1525,6 +1583,7 @@
     <string name="ark_db_export_progress">Экспорт DB Ark…</string>
     <string name="ark_db_import_progress">Импорт DB Ark…</string>
     <string name="ark_db_restore_progress">Восстановление DB Ark…</string>
+    <string name="ark_db_rescan_progress">Пересканирование mailbox…</string>
     <string name="ark_db_export_done">Зашифрованная DB Ark экспортирована</string>
     <string name="ark_db_import_done">DB Ark импортирована</string>
     <string name="ark_db_export_empty">Нет локальных данных Ark для экспорта</string>
@@ -1570,39 +1629,31 @@
     <string name="ark_transfer_withdrawal_fee">Комиссия вывода</string>
     <string name="ark_transfer_deposit_fee_note">Комиссия фондирования Layer 1 для депозита Ark</string>
     <string name="ark_transfer_withdrawal_fee_note">Комиссия кооперативного вывода, заданная ASP</string>
-    <string name="ark_transfer_min_board_format">Мин. %1$s</string>
-    <string name="ark_transfer_below_min_board_format">Ниже минимума ASP (%1$s)</string>
-    <string name="ark_receive_onchain_min_board_format">Мин. депозит ASP %1$s</string>
-    <string name="ark_receive_onchain_min_label">Мин. депозит ASP</string>
-    <string name="ark_board_below_min_format">%1$s on-chain ниже минимального депозита ASP %2$s и не может быть зачислен в Ark. Верните на Layer 1.</string>
-    <string name="ark_board_below_min_shortfall_format">%1$s on-chain ниже минимального депозита ASP %2$s (нужно ещё %3$s) и не может быть зачислен в Ark. Верните на Layer 1.</string>
-    <string name="ark_stuck_below_min_banner_format">%1$s ниже минимального депозита %2$s и не может быть зачислен в Ark.</string>
-    <string name="ark_stuck_below_min_top_up">Пополнить</string>
-    <string name="ark_stuck_below_min_recover">Вернуть на L1</string>
-    <string name="ark_boarding_below_min_actions_note">Пополните BTC, пока депозит не достигнет минимума, или верните все подтверждённые средства на Layer 1 кошелёк.</string>
+    <string name="ark_transfer_board_fee">Комиссия бординга Ark</string>
+    <string name="ark_transfer_board_fee_note">Комиссия ASP за свип и обслуживание для бординга</string>
+    <string name="ark_boarding_recover_to_l1">Вернуть всё на L1</string>
     <string name="ark_boarding_recover_dialog_title">Вернуть на L1</string>
-    <string name="ark_boarding_recover_dialog_body">Все подтверждённые on-chain средства в Ark будут отправлены на ваш Layer 1 адрес получения. Это нельзя отменить.</string>
+    <string name="ark_boarding_recover_dialog_body">Все подтверждённые on-chain средства в Ark будут отправлены на ваш Layer 1 адрес получения.</string>
     <string name="ark_boarding_recover_dialog_address_label">Назначение</string>
     <string name="ark_boarding_recover_dialog_confirm">Подтвердить возврат</string>
     <string name="ark_boarding_recover_dialog_no_address">Сначала создайте Layer 1 адрес</string>
-    <string name="ark_boarding_top_up_note">Отправьте ещё BTC на этот on-chain адрес, пока депозит не достигнет минимума.</string>
     <string name="ark_boarding_recover_note">Верните все подтверждённые on-chain средства на Layer 1 кошелёк.</string>
-    <string name="ark_boarding_board_note">Зачислите этот депозит в Ark как spendable-баланс.</string>
     <string name="ark_manage_tab_boarding">Boarding</string>
-    <string name="ark_boarding_title">On-chain депозиты</string>
+    <string name="ark_boarding_title">On-Chain Депозиты</string>
     <string name="ark_boarding_empty">Нет on-chain депозитов</string>
     <string name="ark_boarding_auto_title">Auto-board</string>
-    <string name="ark_boarding_auto_note">Если включено, подтверждённые депозиты от минимума автоматически зачисляются в Ark.</string>
-    <string name="ark_boarding_auto_note_format">Если включено, подтверждённые депозиты от минимума автоматически зачисляются в Ark.</string>
-    <string name="ark_boarding_auto_note_unknown_min">Если включено, подтверждённые депозиты от минимума автоматически зачисляются в Ark.</string>
+    <string name="ark_boarding_auto_note">Подтверждённые депозиты автоматически зачисляются в Ark при достижении минимума ASP.</string>
     <string name="ark_boarding_disabled_exit">Boarding отключён, пока идёт unilateral exit.</string>
     <string name="ark_board_disabled_exit">Boarding отключён, пока идёт unilateral exit.</string>
     <string name="ark_board_failed_generic">Boarding не удался</string>
+    <string name="ark_board_no_fallback_address">Бординг не удался, адрес депозита недоступен</string>
+    <string name="ark_board_broadcast_mismatch">Проверка бродкаста не удалась — повторите</string>
     <string name="ark_board_success_format">Зачислено %1$s</string>
     <string name="ark_boarding_board">Board</string>
-    <string name="ark_boarding_board_all">Зачислить всё готовое</string>
-    <string name="ark_boarding_min_format">Мин. ASP %1$s</string>
-    <string name="ark_boarding_shortfall_format">Нужно ещё %1$s для boarding</string>
+    <string name="ark_boarding_board_all">Зачислить всё</string>
+    <string name="ark_boarding_board_selected">Зачислить выбранное</string>
+    <string name="ark_boarding_min_format">Минимум ASP: %1$s</string>
+    <string name="ark_boarding_below_min_actions_note">Внесите больше BTC на ваш Ark on-chain адрес до достижения минимума или верните все подтверждённые средства на кошелёк Layer 1.</string>
     <string name="ark_boarding_confirmations_format">%1$d подтверждений</string>
     <string name="ark_boarding_confirmations_one">1 подтверждение</string>
     <string name="ark_boarding_unconfirmed">Не подтверждено</string>
@@ -1610,11 +1661,7 @@
     <string name="ark_boarding_badge_ready">Готово</string>
     <string name="ark_boarding_badge_unconfirmed">Не подтверждено</string>
     <string name="ark_boarding_balance_banner_format">%1$s on-chain не зачислено</string>
-    <string name="ark_boarding_balance_banner_below_min_format">%1$s on-chain не зачислено (мин. ASP %2$s)</string>
-    <string name="ark_boarding_balance_banner_action">Управление boarding</string>
     <string name="ark_boarding_amount_select_note">Bark зачисляет по сумме (не по outpoint).</string>
-    <string name="ark_history_badge_below_min">Ниже минимума</string>
-    <string name="ark_history_status_below_min">Ниже минимума</string>
     <string name="ark_history_badge_recovered_l1">Возвращено на L1</string>
     <string name="ark_history_title_recovered">Возвращено</string>
     <string name="ark_history_recovered_to">Возвращено на</string>
@@ -1643,6 +1690,7 @@
     <string name="ark_deposit_note_confirmed">Депозит достиг порога подтверждений. Ark зачислит spendable-баланс после завершения депозита.</string>
     <string name="ark_deposit_note_pending_format">Ончейн-депозитам Bitcoin может потребоваться до %1$d подтверждений, прежде чем ASP зачислит их в Ark.</string>
     <string name="ark_deposit_note_confirmed_format">Депозит достиг %1$d подтверждений. Ark зачислит spendable-баланс после завершения депозита.</string>
+    <string name="ark_deposit_note_preboard_format">Средства подтверждены ончейн, бординг ещё не начался. Транзакции бординга требуется %1$d подтверждений, прежде чем Ark зачислит средства.</string>
     <string name="ark_deposit_status_awaiting_confirmations">Ожидает 3 подтверждения</string>
     <string name="ark_withdrawal_note">Кооперативные выводы завершаются on-chain на адрес назначения.</string>
     <string name="ark_review_fee_bitcoin">Сетевая комиссия Bitcoin:</string>
@@ -1665,6 +1713,7 @@
     <string name="ark_error_silent_payments">Silent payments не поддерживаются</string>
     <string name="ark_error_nothing_prepared">Ничего не подготовлено</string>
     <string name="ark_error_amount_required">Требуется сумма</string>
+    <string name="ark_error_exit_in_progress">Выполняется выход — повторите попытку позже</string>
     <string name="ark_send_may_have_completed_format">Платёж мог завершиться — проверьте перед повтором. %1$s</string>
     <string name="ark_send_lightning_timeout">Истекло время ожидания платежа Lightning</string>
     <string name="ark_send_lightning_settled_detail">Платёж завершён</string>
@@ -1689,10 +1738,15 @@
     <string name="ark_error_esplora_dns">Сбой DNS Esplora — попробуйте другую сеть или укажите доступный URL Esplora</string>
     <string name="ark_error_chain_source">On-chain источник недоступен — проверьте URL Esplora / сеть</string>
     <string name="ark_error_asp_unreachable">Сервер Ark недоступен</string>
+    <string name="ark_error_fee_unavailable">Котировка комиссии недоступна - попробуйте снова</string>
+    <string name="ark_error_tor_clearnet_blocked">Tor включён: clearnet Esplora заблокирован. Используйте onion Esplora или выключите Tor.</string>
+    <string name="ark_error_tor_bootstrap_timeout">Превышено ожидание Tor для onion Esplora</string>
+    <string name="ark_tor_asp_direct_note">Сервер Ark всегда подключается напрямую, даже с Tor. Через Tor только onion Esplora.</string>
     <string name="ark_error_datadir_locked">Кошелёк Ark завершает предыдущую сессию — попробуйте снова через мгновение</string>
     <string name="l2_error_silent_payments">Silent payments здесь не поддерживаются</string>
     <string name="l2_error_bitcoin_not_on_liquid">Bitcoin-адреса не поддерживаются при отправке Liquid</string>
     <string name="l2_error_liquid_not_supported">Запросы Liquid здесь не поддерживаются</string>
+    <string name="l2_error_liquid_mainnet_only">Поддерживается только Liquid mainnet.</string>
     <string name="l2_error_spark_not_supported">Запросы Spark здесь не поддерживаются</string>
     <string name="l2_error_ark_not_supported">Адреса Ark здесь не поддерживаются</string>
     <string name="l2_error_amountless_invoice">Lightning-инвойсы без суммы не поддерживаются</string>
@@ -1708,6 +1762,81 @@
     <string name="spark_error_connection">Сбой подключения Spark</string>
     <string name="spark_error_unavailable">Сервис Spark недоступен</string>
     <string name="spark_error_generic">Запрос Spark не выполнен</string>
+    <string name="spark_send_session_expired">Срок действия платежа Spark истёк. Проверьте ещё раз.</string>
+    <string name="spark_send_self_payment">Spark не позволяет отправлять на собственный адрес. Чтобы объединить мелкие листья, выведите всё на Layer 1 через обмен и внесите заново одним депозитом.</string>
+    <string name="spark_transfer_withdrawal_failed">Вывод Spark не выполнен</string>
     <string name="layer1_address_not_ready">Адрес Layer 1 не готов</string>
     <string name="ark_error_testnet_address">Testnet-адреса Ark не поддерживаются</string>
+    <string name="update_popup_changelog_show_more">Показать ещё</string>
+    <string name="update_popup_changelog_show_less">Скрыть</string>
+    <string name="wallet_settings_derivation_path">Путь деривации</string>
+    <string name="wallet_settings_derivation_path_invalid">Неверный путь деривации</string>
+    <string name="biometric_enrollment_changed_use_pin" formatted="false">Отпечатки на этом устройстве изменились. Введите PIN для разблокировки.</string>
+    <string name="biometric_enrollment_changed_title" formatted="false">Отпечатки изменились</string>
+    <string name="biometric_enrollment_changed_message" formatted="false">Отпечатки на этом устройстве изменились с момента настройки биометрии. Если вы этого не делали, устройство может быть скомпрометировано. Биометрическая разблокировка привязана к текущим отпечаткам — задайте PIN в настройках безопасности как независимый запасной путь.</string>
+    <string name="biometric_enrollment_changed_dismiss" formatted="false">Понятно</string>
+    <string name="key_material_unavailable" formatted="false">Ключевой материал недоступен для этого кошелька</string>
+    <string name="send_disable_multiple_recipients">Отключить нескольких получателей</string>
+    <string name="send_add_recipient">Добавить получателя</string>
+    <string name="ark_exit_cancel_action">Отменить выход</string>
+    <string name="ark_exit_cancel_title">Отменить выход?</string>
+    <string name="ark_exit_cancel_body">Останавливает выход до первой on-chain транзакции. После broadcast уже поздно.</string>
+    <string name="ark_exit_cancel_none">Нечего отменять</string>
+    <string name="ark_exit_cancel_done_format">Отменено выходов: %1$d</string>
+    <string name="ark_exit_cancel_not_exiting">Выход не выполняется</string>
+    <string name="ark_exit_cancel_too_late">Слишком поздно отменять</string>
+    <string name="ark_exit_cancel_broadcast">Выход уже в эфире</string>
+    <string name="ark_error_session_db">База сессии Ark недоступна — восстановление</string>
+    <string name="ark_receive_title">Получить Ark</string>
+    <string name="ark_receive_no_request">Запрос не создан</string>
+    <string name="ark_receive_request_copied">Запрос скопирован</string>
+    <string name="ark_receive_hidden">Скрыто</string>
+    <string name="ark_receive_generate_request">Создать запрос</string>
+    <string name="ark_receive_generating">Создание...</string>
+    <string name="ark_receive_label_saved">Метка сохранена</string>
+    <string name="ark_receive_label_with_invoice">Метка будет сохранена с инвойсом</string>
+    <string name="ark_receive_qr_cd">QR получения</string>
+    <string name="ark_send_multi_retry">Повторить оставшиеся</string>
+    <string name="ark_error_passphrase_exit_unavailable">Запуск и продвижение выхода требуют on-chain кошелёк — недоступно с BIP39 passphrase. Claim существующего выхода по-прежнему работает.</string>
+    <string name="receive_silent">Silent Payments</string>
+    <string name="receive_silent_server_unavailable">Текущий Electrum-сервер не поддерживает сканирование SP</string>
+    <string name="receive_silent_disclosure_message">Чтобы находить ваши платежи, кошелёк передаёт ключ сканирования серверу Electrum. Сервер видит ваши получения и может их связывать, но не может тратить средства. Для полной приватности используйте собственный сервер Electrum с Frigate и добавьте его в настройках сервера.</string>
+    <string name="receive_silent_disclosure_ok">Понятно</string>
+    <string name="loc_7f2c91aa" formatted="false">Генератор 12/24-го слова</string>
+    <string name="loc_3d8b44f1" formatted="false">Введите 11 или 23 слова, чтобы найти верное 12-е или 24-е контрольное слово.</string>
+    <string name="loc_9a1e70c4" formatted="false">Найти контрольное слово</string>
+    <string name="loc_51f0b823" formatted="false">Сид из 12 слов</string>
+    <string name="loc_62d4e917" formatted="false">Сид из 24 слов</string>
+    <string name="loc_08c3f5a2" formatted="false">Введите ваши 11 или 23 слова</string>
+    <string name="loc_c42d17b5" formatted="false">Слова сида</string>
+    <string name="loc_40e6c1b9">Подходящих контрольных слов: %1$d</string>
+    <string name="loc_2b7d93e0" formatted="false">Нажмите на слово, чтобы выбрать его</string>
+    <string name="loc_6e91a045" formatted="false">Выбрать случайно</string>
+    <string name="loc_8d2f5b10" formatted="false">Копировать / QR</string>
+    <string name="loc_1c4f82d7" formatted="false">Выбрать ещё раз</string>
+    <string name="loc_d5a03768" formatted="false">Использовать энтропию кубиков</string>
+    <string name="loc_19e4a0d3" formatted="false">Бросьте 6-гранный кубик 5 раз и введите каждый результат. Результат хешируется для случайного выбора вашего контрольного слова.</string>
+    <string name="loc_77b2e4f3" formatted="false">Броски D6, минимум 5 цифр (напр. 63214)</string>
+    <string name="loc_f04c98ab" formatted="false">Введите минимум 5 цифр, только 1–6</string>
+    <string name="loc_5a83d2c6" formatted="false">Выбранная сид-фраза</string>
+    <string name="loc_b9e614f0" formatted="false">Использовать при импорте</string>
+    <string name="loc_e1c7405d" formatted="false">Введите выше 11 или 23 верных слова BIP39, чтобы увидеть варианты</string>
+    <string name="loc_93d6a8b2">Неизвестное слово: %1$s</string>
+    <string name="loc_4b7e2c19" formatted="false">Броски кубиков (необязательно)</string>
+    <string name="loc_8f1d6a33">Бросьте 6-гранный кубик минимум %1$d раз и введите каждый результат. Сид выводится только из ваших бросков — случайность телефона не подмешивается. Используйте честные кубики.</string>
+    <string name="loc_2e9c5f07">Введите минимум %1$d цифр, только 1–6</string>
+    <string name="loc_71aa30d4" formatted="false">Введите результаты (напр. 63214)</string>
+    <string name="ark_balance_jargon_deposit" formatted="false">Депозит</string>
+    <string name="ark_balance_jargon_withdrawal" formatted="false">Вывод</string>
+    <string name="ark_balance_jargon_deposit_all" formatted="false">внести всё</string>
+    <string name="ark_balance_jargon_withdraw_all" formatted="false">вывести всё</string>
+    <string name="ark_balance_jargon_boarding" formatted="false">депозит</string>
+    <string name="ark_balance_jargon_offboarding" formatted="false">вывод</string>
+    <string name="ark_balance_jargon_offboard" formatted="false">вывести</string>
+    <string name="ark_balance_jargon_board" formatted="false">внести</string>
+    <string name="ark_send_badge_ln_address" formatted="false">LN-адрес</string>
+    <string name="ark_transfer_sent_txid_format">Отправлено %1$s</string>
+    <string name="ark_transfer_funded_txid_format">Финансировано %1$s — boarding ожидает</string>
+    <string name="ark_transfer_fee_rate_approx_format">≈ %1$s sat/vB</string>
+    <string name="ark_error_load_failed" formatted="false">Не удалось загрузить кошелёк Ark</string>
 </resources>
