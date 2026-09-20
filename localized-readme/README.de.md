@@ -37,8 +37,8 @@ Für erfahrene Nutzer konzipiert – ohne Anleitung, ohne Stützräder.
 ### Layer 2 — Natives Lightning, Ark, Spark und Liquid
 - **Modular Integration** - Wählen Sie, welches Layer 2 Sie pro Wallet aktivieren
 - **Lightning** - Remote-Node via LND (LND REST), CLN (clnrest) oder NWC (NIP-47) anbinden
-- **Ark** - Vollständige Ark-Wallet mit VTXO-Verwaltung, Lightning-Senden und -Empfangen, Payjoin-Boarding und unilateralen Exits (Built on [Bark](https://github.com/ark-bitcoin/bark))
-- **Spark** - Spark-Integration mit Lightning- sowie On-Chain-Senden und -Empfangen, plus unilaterale Exits (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Ark** - Ark L2 mit VTXO-Verwaltung, Lightning-Senden und -Empfangen, Payjoin-Boarding und unilateralen Exits (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Spark L2 mit Lightning- sowie On-Chain-Senden und -Empfangen, und unilateralen Exits (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Vollständige Liquid-Wallet mit vertraulichen Transaktionen und USDt-Unterstützung (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Watch-only Liquid Wallets** - Liquid-Watch-only-Wallets per SLIP77-Deskriptor importieren
 - **Lightning Payments** - Bolt-11- und Bolt-12-Rechnungen oder Lightning-Adressen bezahlen

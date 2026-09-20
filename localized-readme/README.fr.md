@@ -37,8 +37,8 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 ### Layer 2 — Lightning natif, Ark, Spark et Liquid
 - **Modular Integration** - Choisir quel Layer 2 activer pour chaque portefeuille
 - **Lightning** - Connecter un nœud distant via LND (LND REST), CLN (clnrest) ou NWC (NIP-47)
-- **Ark** - Portefeuille Ark complet avec gestion des VTXO, envoi et réception Lightning, boarding payjoin et sorties unilatérales (Built on [Bark](https://github.com/ark-bitcoin/bark))
-- **Spark** - Intégration Spark avec envoi et réception Lightning et on-chain, plus sorties unilatérales (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Ark** - Ark L2 avec gestion des VTXO, envoi et réception Lightning, boarding payjoin et sorties unilatérales (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Spark L2 avec envoi et réception Lightning et on-chain, et sorties unilatérales (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Portefeuille Liquid complet avec transactions confidentielles et prise en charge USDt (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Watch-only Liquid Wallets** - Importer des portefeuilles Liquid en lecture seule avec des descripteurs SLIP77
 - **Lightning Payments** - Payer des factures Bolt 11 et Bolt 12, ou des adresses Lightning

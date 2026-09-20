@@ -37,8 +37,8 @@ Ibis — модульный Bitcoin-кошелёк с самохранением
 ### Layer 2 — нативный Lightning, Ark, Spark и Liquid
 - **Modular Integration** - Выбор Layer 2 для каждого кошелька
 - **Lightning** - Подключение удалённой ноды через LND (LND REST), CLN (clnrest) или NWC (NIP-47)
-- **Ark** - Полноценный Ark-кошелёк с управлением VTXO, отправкой и получением Lightning, payjoin-boarding и односторонними выходами (Built on [Bark](https://github.com/ark-bitcoin/bark))
-- **Spark** - Интеграция Spark с отправкой и получением Lightning и on-chain, плюс односторонние выходы (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Ark** - Ark L2 с управлением VTXO, отправкой и получением Lightning, payjoin-boarding и односторонними выходами (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Spark L2 с отправкой и получением Lightning и on-chain, и односторонними выходами (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Полноценный Liquid-кошелёк с конфиденциальными транзакциями и поддержкой USDt (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Watch-only Liquid Wallets** - Импорт watch-only Liquid-кошельков через дескрипторы SLIP77
 - **Lightning Payments** - Оплата инвойсов Bolt 11 и Bolt 12, а также Lightning-адресов
