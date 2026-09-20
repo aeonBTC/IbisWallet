@@ -8,16 +8,18 @@ Feita para usuários experientes — sem tutoriais nem rodinhas.
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Obter APK no GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Idiomas:** [English](../README.md) · [Español](README.es.md) · [Русский](README.ru.md) · Português (Brasil)
+**Idiomas:** [English](../README.md) · [Español](README.es.md) · [Русский](README.ru.md) · Português (Brasil) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 ## Principais recursos
 
 ### Layer 1 — Bitcoin
 - **Multi-Wallet** - Criar, importar, exportar e alternar entre várias carteiras
 - **Multi-Seed** - Suporte a frases-semente BIP39 ou Electrum na importação
+- **Dice Entropy** - Gerar seeds a partir de dados
 - **Multisig Wallets** - Importar descritores multisig, coordenar assinatura PSBT e assinar localmente como cosignatário
 - **Watch-only Wallets** - Importar xpub/zpub, descritores de saída ou um único endereço
 - **Import Private Key** - Varrer ou importar chaves privadas (formato WIF)
+- **Silent Payments** - Suporte total BIP-352: envio e recebimento, com servidor Frigate padrão
 - **Hardware Wallet Signing** - Usar QR codes animados ou arquivos .psbt para assinatura air-gapped
 - **Coin Control** - Selecionar UTXOs específicos, congelar/descongelar, enviar a partir de saídas individuais
 - **Require Coin Control** - Opção para forçar a seleção de UTXOs antes de envios on-chain
@@ -26,24 +28,24 @@ Feita para usuários experientes — sem tutoriais nem rodinhas.
 - **Cancel Transactions** - Cancelar transações de saída não confirmadas com RBF
 - **Manual Broadcast** - Transmitir qualquer transação bruta assinada diretamente à rede Bitcoin
 - **Batch Sending** - Enviar para vários destinatários em uma única transação
-- **Silent Payments** - Enviar para endereços Silent Payment BIP-352
 - **Message Signing** - Assinar e verificar mensagens com BIP137
+- **Checksum Helper** - Calcular a palavra de checksum faltante a partir de prefixo de 11/23 palavras
 - **BIP329 Labels** - Rótulos de carteira no padrão da indústria para transações e endereços
 - **Transaction Search** - Buscar o histórico por data, endereço ou rótulo
 - **Built on** [BDK](https://bitcoindevkit.org/)
 
-### Layer 2 — Lightning nativo, Liquid e Spark (Ark em breve)
+### Layer 2 — Lightning nativo, Ark, Spark e Liquid
 - **Modular Integration** - Escolher qual Layer 2 ativar em cada carteira
 - **Lightning** - Conectar um nó remoto via LND (LND REST), CLN (clnrest) ou NWC (NIP-47)
-- **Liquid** - Carteira Liquid completa com transações confidenciais (Built on [LWK](https://github.com/Blockstream/lwk))
-- **Spark** - Integração Spark com envio e recebimento Lightning e on-chain (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Ark** - Carteira Ark completa com gerenciamento de VTXO, envio e recebimento Lightning, boarding payjoin e saídas unilaterais (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Integração Spark com envio e recebimento Lightning e on-chain, mais saídas unilaterais (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Liquid** - Carteira Liquid completa com transações confidenciais e suporte a USDt (Built on [LWK](https://github.com/Blockstream/lwk))
+- **Watch-only Liquid Wallets** - Importar carteiras Liquid somente leitura com descritores SLIP77
 - **Lightning Payments** - Pagar faturas Bolt 11 e Bolt 12, ou endereços Lightning
 - **Lightning Invoices** - Gerar faturas Bolt 11
-- **Watch-only Liquid Wallets** - Importar carteiras Liquid somente leitura com descritores SLIP77
-- **Liquid USDt** - Guardar e transacionar USDt na Liquid
 - **Chain Swaps** - Trocar facilmente entre L1 e L2
 - **Coin Control** - Selecionar UTXOs específicos para swaps e pagamentos
-- **BIP329 Labels** - Suporte a rótulos para transações Liquid e Spark
+- **BIP329 Labels** - Suporte a rótulos para transações Ark, Spark e Liquid
 
 ### Privacidade e segurança
 - **Offline by Default** - O app inicia sem conexões externas
@@ -66,7 +68,7 @@ Feita para usuários experientes — sem tutoriais nem rodinhas.
 - **Bitcoin URI Handling** - Registrar-se como manipulador de links `bitcoin:`
 
 ### Localização
-- **Languages** - Inglês, russo, espanhol e português (Brasil)
+- **Languages** - Inglês, russo, espanhol, português (Brasil), francês e alemão
 - **Typeface** - Várias tipografias
 
 ### Backup e restauração

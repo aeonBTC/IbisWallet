@@ -8,16 +8,18 @@ Ibis — модульный Bitcoin-кошелёк с самохранением
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Скачать APK с GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Языки:** [English](../README.md) · [Español](README.es.md) · Русский · [Português (Brasil)](README.pt-BR.md)
+**Языки:** [English](../README.md) · [Español](README.es.md) · Русский · [Português (Brasil)](README.pt-BR.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 ## Ключевые возможности
 
 ### Layer 1 — Bitcoin
 - **Multi-Wallet** - Создание, импорт, экспорт и переключение между несколькими кошельками
 - **Multi-Seed** - Импорт seed-фраз BIP39 или Electrum
+- **Dice Entropy** - Генерация сидов из бросков кубиков
 - **Multisig Wallets** - Импорт multisig-дескрипторов, координация подписи PSBT и локальная подпись как со-подписант
 - **Watch-only Wallets** - Импорт xpub/zpub, output-дескрипторов или одного адреса
 - **Import Private Key** - Свип или импорт приватных ключей (формат WIF)
+- **Silent Payments** - Полная поддержка BIP-352: отправка и получение, с сервером Frigate по умолчанию
 - **Hardware Wallet Signing** - Анимированные QR-коды или файлы .psbt для air-gapped подписи
 - **Coin Control** - Выбор конкретных UTXO, заморозка/разморозка, отправка с отдельных выходов
 - **Require Coin Control** - Опция принудительного выбора UTXO перед on-chain отправкой
@@ -26,24 +28,24 @@ Ibis — модульный Bitcoin-кошелёк с самохранением
 - **Cancel Transactions** - Отмена неподтверждённых исходящих транзакций через RBF
 - **Manual Broadcast** - Прямая трансляция любой подписанной raw-транзакции в сеть Bitcoin
 - **Batch Sending** - Отправка нескольким получателям в одной транзакции
-- **Silent Payments** - Отправка на адреса Silent Payment BIP-352
 - **Message Signing** - Подпись и проверка сообщений по BIP137
+- **Checksum Helper** - Вычисление недостающего контрольного слова из префикса в 11/23 слов
 - **BIP329 Labels** - Стандартные метки кошелька для транзакций и адресов
 - **Transaction Search** - Поиск истории по дате, адресу или метке
 - **Built on** [BDK](https://bitcoindevkit.org/)
 
-### Layer 2 — нативный Lightning, Liquid и Spark (Ark скоро)
+### Layer 2 — нативный Lightning, Ark, Spark и Liquid
 - **Modular Integration** - Выбор Layer 2 для каждого кошелька
 - **Lightning** - Подключение удалённой ноды через LND (LND REST), CLN (clnrest) или NWC (NIP-47)
-- **Liquid** - Полноценный Liquid-кошелёк с конфиденциальными транзакциями (Built on [LWK](https://github.com/Blockstream/lwk))
-- **Spark** - Интеграция Spark с отправкой и получением Lightning и on-chain (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Ark** - Полноценный Ark-кошелёк с управлением VTXO, отправкой и получением Lightning, payjoin-boarding и односторонними выходами (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Интеграция Spark с отправкой и получением Lightning и on-chain, плюс односторонние выходы (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Liquid** - Полноценный Liquid-кошелёк с конфиденциальными транзакциями и поддержкой USDt (Built on [LWK](https://github.com/Blockstream/lwk))
+- **Watch-only Liquid Wallets** - Импорт watch-only Liquid-кошельков через дескрипторы SLIP77
 - **Lightning Payments** - Оплата инвойсов Bolt 11 и Bolt 12, а также Lightning-адресов
 - **Lightning Invoices** - Создание инвойсов Bolt 11
-- **Watch-only Liquid Wallets** - Импорт watch-only Liquid-кошельков через дескрипторы SLIP77
-- **Liquid USDt** - Хранение и переводы USDt в Liquid
 - **Chain Swaps** - Простой обмен между L1 и L2
 - **Coin Control** - Выбор конкретных UTXO для свапов и платежей
-- **BIP329 Labels** - Метки для транзакций Liquid и Spark
+- **BIP329 Labels** - Метки для транзакций Ark, Spark и Liquid
 
 ### Приватность и безопасность
 - **Offline by Default** - Запуск без внешних подключений
@@ -66,7 +68,7 @@ Ibis — модульный Bitcoin-кошелёк с самохранением
 - **Bitcoin URI Handling** - Обработка ссылок `bitcoin:`
 
 ### Локализация
-- **Languages** - Английский, русский, испанский и португальский (Бразилия)
+- **Languages** - Английский, русский, испанский, португальский (Бразилия), французский и немецкий
 - **Typeface** - Несколько вариантов шрифта
 
 ### Резервное копирование и восстановление

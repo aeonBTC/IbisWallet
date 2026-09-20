@@ -8,16 +8,18 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Obtener APK desde GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Idiomas:** [English](../README.md) · Español · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md)
+**Idiomas:** [English](../README.md) · Español · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
 ## Características principales
 
 ### Layer 1 — Bitcoin
 - **Multi-Wallet** - Crear, importar, exportar y cambiar entre varias billeteras
 - **Multi-Seed** - Compatible con frases semilla BIP39 o Electrum al importar
+- **Dice Entropy** - Genera semillas a partir de tiradas de dados
 - **Multisig Wallets** - Importar descriptores multisig, coordinar firmas PSBT y firmar localmente como cosignatario
 - **Watch-only Wallets** - Importar xpub/zpub, descriptores de salida o una sola dirección
 - **Import Private Key** - Barrer o importar claves privadas (formato WIF)
+- **Silent Payments** - Soporte completo BIP-352: envío y recepción, con servidor Frigate por defecto
 - **Hardware Wallet Signing** - Usar códigos QR animados o archivos .psbt para firmas air-gapped
 - **Coin Control** - Seleccionar UTXOs concretos, congelar/descongelar, enviar desde salidas individuales
 - **Require Coin Control** - Opción para forzar la selección de UTXOs antes de envíos on-chain
@@ -26,24 +28,24 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 - **Cancel Transactions** - Cancelar transacciones salientes no confirmadas con RBF
 - **Manual Broadcast** - Transmitir cualquier transacción firmada en bruto a la red Bitcoin
 - **Batch Sending** - Enviar a varios destinatarios en una sola transacción
-- **Silent Payments** - Enviar a direcciones Silent Payment BIP-352
 - **Message Signing** - Firmar y verificar mensajes con BIP137
+- **Checksum Helper** - Calcular la palabra de checksum faltante desde prefijo de 11/23 palabras
 - **BIP329 Labels** - Etiquetas de billetera estándar para transacciones y direcciones
 - **Transaction Search** - Buscar el historial por fecha, dirección o etiqueta
 - **Built on** [BDK](https://bitcoindevkit.org/)
 
-### Layer 2 — Lightning nativo, Liquid y Spark (Ark próximamente)
+### Layer 2 — Lightning nativo, Ark, Spark y Liquid
 - **Modular Integration** - Elegir qué Layer 2 activar en cada billetera
 - **Lightning** - Conectar un nodo remoto vía LND (LND REST), CLN (clnrest) o NWC (NIP-47)
-- **Liquid** - Billetera Liquid completa con transacciones confidenciales (Built on [LWK](https://github.com/Blockstream/lwk))
-- **Spark** - Integración Spark con envío y recepción Lightning y on-chain (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Ark** - Billetera Ark completa con gestión de VTXO, envío y recepción Lightning, payjoin boarding y salidas unilaterales (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Integración Spark con envío y recepción Lightning y on-chain, más salidas unilaterales (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Liquid** - Billetera Liquid completa con transacciones confidenciales y soporte USDt (Built on [LWK](https://github.com/Blockstream/lwk))
+- **Watch-only Liquid Wallets** - Importar billeteras Liquid de solo lectura con descriptores SLIP77
 - **Lightning Payments** - Pagar facturas Bolt 11 y Bolt 12, o direcciones Lightning
 - **Lightning Invoices** - Generar facturas Bolt 11
-- **Watch-only Liquid Wallets** - Importar billeteras Liquid de solo lectura con descriptores SLIP77
-- **Liquid USDt** - Mantener y transaccionar USDt en Liquid
 - **Chain Swaps** - Intercambiar fácilmente entre L1 y L2
 - **Coin Control** - Seleccionar UTXOs concretos para swaps y pagos
-- **BIP329 Labels** - Etiquetas para transacciones Liquid y Spark
+- **BIP329 Labels** - Etiquetas para transacciones Ark, Spark y Liquid
 
 ### Privacidad y seguridad
 - **Offline by Default** - La app arranca sin conexiones externas
@@ -66,7 +68,7 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 - **Bitcoin URI Handling** - Registrarse como manejador de enlaces `bitcoin:`
 
 ### Localización
-- **Languages** - Inglés, ruso, español y portugués (Brasil)
+- **Languages** - Inglés, ruso, español, portugués (Brasil), francés y alemán
 - **Typeface** - Varias tipografías
 
 ### Copia de seguridad y restauración
