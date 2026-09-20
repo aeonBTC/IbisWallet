@@ -8,16 +8,18 @@ Designed for experienced users - no hand-holding, no training wheels.
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Get APK from GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Languages:** English · [Español](localized-readme/README.es.md) · [Русский](localized-readme/README.ru.md) · [Português (Brasil)](localized-readme/README.pt-BR.md)
+**Languages:** English · [Español](localized-readme/README.es.md) · [Русский](localized-readme/README.ru.md) · [Português (Brasil)](localized-readme/README.pt-BR.md) · [Français](localized-readme/README.fr.md) · [Deutsch](localized-readme/README.de.md)
 
 ## Key Features
 
 ### Layer 1 — Bitcoin
 - **Multi-Wallet** - Create, import, export, and switch between multiple wallets
 - **Multi-Seed** - Supports BIP39 or Electrum seed phrases for wallet imports
+- **Dice Entropy** - Generate seeds from dice rolls
 - **Multisig Wallets** - Import multisig descriptors, coordinate PSBT signing, and sign locally as a cosigner
 - **Watch-only Wallets** - Import xpub/zpub, output descriptors, or single address
 - **Import Private Key** - Sweep or import private keys (WIF format)
+- **Silent Payments** - Full BIP-352 support: send and receive, with Frigate default server
 - **Hardware Wallet Signing** - Use animated QR codes or .psbt files for air-gapped key signing
 - **Coin Control** - Select specific UTXOs, freeze/unfreeze, send from individual outputs
 - **Require Coin Control** - Option to force UTXO selection before on-chain sends
@@ -26,24 +28,24 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Cancel Transactions** - Cancel unconfirmed outgoing transactions with RBF
 - **Manual Broadcast** - Broadcast any signed raw transaction directly to the Bitcoin network
 - **Batch Sending** - Send to multiple recipients in a single transaction
-- **Silent Payments** - Send to BIP-352 Silent Payment addresses
 - **Message Signing** - Sign and verify messages with BIP137
+- **Checksum Helper** - Calculate missing checksum word from 11/23-word prefix
 - **BIP329 Labels** - Industry-standard wallet labels for transactions and addresses
 - **Transaction Search** - Search transaction history by date, address, or label
 - **Built on** [BDK](https://bitcoindevkit.org/)
 
-### Layer 2 — Native Lightning, Liquid, and Spark (Ark coming soon)
+### Layer 2 — Native Lightning, Ark, Spark, and Liquid
 - **Modular Integration** - Choose which Layer 2 to enable for each wallet
 - **Lightning** - Connect a remote node over LND (LND REST), CLN (clnrest), or NWC (NIP-47)
-- **Liquid** - Full Liquid wallet with confidential transactions (Built on [LWK](https://github.com/Blockstream/lwk))
-- **Spark** - Spark wallet integration with Lightning and on-chain send and receive (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Ark** - Full Ark wallet with VTXO management, Lightning send and receive, payjoin boarding, and unilateral exits (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Spark wallet integration with Lightning and on-chain send and receive, with unilateral exits (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Liquid** - Full Liquid wallet with confidential transactions and USDt support (Built on [LWK](https://github.com/Blockstream/lwk))
+- **Watch-only Liquid Wallets** - Import Liquid watch-only wallets using SLIP77 descriptors
 - **Lightning Payments** - Pay Bolt 11 and Bolt 12 invoices, or Lightning addresses
 - **Lightning Invoices** - Generate Bolt 11 invoices
-- **Watch-only Liquid Wallets** - Import Liquid watch-only wallets using SLIP77 descriptors
-- **Liquid USDt** - Hold and transact USDt on Liquid
 - **Chain Swaps** - Easily swap between L1 and L2
 - **Coin Control** - Select specific UTXOs for swaps and payments
-- **BIP329 Labels** - Label support for Liquid and Spark transactions
+- **BIP329 Labels** - Label support for Ark, Spark, and Liquid transactions
 
 ### Privacy & Security
 - **Offline by Default** - App launches with zero external connections
@@ -66,7 +68,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Bitcoin URI Handling** - Register as a handler for `bitcoin:` links
 
 ### Localization
-- **Languages** - English, Russian, Spanish, and Portuguese (Brazil)
+- **Languages** - English, Russian, Spanish, Portuguese (Brazil), German, and French
 - **Typeface** - Multiple typeface settings
 
 ### Backup & Restore
