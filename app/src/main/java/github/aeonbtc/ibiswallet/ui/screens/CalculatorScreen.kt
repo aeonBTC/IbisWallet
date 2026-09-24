@@ -140,14 +140,19 @@ private class CalcState {
     fun equals() {
         // Evaluate wipe first so a cultural dual code can never unlock after wipe
         // is configured to match (setup rejects equal codes; still fail closed here).
-        val isWipe = wipeCodeMatches?.invoke(rawInput) == true
-        if (isWipe) {
-            onWipe?.invoke()
-            return
-        }
-        if (cloakCodeMatches?.invoke(rawInput) == true) {
-            onUnlock()
-            return
+        // Skip code probes on empty input (e.g. "=" right after "%", an operator,
+        // or on a fresh calculator): empty input can never match, and probing
+        // would needlessly ratchet the cloak rate-limit counter.
+        if (rawInput.isNotEmpty()) {
+            val isWipe = wipeCodeMatches?.invoke(rawInput) == true
+            if (isWipe) {
+                onWipe?.invoke()
+                return
+            }
+            if (cloakCodeMatches?.invoke(rawInput) == true) {
+                onUnlock()
+                return
+            }
         }
         if (firstOperand != null && pendingOperator != null) {
             val cur = parseDisplay()
