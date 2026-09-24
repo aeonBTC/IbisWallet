@@ -1785,6 +1785,8 @@ class SecureStorage private constructor(private val context: Context) {
             remove("${KEY_ARK_RECOVERED_ONCHAIN_DEPOSIT_PREFIX}$walletId")
             remove("${KEY_ARK_ADDRESS_PREFIX}$walletId")
             remove("${KEY_ARK_USED_ADDRESS_PREFIX}$walletId")
+            remove("${KEY_ARK_ADDRESS_FP_PREFIX}$walletId")
+            remove("${KEY_ARK_MAX_REVEALED_KEY_INDEX_PREFIX}$walletId")
             remove("${KEY_ARK_ONCHAIN_DEPOSIT_ADDRESS_PREFIX}$walletId")
             remove("${KEY_ARK_ONCHAIN_DEPOSIT_ADDRESS_HISTORY_PREFIX}$walletId")
             remove("${KEY_ARK_USED_ONCHAIN_DEPOSIT_ADDRESS_PREFIX}$walletId")
@@ -5354,6 +5356,7 @@ class SecureStorage private constructor(private val context: Context) {
      * Returns false if locked out.
      */
     fun verifyPin(pin: String): Boolean {
+        if (pin.isEmpty()) return false
         if (isPinLockedOut()) return false
 
         val storedHash = securePrefs.getString(KEY_PIN_CODE, null) ?: return false
@@ -5522,6 +5525,7 @@ class SecureStorage private constructor(private val context: Context) {
     fun hasPinCode(): Boolean = securePrefs.getString(KEY_PIN_CODE, null) != null
 
     fun pinMatchesCurrent(pin: String): Boolean {
+        if (pin.isEmpty()) return false
         val storedHash = securePrefs.getString(KEY_PIN_CODE, null) ?: return false
         // Legacy: unhashed PIN — constant-time compare to prevent timing attacks
         val storedSaltStr =
@@ -5541,6 +5545,12 @@ class SecureStorage private constructor(private val context: Context) {
         pin: String,
         salt: ByteArray,
     ): ByteArray {
+        // Platform BouncyCastle rejects empty PBKDF2 passwords with
+        // IllegalArgumentException("password empty") wrapped as
+        // InvalidKeySpecException — an uncaught crash on the UI thread
+        // (e.g. calculator "=" with empty rawInput probing cloak/wipe codes).
+        // Empty input can never match a real hash, so fail closed here.
+        if (pin.isEmpty()) return ByteArray(0)
         val chars = pin.toCharArray()
         val keySpec = PBEKeySpec(chars, salt, PIN_PBKDF2_ITERATIONS, PIN_HASH_LENGTH)
         return try {
@@ -5868,6 +5878,7 @@ class SecureStorage private constructor(private val context: Context) {
         pin: String,
         incrementFailedAttempts: Boolean = true,
     ): Boolean {
+        if (pin.isEmpty()) return false
         if (isPinLockedOut()) return false
         val storedHash = securePrefs.getString(KEY_DURESS_PIN_CODE, null) ?: return false
         val storedSaltStr = securePrefs.getString(KEY_DURESS_PIN_SALT, null) ?: return false
@@ -6018,6 +6029,7 @@ class SecureStorage private constructor(private val context: Context) {
      * Does not unlock spend secrets — success means wipe, not access.
      */
     fun verifyWipePin(pin: String): Boolean {
+        if (pin.isEmpty()) return false
         if (isPinLockedOut()) return false
         if (!isWipePinEnabled()) return false
 
@@ -6035,6 +6047,7 @@ class SecureStorage private constructor(private val context: Context) {
      * Check if the given PIN matches the stored wipe PIN without side effects.
      */
     fun pinMatchesWipe(pin: String): Boolean {
+        if (pin.isEmpty()) return false
         val storedHash = securePrefs.getString(KEY_WIPE_PIN_CODE, null) ?: return false
         val storedSaltStr = securePrefs.getString(KEY_WIPE_PIN_SALT, null) ?: return false
         val salt = Base64.decode(storedSaltStr, Base64.NO_WRAP)
@@ -6051,6 +6064,7 @@ class SecureStorage private constructor(private val context: Context) {
      * Migrates a legacy plaintext cloak code to PBKDF2 on the first successful match.
      */
     fun codeMatchesCloak(code: String): Boolean {
+        if (code.isEmpty()) return false
         if (isCloakLockedOut()) return false
         val storedHash = securePrefs.getString(KEY_CLOAK_CODE, null) ?: return false
         val storedSaltStr = securePrefs.getString(KEY_CLOAK_CODE_SALT, null)
@@ -6084,6 +6098,7 @@ class SecureStorage private constructor(private val context: Context) {
      * Check if the given PIN matches the stored duress PIN without side effects.
      */
     fun pinMatchesDuress(pin: String): Boolean {
+        if (pin.isEmpty()) return false
         val storedHash = securePrefs.getString(KEY_DURESS_PIN_CODE, null) ?: return false
         val storedSaltStr = securePrefs.getString(KEY_DURESS_PIN_SALT, null) ?: return false
         val salt = Base64.decode(storedSaltStr, Base64.NO_WRAP)
@@ -6554,6 +6569,15 @@ class SecureStorage private constructor(private val context: Context) {
         private const val KEY_SPARK_PENDING_LN_INVOICE_CREATED_PREFIX = "spark_pending_ln_invoice_created_"
         private const val KEY_ARK_ADDRESS_PREFIX = "ark_receive_address_"
         private const val KEY_ARK_USED_ADDRESS_PREFIX = "ark_used_receive_addresses_"
+        /** Highest VTXO key index this install ever minted (monotonic; see recordArkRevealedKeyIndex). */
+        private const val KEY_ARK_MAX_REVEALED_KEY_INDEX_PREFIX = "ark_max_revealed_key_index_"
+        /**
+         * Seed fingerprint bound to the current Ark receive address at mint time.
+         * Guards against ever displaying an address minted under a different seed
+         * (wrong-wallet cache, restored-over prefs): such an address receives into
+         * a mailbox this wallet never polls — silent fund stranding.
+         */
+        private const val KEY_ARK_ADDRESS_FP_PREFIX = "ark_receive_address_fp_"
         private const val KEY_ARK_ONCHAIN_DEPOSIT_ADDRESS_PREFIX = "ark_onchain_deposit_address_"
         private const val KEY_ARK_ONCHAIN_DEPOSIT_ADDRESS_HISTORY_PREFIX =
             "ark_onchain_deposit_address_history_"
@@ -6936,6 +6960,49 @@ class SecureStorage private constructor(private val context: Context) {
         val needle = address.trim()
         if (needle.isEmpty()) return false
         return getUsedArkReceiveAddresses(walletId).any { it.equals(needle, ignoreCase = true) }
+    }
+
+    /**
+     * Highest VTXO key index this install ever minted for [walletId], or -1 when unknown.
+     * Bark derives addresses deterministically per seed, so after a session-DB wipe
+     * (which drops Bark's key table) this bounds the re-derivation needed to make
+     * previously shared addresses receivable again. Round-tripped in full backup.
+     */
+    fun getArkMaxRevealedKeyIndex(walletId: String): Int =
+        runCatching {
+            regularPrefs.getInt("${KEY_ARK_MAX_REVEALED_KEY_INDEX_PREFIX}$walletId", -1)
+        }.getOrDefault(-1)
+
+    /** Monotonic record of a minted VTXO key index; lower/negative values are ignored. */
+    fun recordArkRevealedKeyIndex(walletId: String, index: Int) {
+        if (walletId.isBlank() || index < 0) return
+        val key = "${KEY_ARK_MAX_REVEALED_KEY_INDEX_PREFIX}$walletId"
+        runCatching {
+            val prev = regularPrefs.getInt(key, -1)
+            if (index > prev) {
+                regularPrefs.edit { putInt(key, index) }
+            }
+        }
+    }
+
+    /**
+     * Seed fingerprint the current Ark receive address was minted under, or null
+     * when never recorded (pre-recording installs adopt on next verify).
+     * Deliberately excluded from full backup: it is only meaningful alongside the
+     * live address cache (also not backed up); fresh installs mint fresh and record.
+     */
+    fun getArkReceiveAddressSeedFp(walletId: String): String? =
+        runCatching {
+            regularPrefs.getString("${KEY_ARK_ADDRESS_FP_PREFIX}$walletId", null)
+                ?.trim()?.takeIf { it.isNotEmpty() }
+        }.getOrNull()
+
+    fun setArkReceiveAddressSeedFp(walletId: String, fingerprint: String) {
+        val fp = fingerprint.trim()
+        if (walletId.isBlank() || fp.isEmpty()) return
+        runCatching {
+            regularPrefs.edit { putString("${KEY_ARK_ADDRESS_FP_PREFIX}$walletId", fp) }
+        }
     }
 
     fun getArkOnchainDepositAddress(walletId: String): String? =
@@ -7675,6 +7742,8 @@ class SecureStorage private constructor(private val context: Context) {
         setArkFundingTxids(walletId, emptyList())
         runCatching { regularPrefs.edit { remove("${KEY_ARK_ADDRESS_PREFIX}$walletId") } }
         runCatching { regularPrefs.edit { remove("${KEY_ARK_USED_ADDRESS_PREFIX}$walletId") } }
+        runCatching { regularPrefs.edit { remove("${KEY_ARK_ADDRESS_FP_PREFIX}$walletId") } }
+        runCatching { regularPrefs.edit { remove("${KEY_ARK_MAX_REVEALED_KEY_INDEX_PREFIX}$walletId") } }
         runCatching { regularPrefs.edit { remove("${KEY_ARK_ONCHAIN_DEPOSIT_ADDRESS_PREFIX}$walletId") } }
         runCatching {
             regularPrefs.edit { remove("${KEY_ARK_ONCHAIN_DEPOSIT_ADDRESS_HISTORY_PREFIX}$walletId") }

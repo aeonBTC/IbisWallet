@@ -72,6 +72,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import tech.second.bark.notificationsFlow
+import uniffi.bark.AddressWithIndex
 import uniffi.bark.Config
 import uniffi.bark.ExitCancelFailure
 import uniffi.bark.FeeEstimate
@@ -97,6 +98,18 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import uniffi.bark.Exception as BarkException
+
+/** Seed-binding verdict for a cached Ark receive address (see ArkRepository resolve path). */
+internal enum class ArkAddressSeedBinding {
+    /** Bound fingerprint matches the loaded wallet: safe to display. */
+    MATCH,
+    /** No binding recorded (pre-recording install): adopt live binding. */
+    ADOPT,
+    /** Live fingerprint unavailable (offline): cannot verify, fail open. */
+    UNVERIFIED,
+    /** Bound to a different seed: must never display, mint fresh. */
+    MISMATCH,
+}
 
 /**
  * Ark (Bark) L2 repository — mainnet only.
@@ -804,6 +817,10 @@ class ArkRepository(
             // Capture rescan-blocking activity BEFORE unload clears tracking: a
             // session-DB wipe below must not strand an in-flight refresh/exit.
             var rescanBlockedAtEntry = false
+            // Set once the session dir for this open is known: a fresh Bark DB has no
+            // VTXO address keys, so previously revealed indices must be re-derived
+            // after open (see restoreVtxoKeysLocked) before the mailbox replays.
+            var keyRestoreNeeded = false
             val detached =
                 mutex.withLock {
                     if (generation != loadGeneration.get()) return@withContext
@@ -853,6 +870,10 @@ class ArkRepository(
                     rescanBlockedAtEntry = rescanBlockedAtEntry,
                 )
             lastOpenExpectedMailbox = !reuseLocalDb
+            // Fresh session DB (wiped rescan, skeleton reopen, reinstall, cache
+            // eviction): Bark's receive path trusts DB-stored keys only, and seed
+            // recovery cannot rebuild keys for never-processed payments.
+            keyRestoreNeeded = isSkeletonDb || !hasReusableBarkDb(sessionDir)
             val datadir = sessionDir.absolutePath
             val openEndpoints = probeArkOpenEndpoints()
             if (generation != loadGeneration.get()) return@withContext
@@ -909,6 +930,7 @@ class ArkRepository(
                             val fresh = recreateEmptySessionDataDir(walletId, SESSION_BACKUP_REASON_CORRUPT)
                             sessionDataDir = fresh
                             sessionWalletId = walletId
+                            keyRestoreNeeded = true
                             openBarkWalletWithFallbacks(
                                 credentials = credentials,
                                 datadir = fresh.absolutePath,
@@ -958,6 +980,19 @@ class ArkRepository(
                             _isConnected.value = true
                             _isConnecting.value = false
                             runCatching { opened.wallet.runDaemon() }
+                            if (keyRestoreNeeded) {
+                                // Fresh DB: re-derive revealed keys before the mailbox
+                                // replays, or unprocessed payments are refused as
+                                // unowned and stall the mailbox indefinitely.
+                                keyRestoreNeeded = false
+                                runCatching { restoreVtxoKeysLocked(opened.wallet, walletId) }
+                                    .onFailure {
+                                        SecureLog.w(
+                                            TAG,
+                                            "Ark VTXO key restore failed: ${publicError(it)}",
+                                        )
+                                    }
+                            }
                             publishReceiveAddressesFastLocked(walletId)
                             _arkState.value =
                                 _arkState.value.copy(
@@ -2444,7 +2479,10 @@ class ArkRepository(
                 ArkReceiveKind.ARK_ADDRESS -> {
                     val address =
                         resolveUnusedArkAddressLocked(w, walletId, forceNew = true)
-                            ?: w.newAddress()
+                            ?: mintArkAddressLocked(w, walletId)?.address
+                            ?: throw IllegalStateException(
+                                localizedString(R.string.ark_error_wallet_not_loaded),
+                            )
                     if (walletId != null) {
                         secureStorage.setArkReceiveAddress(walletId, address)
                     }
@@ -2470,7 +2508,7 @@ class ArkRepository(
                     // unbound invoice that needs an online claim.
                     val arkAddress =
                         resolveUnusedArkAddressLocked(w, walletId, forceNew = false)
-                            ?: runCatching { w.newAddress() }.getOrNull()
+                            ?: mintArkAddressLocked(w, walletId)?.address
                     if (arkAddress.isNullOrBlank()) {
                         throw IllegalStateException(
                             localizedString(R.string.ark_error_wallet_not_loaded),
@@ -8057,7 +8095,19 @@ class ArkRepository(
             if (sync) {
                 // w.sync() is the transport-liveness signal: account it so a dead
                 // ASP flips the pill instead of wedging every gated reload path.
-                noteTransportResult(runCatching { w.sync() }.isSuccess)
+                // Bound: native Bark sync can stall inside FFI (dead ASP/Esplora
+                // socket) and this runs under [mutex] on the maintenance tick and
+                // post-send refresh — an unbounded hang queues every Ark
+                // operation silently behind it. Timeout counts as transport
+                // failure so the pill/auto-reconnect logic engages.
+                val syncOk =
+                    withTimeoutOrNull(ARK_SYNC_TIMEOUT_MS) {
+                        runCatching { w.sync() }.isSuccess
+                    } ?: false
+                if (!syncOk) {
+                    SecureLog.w(TAG, "Ark sync timed out or failed")
+                }
+                noteTransportResult(syncOk)
                 runCatching { onchainWallet?.sync() }
                 runCatching { w.tryClaimAllLightningReceives(wait = false) }
                 runCatching { w.syncExits() }
@@ -8150,7 +8200,7 @@ class ArkRepository(
             val address =
                 resolveUnusedArkAddressLocked(w, walletId, forceNew = false)
                     ?: _arkState.value.currentAddress
-                    ?: runCatching { w.newAddress() }.getOrNull()?.also { fresh ->
+                    ?: mintArkAddressLocked(w, walletId)?.address?.also { fresh ->
                         secureStorage.setArkReceiveAddress(walletId, fresh)
                     }
             val bitcoinDeposit =
@@ -10122,7 +10172,7 @@ class ArkRepository(
         val w = wallet ?: return
         val ark =
             resolveUnusedArkAddressLocked(w, walletId, forceNew = false)
-                ?: runCatching { w.newAddress() }.getOrNull()?.takeIf { it.isNotBlank() }?.also {
+                ?: mintArkAddressLocked(w, walletId)?.address?.also {
                     secureStorage.setArkReceiveAddress(walletId, it)
                 }
         // Prefer one quick onchain.newAddress() when cache is empty — don't burn the
@@ -10211,6 +10261,182 @@ class ArkRepository(
     }
 
     /**
+     * Mint the next Ark address, recording its key index durably. Bark derives
+     * deterministically per seed and stores the key at mint time; the recorded
+     * max lets a future session-DB wipe re-derive every previously revealed key
+     * (see restoreVtxoKeysLocked) instead of relying on address footprints that
+     * journal pruning (200 rows) and the used-address cap (64) may have dropped.
+     * Returns null on FFI failure. Caller holds [mutex].
+     */
+    private suspend fun mintArkAddressLocked(w: Wallet, walletId: String?): AddressWithIndex? {
+        val minted =
+            try {
+                w.newAddressWithIndex()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                SecureLog.w(TAG, "Ark address mint failed: ${publicError(e)}")
+                return null
+            }
+        if (walletId != null && minted.address.isNotBlank()) {
+            secureStorage.recordArkRevealedKeyIndex(walletId, minted.index.toInt())
+            // Bind the address to this seed: a cached address that fails this
+            // binding later is never displayed (it would receive into a mailbox
+            // this wallet never polls). Fail-open when fingerprint is unavailable.
+            val fp =
+                try {
+                    w.fingerprint()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    null
+                }
+            if (!fp.isNullOrBlank()) {
+                secureStorage.setArkReceiveAddressSeedFp(walletId, fp)
+            }
+        }
+        return minted.takeIf { it.address.isNotBlank() }
+    }
+
+    /**
+     * True when [address] may be shown as this wallet's receive address: its
+     * recorded seed binding matches the loaded wallet. A mismatch means the
+     * cache holds another seed's address (wrong-wallet paint, restored-over
+     * prefs) — displaying it would strand funds in an unpolled mailbox, so the
+     * caller must mint fresh instead. Missing bindings (pre-recording installs)
+     * adopt the live one; unavailable live fingerprint fails open (offline).
+     * Caller holds [mutex].
+     */
+    private suspend fun arkAddressSeedBindingOk(
+        w: Wallet,
+        walletId: String?,
+        address: String,
+    ): Boolean {
+        if (walletId.isNullOrBlank() || address.isBlank()) return true
+        val liveFp =
+            try {
+                w.fingerprint()?.trim()?.takeIf { it.isNotEmpty() }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        return when (
+            arkAddressSeedBindingVerdict(
+                boundFp = secureStorage.getArkReceiveAddressSeedFp(walletId),
+                liveFp = liveFp,
+            )
+        ) {
+            ArkAddressSeedBinding.MATCH,
+            ArkAddressSeedBinding.UNVERIFIED,
+            -> true
+            ArkAddressSeedBinding.ADOPT -> {
+                // Verdict is ADOPT only when liveFp is present.
+                if (liveFp != null) {
+                    secureStorage.setArkReceiveAddressSeedFp(walletId, liveFp)
+                    SecureLog.w(TAG, "Ark receive address seed binding adopted for wallet")
+                }
+                true
+            }
+            ArkAddressSeedBinding.MISMATCH -> false
+        }
+    }
+
+    /**
+     * Every address this wallet lineage ever showed or touched, from durable prefs.
+     * Used after a session-DB wipe to find which VTXO key indices must be re-derived
+     * (current receive address, labeled addresses, journal/cache movement addresses).
+     */
+    private fun collectKnownArkAddresses(walletId: String): Set<String> {
+        fun norm(value: String?) = value?.trim()?.lowercase(Locale.US)?.takeIf { it.isNotBlank() }
+        val out = HashSet<String>()
+        norm(secureStorage.getArkReceiveAddress(walletId))?.let(out::add)
+        runCatching { secureStorage.getUsedArkReceiveAddresses(walletId) }.getOrDefault(emptySet())
+            .forEach { norm(it)?.let(out::add) }
+        runCatching { secureStorage.getAllArkAddressLabels(walletId).keys }.getOrDefault(emptySet())
+            .forEach { norm(it)?.let(out::add) }
+        fun addMovements(movements: List<ArkMovement>) {
+            movements.forEach { movement ->
+                movement.receivedOnAddresses.forEach { norm(it)?.let(out::add) }
+                movement.sentToAddresses.forEach { norm(it)?.let(out::add) }
+            }
+        }
+        runCatching { addMovements(secureStorage.getArkMovementJournal(walletId)) }
+        runCatching {
+            secureStorage.getArkWalletStateCache(walletId)?.movements?.let(::addMovements)
+        }
+        return out
+    }
+
+    /**
+     * Re-derive + store VTXO keys up to the highest previously revealed index.
+     * A session-DB wipe (mailbox rescan, reinstall, cache eviction) drops Bark's
+     * key table; Bark's receive path trusts DB keys only and seed recovery cannot
+     * rebuild keys for payments this instance never processed — without this, the
+     * mailbox replay refuses them as unowned and stalls (invisible forever, and a
+     * rescan cannot fix it). Derivation is deterministic per seed, so re-minting
+     * reproduces the exact original addresses. Caller holds [mutex].
+     */
+    private suspend fun restoreVtxoKeysLocked(w: Wallet, walletId: String) {
+        val known = collectKnownArkAddresses(walletId)
+        // Authoritative floor: every mint records its index, independent of
+        // footprint pruning (journal cap, used-address cap). Footprints cover
+        // installs predating the recording.
+        val recordedMax = secureStorage.getArkMaxRevealedKeyIndex(walletId)
+        if (known.isEmpty() && recordedMax < 0) return
+        // Read the live mint counter with one spare mint: Bark derives
+        // deterministically per seed, so indices 0..counter reproduce the exact
+        // original addresses. This bounds the re-derivation scan precisely.
+        val counter =
+            try {
+                w.newAddressWithIndex().index.toInt().also { secureStorage.recordArkRevealedKeyIndex(walletId, it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                SecureLog.w(TAG, "Ark VTXO key restore: counter read failed: ${publicError(e)}")
+                return
+            }
+        if (counter < 0) return
+        val peek: suspend (Int) -> String? = { idx: Int ->
+            try {
+                w.peekAddress(idx.toUInt())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        }
+        val scanMax = counter.coerceAtMost(VTXO_KEY_RESTORE_SCAN_CAP)
+        val footprintTarget = planVtxoKeyRestore(known, scanMax, peek)
+        // The recorded max is authoritative for this install; footprints cover
+        // installs predating the recording. A foreign lineage matches neither
+        // (no shared addresses, no recorded max) and mints nothing further.
+        val target = maxOf(footprintTarget, recordedMax)
+        if (target < 0) {
+            SecureLog.w(
+                TAG,
+                "Ark VTXO key restore: no known address re-derived " +
+                    "(known=${known.size} counter=$counter)",
+            )
+            return
+        }
+        val goal = (target + VTXO_KEY_RESTORE_ALLOC_EXTRA).coerceAtMost(VTXO_KEY_RESTORE_ALLOC_CAP)
+        // Counter already sits past the counter-read mint; its index is known.
+        var lastIndex = counter
+        var minted = 1
+        while (lastIndex < goal && minted <= VTXO_KEY_RESTORE_ALLOC_CAP) {
+            // mintArkAddressLocked records each re-derived index durably.
+            val mintedAddress = mintArkAddressLocked(w, walletId) ?: break
+            minted++
+            lastIndex = mintedAddress.index.toInt()
+        }
+        SecureLog.w(
+            TAG,
+            "Ark VTXO key restore: known=${known.size} target=$target minted=$minted lastIndex=$lastIndex",
+        )
+    }
+
+    /**
      * Return a cached unused Ark address, or generate a new one when [forceNew] or used.
      * Must run under [mutex].
      */
@@ -10224,17 +10450,25 @@ class ArkRepository(
                 _arkState.value.currentAddress?.takeIf { it.isNotBlank() }
                     ?: walletId?.let { secureStorage.getArkReceiveAddress(it) }
             if (!cached.isNullOrBlank() && !isAddressUsed(cached, walletId = walletId)) {
-                if (walletId != null) secureStorage.setArkReceiveAddress(walletId, cached)
-                return cached
-            }
-            if (!cached.isNullOrBlank() && walletId != null) {
+                // Never hand out an address minted under a different seed: it would
+                // receive into a mailbox this wallet never polls (silent stranding).
+                // Mismatches fall through to a fresh mint below (never marked used
+                // under this wallet — it is not ours).
+                if (arkAddressSeedBindingOk(w, walletId, cached)) {
+                    if (walletId != null) secureStorage.setArkReceiveAddress(walletId, cached)
+                    return cached
+                }
+                SecureLog.w(TAG, "Ark cached receive address failed seed binding — minting fresh")
+            } else if (
+                !cached.isNullOrBlank() && walletId != null &&
+                isAddressUsed(cached, walletId = walletId)
+            ) {
                 secureStorage.markArkReceiveAddressUsed(walletId, cached)
             }
         }
         // Generate until unused (cap avoids infinite loop if history is noisy).
         repeat(16) {
-            val fresh =
-                runCatching { w.newAddress() }.getOrNull()?.takeIf { it.isNotBlank() } ?: return null
+            val fresh = mintArkAddressLocked(w, walletId)?.address ?: return null
             if (!isAddressUsed(fresh, walletId = walletId)) {
                 if (walletId != null) secureStorage.setArkReceiveAddress(walletId, fresh)
                 return fresh
@@ -10243,7 +10477,7 @@ class ArkRepository(
                 secureStorage.markArkReceiveAddressUsed(walletId, fresh)
             }
         }
-        return runCatching { w.newAddress() }.getOrNull()?.also { fresh ->
+        return mintArkAddressLocked(w, walletId)?.address?.also { fresh ->
             if (walletId != null && fresh.isNotBlank()) {
                 secureStorage.setArkReceiveAddress(walletId, fresh)
             }
@@ -11541,6 +11775,12 @@ class ArkRepository(
         /** Bound send fee-quote FFI so review cannot spin forever on a hung ASP. */
         private const val ARK_SEND_PREVIEW_TIMEOUT_MS = 45_000L
         /**
+         * Bound Bark sync in refreshStateLocked: native sync can stall inside FFI
+         * and this path holds [mutex]. Generous (healthy syncs take seconds even
+         * over Tor); only a genuine hang trips it.
+         */
+        private const val ARK_SYNC_TIMEOUT_MS = 120_000L
+        /**
          * Bound the authoritative exit-fee quote. Bark syncs the on-chain wallet
          * first, so allow longer than refresh quotes — the dialog paints the
          * manual estimate meanwhile.
@@ -11564,5 +11804,59 @@ class ArkRepository(
         private const val FAILED_SEND_CREATE_WINDOW_MS = 10 * 60_000L
         /** When movement time is unparseable, only match very recent failures. */
         private const val FAILED_SEND_UNKNOWN_TIME_MATCH_MS = 2 * 60_000L
+        /**
+         * Bound peekAddress() probes when re-discovering revealed VTXO key indices
+         * after a fresh session DB. Wallet mint counters only advance, so the live
+         * counter (read via one spare mint) is the exact upper bound; this cap only
+         * guards pathological counters.
+         */
+        private const val VTXO_KEY_RESTORE_SCAN_CAP = 1024
+        /** Mint this many spare addresses past the highest known index. */
+        private const val VTXO_KEY_RESTORE_ALLOC_EXTRA = 8
+        /** Hard bound on mint operations per restore (includes the counter read). */
+        private const val VTXO_KEY_RESTORE_ALLOC_CAP = 1040
+
+        /**
+         * Highest revealed VTXO key index at or below [maxIndex] among [known]
+         * addresses, or -1 when none match. [peek] maps key index to address
+         * (Bark peekAddress: pure derivation, no storage). Indices are dense from
+         * zero (the mint counter only advances), so every revealed index at or
+         * below the highest hit is covered by re-minting up to it.
+         */        internal suspend fun planVtxoKeyRestore(
+            known: Set<String>,
+            maxIndex: Int,
+            peek: suspend (Int) -> String?,
+        ): Int {
+            if (known.isEmpty() || maxIndex < 0) return -1
+            val normalized = known.mapTo(HashSet(known.size)) { it.trim().lowercase(Locale.US) }
+            if (normalized.isEmpty()) return -1
+            var maxFound = -1
+            var i = 0
+            while (i <= maxIndex) {
+                val candidate = peek(i)?.trim()?.lowercase(Locale.US)
+                if (candidate.isNullOrBlank()) break
+                if (candidate in normalized) maxFound = i
+                i++
+            }
+            return maxFound
+        }
+
+        /**
+         * Pure verdict for whether a cached receive address may be shown for the
+         * loaded wallet. Both fingerprints are Bark seed-derived wallet
+         * fingerprints; comparison is case-insensitive.
+         */
+        internal fun arkAddressSeedBindingVerdict(
+            boundFp: String?,
+            liveFp: String?,
+        ): ArkAddressSeedBinding {
+            val live = liveFp?.trim()?.takeIf { it.isNotEmpty() } ?: return ArkAddressSeedBinding.UNVERIFIED
+            val bound = boundFp?.trim()?.takeIf { it.isNotEmpty() } ?: return ArkAddressSeedBinding.ADOPT
+            return if (bound.equals(live, ignoreCase = true)) {
+                ArkAddressSeedBinding.MATCH
+            } else {
+                ArkAddressSeedBinding.MISMATCH
+            }
+        }
     }
 }
