@@ -3418,6 +3418,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             if (arkFundingTxids.isNotEmpty()) {
                                 put("arkFundingTxids", org.json.JSONArray(arkFundingTxids))
                             }
+                            // VTXO key restoral after a session-DB wipe needs the
+                            // highest revealed index; footprints alone may be pruned.
+                            val arkMaxKeyIndex = secureStorage.getArkMaxRevealedKeyIndex(walletId)
+                            if (arkMaxKeyIndex >= 0) {
+                                put("arkMaxRevealedKeyIndex", arkMaxKeyIndex)
+                            }
                         })
 
                         // Full backup intentionally excludes the local Bark DB (seed+ASP
@@ -4488,6 +4494,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 fundingArr.optString(i, "").takeIf { it.isNotBlank() }
             }
             repository.setArkFundingTxidsForWallet(walletId, txids)
+        }
+        if (settingsObj.has("arkMaxRevealedKeyIndex")) {
+            val restoredMax = settingsObj.optInt("arkMaxRevealedKeyIndex", -1)
+            if (restoredMax >= 0) {
+                secureStorage.recordArkRevealedKeyIndex(walletId, restoredMax)
+            }
         }
         settingsObj.optJSONObject("silentPaymentDestinations")?.let { destObj ->
             val destinations = mutableMapOf<String, List<Recipient>>()
