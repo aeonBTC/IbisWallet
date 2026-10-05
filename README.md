@@ -100,6 +100,8 @@ Ibis is beta software and built for experienced Bitcoin users. Off-device seed b
 
 Lower severity issues, theoretical vulnerabilities without a practical exploit path, or findings that do not lead to fund loss will be acknowledged but are generally out of scope for monetary rewards.
 
+Bug bounty awards: [August 15th, 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+
 ## Disclaimer
 
 Ibis is coded and audited by the most current frontier AI models.
