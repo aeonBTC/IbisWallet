@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -62,6 +63,11 @@ import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeQuote
 import github.aeonbtc.ibiswallet.data.model.SparkOnchainFeeSpeed
 import github.aeonbtc.ibiswallet.data.model.SparkSendState
+import github.aeonbtc.ibiswallet.data.model.SparkToken
+import github.aeonbtc.ibiswallet.data.model.SparkTokenBalance
+import github.aeonbtc.ibiswallet.data.model.filterSparkTokenAmountInput
+import github.aeonbtc.ibiswallet.data.model.formatSparkTokenAmount
+import github.aeonbtc.ibiswallet.data.model.parseSparkTokenAmountToBaseUnits
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
@@ -69,6 +75,8 @@ import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
+import github.aeonbtc.ibiswallet.ui.components.SendExternalOriginBanner
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -88,6 +96,7 @@ import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
+import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -110,6 +119,10 @@ fun SparkSendScreen(
     onSendPreparedMany: () -> Unit = {},
     onResetSend: () -> Unit,
     onToggleDenomination: () -> Unit,
+    tokenBalances: List<SparkTokenBalance> = emptyList(),
+    onPrepareTokenSend: ((String, String, java.math.BigInteger, Boolean, String?) -> Unit)? = null,
+    externalOriginOrigin: WalletViewModel.PendingSendOrigin? = null,
+    onClearExternalOriginNotice: () -> Unit = {},
 ) {
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     var paymentRequest by remember { mutableStateOf(draft.recipientAddress) }
@@ -133,6 +146,21 @@ fun SparkSendScreen(
     // dialogs racing). Cleared whenever sendState settles below.
     var reviewClickGuard by remember { mutableStateOf(false) }
     val multiRecipients = remember { mutableStateListOf<Pair<String, String>>() }
+    // Token mode (Liquid-USDt parity): first held token only, toggled via the
+    // "Send <ticker>" chip. Null = BTC.
+    var selectedToken by remember { mutableStateOf<SparkToken?>(null) }
+    val nonBtcTokens = remember(tokenBalances) { tokenBalances.filter { it.amount.signum() > 0 } }
+    // If the token list loads after first composition, default to nothing
+    // (BTC stays the default; the user opts into the token explicitly).
+    LaunchedEffect(nonBtcTokens) {
+        if (selectedToken != null && nonBtcTokens.none { it.token.tokenIdentifier == selectedToken?.tokenIdentifier }) {
+            selectedToken = null
+            amountInput = ""
+            isMaxMode = false
+        }
+    }
+    val isTokenMode = selectedToken != null
+    val tokenBalance = selectedToken?.let { token -> tokenBalances.firstOrNull { it.token.tokenIdentifier == token.tokenIdentifier } }
 
     // NFC reader mode: tapping a tag fills the recipient via pendingSendInput.
     val sendNfcContext = LocalContext.current
@@ -173,13 +201,23 @@ fun SparkSendScreen(
         }
     }
 
-    val amountSats = remember(amountInput, denomination, isUsdMode, btcPrice) {
-        parseSparkSendAmount(amountInput, useSats, isUsdMode, btcPrice)
+    val amountSats = remember(amountInput, denomination, isUsdMode, btcPrice, isTokenMode) {
+        if (isTokenMode) null else parseSparkSendAmount(amountInput, useSats, isUsdMode, btcPrice)
+    }
+    val tokenAmountBaseUnits = remember(amountInput, selectedToken) {
+        val token = selectedToken ?: return@remember null
+        parseSparkTokenAmountToBaseUnits(amountInput, token.decimals)
     }
     val context = LocalContext.current
     val parsedRecipient = parseSendRecipient(paymentRequest.trim(), context)
-    val recipientValidationError = remember(parsedRecipient, paymentRequest, context) {
-        if (paymentRequest.isBlank()) {
+    val tokenOnlyError =
+        if (isTokenMode && paymentRequest.isNotBlank() && parsedRecipient !is ParsedSendRecipient.Spark) {
+            stringResource(R.string.spark_send_token_spark_only)
+        } else {
+            null
+        }
+    val recipientValidationError = remember(parsedRecipient, paymentRequest, context, tokenOnlyError) {
+        tokenOnlyError ?: if (paymentRequest.isBlank()) {
             null
         } else {
             layer2RecipientValidationError(parsedRecipient, Layer2Provider.SPARK, context = context)
@@ -256,11 +294,16 @@ fun SparkSendScreen(
             else -> null
         }
     val hasUsableSendAmount =
-        isMaxMode ||
-            (amountSats != null && amountSats > 0L) ||
-            (recipientFixedAmountSats != null && recipientFixedAmountSats > 0L)
+        if (isTokenMode) {
+            isMaxMode || (tokenAmountBaseUnits != null && tokenAmountBaseUnits.signum() > 0)
+        } else {
+            isMaxMode ||
+                (amountSats != null && amountSats > 0L) ||
+                (recipientFixedAmountSats != null && recipientFixedAmountSats > 0L)
+        }
     val amountForSpendCheck: Long? =
         when {
+            isTokenMode -> null
             isMaxMode -> null
             amountSats != null && amountSats > 0L -> amountSats
             recipientFixedAmountSats != null && recipientFixedAmountSats > 0L -> recipientFixedAmountSats
@@ -280,10 +323,19 @@ fun SparkSendScreen(
             else -> amountForSpendCheck
         }
     val sparkClientOverBalance =
-        !isMaxMode &&
-            amountForSpendCheck != null &&
-            amountForSpendCheck > 0L &&
-            totalOutSats > availableSats
+        if (isTokenMode) {
+            val balance = tokenBalance?.amount
+            !isMaxMode &&
+                tokenAmountBaseUnits != null &&
+                tokenAmountBaseUnits.signum() > 0 &&
+                balance != null &&
+                tokenAmountBaseUnits > balance
+        } else {
+            !isMaxMode &&
+                amountForSpendCheck != null &&
+                amountForSpendCheck > 0L &&
+                totalOutSats > availableSats
+        }
     val sparkAmountFieldError =
         prepareError?.takeIf { it.isNotBlank() }
             ?: if (sparkClientOverBalance) {
@@ -296,7 +348,15 @@ fun SparkSendScreen(
                 null
             }
     val canSparkReview =
-        if (isMultiMode) {
+        if (isTokenMode) {
+            paymentRequest.isNotBlank() &&
+                recipientValidationError == null &&
+                !busy &&
+                prepareError == null &&
+                !sparkClientOverBalance &&
+                hasUsableSendAmount &&
+                onPrepareTokenSend != null
+        } else if (isMultiMode) {
             multiRecipientPairs.size >= 2 &&
                 multiTotalSats > 0L &&
                 multiTotalSats <= availableSats &&
@@ -332,6 +392,7 @@ fun SparkSendScreen(
                 else -> availableSats.takeIf { it > 0L }
             }
         if (parsedRecipient is ParsedSendRecipient.Bitcoin &&
+            !isTokenMode &&
             quoteAmount != null &&
             recipientValidationError == null
         ) {
@@ -532,6 +593,45 @@ fun SparkSendScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                if (externalOriginOrigin != null) {
+                    SendExternalOriginBanner(origin = externalOriginOrigin)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
+                if (nonBtcTokens.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.loc_cddf2d76),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                        val chipToken = nonBtcTokens.first().token
+                        SparkChipButton(
+                            text = if (isTokenMode) chipToken.ticker else "BTC",
+                            selected = isTokenMode,
+                            enabled = !busy,
+                            onClick = {
+                                selectedToken = if (isTokenMode) null else chipToken
+                                amountInput = ""
+                                isMaxMode = false
+                                isMultiMode = false
+                                isUsdMode = false
+                                multiRecipients.clear()
+                                onResetSend()
+                            },
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -540,7 +640,7 @@ fun SparkSendScreen(
                     Text(stringResource(R.string.loc_eaf579ea), style = MaterialTheme.typography.labelLarge, color = TextSecondary)
                     MultiRecipientToggleChip(
                         isMultiMode = isMultiMode,
-                        enabled = !busy,
+                        enabled = !busy && !isTokenMode,
                         accentColor = SparkPurple,
                         onClick = {
                             if (!isMultiMode) {
@@ -599,9 +699,9 @@ fun SparkSendScreen(
                             }
                     }
                 } else {
-                OutlinedTextField(
-                    value = paymentRequest,
-                    onValueChange = { input ->
+                val onPaymentInput: (String) -> Unit =
+                    onPaymentInput@{ input ->
+                        onClearExternalOriginNotice()
                         val normalized = input.trim()
                         when (val parsed = parseSendRecipient(normalized, context)) {
                             is ParsedSendRecipient.Bitcoin -> {
@@ -625,7 +725,10 @@ fun SparkSendScreen(
                                 isMaxMode = false
                             }
                         }
-                    },
+                    }
+                OutlinedTextField(
+                    value = paymentRequest,
+                    onValueChange = onPaymentInput,
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text(
@@ -636,14 +739,12 @@ fun SparkSendScreen(
                         )
                     },
                     trailingIcon = {
-                        IconButton(onClick = { showQrScanner = true }) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR Code",
-                                tint = SparkPurple,
-                                modifier = Modifier.size(22.dp),
-                            )
-                        }
+                        ScanPasteIcons(
+                            onScan = { showQrScanner = true },
+                            onPaste = onPaymentInput,
+                            tint = SparkPurple,
+                            scanContentDescription = "Scan QR Code",
+                        )
                     },
                     supportingText =
                         recipientValidationError?.let {
@@ -687,13 +788,21 @@ fun SparkSendScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    AmountLabel(
-                        useSats = useSats,
-                        isUsdMode = isUsdMode,
-                        fiatCurrency = fiatCurrency,
-                        onToggleDenomination = onToggleDenomination,
-                    )
-                    if (btcPrice != null && btcPrice > 0) {
+                    if (isTokenMode) {
+                        Text(
+                            text = "Amount (${selectedToken?.ticker.orEmpty()})",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = TextSecondary,
+                        )
+                    } else {
+                        AmountLabel(
+                            useSats = useSats,
+                            isUsdMode = isUsdMode,
+                            fiatCurrency = fiatCurrency,
+                            onToggleDenomination = onToggleDenomination,
+                        )
+                    }
+                    if (!isTokenMode && btcPrice != null && btcPrice > 0) {
                         Card(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
@@ -720,7 +829,9 @@ fun SparkSendScreen(
                 Spacer(modifier = Modifier.height(6.dp))
 
                 val conversionText =
-                    if (amountInput.isNotBlank() && amountSats != null && amountSats > 0 && btcPrice != null && btcPrice > 0) {
+                    if (isTokenMode) {
+                        null
+                    } else if (amountInput.isNotBlank() && amountSats != null && amountSats > 0 && btcPrice != null && btcPrice > 0) {
                         if (privacyMode) {
                             "≈ $SPARK_SEND_HIDDEN"
                         } else if (isUsdMode) {
@@ -735,13 +846,19 @@ fun SparkSendScreen(
                 OutlinedTextField(
                     value = amountInput,
                     onValueChange = { value ->
-                        amountInput = filterSparkAmountInput(value, useSats, isUsdMode)
+                        onClearExternalOriginNotice()
+                        amountInput =
+                            if (isTokenMode) {
+                                filterSparkTokenAmountInput(value, selectedToken?.decimals ?: 6)
+                            } else {
+                                filterSparkAmountInput(value, useSats, isUsdMode)
+                            }
                         isMaxMode = false
                     },
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text(
-                            text = if (isUsdMode) "0.00" else "0",
+                            text = if (isTokenMode || isUsdMode) "0.00" else "0",
                             color = TextSecondary.copy(alpha = 0.5f),
                         )
                     },
@@ -783,11 +900,15 @@ fun SparkSendScreen(
                     amountText =
                         if (privacyMode) {
                             SPARK_SEND_HIDDEN
+                        } else if (isTokenMode && tokenBalance != null) {
+                            formatSparkTokenAmount(tokenBalance.amount, tokenBalance.token)
                         } else {
                             formatAmount(availableSats.toULong(), useSats, includeUnit = true)
                         },
                     fiatText =
-                        if (btcPrice != null && btcPrice > 0 && !privacyMode) {
+                        if (isTokenMode) {
+                            null
+                        } else if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                             val usdValue = (availableSats.toDouble() / 100_000_000.0) * btcPrice
                             " · ${formatFiat(usdValue, fiatCurrency)}"
                         } else {
@@ -795,10 +916,14 @@ fun SparkSendScreen(
                         },
                     accentColor = SparkPurple,
                     isMaxMode = isMaxMode,
-                    maxEnabled = availableSats > 0 && !busy,
+                    maxEnabled = if (isTokenMode) (tokenBalance?.amount?.signum() ?: 0) > 0 && !busy else availableSats > 0 && !busy,
                     fadeWhenDisabled = true,
                     onMaxClick = {
-                        amountInput = formatSparkSendAmountInput(availableSats, useSats)
+                        if (isTokenMode && tokenBalance != null) {
+                            amountInput = formatSparkTokenDisplayInput(tokenBalance.amount, tokenBalance.token)
+                        } else {
+                            amountInput = formatSparkSendAmountInput(availableSats, useSats)
+                        }
                         isUsdMode = false
                         isMaxMode = true
                     },
@@ -862,7 +987,32 @@ fun SparkSendScreen(
                 reviewClickGuard = true
                 showConfirmDialog = true
                 val sendLabel = labelText.trim().takeIf { it.isNotBlank() }
-                if (isMultiMode) {
+                if (isTokenMode) {
+                    val token = selectedToken
+                    val prepare = onPrepareTokenSend
+                    if (token != null && prepare != null) {
+                        val amountForPrepare =
+                            if (isMaxMode) {
+                                tokenBalance?.amount?.takeIf { it.signum() > 0 }
+                                    ?: tokenAmountBaseUnits?.takeIf { it.signum() > 0 }
+                            } else {
+                                tokenAmountBaseUnits?.takeIf { it.signum() > 0 }
+                            }
+                        if (amountForPrepare != null) {
+                            prepare(
+                                paymentRequest.trim(),
+                                token.tokenIdentifier,
+                                amountForPrepare,
+                                isMaxMode,
+                                sendLabel,
+                            )
+                        } else {
+                            onResetSend()
+                            showConfirmDialog = false
+                            reviewClickGuard = false
+                        }
+                    }
+                } else if (isMultiMode) {
                     onPrepareSendMany(multiRecipientPairs, sendLabel)
                 } else {
                     val amountForPrepare: Long? =
@@ -889,7 +1039,7 @@ fun SparkSendScreen(
             },
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .heightIn(min = 48.dp),
             shape = RoundedCornerShape(8.dp),
             enabled = canSparkReview && !reviewClickGuard,
             colors =
@@ -1127,7 +1277,7 @@ private fun SparkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = false,
                         colors = ButtonDefaults.buttonColors(containerColor = SparkPurple, contentColor = DarkBackground),
@@ -1148,7 +1298,7 @@ private fun SparkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1171,7 +1321,7 @@ private fun SparkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = SparkPurple, contentColor = DarkBackground),
                     ) {
@@ -1191,7 +1341,7 @@ private fun SparkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1204,7 +1354,7 @@ private fun SparkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = false,
                         colors = ButtonDefaults.buttonColors(containerColor = SparkPurple, contentColor = DarkBackground),
@@ -1237,7 +1387,7 @@ private fun SparkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1259,7 +1409,7 @@ private fun SparkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1567,6 +1717,52 @@ private fun SparkSendReviewContent(
 
     val amountSats = preview.amountSats ?: 0L
     val feeSats = preview.feeSats ?: 0L
+    if (preview.isToken) {
+        val token =
+            preview.tokenIdentifier?.let { id ->
+                SparkToken.fromMetadata(
+                    tokenIdentifier = id,
+                    ticker = preview.tokenTicker ?: "",
+                    name = preview.tokenTicker ?: "",
+                    decimals = preview.tokenDecimals ?: 6,
+                )
+            }
+        val tokenAmount = preview.tokenAmount?.let { runCatching { java.math.BigInteger(it) }.getOrNull() }
+        val tokenFee = preview.tokenFee?.let { runCatching { java.math.BigInteger(it) }.getOrNull() }
+        if (token != null && tokenAmount != null) {
+            SparkReviewAmountRow(
+                label = "Sending:",
+                subtitle = abbreviateSparkReviewText(preview.paymentRequest, prefix = 8, suffix = 8),
+                valueText = sparkReviewTokenText(tokenAmount, token, privacyMode),
+                valueSubtext = null,
+                color = AccentRed,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+        if (token != null && tokenFee != null && tokenFee.signum() > 0) {
+            SparkReviewAmountRow(
+                label = sparkReviewFeeLabel(preview.method),
+                subtitle = null,
+                valueText = sparkReviewTokenText(tokenFee, token, privacyMode),
+                valueSubtext = null,
+                color = sparkReviewFeeColor(preview.method),
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+        if (token != null && tokenAmount != null) {
+            SparkReviewDivider()
+            Spacer(modifier = Modifier.height(16.dp))
+            val total = tokenAmount + (tokenFee ?: java.math.BigInteger.ZERO)
+            SparkReviewAmountRow(
+                label = "Total",
+                valueText = sparkReviewTokenText(total, token, privacyMode),
+                valueSubtext = null,
+                color = AccentRed,
+                bold = true,
+            )
+        }
+        return
+    }
     if (preview.amountSats != null) {
         SparkReviewAmountRow(
             label = "Sending:",
@@ -1647,6 +1843,7 @@ private fun SparkReviewAmountRow(
                 color = color,
                 textAlign = TextAlign.End,
                 softWrap = false,
+                overflow = TextOverflow.Ellipsis,
             )
             valueSubtext?.let {
                 Text(
@@ -1669,6 +1866,31 @@ private fun SparkReviewDivider() {
                 .height(1.dp)
                 .background(BorderColor),
     )
+}
+
+private fun sparkReviewTokenText(
+    value: java.math.BigInteger,
+    token: SparkToken,
+    privacyMode: Boolean,
+): String =
+    if (privacyMode) {
+        SPARK_SEND_HIDDEN
+    } else {
+        val formatted = formatSparkTokenAmount(value.abs(), token)
+        if (value.signum() > 0) "-$formatted" else formatted
+    }
+
+private fun formatSparkTokenDisplayInput(
+    amount: java.math.BigInteger,
+    token: SparkToken,
+): String {
+    if (amount.signum() <= 0) return ""
+    val decimals = token.decimals.coerceIn(0, 18)
+    val divisor = java.math.BigDecimal.TEN.pow(decimals)
+    return java.math.BigDecimal(amount)
+        .divide(divisor, decimals, java.math.RoundingMode.DOWN)
+        .stripTrailingZeros()
+        .toPlainString()
 }
 
 private fun sparkReviewAmountText(

@@ -64,6 +64,16 @@ fun LanguageDropdown(
                 name = stringResource(R.string.settings_language_german),
                 description = stringResource(R.string.settings_language_german_description),
             ),
+            LanguageOption(
+                locale = AppLocale.JAPANESE,
+                name = stringResource(R.string.settings_language_japanese),
+                description = stringResource(R.string.settings_language_japanese_description),
+            ),
+            LanguageOption(
+                locale = AppLocale.SIMPLIFIED_CHINESE,
+                name = stringResource(R.string.settings_language_simplified_chinese),
+                description = stringResource(R.string.settings_language_simplified_chinese_description),
+            ),
         )
     val selectedOption = options.find { it.locale == currentLocale } ?: options.first()
 

@@ -3,7 +3,6 @@
 package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,16 +11,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -36,7 +36,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,7 +45,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -57,7 +55,9 @@ import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.FeeEstimationResult
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.ImportQrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.ui.components.SensitiveSeedIme
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
@@ -69,6 +69,9 @@ import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.viewmodel.SweepState
+
+/** Width reserved inside a single-line secret field for the paste/scan icon pair. */
+private const val SECRET_FIELD_ICON_SPACE = 68
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -131,6 +134,8 @@ fun SweepPrivateKeyScreen(
         ScrollableAlertDialog(
             onDismissRequest = { if (!sweepState.isSweeping) showReviewDialog = false },
             containerColor = DarkCard,
+            // Cancel left, Sweep right in the shared row.
+            confirmFirst = false,
             title = {
                 Text(
                     stringResource(R.string.loc_f71ec2bd),
@@ -222,6 +227,7 @@ fun SweepPrivateKeyScreen(
                         onSweep(wifKey.trim(), destinationAddress.trim(), feeRate)
                     },
                     enabled = !sweepState.isSweeping,
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors =
                         ButtonDefaults.buttonColors(
@@ -242,8 +248,11 @@ fun SweepPrivateKeyScreen(
             },
             dismissButton = {
                 if (!sweepState.isSweeping) {
-                    TextButton(onClick = { showReviewDialog = false }) {
-                        Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                    IbisButton(
+                        onClick = { showReviewDialog = false },
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    ) {
+                        Text(stringResource(R.string.loc_51bac044))
                     }
                 }
             },
@@ -295,6 +304,7 @@ fun SweepPrivateKeyScreen(
                         onReset()
                         onBack()
                     },
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
                 ) {
@@ -303,6 +313,8 @@ fun SweepPrivateKeyScreen(
             },
         )
     }
+
+    val privateKeyInputDescription = stringResource(R.string.sweep_private_key_input)
 
     Column(
         modifier =
@@ -325,7 +337,7 @@ fun SweepPrivateKeyScreen(
             }) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
@@ -336,32 +348,103 @@ fun SweepPrivateKeyScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // WIF Private Key input
-        Text(
-            text = stringResource(R.string.loc_e109877e),
-            style = MaterialTheme.typography.labelLarge,
-            color = TextSecondary,
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Box(modifier = Modifier.fillMaxWidth()) {
-            SensitiveSeedIme {
-                OutlinedTextField(
-                    value = wifKey,
-                    onValueChange = { wifKey = it },
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .height(80.dp)
-                            .clearAndSetSemantics {
-                                contentDescription = "Private key input"
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
+        ) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+            ) {
+                // WIF Private Key input
+                Text(
+                    text = stringResource(R.string.loc_e109877e),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextSecondary,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    SensitiveSeedIme {
+                        OutlinedTextField(
+                            value = wifKey,
+                            onValueChange = { wifKey = it },
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clearAndSetSemantics {
+                                        contentDescription = privateKeyInputDescription
+                                    },
+                            shape = RoundedCornerShape(8.dp),
+                            placeholder = { Text(stringResource(R.string.loc_3a47abe2), color = TextSecondary.copy(alpha = 0.5f)) },
+                            keyboardOptions = sensitiveSeedKeyboardOptions(KeyboardType.Password),
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true,
+                            // Reserve room so the masked key never runs under the paste/scan icons.
+                            trailingIcon = {
+                                Spacer(modifier = Modifier.width(SECRET_FIELD_ICON_SPACE.dp))
                             },
+                            colors =
+                                OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = BitcoinOrange,
+                                    unfocusedBorderColor = BorderColor,
+                                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
+                                    cursorColor = BitcoinOrange,
+                                ),
+                        )
+                    }
+                    ScanPasteIcons(
+                        onScan = { showWifQrScanner = true },
+                        onPaste = { text -> wifKey = text },
+                        tint = BitcoinOrange,
+                        scanContentDescription = stringResource(R.string.sign_scan_qr),
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                    )
+                }
+
+                // WIF validation feedback
+                if (wifKey.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text =
+                            if (isValidWif) {
+                                stringResource(R.string.sweep_wif_valid)
+                            } else {
+                                stringResource(R.string.sweep_wif_invalid)
+                            },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isValidWif) SuccessGreen else ErrorRed,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Destination Address
+                Text(
+                    text = stringResource(R.string.loc_ff3e9c4d),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextSecondary,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = destinationAddress,
+                    onValueChange = { destinationAddress = it },
+                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
-                    placeholder = { Text(stringResource(R.string.loc_3a47abe2), color = TextSecondary.copy(alpha = 0.5f)) },
-                    keyboardOptions = sensitiveSeedKeyboardOptions(KeyboardType.Password),
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = false,
+                    placeholder = { Text(stringResource(R.string.loc_b7fdd705), color = TextSecondary.copy(alpha = 0.5f)) },
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
+                    singleLine = true,
+                    trailingIcon = {
+                        ScanPasteIcons(
+                            onScan = { showDestQrScanner = true },
+                            onPaste = { text -> destinationAddress = text.removePrefix("bitcoin:").split("?").first().trim() },
+                            tint = BitcoinOrange,
+                            scanContentDescription = stringResource(R.string.sign_scan_qr),
+                        )
+                    },
                     colors =
                         OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = BitcoinOrange,
@@ -371,112 +454,48 @@ fun SweepPrivateKeyScreen(
                             cursorColor = BitcoinOrange,
                         ),
                 )
-            }
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier =
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(4.dp)
-                        .size(40.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { showWifQrScanner = true },
-            ) {
-                Icon(
-                    imageVector = Icons.Default.QrCodeScanner,
-                    contentDescription = "Scan QR Code",
-                    tint = BitcoinOrange,
-                    modifier = Modifier.size(24.dp),
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Fee Rate
+                FeeRateSection(
+                    feeEstimationState = feeEstimationState,
+                    currentFeeRate = feeRate,
+                    minFeeRate = minFeeRate,
+                    onFeeRateChange = { feeRate = it },
+                    onRefreshFees = onRefreshFees,
+                    enabled = true,
                 )
-            }
-        }
 
-        // WIF validation feedback
-        if (wifKey.isNotBlank()) {
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = if (isValidWif) "Valid WIF key" else "Invalid WIF key",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (isValidWif) SuccessGreen else ErrorRed,
-            )
-        }
+                Spacer(modifier = Modifier.height(16.dp))
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Destination Address
-        Text(
-            text = stringResource(R.string.loc_ff3e9c4d),
-            style = MaterialTheme.typography.labelLarge,
-            color = TextSecondary,
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        OutlinedTextField(
-            value = destinationAddress,
-            onValueChange = { destinationAddress = it },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(8.dp),
-            placeholder = { Text(stringResource(R.string.loc_b7fdd705), color = TextSecondary.copy(alpha = 0.5f)) },
-            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false),
-            singleLine = true,
-            trailingIcon = {
-                IconButton(onClick = { showDestQrScanner = true }) {
-                    Icon(
-                        imageVector = Icons.Default.QrCodeScanner,
-                        contentDescription = "Scan",
-                        tint = BitcoinOrange,
-                        modifier = Modifier.size(22.dp),
-                    )
+                // Check Balance button
+                Button(
+                    onClick = { onScanBalances(wifKey.trim()) },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    enabled = canScan,
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        ),
+                ) {
+                    if (sweepState.isScanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(sweepState.scanProgress ?: stringResource(R.string.sweep_scanning))
+                    } else {
+                        Text(stringResource(R.string.loc_e35ba02b))
+                    }
                 }
-            },
-            colors =
-                OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = BitcoinOrange,
-                    unfocusedBorderColor = BorderColor,
-                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                    cursorColor = BitcoinOrange,
-                ),
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Fee Rate
-        FeeRateSection(
-            feeEstimationState = feeEstimationState,
-            currentFeeRate = feeRate,
-            minFeeRate = minFeeRate,
-            onFeeRateChange = { feeRate = it },
-            onRefreshFees = onRefreshFees,
-            enabled = true,
-        )
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Check Balance button
-        Button(
-            onClick = { onScanBalances(wifKey.trim()) },
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-            shape = RoundedCornerShape(8.dp),
-            enabled = canScan,
-            colors =
-                ButtonDefaults.buttonColors(
-                    containerColor = BitcoinOrange,
-                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
-                ),
-        ) {
-            if (sweepState.isScanning) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    strokeWidth = 2.dp,
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(sweepState.scanProgress ?: "Scanning...")
-            } else {
-                Text(stringResource(R.string.loc_e35ba02b))
             }
         }
 

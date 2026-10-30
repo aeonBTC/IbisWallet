@@ -6,15 +6,40 @@ import java.text.SimpleDateFormat
 import java.util.Currency
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 private const val SATS_PER_BTC = 100_000_000.0
+
+private val satsNumberFormat = ThreadLocal.withInitial { NumberFormat.getNumberInstance(Locale.US) }
+
+private val currencyNumberFormats =
+    ThreadLocal.withInitial { HashMap<Pair<String, Locale>, NumberFormat>() }
+
+private val dateFormats =
+    ThreadLocal.withInitial { HashMap<Triple<String, Locale, String>, SimpleDateFormat>() }
+
+private fun currencyFormat(currencyCode: String, locale: Locale): NumberFormat =
+    currencyNumberFormats.get()!!.getOrPut(currencyCode to locale) {
+        NumberFormat.getCurrencyInstance(locale).apply {
+            currency = Currency.getInstance(currencyCode)
+        }
+    }
+
+private fun dateFormat(
+    pattern: String,
+    locale: Locale,
+    timeZoneId: String,
+): SimpleDateFormat =
+    dateFormats.get()!!.getOrPut(Triple(pattern, locale, timeZoneId)) {
+        SimpleDateFormat(pattern, locale).apply { timeZone = TimeZone.getTimeZone(timeZoneId) }
+    }
 
 fun formatBtc(sats: ULong): String {
     val btc = sats.toDouble() / SATS_PER_BTC
     return String.format(Locale.US, "%.8f", btc)
 }
 
-fun formatSats(sats: ULong): String = NumberFormat.getNumberInstance(Locale.US).format(sats.toLong())
+fun formatSats(sats: ULong): String = satsNumberFormat.get()!!.format(sats.toLong())
 
 /**
  * Formats a balance or tx amount. When [includeUnit] is true and [useSats], appends lowercase **sats**
@@ -38,10 +63,7 @@ fun formatFiat(
     return try {
         // USD: use US locale so the symbol is "$", not "US$" (default locale disambiguates $ currencies).
         val formatLocale = if (normalizedCode == "USD") Locale.US else Locale.getDefault()
-        NumberFormat.getCurrencyInstance(formatLocale).run {
-            currency = Currency.getInstance(normalizedCode)
-            format(amount)
-        }
+        currencyFormat(normalizedCode, formatLocale).format(amount)
     } catch (_: IllegalArgumentException) {
         val fallback =
             NumberFormat.getNumberInstance(Locale.US).apply {
@@ -90,7 +112,7 @@ fun formatBalanceDate(
     if (timestamp <= 0L) return ""
     val date = Date(normalizeTimestampMillis(timestamp))
     val balanceDateFormat = BalanceDateFormat.fromStorageValue(dateFormatStorageValue)
-    return SimpleDateFormat(balanceDateFormat.datePattern, Locale.getDefault()).format(date)
+    return dateFormat(balanceDateFormat.datePattern, Locale.getDefault(), TimeZone.getDefault().id).format(date)
 }
 
 fun formatFullTimestamp(
@@ -113,8 +135,9 @@ private fun formatTimestamp(
     val date = Date(timestampMillis)
     val locale = Locale.getDefault()
     val balanceDateFormat = BalanceDateFormat.fromStorageValue(dateFormatStorageValue)
-    val dateText = SimpleDateFormat(balanceDateFormat.datePattern, locale).format(date)
-    val timeText = SimpleDateFormat("HH:mm", locale).format(date)
+    val timeZoneId = TimeZone.getDefault().id
+    val dateText = dateFormat(balanceDateFormat.datePattern, locale, timeZoneId).format(date)
+    val timeText = dateFormat("HH:mm", locale, timeZoneId).format(date)
     return "$dateText$separator$timeText"
 }
 

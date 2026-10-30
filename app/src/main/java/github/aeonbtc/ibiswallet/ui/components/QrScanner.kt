@@ -125,6 +125,7 @@ internal fun QrScannerDialogShell(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        SecureDialogSideEffect()
         Box(
             modifier =
                 Modifier
@@ -314,6 +315,20 @@ internal fun QrCameraPreview(
     }
 }
 
+private class QrAnalysisBuffers {
+    var pixels = IntArray(0)
+    var row = ByteArray(0)
+    val hints =
+        mapOf(
+            DecodeHintType.TRY_HARDER to true,
+            DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
+            DecodeHintType.CHARACTER_SET to "UTF-8",
+        )
+    val reader = MultiFormatReader().apply { setHints(hints) }
+}
+
+private val qrAnalysisBuffers = ThreadLocal.withInitial { QrAnalysisBuffers() }
+
 private fun decodeQrFrame(
     imageProxy: androidx.camera.core.ImageProxy,
     scanned: AtomicBoolean?,
@@ -329,8 +344,11 @@ private fun decodeQrFrame(
         val height = imageProxy.height
         // Dense connection QRs (clnrest/lndconnect with large cert bundles) need
         // TRY_HARDER + HybridBinarizer; GlobalHistogram alone often fails on phone cameras.
-        val pixels = IntArray(width * height)
-        val row = ByteArray(rowStride)
+        val buffers = qrAnalysisBuffers.get()!!
+        if (buffers.pixels.size != width * height) buffers.pixels = IntArray(width * height)
+        if (buffers.row.size != rowStride) buffers.row = ByteArray(rowStride)
+        val pixels = buffers.pixels
+        val row = buffers.row
         var out = 0
         for (y in 0 until height) {
             buffer.position(y * rowStride)
@@ -343,7 +361,7 @@ private fun decodeQrFrame(
             }
         }
 
-        val result = decodeQrFromPixels(pixels, width, height) ?: return
+        val result = decodeQrFromPixels(pixels, width, height, buffers) ?: return
         val text = result.text.trim()
         if (text.isBlank()) return
         val deliverResult = {
@@ -364,14 +382,9 @@ private fun decodeQrFromPixels(
     pixels: IntArray,
     width: Int,
     height: Int,
+    buffers: QrAnalysisBuffers,
 ): Result? {
-    val hints =
-        mapOf(
-            DecodeHintType.TRY_HARDER to true,
-            DecodeHintType.POSSIBLE_FORMATS to listOf(BarcodeFormat.QR_CODE),
-            DecodeHintType.CHARACTER_SET to "UTF-8",
-        )
-    val reader = MultiFormatReader().apply { setHints(hints) }
+    val reader = buffers.reader
     val source = RGBLuminanceSource(width, height, pixels)
     val attempts =
         listOf(

@@ -4,8 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -134,7 +135,7 @@ fun ScrollableDialogSurface(
 fun ScrollableAlertDialog(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
-    properties: DialogProperties = DialogProperties(),
+    properties: DialogProperties = DialogProperties(usePlatformDefaultWidth = false),
     containerColor: Color = DarkSurface,
     shape: Shape = RoundedCornerShape(12.dp),
     icon: (@Composable () -> Unit)? = null,
@@ -142,6 +143,13 @@ fun ScrollableAlertDialog(
     text: (@Composable () -> Unit)? = null,
     confirmButton: @Composable () -> Unit,
     dismissButton: (@Composable () -> Unit)? = null,
+    /**
+     * When false, the dismiss action renders before confirm, so confirm sits
+     * on the right in a shared row (matches [IbisConfirmDialog] order).
+     * Keep true when confirm is full-width and dismiss stacks below it.
+     */
+    confirmFirst: Boolean = true,
+    bottomSpacing: Dp = 24.dp,
 ) {
     ScrollableDialogSurface(
         onDismissRequest = onDismissRequest,
@@ -149,14 +157,23 @@ fun ScrollableAlertDialog(
         properties = properties,
         containerColor = containerColor,
         shape = shape,
+        bottomSpacing = bottomSpacing,
         actions = {
-            Column(
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.End,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                // Full-width buttons wrap onto separate lines; keep them from touching.
+                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
             ) {
-                confirmButton()
+                if (confirmFirst) {
+                    confirmButton()
+                }
                 if (dismissButton != null) {
                     dismissButton()
+                }
+                if (!confirmFirst) {
+                    confirmButton()
                 }
             }
         },
@@ -188,7 +205,7 @@ fun IbisConfirmDialog(
     confirmText: String,
     onConfirm: () -> Unit,
     modifier: Modifier = Modifier,
-    properties: DialogProperties = DialogProperties(),
+    properties: DialogProperties = DialogProperties(usePlatformDefaultWidth = false),
     containerColor: Color = DarkSurface,
     shape: Shape = RoundedCornerShape(12.dp),
     message: String? = null,
@@ -198,6 +215,9 @@ fun IbisConfirmDialog(
     dismissEnabled: Boolean = true,
     confirmEnabled: Boolean = true,
     confirmColor: Color = BitcoinOrange,
+    neutralText: String? = null,
+    onNeutralAction: (() -> Unit)? = null,
+    neutralEnabled: Boolean = true,
     maxWidth: Dp = 560.dp,
     contentPadding: PaddingValues = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
     bottomSpacing: Dp = 16.dp,
@@ -227,15 +247,17 @@ fun IbisConfirmDialog(
         contentPadding = contentPadding,
         bottomSpacing = bottomSpacing,
         actions = {
-            Row(
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                // Buttons that wrap onto separate lines must not touch.
+                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
             ) {
                 if (resolvedDismissText != null && onDismissAction != null) {
                     IbisButton(
                         onClick = onDismissAction,
-                        modifier = Modifier.widthIn(min = 96.dp).height(actionHeight),
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = actionHeight),
                         enabled = dismissEnabled,
                         activeColor = TextSecondary,
                     ) {
@@ -243,6 +265,29 @@ fun IbisConfirmDialog(
                             text = resolvedDismissText,
                             style = resolvedActionTextStyle,
                             fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            softWrap = true,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.widthIn(min = 10.dp))
+                }
+
+                if (neutralText != null && onNeutralAction != null) {
+                    IbisButton(
+                        onClick = onNeutralAction,
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = actionHeight),
+                        enabled = neutralEnabled,
+                        activeColor = TextSecondary,
+                    ) {
+                        Text(
+                            text = neutralText,
+                            style = resolvedActionTextStyle,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            softWrap = true,
                         )
                     }
 
@@ -252,9 +297,9 @@ fun IbisConfirmDialog(
                 Button(
                     onClick = onConfirm,
                     enabled = confirmEnabled,
-                    modifier = Modifier.widthIn(min = 96.dp).height(actionHeight),
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = actionHeight),
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 0.dp),
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
                     colors =
                         ButtonDefaults.buttonColors(
                             containerColor = confirmColor,
@@ -265,6 +310,9 @@ fun IbisConfirmDialog(
                         text = confirmText,
                         style = resolvedActionTextStyle,
                         fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        softWrap = true,
                     )
                 }
             }

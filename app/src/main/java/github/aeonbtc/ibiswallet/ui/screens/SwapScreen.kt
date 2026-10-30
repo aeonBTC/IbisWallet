@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -99,6 +100,7 @@ import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.LiquidConnectionBanner
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
@@ -1379,17 +1381,26 @@ fun SwapScreen(
                                         )
                                     },
                                     trailingIcon = {
-                                        IconButton(
-                                            onClick = { showCustomDestinationQrScanner = true },
+                                        ScanPasteIcons(
+                                            onScan = { showCustomDestinationQrScanner = true },
+                                            onPaste = { text ->
+                                                val normalizedInput =
+                                                    when (val parsed = parseSendRecipient(text)) {
+                                                        is ParsedSendRecipient.Liquid -> if (isPegIn) parsed.address else text
+                                                        is ParsedSendRecipient.Bitcoin -> if (isPegIn) text else parsed.address
+                                                        else -> text
+                                                    }
+                                                if (isPegIn) {
+                                                    customLiquidDestinationState.value = normalizedInput
+                                                } else {
+                                                    customBitcoinDestinationState.value = normalizedInput
+                                                }
+                                                onResetSwap()
+                                            },
+                                            tint = destinationOptionAccentColor,
+                                            scanContentDescription = "Scan QR Code",
                                             enabled = !isSwapLocked,
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.QrCodeScanner,
-                                                contentDescription = "Scan QR Code",
-                                                tint = destinationOptionAccentColor,
-                                                modifier = Modifier.size(20.dp),
-                                            )
-                                        }
+                                        )
                                     },
                                     isError = destinationValidationError != null,
                                     singleLine = true,
@@ -1505,7 +1516,7 @@ fun SwapScreen(
                     onClick = requestSwapReview,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                     enabled = canRequestQuote && broadcastingSwapId == null,
                     shape = RoundedCornerShape(8.dp),
                     colors =
@@ -1565,7 +1576,7 @@ fun SwapScreen(
                     onClick = { showConfirmation = true },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
                 ) {
@@ -1659,7 +1670,7 @@ fun SwapScreen(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
                 ) {
@@ -1751,21 +1762,19 @@ fun SwapScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Button(
+                        IbisButton(
                             onClick = { onDismissFailedSwap() },
                             modifier = Modifier
                                 .weight(1f)
-                                .height(48.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = DarkSurfaceVariant),
+                                .heightIn(min = 48.dp),
                         ) {
-                            Text(stringResource(R.string.loc_fff59f5b), color = TextSecondary)
+                            Text(stringResource(R.string.loc_fff59f5b))
                         }
                         Button(
                             onClick = { onResetSwap() },
                             modifier = Modifier
                                 .weight(1f)
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
                         ) {
@@ -1777,7 +1786,7 @@ fun SwapScreen(
                         onClick = requestSwapReview,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .heightIn(min = 48.dp),
                         enabled = canRequestQuote && broadcastingSwapId == null,
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
@@ -2567,6 +2576,8 @@ private fun SwapCoinControlDialog(
         remember(selectedUtxos.toList()) {
             selectedUtxos.mapTo(hashSetOf()) { it.outpoint }
         }
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredUtxos = remember(utxos, searchQuery) { filterCoinControlUtxos(utxos, searchQuery) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -2642,6 +2653,23 @@ private fun SwapCoinControlDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                CoinControlSearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    accentColor = accentColor,
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (filteredUtxos.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.loc_3a296c42),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        modifier = Modifier.padding(vertical = 24.dp),
+                    )
+                }
+
                 LazyColumn(
                     modifier =
                         Modifier
@@ -2649,7 +2677,7 @@ private fun SwapCoinControlDialog(
                             .height(350.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(utxos, key = { it.outpoint }) { utxo ->
+                    items(filteredUtxos, key = { it.outpoint }) { utxo ->
                         CoinControlUtxoCard(
                             utxo = utxo,
                             isSelected = selectedOutpoints.contains(utxo.outpoint),
@@ -2684,7 +2712,7 @@ private fun SwapCoinControlDialog(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .heightIn(min = 48.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors =
                         ButtonDefaults.buttonColors(
@@ -2980,9 +3008,9 @@ private fun SwapReviewDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(50.dp),
+                        .height(48.dp),
                 enabled = !isExecuting,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal),
             ) {
                 if (isExecuting) {
@@ -3020,7 +3048,7 @@ private fun SwapReviewDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
             ) {
                 Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
             }

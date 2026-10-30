@@ -86,6 +86,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundKeySource
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
@@ -110,6 +111,8 @@ import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
+import github.aeonbtc.ibiswallet.ui.components.SendExternalOriginBanner
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
@@ -133,6 +136,7 @@ import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
+import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -244,6 +248,8 @@ fun LiquidSendScreen(
     onClearDraft: () -> Unit = {},
     onResetSend: () -> Unit = {},
     onToggleDenomination: () -> Unit = {},
+    externalOriginOrigin: WalletViewModel.PendingSendOrigin? = null,
+    onClearExternalOriginNotice: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var recipientAddress by remember { mutableStateOf(draft.recipientAddress) }
@@ -1013,6 +1019,11 @@ fun LiquidSendScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                if (externalOriginOrigin != null) {
+                    SendExternalOriginBanner(origin = externalOriginOrigin)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1124,9 +1135,9 @@ fun LiquidSendScreen(
                         color = TextSecondary.copy(alpha = 0.6f),
                     )
                 } else {
-                    OutlinedTextField(
-                        value = recipientAddress,
-                        onValueChange = { input ->
+                    val onRecipientInput: (String) -> Unit =
+                        onRecipientInput@{ input ->
+                            onClearExternalOriginNotice()
                             val normalized = input.trim()
                             when (val parsed = parseSendRecipient(normalized, context)) {
                                 is ParsedSendRecipient.Liquid -> {
@@ -1159,7 +1170,10 @@ fun LiquidSendScreen(
                                     }
                                 }
                             }
-                        },
+                        }
+                    OutlinedTextField(
+                        value = recipientAddress,
+                        onValueChange = onRecipientInput,
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = {
                             Text(
@@ -1170,14 +1184,12 @@ fun LiquidSendScreen(
                             )
                         },
                         trailingIcon = {
-                            IconButton(onClick = { showQrScanner = true }) {
-                                Icon(
-                                    imageVector = Icons.Default.QrCodeScanner,
-                                    contentDescription = "Scan QR Code",
-                                    tint = LiquidTeal,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
+                            ScanPasteIcons(
+                                onScan = { showQrScanner = true },
+                                onPaste = onRecipientInput,
+                                tint = LiquidTeal,
+                                scanContentDescription = "Scan QR Code",
+                            )
                         },
                         supportingText =
                             if (addressValidationError != null && recipientAddress.isNotBlank()) {
@@ -1302,6 +1314,7 @@ fun LiquidSendScreen(
                     OutlinedTextField(
                         value = amountInput,
                         onValueChange = { value ->
+                            onClearExternalOriginNotice()
                             isMaxMode = false
                             amountInput =
                                 if (isAssetMode) {
@@ -1583,7 +1596,7 @@ fun LiquidSendScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(48.dp),
+                    .heightIn(min = 48.dp),
             shape = RoundedCornerShape(8.dp),
             enabled = canReview,
             colors =
@@ -1733,7 +1746,7 @@ private fun LiquidSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = false,
                         colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal, contentColor = DarkBackground),
@@ -1757,7 +1770,7 @@ private fun LiquidSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1768,7 +1781,7 @@ private fun LiquidSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal, contentColor = DarkBackground),
                     ) {
@@ -1798,7 +1811,7 @@ private fun LiquidSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1810,7 +1823,7 @@ private fun LiquidSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = false,
                         colors = ButtonDefaults.buttonColors(containerColor = LiquidTeal, contentColor = DarkBackground),
@@ -1838,7 +1851,7 @@ private fun LiquidSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         enabled = sendState.canDismiss,
                     ) {
                         Text(
@@ -1860,7 +1873,7 @@ private fun LiquidSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                     }
@@ -2695,11 +2708,14 @@ private fun LiquidCoinControlDialog(
         remember(selectedUtxos.toList()) {
             selectedUtxos.mapTo(hashSetOf()) { it.outpoint }
         }
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredUtxos = remember(utxos, searchQuery) { filterCoinControlUtxos(utxos, searchQuery) }
 
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        SecureDialogSideEffect()
         Surface(
             modifier =
                 Modifier
@@ -2779,6 +2795,23 @@ private fun LiquidCoinControlDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                CoinControlSearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    accentColor = LiquidTeal,
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (filteredUtxos.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.loc_3a296c42),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary,
+                        modifier = Modifier.padding(vertical = 24.dp),
+                    )
+                }
+
                 LazyColumn(
                     modifier =
                         Modifier
@@ -2786,7 +2819,7 @@ private fun LiquidCoinControlDialog(
                             .height(350.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(utxos, key = { it.outpoint }) { utxo ->
+                    items(filteredUtxos, key = { it.outpoint }) { utxo ->
                         CoinControlUtxoCard(
                             utxo = utxo,
                             isSelected = selectedOutpoints.contains(utxo.outpoint),
@@ -2808,7 +2841,7 @@ private fun LiquidCoinControlDialog(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .heightIn(min = 48.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors =
                         ButtonDefaults.buttonColors(
@@ -2868,6 +2901,7 @@ private fun LiquidMultiRecipientDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        SecureDialogSideEffect()
         Surface(
             modifier =
                 Modifier
@@ -2948,14 +2982,22 @@ private fun LiquidMultiRecipientDialog(
                                     modifier = Modifier.fillMaxWidth(),
                                     placeholder = { Text(stringResource(R.string.loc_4622d13c), color = TextSecondary.copy(alpha = 0.5f)) },
                                     trailingIcon = {
-                                        IconButton(onClick = { qrScanRecipientIndex = index }) {
-                                            Icon(
-                                                imageVector = Icons.Default.QrCodeScanner,
-                                                contentDescription = "Scan QR Code",
-                                                tint = LiquidTeal,
-                                                modifier = Modifier.size(20.dp),
-                                            )
-                                        }
+                                        ScanPasteIcons(
+                                            onScan = { qrScanRecipientIndex = index },
+                                            onPaste = { text ->
+                                                val parsed = parseSendRecipient(text, context)
+                                                if (parsed is ParsedSendRecipient.Liquid) {
+                                                    val amt =
+                                                        parsed.amountSats?.let { formatLiquidInputAmount(it, useSats, isUsdMode, btcPrice) }
+                                                            ?: amount
+                                                    recipients[index] = parsed.address to amt
+                                                } else {
+                                                    recipients[index] = text to amount
+                                                }
+                                            },
+                                            tint = LiquidTeal,
+                                            scanContentDescription = "Scan QR Code",
+                                        )
                                     },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
@@ -3799,7 +3841,7 @@ private fun PendingLightningPaymentDetails(
                 onClick = onRetryRefund,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 40.dp),
+                    .height(40.dp),
                 shape = RoundedCornerShape(8.dp),
                 border = BorderStroke(1.dp, BorderColor),
             ) {
@@ -3943,6 +3985,7 @@ private fun RescueMnemonicDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        SecureDialogSideEffect()
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
@@ -4040,7 +4083,7 @@ private fun RescueMnemonicDialog(
                     onClick = onDismiss,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                 ) {
                     Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                 }

@@ -156,6 +156,8 @@ fun WalletSelectorDropdown(
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            softWrap = false,
+            modifier = Modifier.weight(1f, fill = false),
         )
         Spacer(modifier = Modifier.width(4.dp))
         Icon(

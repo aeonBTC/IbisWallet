@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -71,36 +72,30 @@ fun ElectrumConnectionBanner(
             if (!isConnecting) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        if (hasServerConfigured) {
-                            TextButton(
-                                onClick = onConnect,
-                                shape = RoundedCornerShape(8.dp),
-                                border = BorderStroke(1.dp, BorderColor),
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.electrum_connect_server),
-                                    color = BitcoinOrange,
-                                )
-                            }
-                        }
+                    if (hasServerConfigured) {
                         TextButton(
-                            onClick = onOpenServerSettings,
+                            onClick = onConnect,
                             shape = RoundedCornerShape(8.dp),
                             border = BorderStroke(1.dp, BorderColor),
                         ) {
                             Text(
-                                text = stringResource(R.string.electrum_configure_server),
+                                text = stringResource(R.string.electrum_connect_server),
                                 color = BitcoinOrange,
                             )
                         }
+                    }
+                    TextButton(
+                        onClick = onOpenServerSettings,
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BorderColor),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.electrum_configure_server),
+                            color = BitcoinOrange,
+                        )
                     }
                     TextButton(
                         onClick = onWorkOffline,

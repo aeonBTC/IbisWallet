@@ -1,4 +1,4 @@
-﻿package github.aeonbtc.ibiswallet.ui.screens
+package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Context
 import android.net.Uri
@@ -130,6 +130,10 @@ fun ArkLifecycleScreen(
     rescanBlocked: Boolean = false,
     onPrepareRefresh: (List<String>) -> Unit,
     onExecuteRefresh: (useScheduled: Boolean) -> Unit,
+    /** Explicit recovery for a refresh participation whose submission outcome was lost. */
+    onClearStaleRefresh: () -> Unit = {},
+    /** Explicit recovery for an unaccepted, not-on-chain saved claim journal. */
+    onDiscardPendingClaim: () -> Unit = {},
     onExportArkDb: (Uri) -> Unit = {},
     onImportArkDb: (Uri) -> Unit = {},
     dbTransferInProgress: ArkDbTransferProgress? = null,
@@ -148,6 +152,8 @@ fun ArkLifecycleScreen(
     onBoardAll: () -> Unit = {},
     onBoardAmount: (Long) -> Unit = {},
     onRecoverOnchain: () -> Unit = {},
+    /** Recover only the given "txid:vout" deposits (empty/null means all). */
+    onRecoverSelectedOnchain: (List<String>) -> Unit = {},
     unilateralExitUnavailable: Boolean = false,
     /** Layer 1 receive address shown in the recover confirmation dialog. */
     recoverDestinationAddress: String? = null,
@@ -159,7 +165,9 @@ fun ArkLifecycleScreen(
     onBack: () -> Unit = {},
     initialTab: String? = null,
 ) {
-    var showRecoverConfirmDialog by remember { mutableStateOf(false) }
+    // null ids = recover every confirmed deposit; a list = recover only those.
+    var recoverRequest by remember { mutableStateOf<ArkRecoverRequest?>(null) }
+    var showDiscardClaimConfirm by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val mainActivity = context as? MainActivity
     val suggestedExportName =
@@ -218,12 +226,12 @@ fun ArkLifecycleScreen(
         }
     }
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
-    var selectedRefresh by remember { mutableStateOf(setOf<String>()) }
-    var showRefreshReview by rememberSaveable { mutableStateOf(false) }
-    var closedPendingRefresh by rememberSaveable { mutableStateOf(false) }
+    var selectedRefresh by remember(arkState.walletId) { mutableStateOf(setOf<String>()) }
+    var showRefreshReview by rememberSaveable(arkState.walletId) { mutableStateOf(false) }
+    var closedPendingRefresh by rememberSaveable(arkState.walletId) { mutableStateOf(false) }
     // Start-exit selection only — never seeded from claimable ids.
-    var selectedExit by remember { mutableStateOf(setOf<String>()) }
-    var claimAddress by rememberSaveable { mutableStateOf("") }
+    var selectedExit by remember(arkState.walletId) { mutableStateOf(setOf<String>()) }
+    var claimAddress by rememberSaveable(arkState.walletId) { mutableStateOf("") }
     // Blank = auto (live network rate); digits only, clamped to 200 downstream.
     var claimFeeRateText by rememberSaveable { mutableStateOf("") }
     // Last-flow-wins gates: lifecycleState is shared across tabs, so an inline
@@ -293,13 +301,17 @@ fun ArkLifecycleScreen(
                 .background(DarkBackground)
                 .padding(horizontal = 16.dp),
     ) {
-        Spacer(modifier = Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.loc_cdfc6e09),
-                    tint = MaterialTheme.colorScheme.onBackground,
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
@@ -309,7 +321,6 @@ fun ArkLifecycleScreen(
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
-        Spacer(modifier = Modifier.height(8.dp))
 
         val defaultTab =
             remember(initialTab) {
@@ -350,6 +361,18 @@ fun ArkLifecycleScreen(
             },
         )
         Spacer(modifier = Modifier.height(8.dp))
+        if (arkState.pendingClaimPresent) {
+            OutlinedButton(
+                onClick = { showDiscardClaimConfirm = true },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                shape = RoundedCornerShape(8.dp),
+                border = BorderStroke(1.dp, ErrorRed.copy(alpha = 0.7f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = ErrorRed),
+            ) {
+                Text(stringResource(R.string.ark_claim_discard_saved))
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
 
         HorizontalPager(
             state = pagerState,
@@ -375,11 +398,11 @@ fun ArkLifecycleScreen(
                     onAutoBoardEnabledChange = onAutoBoardEnabledChange,
                     onBoardAll = onBoardAll,
                     onBoardAmount = onBoardAmount,
-                    onRecoverOnchain = {
+                    onRequestRecover = { ids ->
                         if (recoverDestinationAddress.isNullOrBlank()) {
                             onEnsureRecoverAddress()
                         }
-                        showRecoverConfirmDialog = true
+                        recoverRequest = ArkRecoverRequest(ids)
                     },
                     isBoarding = isBoarding,
                     isRecoveringOnchain = isRecoveringOnchain,
@@ -404,6 +427,16 @@ fun ArkLifecycleScreen(
                             color = TextPrimary,
                             fontWeight = FontWeight.SemiBold,
                         )
+                        // Expired-but-unswept VTXOs can still be submitted for a
+                        // cooperative refresh — the ASP may include them. Exit
+                        // is the guaranteed fallback if the round rejects them.
+                        if (arkState.expiredVtxos.isNotEmpty()) {
+                            Text(
+                                text = stringResource(R.string.ark_refresh_expired_note),
+                                color = TextSecondary,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                        }
                         // Include locked/in-round outputs so pending-refresh badges stay visible
                         // after Bark moves the VTXO out of Spendable mid-round.
                         val listedVtxos =
@@ -442,7 +475,7 @@ fun ArkLifecycleScreen(
                         } else {
                             val visibleRefreshVtxos =
                                 if (refreshListExpanded) {
-                                    listedVtxos.take(40)
+                                    listedVtxos
                                 } else {
                                     listedVtxos.take(REFRESH_VTXO_COLLAPSED_COUNT)
                                 }
@@ -459,7 +492,12 @@ fun ArkLifecycleScreen(
                                     pendingRefresh = isPendingRefresh,
                                     pendingRefreshLabel =
                                         if (isPendingRefresh) {
-                                            stringResource(R.string.ark_refresh_vtxo_pending_round)
+                                            arkState.pendingRefreshScheduledHeight?.let { height ->
+                                                stringResource(
+                                                    R.string.ark_refresh_vtxo_pending_scheduled,
+                                                    height,
+                                                )
+                                            } ?: stringResource(R.string.ark_refresh_vtxo_pending_round)
                                         } else {
                                             null
                                         },
@@ -510,14 +548,16 @@ fun ArkLifecycleScreen(
                                         selectableSelected.isNotEmpty() &&
                                             !refreshBusy &&
                                             !reviewOpen,
-                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                                     shape = RoundedCornerShape(8.dp),
                                     border = BorderStroke(1.dp, BorderColor),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = ArkRust),
                                 ) {
                                     Text(
                                         text = stringResource(R.string.ark_refresh_action),
-                                        maxLines = 1,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        softWrap = true,
                                     )
                                 }
                                 OutlinedButton(
@@ -532,14 +572,28 @@ fun ArkLifecycleScreen(
                                         selectableAll.isNotEmpty() &&
                                             !refreshBusy &&
                                             !reviewOpen,
-                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                                     shape = RoundedCornerShape(8.dp),
                                     border = BorderStroke(1.dp, BorderColor),
                                     colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
                                 ) {
                                     Text(
                                         text = stringResource(R.string.ark_refresh_all),
-                                        maxLines = 1,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        softWrap = true,
+                                    )
+                                }
+                            }
+                            if (pendingRefreshIds.isNotEmpty()) {
+                                TextButton(
+                                    onClick = onClearStaleRefresh,
+                                    enabled = !refreshBusy,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                ) {
+                                    Text(
+                                        text = stringResource(R.string.ark_refresh_clear_stale),
+                                        color = TextSecondary,
                                     )
                                 }
                             }
@@ -626,7 +680,7 @@ Column(
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .height(48.dp),
+                                    .heightIn(min = 48.dp),
                         ) {
                             Text(
                                 text = stringResource(R.string.ark_mailbox_rescan_action),
@@ -745,13 +799,41 @@ Column(
                             )
                         }
 
+                        // Exit-eligible: spendable plus expired-but-unswept (still
+                        // exitable per Bark docs; cooperative refresh of expired
+                        // VTXOs may also still succeed — see the REFRESH tab).
                         val spendableIds =
-                            arkState.vtxos
-                                .filter {
-                                    ArkBarkMappers.isSpendableLabel(it.state) &&
-                                        it.id !in arkState.pendingRefreshVtxoIds
-                                }
-                                .map { it.id }
+                            ArkUnilateralExitPolicy.exitEligibleIds(
+                                spendableVtxoIds =
+                                    arkState.vtxos
+                                        .filter {
+                                            ArkBarkMappers.isSpendableLabel(it.state)
+                                        }
+                                        .map { it.id },
+                                liveVtxos = arkState.expiredVtxos,
+                                chainTipHeight = arkState.chainTipHeight,
+                                excludedVtxoIds = arkState.pendingRefreshVtxoIds,
+                            )
+                        if (arkState.expiredVtxos.isNotEmpty()) {
+                            Text(
+                                text =
+                                    stringResource(
+                                        R.string.ark_exit_expired_format,
+                                        arkState.expiredVtxos.size,
+                                        if (privacyMode) {
+                                            ARK_HIDDEN_AMOUNT
+                                        } else {
+                                            formatArkAmount(
+                                                arkState.expiredVtxos.sumOf { it.amountSats },
+                                                useSats,
+                                            )
+                                        },
+                                    ),
+                                color = ErrorRed,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
                         // Bark entire-wallet exit grabs every spendable VTXO, including
                         // round-locked ones — block it while any refresh is pending.
                         val exitAllBlockedByPendingRefresh = arkState.pendingRefreshVtxoIds.isNotEmpty()
@@ -802,19 +884,26 @@ Column(
                                         ?: ArkUnilateralExitPolicy.PROGRESS_EXIT_FEE_RATE_SAT_VB,
                             )
                         val confirmedFeeBalance = arkState.onchainConfirmedSats.coerceAtLeast(0L)
-                        var pendingExitConfirm by remember {
+                        var pendingExitConfirm by remember(arkState.walletId) {
                             mutableStateOf<Pair<List<String>, Boolean>?>(null)
                         }
-                        var showProgressReview by remember { mutableStateOf(false) }
-                        var showClaimReview by remember { mutableStateOf(false) }
-                        var showCancelReview by remember { mutableStateOf(false) }
+                        var showProgressReview by remember(arkState.walletId) { mutableStateOf(false) }
+                        var showClaimReview by remember(arkState.walletId) { mutableStateOf(false) }
+                        var showCancelReview by remember(arkState.walletId) { mutableStateOf(false) }
 
-                        LaunchedEffect(pendingExitConfirm) {
+                        LaunchedEffect(pendingExitConfirm, arkState.onchainConfirmedSats, arkState.exitVtxos) {
                             val confirm = pendingExitConfirm
                             if (confirm != null) {
                                 onRefreshExitFeeRate()
                                 val (ids, entire) = confirm
                                 onRefreshEmergencyExitFeeQuote(if (entire) spendableIds else ids)
+                            }
+                        }
+
+                        LaunchedEffect(showProgressReview, arkState.onchainConfirmedSats, arkState.exitVtxos) {
+                            if (showProgressReview) {
+                                onRefreshExitFeeRate()
+                                onRefreshEmergencyExitFeeQuote(pendingExitIds.toList())
                             }
                         }
 
@@ -856,7 +945,7 @@ Column(
                                     pendingExitConfirm = null
                                     exitResultArmed = true
                                     rescanResultArmed = false
-                                    onStartExit(ids, entire)
+                                    onStartExit(if (entire) spendableIds else ids, false)
                                 },
                                 onDismiss = { pendingExitConfirm = null },
                             )
@@ -866,14 +955,12 @@ Column(
                             ArkExitProgressReviewDialog(
                                 state = lifecycleState,
                                 estimatedFeeSats = pendingExitFee,
+                                privacyMode = privacyMode,
                                 confirmedFeeBalanceSats = confirmedFeeBalance,
                                 emergencyFeeQuote =
                                     emergencyExitFeeQuote?.takeIf { quote ->
                                         val active = pendingExitIds
-                                        quote.vtxoIds.toSet() == active ||
-                                            (ArkUnilateralExitPolicy.isEmergencyExitBlockedByQuote(quote) &&
-                                                active.isNotEmpty() &&
-                                                active.all { it in quote.vtxoIds.toSet() })
+                                         quote.vtxoIds.toSet() == active
                                     },
                                 onConfirm = {
                                     exitResultArmed = true
@@ -912,6 +999,7 @@ Column(
                             ArkExitClaimReviewDialog(
                                 state = lifecycleState,
                                 useSats = useSats,
+                                privacyMode = privacyMode,
                                 onConfirm = onExecuteClaim,
                                 onDismiss = {
                                     if (
@@ -1036,7 +1124,7 @@ Column(
                                                 showProgressReview = true
                                             },
                                             enabled = !exitBusy && !unilateralExitUnavailable,
-                                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                                             shape = RoundedCornerShape(8.dp),
                                             colors = ButtonDefaults.buttonColors(containerColor = ArkRust),
                                         ) {
@@ -1047,7 +1135,7 @@ Column(
                                         OutlinedButton(
                                             onClick = { showCancelReview = true },
                                             enabled = !exitBusy && !unilateralExitUnavailable,
-                                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                                             shape = RoundedCornerShape(8.dp),
                                             border = BorderStroke(1.dp, BorderColor),
                                             colors =
@@ -1145,7 +1233,7 @@ Column(
                                             canQuoteClaim &&
                                                 claimAddressError == null &&
                                                 !exitBusy,
-                                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = ArkRust),
                                     ) {
@@ -1154,12 +1242,14 @@ Column(
                                 }
                             }
 
-                            else -> {
+                            else -> Unit
+                        }
+                        if ((!hasPending && !hasClaimable) || spendableIds.isNotEmpty()) {
                                 if (spendableIds.isEmpty()) {
                                     Text(stringResource(R.string.ark_exit_no_outputs), color = TextSecondary)
                                 } else {
                                     val pendingExitRefreshIds = arkState.pendingRefreshVtxoIds.toSet()
-                                    arkState.vtxos.take(40).forEach { vtxo ->
+                                    arkState.vtxos.forEach { vtxo ->
                                         // Round-locked outputs cannot be exit-selected.
                                         val isPendingRefreshExit = vtxo.id in pendingExitRefreshIds
                                         ArkVtxoSelectRow(
@@ -1176,7 +1266,12 @@ Column(
                                             pendingRefresh = isPendingRefreshExit,
                                             pendingRefreshLabel =
                                                 if (isPendingRefreshExit) {
-                                                    stringResource(R.string.ark_refresh_vtxo_pending_round)
+                                                    arkState.pendingRefreshScheduledHeight?.let { height ->
+                                                        stringResource(
+                                                            R.string.ark_refresh_vtxo_pending_scheduled,
+                                                            height,
+                                                        )
+                                                    } ?: stringResource(R.string.ark_refresh_vtxo_pending_round)
                                                 } else {
                                                     null
                                                 },
@@ -1202,7 +1297,7 @@ Column(
                                                 selectedExit.intersect(spendableIds.toSet()).toList() to false
                                         },
                                         enabled = canStartSelected && !exitBusy,
-                                        modifier = Modifier.weight(1f).height(48.dp),
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = ArkRust),
                                     ) {
@@ -1214,7 +1309,7 @@ Column(
                                     OutlinedButton(
                                         onClick = { pendingExitConfirm = emptyList<String>() to true },
                                         enabled = canStartEntire && !exitBusy,
-                                        modifier = Modifier.weight(1f).height(48.dp),
+                                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         border =
                                             BorderStroke(
@@ -1234,7 +1329,6 @@ Column(
                                     }
                                 }
                             }
-                        }
                     }
                 }
             }
@@ -1313,7 +1407,7 @@ Column(
                                     exportLauncher.launch(suggestedExportName)
                                 },
                                 enabled = arkState.isInitialized && !dbBusy,
-                                modifier = Modifier.weight(1f).height(48.dp),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                             ) {
                                 Text(
                                     text = stringResource(R.string.ark_db_export_action),
@@ -1327,7 +1421,7 @@ Column(
                                     importLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
                                 },
                                 enabled = arkState.isInitialized && !dbBusy,
-                                modifier = Modifier.weight(1f).height(48.dp),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                             ) {
                                 Text(
                                     text = stringResource(R.string.ark_db_import_action),
@@ -1475,7 +1569,7 @@ Column(
                                 modifier =
                                     Modifier
                                         .fillMaxWidth()
-                                        .height(48.dp),
+                                        .heightIn(min = 48.dp),
                             ) {
                                 Text(
                                     text = stringResource(R.string.ark_db_auto_backup_folder_pick),
@@ -1497,19 +1591,29 @@ Column(
     var wasRecoveringOnchain by remember { mutableStateOf(false) }
     LaunchedEffect(isRecoveringOnchain) {
         if (wasRecoveringOnchain && !isRecoveringOnchain) {
-            showRecoverConfirmDialog = false
+            recoverRequest = null
         }
         wasRecoveringOnchain = isRecoveringOnchain
     }
-    if (showRecoverConfirmDialog || isRecoveringOnchain) {
+    if (recoverRequest != null || isRecoveringOnchain) {
+        val request = recoverRequest
+        val selectedIds = request?.selectedOutpoints
+        val isSelectedScope = !selectedIds.isNullOrEmpty()
         val dest = recoverDestinationAddress?.trim().orEmpty()
         val hasDest = dest.isNotBlank()
         IbisConfirmDialog(
             onDismissRequest = {
-                if (!isRecoveringOnchain) showRecoverConfirmDialog = false
+                if (!isRecoveringOnchain) recoverRequest = null
             },
             title = stringResource(R.string.ark_boarding_recover_dialog_title),
-            message = stringResource(R.string.ark_boarding_recover_dialog_body),
+            message =
+                stringResource(
+                    if (isSelectedScope) {
+                        R.string.ark_boarding_recover_dialog_body
+                    } else {
+                        R.string.ark_boarding_recover_all_dialog_body
+                    },
+                ),
             confirmText =
                 if (isRecoveringOnchain) {
                     stringResource(R.string.ark_boarding_recover_dialog_working)
@@ -1520,10 +1624,14 @@ Column(
             confirmColor = ArkRust,
             dismissEnabled = !isRecoveringOnchain,
             onConfirm = {
-                onRecoverOnchain()
+                if (isSelectedScope) {
+                    onRecoverSelectedOnchain(selectedIds.orEmpty())
+                } else {
+                    onRecoverOnchain()
+                }
             },
             onDismissAction = {
-                if (!isRecoveringOnchain) showRecoverConfirmDialog = false
+                if (!isRecoveringOnchain) recoverRequest = null
             },
             body = {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -1548,7 +1656,27 @@ Column(
             },
         )
     }
+    if (showDiscardClaimConfirm) {
+        IbisConfirmDialog(
+            onDismissRequest = { showDiscardClaimConfirm = false },
+            title = stringResource(R.string.ark_claim_discard_title),
+            message = stringResource(R.string.ark_claim_discard_body),
+            confirmText = stringResource(R.string.ark_claim_discard_saved),
+            confirmColor = ErrorRed,
+            dismissText = stringResource(R.string.loc_d2c0aec0),
+            onConfirm = {
+                showDiscardClaimConfirm = false
+                onDiscardPendingClaim()
+            },
+            onDismissAction = { showDiscardClaimConfirm = false },
+        )
+    }
 }
+
+/** Pending "recover to L1" request: null ids = all deposits, a list = selected. */
+private data class ArkRecoverRequest(
+    val selectedOutpoints: List<String>?,
+)
 
 enum class ArkManageTab {
     BOARDING,
@@ -1622,14 +1750,27 @@ private fun ArkRefreshReviewDialog(
     onReset: () -> Unit,
 ) {
     if (state is ArkLifecycleState.Idle) return
-    val isBusy = state is ArkLifecycleState.Loading || state is ArkLifecycleState.InProgress
     val preview = state as? ArkLifecycleState.RefreshPreview
     val pending = state as? ArkLifecycleState.RefreshPending
     val terminal = state is ArkLifecycleState.Completed || state is ArkLifecycleState.Error
-    // Mode choice resets per preview; scheduled stays the default while available.
-    var useScheduledMode by remember(preview?.vtxoIds, preview?.scheduledHeight) {
-        mutableStateOf(true)
+    // Before the native call returns, nothing is registered with the ASP yet.
+    // Show the working state instead of claiming the refresh was submitted. The
+    // user may still dismiss: the submission continues in the repository.
+    val submitting = pending?.submitting == true
+    val isBusy = state is ArkLifecycleState.Loading || state is ArkLifecycleState.InProgress
+    // Mode choice resets per preview; scheduled is the default only when its
+    // quote actually landed. An unavailable scheduled fee falls back to the
+    // next-round quote the repository can execute.
+    var useScheduledMode by remember(
+        preview?.vtxoIds,
+        preview?.scheduledHeight,
+    ) {
+        // Capture the availability at first composition only: a late-arriving
+        // scheduled quote must not override a mode the user already selected.
+        mutableStateOf(preview?.scheduledHeight != null && preview?.scheduledFeeSats != null)
     }
+    val selectedFeeSats =
+        if (useScheduledMode) preview?.scheduledFeeSats else preview?.feeSats
     IbisConfirmDialog(
         onDismissRequest = {
             if (!isBusy) {
@@ -1642,7 +1783,9 @@ private fun ArkRefreshReviewDialog(
             stringResource(
                 if (pending != null || terminal) R.string.loc_d2c0aec0 else R.string.ark_refresh_confirm,
             ),
-        confirmEnabled = (preview != null || pending != null || terminal) && !isBusy,
+        confirmEnabled =
+            (pending != null || terminal || (preview != null && selectedFeeSats != null)) &&
+                !isBusy,
         confirmColor = ArkRust,
         dismissText = stringResource(R.string.loc_51bac044),
         dismissEnabled = !isBusy,
@@ -1675,7 +1818,7 @@ private fun ArkRefreshReviewDialog(
             }
         },
         body = {
-            if (isBusy) {
+            if (isBusy || submitting) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1909,18 +2052,17 @@ private fun ArkExitStartReviewDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var backupAck by remember { mutableStateOf(false) }
-    // Gate on the max budget (manual 2x-weight or authoritative broadcast leg).
-    // This must stay >= the repository start gate: the broadcast leg alone is
-    // ~half of that (e.g. 755 vs 1,497) and gating lower lets the user confirm
-    // 1,489 as funded, only for start to fail demanding 1,497. Fail-open when
-    // both are unknown. No dust padding: confirmed >= fee is sufficient.
-    // The budget itself is never displayed — the dialog lists the real legs
-    // (broadcast now + claim later) and their total instead.
+    var backupAck by remember(vtxoCount, amountSats) { mutableStateOf(false) }
+    // Must stay identical to the repository start gate: prefer Bark's
+    // authoritative broadcast leg (a fee-margin funding target since bark
+    // 0.8.0) and fall back to the manual 2x-weight estimate. Showing less than
+    // the gate enforces lets the user confirm a start that then fails for
+    // funds. Fail-open when both are unknown; no dust padding.
+    // "Overhead required" shows this value; broadcast + claim are the real legs.
     val authoritativeBroadcastSats =
         emergencyFeeQuote?.takeIf { !it.isQuoting }?.broadcastFeeSats
     val gateFeeSats =
-        listOfNotNull(estimatedFeeSats, authoritativeBroadcastSats).maxOrNull()
+        authoritativeBroadcastSats ?: estimatedFeeSats
     val startShortfall =
         gateFeeSats
             ?.minus(confirmedFeeBalanceSats)
@@ -1928,12 +2070,9 @@ private fun ArkExitStartReviewDialog(
     // Authoritative Bark quote (bark-ffi 0.23+): blocks start when Bark reports
     // the broadcast leg unfundable from confirmed on-chain funds.
     val authoritativeBlocked =
-        ArkUnilateralExitPolicy.isEmergencyExitBlockedByQuote(emergencyFeeQuote)
+        ArkUnilateralExitPolicy.isEmergencyExitBlockedByQuote(emergencyFeeQuote, confirmedFeeBalanceSats)
     val feeBlocked = (startShortfall != null && startShortfall > 0L) || authoritativeBlocked
     // Row color matches the numbers shown, so it stays in sync with the gate.
-    // Deliberately max(), never upfront + broadcast summed: the 2x upfront
-    // budget already contains the broadcast cost (plus the CPFP child), so
-    // summing would double-count and wrongly block a funded start.
     val feeFundsInsufficient = feeBlocked
     IbisConfirmDialog(
         onDismissRequest = onDismiss,
@@ -2033,9 +2172,9 @@ private fun ArkExitStartReviewDialog(
                             }
                         } else {
                             emergencyFeeQuote?.let { quote ->
-                                // Fee-funds scope only: the claim leg is deducted from the
-                                // recovered amount later, so the total the user must cover
-                                // is the broadcast leg, not broadcast + claim.
+                                // Broadcast leg: paid now from confirmed on-chain
+                                // funds. The claim leg is listed separately below
+                                // because it is deducted from the recovered amount.
                                 val feeFundsTotal =
                                     quote.broadcastFeeSats ?: quote.totalFeeSats
                                 if (feeFundsTotal != null) {
@@ -2114,6 +2253,7 @@ private fun ArkExitProgressReviewDialog(
     estimatedFeeSats: Long?,
     confirmedFeeBalanceSats: Long,
     emergencyFeeQuote: ArkEmergencyExitFeeQuote? = null,
+    privacyMode: Boolean = false,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2121,10 +2261,10 @@ private fun ArkExitProgressReviewDialog(
     // remainder is absorbed into the fee instead of a change output.
     // Mirror the start dialog: an authoritative unfundable quote also blocks
     // Push so confirm-then-error becomes a disabled button with explanation.
-    val requiredFunds = estimatedFeeSats
+    val requiredFunds = emergencyFeeQuote?.takeIf { !it.isQuoting }?.broadcastFeeSats
     val shortfall = requiredFunds?.minus(confirmedFeeBalanceSats)?.coerceAtLeast(0L)
     val authoritativeBlocked =
-        ArkUnilateralExitPolicy.isEmergencyExitBlockedByQuote(emergencyFeeQuote)
+        ArkUnilateralExitPolicy.isEmergencyExitBlockedByQuote(emergencyFeeQuote, confirmedFeeBalanceSats)
     val feeBlocked = (requiredFunds != null && (shortfall ?: 0L) > 0L) || authoritativeBlocked
     val error = state as? ArkLifecycleState.Error
     val busy = state is ArkLifecycleState.InProgress
@@ -2164,8 +2304,9 @@ private fun ArkExitProgressReviewDialog(
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     ArkExitFeeReview(
-                        estimatedFeeSats = estimatedFeeSats,
+                        estimatedFeeSats = requiredFunds ?: estimatedFeeSats,
                         confirmedFeeBalanceSats = confirmedFeeBalanceSats,
+                        privacyMode = privacyMode,
                     )
                     if (feeBlocked) {
                         Text(
@@ -2187,24 +2328,25 @@ private fun ArkExitProgressReviewDialog(
 private fun ArkExitFeeRows(
     estimatedFeeSats: Long?,
     confirmedFeeBalanceSats: Long,
+    privacyMode: Boolean = false,
 ) {
     // "Fee funds needed" equals the estimated fee (no dust padding).
     val requiredFunds = estimatedFeeSats
     ArkExitReviewRow(
         label = stringResource(R.string.ark_exit_review_fee),
         value =
-            estimatedFeeSats?.let { formatArkAmount(it, useSats = true) }
+            if (privacyMode) "****" else estimatedFeeSats?.let { formatArkAmount(it, useSats = true) }
                 ?: stringResource(R.string.ark_exit_fee_unavailable),
     )
     ArkExitReviewRow(
         label = stringResource(R.string.ark_exit_review_required),
         value =
-            requiredFunds?.let { formatArkAmount(it, useSats = true) }
+            if (privacyMode) "****" else requiredFunds?.let { formatArkAmount(it, useSats = true) }
                 ?: stringResource(R.string.ark_exit_fee_unavailable),
     )
     ArkExitReviewRow(
         label = stringResource(R.string.ark_exit_review_available),
-        value = formatArkAmount(confirmedFeeBalanceSats, useSats = true),
+        value = if (privacyMode) "****" else formatArkAmount(confirmedFeeBalanceSats, useSats = true),
     )
 }
 
@@ -2212,10 +2354,12 @@ private fun ArkExitFeeRows(
 private fun ArkExitFeeReview(
     estimatedFeeSats: Long?,
     confirmedFeeBalanceSats: Long,
+    privacyMode: Boolean = false,
 ) {
     ArkExitFeeRows(
         estimatedFeeSats = estimatedFeeSats,
         confirmedFeeBalanceSats = confirmedFeeBalanceSats,
+        privacyMode = privacyMode,
     )
     Text(
         text = stringResource(R.string.ark_exit_fee_requirement_note),
@@ -2250,6 +2394,7 @@ private fun ArkExitReviewRow(
 private fun ArkExitClaimReviewDialog(
     state: ArkLifecycleState,
     useSats: Boolean,
+    privacyMode: Boolean = false,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2274,9 +2419,16 @@ private fun ArkExitClaimReviewDialog(
                     CircularProgressIndicator(color = ArkRust, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                 }
                 preview != null -> {
+                    preview.claimAmountSats?.let { amount ->
+                        ArkExitReviewRow(
+                            label = stringResource(R.string.ark_exit_review_funds),
+                            value = if (privacyMode) ARK_HIDDEN_AMOUNT else
+                                formatArkAmount((amount - preview.feeSats).coerceAtLeast(0L), useSats),
+                        )
+                    }
                     ArkExitReviewRow(
                         label = stringResource(R.string.ark_exit_review_fee),
-                        value = formatArkAmount(preview.feeSats, useSats),
+                        value = if (privacyMode) "****" else formatArkAmount(preview.feeSats, useSats),
                     )
                     Text(
                         text =
@@ -2468,7 +2620,8 @@ private fun ArkBoardingTabContent(
     onAutoBoardEnabledChange: (Boolean) -> Unit,
     onBoardAll: () -> Unit,
     onBoardAmount: (Long) -> Unit,
-    onRecoverOnchain: () -> Unit,
+    /** null = recover everything confirmed; a list = recover only those outpoints. */
+    onRequestRecover: (List<String>?) -> Unit,
     isBoarding: Boolean,
     isRecoveringOnchain: Boolean,
 ) {
@@ -2501,7 +2654,7 @@ private fun ArkBoardingTabContent(
                 } else {
                     emptyList()
                 }
-            }.take(40)
+            }
         }
     // Selection mirrors the Refresh/Exit tabs: confirmed UTXOs pre-selected,
     // pruned as the set changes. Boarding sums the selection (Bark boards by
@@ -2640,7 +2793,11 @@ private fun ArkBoardingTabContent(
                 }
             }
 
-            if (displayUtxos.isNotEmpty()) {
+            // Boarding is impossible below the ASP minimum (Bark rejects it), so
+            // don't show permanently greyed Board buttons next to a selected
+            // deposit — Recover all to L1 is the only action that can succeed.
+            val boardingPossible = minBoard != null && confirmedTotal >= minBoard
+            if (displayUtxos.isNotEmpty() && boardingPossible) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2648,7 +2805,7 @@ private fun ArkBoardingTabContent(
                     OutlinedButton(
                         onClick = { onBoardAmount(selectedTotal) },
                         enabled = canBoardSelected,
-                        modifier = Modifier.weight(1f).height(48.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         border = BorderStroke(1.dp, BorderColor),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = ArkRust),
@@ -2669,7 +2826,7 @@ private fun ArkBoardingTabContent(
                     OutlinedButton(
                         onClick = onBoardAll,
                         enabled = canBoardAll,
-                        modifier = Modifier.weight(1f).height(48.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         border = BorderStroke(1.dp, BorderColor),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
@@ -2682,26 +2839,57 @@ private fun ArkBoardingTabContent(
                 }
             }
 
-            if (belowMinBlock) {
-                OutlinedButton(
-                    onClick = onRecoverOnchain,
-                    enabled = !isRecoveringOnchain && !exitBlocksBoard,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, BorderColor),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = BitcoinOrange),
+            // Recovery is always offered for confirmed deposits — including when
+            // boarding is possible, so the full menu has both action pairs.
+            if (displayUtxos.isNotEmpty() && confirmedTotal > 0L) {
+                val recoverEnabled = !isRecoveringOnchain && !exitBlocksBoard
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    if (isRecoveringOnchain) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = BitcoinOrange,
-                            strokeWidth = 2.dp,
-                        )
-                    } else {
-                        Text(
-                            stringResource(R.string.ark_boarding_recover_to_l1),
-                            maxLines = 1,
-                        )
+                    OutlinedButton(
+                        onClick = { onRequestRecover(selectedBoard.toList()) },
+                        enabled = recoverEnabled && selectedTotal > 0L,
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BorderColor),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BitcoinOrange),
+                    ) {
+                        if (isRecoveringOnchain) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = BitcoinOrange,
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(
+                                stringResource(R.string.ark_boarding_recover_selected_action),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    OutlinedButton(
+                        onClick = { onRequestRecover(null) },
+                        enabled = recoverEnabled && confirmedTotal > 0L,
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        border = BorderStroke(1.dp, BorderColor),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = BitcoinOrange),
+                    ) {
+                        if (isRecoveringOnchain) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                color = BitcoinOrange,
+                                strokeWidth = 2.dp,
+                            )
+                        } else {
+                            Text(
+                                stringResource(R.string.ark_boarding_recover_to_l1),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }
@@ -2906,4 +3094,3 @@ private fun ArkVtxoSelectRow(
 
 private fun arkExitNeedsPush(state: String): Boolean =
     ArkBarkMappers.needsPushLabel(state)
-

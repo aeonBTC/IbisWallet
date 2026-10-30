@@ -15,6 +15,8 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -119,11 +122,14 @@ import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
+import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.BalanceAmountText
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
+import github.aeonbtc.ibiswallet.ui.components.SendExternalOriginBanner
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
@@ -158,6 +164,7 @@ import github.aeonbtc.ibiswallet.util.isLightningAddressPayment
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.lightningNodeRecipientPlaceholder
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
+import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -185,6 +192,8 @@ fun LightningNodeBalanceScreen(
     onQuickReceive: () -> Unit = {},
     quickReceiveState: LightningNodeReceiveState = LightningNodeReceiveState.Idle,
     onScanQrResult: (String) -> Unit = {},
+    onSavePaymentLabel: (LightningNodePayment, String) -> Unit = { _, _ -> },
+    onDeletePaymentLabel: (LightningNodePayment) -> Unit = {},
 ) {
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     val context = LocalContext.current
@@ -227,6 +236,7 @@ fun LightningNodeBalanceScreen(
                     listOfNotNull(
                         p.id,
                         p.memo,
+                        p.label,
                         p.paymentHash,
                         p.destination,
                         p.destinationAlias,
@@ -284,6 +294,9 @@ fun LightningNodeBalanceScreen(
             fiatCurrency = fiatCurrency,
             dateFormat = dateFormat,
             onDismiss = { selectedPayment = null },
+            label = payment.label,
+            onSaveLabel = { label -> onSavePaymentLabel(payment, label) },
+            onDeleteLabel = { onDeletePaymentLabel(payment) },
         )
     }
 
@@ -398,6 +411,29 @@ fun LightningNodeBalanceScreen(
                                     )
                                 }
                             }
+
+                            if (isNfcReaderActive) {
+                                val nfcStatusLabel =
+                                    when (nfcReaderState) {
+                                        NfcReaderUiState.Inactive,
+                                        NfcReaderUiState.Ready,
+                                        -> stringResource(R.string.nfc_status_ready)
+                                        NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                                        NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                                    }
+                                val nfcStatusColor =
+                                    if (nfcReaderState == NfcReaderUiState.Detecting) {
+                                        accent
+                                    } else {
+                                        SuccessGreen
+                                    }
+                                NfcStatusIndicator(
+                                    label = nfcStatusLabel,
+                                    contentDescription = nfcStatusLabel,
+                                    modifier = Modifier.align(Alignment.Center),
+                                    color = nfcStatusColor,
+                                )
+                            }
                         }
 
                         Column(
@@ -471,32 +507,6 @@ fun LightningNodeBalanceScreen(
                                 contentDescription = stringResource(R.string.loc_60129540),
                                 tint = accent,
                                 modifier = Modifier.size(24.dp),
-                            )
-                        }
-
-                        if (isNfcReaderActive) {
-                            val nfcStatusLabel =
-                                when (nfcReaderState) {
-                                    NfcReaderUiState.Inactive,
-                                    NfcReaderUiState.Ready,
-                                    -> stringResource(R.string.nfc_status_ready)
-                                    NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
-                                    NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
-                                }
-                            val nfcStatusColor =
-                                if (nfcReaderState == NfcReaderUiState.Detecting) {
-                                    accent
-                                } else {
-                                    SuccessGreen
-                                }
-                            NfcStatusIndicator(
-                                label = nfcStatusLabel,
-                                contentDescription = nfcStatusLabel,
-                                modifier =
-                                    Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 2.dp),
-                                color = nfcStatusColor,
                             )
                         }
                     }
@@ -779,7 +789,8 @@ private fun LightningPaymentRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                payment.memo?.let { BitcoinUtils.sanitizeExternalLabel(it) }?.let { memo ->
+                (payment.label?.takeIf { it.isNotBlank() } ?: payment.memo)
+                    ?.let { BitcoinUtils.sanitizeExternalLabel(it) }?.let { memo ->
                     Text(
                         text = memo,
                         style =
@@ -927,6 +938,9 @@ private fun LightningNodePaymentDetailDialog(
     fiatCurrency: String,
     dateFormat: String,
     onDismiss: () -> Unit,
+    label: String? = null,
+    onSaveLabel: (String) -> Unit = {},
+    onDeleteLabel: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val isReceive = payment.direction == LightningNodePaymentDirection.INCOMING
@@ -1000,6 +1014,8 @@ private fun LightningNodePaymentDetailDialog(
     var showCopiedHash by remember { mutableStateOf(false) }
     var showCopiedInvoice by remember { mutableStateOf(false) }
     var showCopiedRecipient by remember { mutableStateOf(false) }
+    var isEditingLabel by remember { mutableStateOf(false) }
+    var labelText by remember(label) { mutableStateOf(label.orEmpty()) }
     val scrollState = rememberScrollState()
 
     LaunchedEffect(showCopiedAmount) {
@@ -1283,12 +1299,11 @@ private fun LightningNodePaymentDetailDialog(
                                             style =
                                                 MaterialTheme.typography.bodyMedium.copy(
                                                     fontFamily = FontFamily.Monospace,
-                                                    lineHeight = MaterialTheme.typography.bodyMedium.fontSize,
                                                 ),
                                             color = MaterialTheme.colorScheme.onBackground,
                                             maxLines = 1,
                                             softWrap = false,
-                                            overflow = TextOverflow.Clip,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
                                         if (amountUnderInvoice) {
                                             Spacer(modifier = Modifier.height(3.dp))
@@ -1397,24 +1412,79 @@ private fun LightningNodePaymentDetailDialog(
                             }
                         }
 
-                        payment.memo?.let { BitcoinUtils.sanitizeExternalLabel(it) }?.let { memo ->
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 6.dp),
-                                color = TextSecondary.copy(alpha = 0.1f),
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 6.dp),
+                            color = TextSecondary.copy(alpha = 0.1f),
+                        )
+                        Column {
+                            Text(
+                                text = stringResource(R.string.loc_cf667fec),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TextSecondary,
                             )
-                            Column {
-                                Text(
-                                    text = stringResource(R.string.ln_node_memo),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TextSecondary,
+                            Spacer(modifier = Modifier.height(4.dp))
+                            if (isEditingLabel) {
+                                OutlinedTextField(
+                                    value = labelText,
+                                    onValueChange = { labelText = it },
+                                    placeholder = {
+                                        Text(
+                                            text = stringResource(R.string.loc_822c6f45),
+                                            color = TextSecondary.copy(alpha = 0.5f),
+                                        )
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(8.dp),
+                                    colors =
+                                        OutlinedTextFieldDefaults.colors(
+                                            focusedBorderColor = LightningYellow,
+                                            unfocusedBorderColor = BorderColor,
+                                            cursorColor = LightningYellow,
+                                        ),
+                                    trailingIcon = {
+                                        TextButton(
+                                            onClick = {
+                                                onSaveLabel(labelText)
+                                                isEditingLabel = false
+                                            },
+                                        ) {
+                                            Text(
+                                                text = stringResource(R.string.loc_f55495e0),
+                                                color = LightningYellow,
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = memo,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = MaterialTheme.colorScheme.onBackground,
+                            } else {
+                                EditableLabelChip(
+                                    label = labelText.takeIf { it.isNotBlank() },
+                                    accentColor = LightningYellow,
+                                    onClick = { isEditingLabel = true },
+                                    onDelete =
+                                        if (labelText.isNotBlank()) {
+                                            onDeleteLabel?.let { delete ->
+                                                {
+                                                    labelText = ""
+                                                    delete()
+                                                }
+                                            }
+                                        } else {
+                                            null
+                                        },
                                 )
                             }
+                            payment.memo
+                                ?.takeIf { it.isNotBlank() && it != labelText }
+                                ?.let { BitcoinUtils.sanitizeExternalLabel(it) }
+                                ?.let { memo ->
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = memo,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = TextSecondary,
+                                    )
+                                }
                         }
 
                         payment.paymentHash?.takeIf { it.isNotBlank() }?.let { hash ->
@@ -1727,7 +1797,10 @@ fun LightningNodeReceiveScreen(
     }
 
     if (showEnlargedQr && activeEnlargedQr != null) {
-        Dialog(onDismissRequest = { showEnlargedQr = false }) {
+        Dialog(
+            onDismissRequest = { showEnlargedQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
             SecureDialogSideEffect()
             Box(
                 modifier =
@@ -1991,7 +2064,7 @@ fun LightningNodeReceiveScreen(
                                     style =
                                         MaterialTheme.typography.bodySmall.copy(
                                             fontFamily = FontFamily.Monospace,
-                                            fontSize = 11.sp,
+                                            fontSize = 12.sp,
                                         ),
                                     color = TextSecondary,
                                     textAlign = TextAlign.Center,
@@ -2027,8 +2100,7 @@ fun LightningNodeReceiveScreen(
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement =
-                                        Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
                                 ) {
                                     ReceiveActionButton(
                                         text = stringResource(R.string.loc_ed8814bc),
@@ -2464,7 +2536,7 @@ private fun LnLightningAddressReceiveContent(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 48.dp),
+                                .height(48.dp),
                         shape = RoundedCornerShape(8.dp),
                         border = BorderStroke(1.dp, BorderColor),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
@@ -2566,17 +2638,20 @@ fun LightningNodeSendScreen(
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     onUpdateDraft: (SendScreenDraft) -> Unit,
-    onPrepareSend: (paymentRequest: String, amountSats: Long?) -> Unit,
+    onPrepareSend: (paymentRequest: String, amountSats: Long?, label: String?) -> Unit,
     onSendPrepared: () -> Unit,
     onUpdateMaxFeePercent: (Double) -> Unit = {},
     onResetSend: () -> Unit,
     onToggleDenomination: () -> Unit = {},
     onOpenConnectionSettings: () -> Unit,
+    externalOriginOrigin: WalletViewModel.PendingSendOrigin? = null,
+    onClearExternalOriginNotice: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     var paymentRequest by remember { mutableStateOf(sendDraft.recipientAddress) }
     var amountInput by remember { mutableStateOf(sendDraft.amountInput) }
+    var labelText by remember { mutableStateOf("") }
     var isUsdMode by remember { mutableStateOf(false) }
     var isMaxMode by remember { mutableStateOf(sendDraft.isMaxSend) }
     var showQrScanner by remember { mutableStateOf(false) }
@@ -2840,6 +2915,11 @@ fun LightningNodeSendScreen(
                 }
                 Spacer(modifier = Modifier.height(20.dp))
 
+                if (externalOriginOrigin != null) {
+                    SendExternalOriginBanner(origin = externalOriginOrigin)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2852,9 +2932,9 @@ fun LightningNodeSendScreen(
                     )
                 }
                 Spacer(modifier = Modifier.height(6.dp))
-                OutlinedTextField(
-                    value = paymentRequest,
-                    onValueChange = { input ->
+                val onPaymentInput: (String) -> Unit =
+                    onPaymentInput@{ input ->
+                        onClearExternalOriginNotice()
                         val normalized = input.trim()
                         when (val parsed = parseSendRecipient(normalized, context)) {
                             is ParsedSendRecipient.Lightning -> applyParsedRecipient(parsed)
@@ -2864,7 +2944,10 @@ fun LightningNodeSendScreen(
                                 isMaxMode = false
                             }
                         }
-                    },
+                    }
+                OutlinedTextField(
+                    value = paymentRequest,
+                    onValueChange = onPaymentInput,
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = {
                         Text(
@@ -2875,14 +2958,12 @@ fun LightningNodeSendScreen(
                         )
                     },
                     trailingIcon = {
-                        IconButton(onClick = { showQrScanner = true }) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                tint = LightningYellow,
-                                modifier = Modifier.size(22.dp),
-                            )
-                        }
+                        ScanPasteIcons(
+                            onScan = { showQrScanner = true },
+                            onPaste = onPaymentInput,
+                            tint = LightningYellow,
+                            scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                        )
                     },
                     supportingText =
                         recipientValidationError?.let {
@@ -2998,6 +3079,7 @@ fun LightningNodeSendScreen(
                     value = amountInput,
                     onValueChange = { value ->
                         if (amountLocked) return@OutlinedTextField
+                        onClearExternalOriginNotice()
                         amountInput = filterLnAmountInput(value, useSats, isUsdMode)
                         isMaxMode = false
                     },
@@ -3071,6 +3153,27 @@ fun LightningNodeSendScreen(
                         isMaxMode = true
                     },
                 )
+
+                Spacer(modifier = Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = labelText,
+                    onValueChange = { labelText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = {
+                        Text(
+                            text = stringResource(R.string.loc_cf667fec),
+                            color = TextSecondary.copy(alpha = 0.5f),
+                        )
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = LightningYellow,
+                            unfocusedBorderColor = BorderColor,
+                            cursorColor = LightningYellow,
+                        ),
+                )
             }
         }
 
@@ -3084,7 +3187,7 @@ fun LightningNodeSendScreen(
                         else -> invoiceFixedAmountSats?.takeIf { it > 0L }
                     }
                 showConfirmDialog = true
-                onPrepareSend(paymentRequest.trim(), amountForPrepare)
+                onPrepareSend(paymentRequest.trim(), amountForPrepare, labelText.trim().takeIf { it.isNotBlank() })
             },
             modifier =
                 Modifier
@@ -3938,7 +4041,7 @@ private fun LnMaxFeeRow(
                 Row(
                     modifier =
                         Modifier
-                            .heightIn(min = 40.dp)
+                            .height(40.dp)
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -4115,34 +4218,37 @@ fun LightningNodeConnectionScreen(
         if (type == LightningNodeConnectionType.NWC) return true
         // Tor onion authenticates the endpoint — no cert or ack needed.
         if (config.isOnionHost()) return true
-        if (tlsEnabled) return tlsCert.trim().isNotBlank()
-        // Cleartext clearnet requires explicit acknowledgment.
-        return acknowledgeInsecure
+        // Clearnet requires either a pinned cert or explicit insecure ack.
+        return tlsCert.trim().isNotBlank() || acknowledgeInsecure
     }
 
+    // Shared by the QR scanner and the paste buttons so both import connection URIs identically.
+    fun importConnectionPayload(payload: String) {
+        runCatching {
+            LightningNodeConnectionUriParser.parse(payload).config
+        }.onSuccess { imported ->
+            applyImportedConfig(imported)
+            Toast
+                .makeText(
+                    context,
+                    qrImportSuccessMessage,
+                    Toast.LENGTH_SHORT,
+                ).show()
+        }.onFailure { err ->
+            Toast
+                .makeText(
+                    context,
+                    err.message?.takeIf { it.isNotBlank() }
+                        ?: qrImportErrorMessage,
+                    Toast.LENGTH_LONG,
+                ).show()
+        }
+    }
     if (showQrScanner) {
         QrScannerDialog(
             onCodeScanned = { payload ->
                 showQrScanner = false
-                runCatching {
-                    LightningNodeConnectionUriParser.parse(payload).config
-                }.onSuccess { imported ->
-                    applyImportedConfig(imported)
-                    Toast
-                        .makeText(
-                            context,
-                            qrImportSuccessMessage,
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                }.onFailure { err ->
-                    Toast
-                        .makeText(
-                            context,
-                            err.message?.takeIf { it.isNotBlank() }
-                                ?: qrImportErrorMessage,
-                            Toast.LENGTH_LONG,
-                        ).show()
-                }
+                importConnectionPayload(payload)
             },
             onDismiss = { showQrScanner = false },
         )
@@ -4186,6 +4292,7 @@ fun LightningNodeConnectionScreen(
             onDismissRequest = {
                 showSuccessSaveDialog = false
             },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
             containerColor = DarkCard,
             shape = RoundedCornerShape(12.dp),
             title = {
@@ -4196,7 +4303,10 @@ fun LightningNodeConnectionScreen(
                 )
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()).heightIn(max = 480.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     Text(
                         text = stringResource(R.string.ln_node_test_success_body),
                         color = TextPrimary,
@@ -4293,26 +4403,38 @@ fun LightningNodeConnectionScreen(
                 }
             },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         showSuccessSaveDialog = false
                         onSave(resolvedWalletName(), currentConfig())
                     },
                     enabled = canSave,
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        ),
                 ) {
                     Text(
                         text = stringResource(R.string.ln_node_test_success_save),
-                        color = if (canSave) BitcoinOrange else TextSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = true,
                     )
                 }
             },
             dismissButton = {
-                TextButton(
+                IbisButton(
                     onClick = { showSuccessSaveDialog = false },
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                 ) {
                     Text(
                         text = stringResource(R.string.ln_node_test_success_later),
-                        color = TextSecondary,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = true,
                     )
                 }
             },
@@ -4330,25 +4452,22 @@ fun LightningNodeConnectionScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = stringResource(R.string.loc_cdfc6e09),
-                    tint = MaterialTheme.colorScheme.onBackground,
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = stringResource(R.string.ln_node_connection_title),
                 style = MaterialTheme.typography.titleLarge,
-                color = TextPrimary,
+                color = MaterialTheme.colorScheme.onBackground,
             )
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         if (walletId == null) {
             Card(
@@ -4385,7 +4504,11 @@ fun LightningNodeConnectionScreen(
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     ConnectionTypeChip(
                         label = "LND",
                         selected = type == LightningNodeConnectionType.LND_REST,
@@ -4449,14 +4572,21 @@ fun LightningNodeConnectionScreen(
                             },
                             stringResource(R.string.ln_node_host),
                             trailingIcon = {
-                                IconButton(onClick = { showQrScanner = true }) {
-                                    Icon(
-                                        imageVector = Icons.Default.QrCodeScanner,
-                                        contentDescription = stringResource(R.string.ln_node_qr_scan_cd),
-                                        tint = LightningYellow,
-                                        modifier = Modifier.size(20.dp),
-                                    )
-                                }
+                                ScanPasteIcons(
+                                    onScan = { showQrScanner = true },
+                                    onPaste = { text ->
+                                        if (text.contains("://") ||
+                                            text.contains("macaroon=", ignoreCase = true) ||
+                                            text.contains("rune=", ignoreCase = true)
+                                        ) {
+                                            importConnectionPayload(text)
+                                        } else {
+                                            onHostChanged(text)
+                                        }
+                                    },
+                                    tint = LightningYellow,
+                                    scanContentDescription = stringResource(R.string.ln_node_qr_scan_cd),
+                                )
                             },
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -4506,7 +4636,7 @@ fun LightningNodeConnectionScreen(
                                 minLines = 3,
                             )
                         }
-                        if (!tlsEnabled && host.isNotBlank() && !isOnionHostInput(host)) {
+                        if (tlsCert.isBlank() && host.isNotBlank() && !isOnionHostInput(host)) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -4548,14 +4678,21 @@ fun LightningNodeConnectionScreen(
                             },
                             stringResource(R.string.ln_node_host),
                             trailingIcon = {
-                                IconButton(onClick = { showQrScanner = true }) {
-                                    Icon(
-                                        imageVector = Icons.Default.QrCodeScanner,
-                                        contentDescription = stringResource(R.string.ln_node_qr_scan_cd),
-                                        tint = LightningYellow,
-                                        modifier = Modifier.size(20.dp),
-                                    )
-                                }
+                                ScanPasteIcons(
+                                    onScan = { showQrScanner = true },
+                                    onPaste = { text ->
+                                        if (text.contains("://") ||
+                                            text.contains("macaroon=", ignoreCase = true) ||
+                                            text.contains("rune=", ignoreCase = true)
+                                        ) {
+                                            importConnectionPayload(text)
+                                        } else {
+                                            onHostChanged(text)
+                                        }
+                                    },
+                                    tint = LightningYellow,
+                                    scanContentDescription = stringResource(R.string.ln_node_qr_scan_cd),
+                                )
                             },
                         )
                         Spacer(modifier = Modifier.height(8.dp))
@@ -4610,7 +4747,7 @@ fun LightningNodeConnectionScreen(
                                 minLines = 3,
                             )
                         }
-                        if (!tlsEnabled && host.isNotBlank() && !isOnionHostInput(host)) {
+                        if (tlsCert.isBlank() && host.isNotBlank() && !isOnionHostInput(host)) {
                             Spacer(modifier = Modifier.height(12.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -4655,14 +4792,16 @@ fun LightningNodeConnectionScreen(
                             stringResource(R.string.ln_node_nwc_uri),
                             minLines = 3,
                             bottomTrailingContent = {
-                                IconButton(onClick = { showQrScanner = true }) {
-                                    Icon(
-                                        imageVector = Icons.Default.QrCodeScanner,
-                                        contentDescription = stringResource(R.string.ln_node_qr_scan_cd),
-                                        tint = LightningYellow,
-                                        modifier = Modifier.size(20.dp),
-                                    )
-                                }
+                                ScanPasteIcons(
+                                    onScan = { showQrScanner = true },
+                                    onPaste = { text ->
+                                        nwcUri = text
+                                        useTor = text.contains(".onion", ignoreCase = true)
+                                        onClearTest()
+                                    },
+                                    tint = LightningYellow,
+                                    scanContentDescription = stringResource(R.string.ln_node_qr_scan_cd),
+                                )
                             },
                         )
                     }
@@ -4890,11 +5029,8 @@ private fun LnConnectionStatusBanner(
             )
             if (!isConnecting) {
                 Spacer(modifier = Modifier.height(12.dp))
-                TextButton(onClick = onOpenConnectionSettings) {
-                    Text(
-                        text = stringResource(R.string.ln_node_setup_connection),
-                        color = LightningYellow,
-                    )
+                IbisButton(onClick = onOpenConnectionSettings, activeColor = LightningYellow) {
+                    Text(text = stringResource(R.string.ln_node_setup_connection))
                 }
             }
         }
@@ -4913,6 +5049,35 @@ fun LightningNodeChannelsScreen(
     denomination: String,
     privacyMode: Boolean,
     onRefresh: () -> Unit,
+    peers: List<github.aeonbtc.ibiswallet.data.model.LightningNodePeer> = emptyList(),
+    peersLoading: Boolean = false,
+    channelOpState: github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState =
+        github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Idle,
+    onRefreshPeers: () -> Unit = {},
+    onConnectPeer: (pubkey: String, host: String?) -> Unit = { _, _ -> },
+    onDisconnectPeer: (pubkey: String, force: Boolean) -> Unit = { _, _ -> },
+    onOpenChannel: (
+        pubkey: String,
+        amountSats: Long,
+        satPerVbyte: Double?,
+        isPrivate: Boolean,
+        pushSats: Long,
+        closeAddress: String?,
+        peerHost: String?,
+    ) -> Unit = { _, _, _, _, _, _, _ -> },
+    onCloseChannel: (
+        channel: LightningNodeChannel,
+        force: Boolean,
+        satPerVbyte: Double?,
+        closeAddress: String?,
+    ) -> Unit = { _, _, _, _ -> },
+    onUpdateFeePolicy: (
+        channel: LightningNodeChannel,
+        baseFeeMsat: Long,
+        feeRatePpm: Long,
+        cltvDelta: Int?,
+    ) -> Unit = { _, _, _, _ -> },
+    onResetChannelOp: () -> Unit = {},
 ) {
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     var isPullRefreshing by remember { mutableStateOf(false) }
@@ -4926,6 +5091,9 @@ fun LightningNodeChannelsScreen(
 
     val nwcUnavailable =
         connectionType == LightningNodeConnectionType.NWC
+    // Hoisted above the lazy list so dialog visibility survives list recomposition.
+    var showPeerDialog by remember { mutableStateOf(false) }
+    var showOpenDialog by remember { mutableStateOf(false) }
 
     PullToRefreshBox(
         isRefreshing = isPullRefreshing || isLoading,
@@ -4949,12 +5117,35 @@ fun LightningNodeChannelsScreen(
         ) {
             item {
                 Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = stringResource(R.string.ln_node_channels_title),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.ln_node_channels_title),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    if (!nwcUnavailable && isConnected && !isConnecting) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { showPeerDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text(text = stringResource(R.string.ln_node_channels_peers))
+                            }
+                            Button(
+                                onClick = { showOpenDialog = true },
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
+                            ) {
+                                Text(text = stringResource(R.string.ln_node_channels_open))
+                            }
+                        }
+                    }
+                }
                 when {
                     nwcUnavailable || !isConnected || isConnecting -> {
                         // Empty state cards carry the full message; avoid duplicate subtitle text.
@@ -4973,6 +5164,17 @@ fun LightningNodeChannelsScreen(
                     }
                 }
                 Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            val opState = channelOpState
+            if (opState !is github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Idle) {
+                item {
+                    LnChannelOpBanner(
+                        state = opState,
+                        onDismiss = onResetChannelOp,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
             }
 
             error?.takeIf { it.isNotBlank() }?.let { message ->
@@ -5038,6 +5240,11 @@ fun LightningNodeChannelsScreen(
                             channel = channel,
                             useSats = useSats,
                             privacyMode = privacyMode,
+                            onClose = { c, force, fee, addr -> onCloseChannel(c, force, fee, addr) },
+                            onUpdateFees = { c, baseMsat, ppm, cltv ->
+                                onUpdateFeePolicy(c, baseMsat, ppm, cltv)
+                            },
+                            onDisconnectPeer = { pubkey -> onDisconnectPeer(pubkey, false) },
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                     }
@@ -5046,6 +5253,31 @@ fun LightningNodeChannelsScreen(
 
             item { Spacer(modifier = Modifier.height(24.dp)) }
         }
+    }
+    if (showPeerDialog) {
+        LnPeerDialog(
+            peers = peers,
+            isLoading = peersLoading,
+            onRefresh = onRefreshPeers,
+            onConnect = { pubkey, host ->
+                showPeerDialog = false
+                onConnectPeer(pubkey, host)
+            },
+            onDisconnect = { pubkey, force ->
+                onDisconnectPeer(pubkey, force)
+            },
+            onDismiss = { showPeerDialog = false },
+        )
+    }
+    if (showOpenDialog) {
+        LnOpenChannelDialog(
+            peers = peers,
+            onConfirm = { pubkey, amount, fee, isPrivate, push, closeAddr, peerHost ->
+                showOpenDialog = false
+                onOpenChannel(pubkey, amount, fee, isPrivate, push, closeAddr, peerHost)
+            },
+            onDismiss = { showOpenDialog = false },
+        )
     }
 }
 
@@ -5171,6 +5403,19 @@ private fun LnChannelCard(
     channel: LightningNodeChannel,
     useSats: Boolean,
     privacyMode: Boolean,
+    onClose: (
+        channel: LightningNodeChannel,
+        force: Boolean,
+        satPerVbyte: Double?,
+        closeAddress: String?,
+    ) -> Unit = { _, _, _, _ -> },
+    onUpdateFees: (
+        channel: LightningNodeChannel,
+        baseFeeMsat: Long,
+        feeRatePpm: Long,
+        cltvDelta: Int?,
+    ) -> Unit = { _, _, _, _ -> },
+    onDisconnectPeer: (pubkey: String) -> Unit = {},
 ) {
     val capacity = channel.capacitySats.coerceAtLeast(0L)
     val local = channel.localBalanceSats.coerceAtLeast(0L).coerceAtMost(capacity)
@@ -5232,7 +5477,6 @@ private fun LnChannelCard(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 Spacer(modifier = Modifier.width(8.dp))
@@ -5343,6 +5587,737 @@ private fun LnChannelCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            LnChannelActionsRow(
+                channel = channel,
+                useSats = useSats,
+                privacyMode = privacyMode,
+                onClose = onClose,
+                onUpdateFees = onUpdateFees,
+                onDisconnectPeer = onDisconnectPeer,
+            )
         }
+    }
+}
+
+@Composable
+private fun LnChannelActionsRow(
+    channel: LightningNodeChannel,
+    useSats: Boolean,
+    privacyMode: Boolean,
+    onClose: (
+        channel: LightningNodeChannel,
+        force: Boolean,
+        satPerVbyte: Double?,
+        closeAddress: String?,
+    ) -> Unit,
+    onUpdateFees: (
+        channel: LightningNodeChannel,
+        baseFeeMsat: Long,
+        feeRatePpm: Long,
+        cltvDelta: Int?,
+    ) -> Unit,
+    onDisconnectPeer: (pubkey: String) -> Unit,
+) {
+    var showClose by remember { mutableStateOf(false) }
+    var showFees by remember { mutableStateOf(false) }
+    var showDetail by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TextButton(onClick = { showDetail = true }) {
+            Text(
+                text = stringResource(R.string.ln_node_channels_detail),
+                color = TextSecondary,
+            )
+        }
+        Spacer(modifier = Modifier.weight(1f))
+        TextButton(onClick = { showFees = true }) {
+            Text(
+                text = stringResource(R.string.ln_node_channels_fees),
+                color = BitcoinOrange,
+            )
+        }
+        TextButton(onClick = { showClose = true }) {
+            Text(
+                text = stringResource(R.string.ln_node_channels_close),
+                color = ErrorRed,
+            )
+        }
+    }
+    if (showClose) {
+        LnCloseChannelDialog(
+            channel = channel,
+            onConfirm = { force, fee, addr ->
+                showClose = false
+                onClose(channel, force, fee, addr)
+            },
+            onDismiss = { showClose = false },
+        )
+    }
+    if (showFees) {
+        LnFeePolicyDialog(
+            channel = channel,
+            onConfirm = { baseMsat, ppm, cltv ->
+                showFees = false
+                onUpdateFees(channel, baseMsat, ppm, cltv)
+            },
+            onDismiss = { showFees = false },
+        )
+    }
+    if (showDetail) {
+        LnChannelDetailDialog(
+            channel = channel,
+            useSats = useSats,
+            privacyMode = privacyMode,
+            onDisconnectPeer = {
+                showDetail = false
+                onDisconnectPeer(channel.remotePubkey)
+            },
+            onDismiss = { showDetail = false },
+        )
+    }
+}
+
+@Composable
+private fun LnChannelOpBanner(
+    state: github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState,
+    onDismiss: () -> Unit,
+) {
+    val (border, textColor, message) =
+        when (state) {
+            is github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Working ->
+                Triple(BitcoinOrange.copy(alpha = 0.4f), TextSecondary, state.message)
+            is github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Success ->
+                Triple(SuccessGreen.copy(alpha = 0.4f), SuccessGreen, state.message)
+            is github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Error ->
+                Triple(ErrorRed.copy(alpha = 0.4f), ErrorRed, state.message)
+            else -> return
+        }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+        border = BorderStroke(1.dp, border),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (state is github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Working) {
+                CircularProgressIndicator(
+                    color = BitcoinOrange,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = textColor,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.ln_node_channels_dismiss), color = TextSecondary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LnChannelTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    singleLine: Boolean = true,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(text = label) },
+        singleLine = singleLine,
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        shape = RoundedCornerShape(8.dp),
+        colors =
+            OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = BitcoinOrange,
+                unfocusedBorderColor = BorderColor,
+                cursorColor = BitcoinOrange,
+            ),
+        modifier = Modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun LnOpenChannelDialog(
+    peers: List<github.aeonbtc.ibiswallet.data.model.LightningNodePeer>,
+    onConfirm: (
+        pubkey: String,
+        amountSats: Long,
+        satPerVbyte: Double?,
+        isPrivate: Boolean,
+        pushSats: Long,
+        closeAddress: String?,
+        peerHost: String?,
+    ) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pubkey by remember { mutableStateOf("") }
+    var host by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var fee by remember { mutableStateOf("") }
+    var isPrivate by remember { mutableStateOf(false) }
+    var errorRes by remember { mutableStateOf<Int?>(null) }
+    ScrollableDialogSurface(onDismissRequest = onDismiss) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.ln_node_channels_open_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                LnChannelTextField(
+                    value = pubkey,
+                    onValueChange = { pubkey = it.trim() },
+                    label = stringResource(R.string.ln_node_channels_peer_pubkey),
+                )
+                LnChannelTextField(
+                    value = host,
+                    onValueChange = { host = it.trim() },
+                    label = stringResource(R.string.ln_node_channels_peer_host_hint),
+                )
+                if (peers.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.ln_node_channels_known_peers, peers.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                    )
+                    peers.take(5).forEach { peer ->
+                        TextButton(
+                            onClick = {
+                                pubkey = peer.pubkey
+                                peer.address?.takeIf { it.isNotBlank() }?.let { host = it }
+                            },
+                        ) {
+                            Text(
+                                text =
+                                    (peer.alias?.takeIf { it.isNotBlank() } ?: "${peer.pubkey.take(8)}…${peer.pubkey.takeLast(8)}"),
+                                color = BitcoinOrange,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                LnChannelTextField(
+                    value = amount,
+                    onValueChange = { amount = it.filter { c -> c.isDigit() } },
+                    label = stringResource(R.string.ln_node_channels_amount_sats),
+                    keyboardType = KeyboardType.Number,
+                )
+                LnChannelTextField(
+                    value = fee,
+                    onValueChange = { fee = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = stringResource(R.string.ln_node_channels_fee_optional),
+                    keyboardType = KeyboardType.Decimal,
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SquareToggle(checked = isPrivate, onCheckedChange = { isPrivate = it })
+                    Text(
+                        text = stringResource(R.string.ln_node_channels_private),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                errorRes?.let {
+                    Text(
+                        text = stringResource(it),
+                        color = ErrorRed,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(text = stringResource(R.string.ln_node_channels_cancel), color = TextSecondary)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val cleanPubkey = pubkey.trim()
+                            val cleanHost = host.trim().substringAfter("@").trim()
+                            val amt = amount.toLongOrNull() ?: 0L
+                            when {
+                                !cleanPubkey.matches(Regex("(?i)[0-9a-f]{66}")) ->
+                                    errorRes = R.string.ln_node_channels_error_pubkey
+                                amt <= 0 -> errorRes = R.string.ln_node_channels_error_capacity
+                                else ->
+                                    onConfirm(
+                                        cleanPubkey,
+                                        amt,
+                                        fee.toDoubleOrNull()?.takeIf { it > 0 },
+                                        isPrivate,
+                                        0L,
+                                        null,
+                                        cleanHost.takeIf { it.isNotBlank() },
+                                    )
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
+                    ) {
+                        Text(text = stringResource(R.string.ln_node_channels_open))
+                    }
+                }
+            }
+    }
+}
+
+@Composable
+private fun LnPeerDialog(
+    peers: List<github.aeonbtc.ibiswallet.data.model.LightningNodePeer>,
+    isLoading: Boolean,
+    onRefresh: () -> Unit,
+    onConnect: (pubkey: String, host: String?) -> Unit,
+    onDisconnect: (pubkey: String, force: Boolean) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pubkey by remember { mutableStateOf("") }
+    var host by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) { onRefresh() }
+    ScrollableDialogSurface(onDismissRequest = onDismiss) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.ln_node_channels_peers_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                LnChannelTextField(
+                    value = pubkey,
+                    onValueChange = { pubkey = it.trim() },
+                    label = stringResource(R.string.ln_node_channels_peer_pubkey),
+                )
+                LnChannelTextField(
+                    value = host,
+                    onValueChange = { host = it.trim() },
+                    label = stringResource(R.string.ln_node_channels_peer_host_hint),
+                )
+                Button(
+                    onClick = {
+                        val cleanPubkey = pubkey.trim()
+                        if (cleanPubkey.matches(Regex("(?i)[0-9a-f]{66}"))) {
+                            onConnect(cleanPubkey, host.trim().substringAfter("@").takeIf { it.isNotBlank() })
+                        }
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(text = stringResource(R.string.ln_node_channels_peer_connect))
+                }
+                HorizontalDivider(color = BorderColor)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(R.string.ln_node_channels_known_peers, peers.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                    )
+                    TextButton(onClick = onRefresh) {
+                        Text(text = stringResource(R.string.ln_node_channels_refresh), color = BitcoinOrange)
+                    }
+                }
+                if (isLoading && peers.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = BitcoinOrange, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                    }
+                }
+                peers.forEach { peer ->
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = DarkSurfaceVariant),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+                            Text(
+                                text = peer.alias?.takeIf { it.isNotBlank() } ?: "${peer.pubkey.take(8)}…${peer.pubkey.takeLast(8)}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = peer.pubkey,
+                                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                                color = TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                TextButton(onClick = { onDisconnect(peer.pubkey, false) }) {
+                                    Text(text = stringResource(R.string.ln_node_channels_peer_disconnect), color = TextSecondary)
+                                }
+                                TextButton(onClick = { onDisconnect(peer.pubkey, true) }) {
+                                    Text(text = stringResource(R.string.ln_node_channels_peer_force), color = ErrorRed)
+                                }
+                            }
+                        }
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) {
+                        Text(text = stringResource(R.string.ln_node_channels_close_btn), color = TextSecondary)
+                    }
+                }
+            }
+    }
+}
+
+@Composable
+private fun LnCloseChannelDialog(
+    channel: LightningNodeChannel,
+    onConfirm: (force: Boolean, satPerVbyte: Double?, closeAddress: String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var fee by remember { mutableStateOf("") }
+    var closeAddress by remember { mutableStateOf("") }
+    var showForceConfirm by remember { mutableStateOf(false) }
+    ScrollableDialogSurface(onDismissRequest = onDismiss) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.ln_node_channels_close_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = stringResource(R.string.ln_node_channels_close_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+                LnChannelTextField(
+                    value = fee,
+                    onValueChange = { fee = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = stringResource(R.string.ln_node_channels_fee_optional),
+                    keyboardType = KeyboardType.Decimal,
+                )
+                LnChannelTextField(
+                    value = closeAddress,
+                    onValueChange = { closeAddress = it.trim() },
+                    label = stringResource(R.string.ln_node_channels_close_addr_optional),
+                )
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            onConfirm(false, fee.toDoubleOrNull()?.takeIf { it > 0 }, closeAddress.takeIf { it.isNotBlank() })
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.ln_node_channels_coop_close),
+                            color = SuccessGreen,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true,
+                        )
+                    }
+                    Button(
+                        onClick = { showForceConfirm = true },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.ln_node_channels_force_close),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true,
+                        )
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    IbisButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    ) {
+                        Text(text = stringResource(R.string.ln_node_channels_cancel))
+                    }
+                }
+            }
+    }
+    if (showForceConfirm) {
+        AlertDialog(
+            onDismissRequest = { showForceConfirm = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+            title = { Text(text = stringResource(R.string.ln_node_channels_force_title)) },
+            text = { Text(text = stringResource(R.string.ln_node_channels_force_body)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showForceConfirm = false
+                        onConfirm(true, null, closeAddress.takeIf { it.isNotBlank() })
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = ErrorRed),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.ln_node_channels_force_confirm),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = true,
+                    )
+                }
+            },
+            dismissButton = {
+                IbisButton(
+                    onClick = { showForceConfirm = false },
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.ln_node_channels_cancel),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = true,
+                    )
+                }
+            },
+            shape = RoundedCornerShape(12.dp),
+            containerColor = DarkCard,
+        )
+    }
+}
+
+@Composable
+private fun LnFeePolicyDialog(
+    channel: LightningNodeChannel,
+    onConfirm: (baseFeeMsat: Long, feeRatePpm: Long, cltvDelta: Int?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var baseFee by remember { mutableStateOf("1000") }
+    var ppm by remember { mutableStateOf("100") }
+    var cltv by remember { mutableStateOf("40") }
+    var errorRes by remember { mutableStateOf<Int?>(null) }
+    ScrollableDialogSurface(onDismissRequest = onDismiss) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.ln_node_channels_fee_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = stringResource(R.string.ln_node_channels_fee_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+                LnChannelTextField(
+                    value = baseFee,
+                    onValueChange = { baseFee = it.filter { c -> c.isDigit() } },
+                    label = stringResource(R.string.ln_node_channels_fee_base),
+                    keyboardType = KeyboardType.Number,
+                )
+                LnChannelTextField(
+                    value = ppm,
+                    onValueChange = { ppm = it.filter { c -> c.isDigit() } },
+                    label = stringResource(R.string.ln_node_channels_fee_ppm),
+                    keyboardType = KeyboardType.Number,
+                )
+                LnChannelTextField(
+                    value = cltv,
+                    onValueChange = { cltv = it.filter { c -> c.isDigit() } },
+                    label = stringResource(R.string.ln_node_channels_fee_cltv),
+                    keyboardType = KeyboardType.Number,
+                )
+                errorRes?.let {
+                    Text(
+                        text = stringResource(it),
+                        color = ErrorRed,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    IbisButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.ln_node_channels_cancel),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true,
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            val base = baseFee.toLongOrNull()
+                            val rate = ppm.toLongOrNull()
+                            val cltvVal = cltv.toIntOrNull()
+                            if (base == null || base < 0 || rate == null || rate < 0) {
+                                errorRes = R.string.ln_node_channels_error_fee
+                            } else {
+                                onConfirm(base, rate, cltvVal)
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.ln_node_channels_save),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true,
+                        )
+                    }
+                }
+            }
+    }
+}
+
+@Composable
+private fun LnChannelDetailDialog(
+    channel: LightningNodeChannel,
+    useSats: Boolean,
+    privacyMode: Boolean,
+    onDisconnectPeer: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    fun formatPrivate(amount: Long): String =
+        if (privacyMode) {
+            LN_HIDDEN
+        } else {
+            formatAmount(amount.toULong(), useSats, includeUnit = true)
+        }
+    ScrollableDialogSurface(onDismissRequest = onDismiss) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.ln_node_channels_detail),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                LnDetailRow(
+                    label = stringResource(R.string.ln_node_channels_detail_peer),
+                    value = channel.remoteAlias?.takeIf { it.isNotBlank() } ?: channel.remotePubkey,
+                )
+                LnDetailRow(
+                    label = stringResource(R.string.ln_node_channels_detail_pubkey),
+                    value = channel.remotePubkey.ifBlank { "—" },
+                    mono = true,
+                )
+                channel.shortChannelId?.let {
+                    LnDetailRow(
+                        label = stringResource(R.string.ln_node_channels_scid),
+                        value = it,
+                        mono = true,
+                    )
+                }
+                channel.channelPoint?.let {
+                    LnDetailRow(
+                        label = stringResource(R.string.ln_node_channels_detail_outpoint),
+                        value = it,
+                        mono = true,
+                    )
+                }
+                    ?: channel.fundingTxid?.let {
+                        LnDetailRow(
+                            label = stringResource(R.string.ln_node_channels_detail_funding),
+                            value = it,
+                            mono = true,
+                        )
+                    }
+                LnDetailRow(
+                    label = stringResource(R.string.ln_node_channels_detail_state),
+                    value = channel.state ?: (if (channel.isActive) "ACTIVE" else "INACTIVE"),
+                )
+                LnDetailRow(
+                    label = stringResource(R.string.ln_node_channels_capacity),
+                    value = formatPrivate(channel.capacitySats),
+                )
+                LnDetailRow(
+                    label = stringResource(R.string.ln_node_channels_local),
+                    value = formatPrivate(channel.localBalanceSats),
+                )
+                LnDetailRow(
+                    label = stringResource(R.string.ln_node_channels_remote),
+                    value = formatPrivate(channel.remoteBalanceSats),
+                )
+                val total = channel.capacitySats.coerceAtLeast(0L)
+                if (total > 0) {
+                    val localPct = (channel.localBalanceSats.toDouble() / total.toDouble() * 100.0).coerceIn(0.0, 100.0)
+                    Text(
+                        text = stringResource(R.string.ln_node_channels_balance_hint, "%.1f".format(localPct)),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onDisconnectPeer, shape = RoundedCornerShape(8.dp), modifier = Modifier.weight(1f)) {
+                        Text(text = stringResource(R.string.ln_node_channels_peer_disconnect), color = TextSecondary)
+                    }
+                    Button(
+                        onClick = onDismiss,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(text = stringResource(R.string.ln_node_channels_close_btn))
+                    }
+                }
+            }
+    }
+}
+
+@Composable
+private fun LnDetailRow(
+    label: String,
+    value: String,
+    mono: Boolean = false,
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(text = label, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+        Text(
+            text = value,
+            style =
+                if (mono) {
+                    MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace)
+                } else {
+                    MaterialTheme.typography.bodySmall
+                },
+            color = TextPrimary,
+        )
     }
 }

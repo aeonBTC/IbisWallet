@@ -12,8 +12,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -39,6 +42,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -116,7 +120,8 @@ fun QuickReceiveDialog(
                 Box(
                     modifier =
                         Modifier
-                            .size(320.dp)
+                            .fillMaxWidth(0.85f)
+                            .heightIn(max = 340.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(Color.White)
                             .padding(16.dp),
@@ -136,12 +141,14 @@ fun QuickReceiveDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        SecureDialogSideEffect()
         ProvideLocalizedResources {
             Card(
                 modifier =
                     Modifier
                         .padding(horizontal = 24.dp)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .heightIn(max = 560.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = DarkCard),
             ) {
@@ -149,6 +156,7 @@ fun QuickReceiveDialog(
                     modifier =
                         Modifier
                             .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
                             .padding(16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -162,6 +170,8 @@ fun QuickReceiveDialog(
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onBackground,
                             modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         Box(
                             modifier =

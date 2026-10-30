@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -76,7 +76,7 @@ fun BalanceAmountText(
         modifier =
             modifier
                 .fillMaxWidth()
-                .height(slotHeight)
+                .heightIn(min = slotHeight)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -93,7 +93,7 @@ fun BalanceAmountText(
                     contentAlignment = Alignment.Center,
                     modifier =
                         Modifier
-                            .height(slotHeight)
+                            .heightIn(min = slotHeight)
                             .widthIn(min = with(density) { (base.fontSize * 0.85f).toDp() })
                             .padding(end = 4.dp),
                 ) {
@@ -126,6 +126,7 @@ fun BalanceAmountText(
                     color = color,
                     maxLines = 1,
                     softWrap = false,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

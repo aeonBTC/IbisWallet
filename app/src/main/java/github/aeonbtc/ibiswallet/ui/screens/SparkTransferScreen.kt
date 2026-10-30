@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -83,6 +84,7 @@ import github.aeonbtc.ibiswallet.ui.components.FeeRateOption
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
@@ -856,7 +858,12 @@ fun SparkTransferScreen(
                     )
                     Icon(
                         imageVector = if (showAdvancedOptions) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                        contentDescription = if (showAdvancedOptions) "Collapse advanced options" else "Expand advanced options",
+                        contentDescription =
+                            if (showAdvancedOptions) {
+                                stringResource(R.string.loc_2d4a03c5)
+                            } else {
+                                stringResource(R.string.loc_f5276b4c)
+                            },
                         tint = TextSecondary,
                     )
                 }
@@ -913,17 +920,20 @@ fun SparkTransferScreen(
                                         )
                                     },
                                     trailingIcon = {
-                                        IconButton(
-                                            onClick = { showCustomDestinationQrScanner = true },
+                                        ScanPasteIcons(
+                                            onScan = { showCustomDestinationQrScanner = true },
+                                            onPaste = { text ->
+                                                customDestination =
+                                                    when (val parsed = parseSendRecipient(text, context)) {
+                                                        is ParsedSendRecipient.Bitcoin -> parsed.address
+                                                        else -> text
+                                                    }
+                                                reviewError = null
+                                            },
+                                            tint = toColor,
+                                            scanContentDescription = stringResource(R.string.loc_59b2cdc5),
                                             enabled = !isPreparingReview && !isExecutingReview,
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.QrCodeScanner,
-                                                contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                                tint = toColor,
-                                                modifier = Modifier.size(20.dp),
-                                            )
-                                        }
+                                        )
                                     },
                                     isError = destinationValidationError != null,
                                     singleLine = true,
@@ -1131,7 +1141,7 @@ fun SparkTransferScreen(
                     },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                     enabled = canPrepareReview,
                     shape = RoundedCornerShape(8.dp),
                     colors =
@@ -1409,9 +1419,9 @@ private fun SparkTransferReviewDialog(
                 onClick = onConfirm,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp),
+                    .height(48.dp),
                 enabled = !isExecuting,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SparkPurple),
             ) {
                 if (isExecuting) {
@@ -1442,7 +1452,7 @@ private fun SparkTransferReviewDialog(
                 enabled = !isExecuting,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp),
+                    .heightIn(min = 48.dp),
             ) {
                 Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
             }

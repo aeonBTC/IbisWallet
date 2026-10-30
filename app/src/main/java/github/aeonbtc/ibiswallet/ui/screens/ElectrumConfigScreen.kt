@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -51,7 +52,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -77,8 +77,10 @@ import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.ElectrumConfig
 import github.aeonbtc.ibiswallet.tor.TorState
 import github.aeonbtc.ibiswallet.tor.TorStatus
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
@@ -218,7 +220,6 @@ fun ElectrumConfigScreen(
                         color = MaterialTheme.colorScheme.onBackground,
                     )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
             // 1. Current Server / Connection Status Card (always shown)
@@ -523,6 +524,18 @@ fun ElectrumConfigScreen(
                     onUrlChange = { serverUrl = it },
                     onPortChange = { serverPort = it },
                     onScanQr = { showQrScanner = true },
+                    onPasteServer = { text ->
+                        val parsed = github.aeonbtc.ibiswallet.util.QrFormatParser.parseServerQr(text)
+                        serverUrl = parsed.host
+                        if (parsed.port != null) {
+                            serverPort = parsed.port.toString()
+                        }
+                        if (parsed.ssl != null) {
+                            useSsl = parsed.ssl
+                        } else if (parsed.port != null) {
+                            useSsl = parsed.port == 50002
+                        }
+                    },
                     onSslChange = { newUseSsl ->
                         useSsl = newUseSsl
                         if (newUseSsl && serverPort == "50001") {
@@ -670,7 +683,8 @@ internal fun ServerDetailRow(
             fontFamily = if (monospace) androidx.compose.ui.text.font.FontFamily.Monospace else null,
             maxLines = if (fullValue) Int.MAX_VALUE else 1,
             overflow = if (fullValue) TextOverflow.Clip else TextOverflow.Ellipsis,
-            modifier = if (fullValue) Modifier.weight(1f) else Modifier,
+            softWrap = fullValue,
+            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -729,6 +743,7 @@ fun CurrentServerCard(
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f, fill = false),
                 ) {
                     if (headerLeadingContent != null) {
                         headerLeadingContent()
@@ -745,6 +760,9 @@ fun CurrentServerCard(
                         text = headerTitle ?: stringResource(R.string.loc_8d4cd2b4),
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     if (headerTrailingContent != null) {
                         Spacer(modifier = Modifier.width(6.dp))
@@ -967,7 +985,7 @@ fun CurrentServerCard(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .heightIn(min = 48.dp),
                     shape = RoundedCornerShape(8.dp),
                     border = BorderStroke(1.dp, BorderColor),
                     colors =
@@ -1242,6 +1260,7 @@ private fun ServerConfigDialog(
     onUrlChange: (String) -> Unit,
     onPortChange: (String) -> Unit,
     onScanQr: () -> Unit,
+    onPasteServer: (String) -> Unit,
     onSslChange: (Boolean) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
@@ -1318,14 +1337,12 @@ private fun ServerConfigDialog(
                         )
                     },
                     trailingIcon = {
-                        IconButton(onClick = onScanQr) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
+                        ScanPasteIcons(
+                            onScan = onScanQr,
+                            onPaste = onPasteServer,
+                            tint = BitcoinOrange,
+                            scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                        )
                     },
                     singleLine = true,
                     shape = RoundedCornerShape(8.dp),
@@ -1413,7 +1430,7 @@ private fun ServerConfigDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                 shape = RoundedCornerShape(8.dp),
                 enabled = isEnabled,
                 colors =
@@ -1433,11 +1450,11 @@ private fun ServerConfigDialog(
                 Spacer(modifier = Modifier.height(10.dp))
                 HorizontalDivider(color = BorderColor)
                 Spacer(modifier = Modifier.height(8.dp))
-                TextButton(
+                IbisButton(
                     onClick = onCancel,
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                 ) {
-                    Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                    Text(stringResource(R.string.loc_51bac044))
                 }
             }
         },

@@ -76,6 +76,8 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.ui.theme.TorPurple
+import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import java.text.NumberFormat
 import java.util.Locale
@@ -156,17 +158,23 @@ fun AllUtxosScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Column {
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
                         Text(
                             text = stringResource(R.string.loc_ba1d1a3c),
                             style = MaterialTheme.typography.labelSmall,
                             color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
                         )
                         Text(
                             text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(totalBalance, useSats, includeUnit = true),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = AccentGreen,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
                         )
                         if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                             Text(
@@ -182,12 +190,18 @@ fun AllUtxosScreen(
                             text = stringResource(R.string.loc_63722213),
                             style = MaterialTheme.typography.labelSmall,
                             color = TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
                         )
                         Text(
                             text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(frozenBalance, useSats, includeUnit = true),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = if (frozenBalance > 0UL) AccentBlue else TextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
                         )
                         if (btcPrice != null && btcPrice > 0 && frozenBalance > 0UL && !privacyMode) {
                             Text(
@@ -430,7 +444,10 @@ private fun UtxoCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f, fill = false),
+                ) {
                     if (utxo.isFrozen) {
                         Icon(
                             imageVector = Icons.Default.AcUnit,
@@ -446,6 +463,10 @@ private fun UtxoCard(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = if (utxo.isFrozen) AccentBlue else AccentGreen,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
                     } else {
                         Text(
@@ -453,12 +474,19 @@ private fun UtxoCard(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                             color = if (utxo.isFrozen) AccentBlue else AccentGreen,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
                         if (btcPrice != null && btcPrice > 0 && !privacyMode) {
                             Text(
                                 text = " · ${formatFiat((utxo.amountSats.toDouble() / 100_000_000.0) * btcPrice, fiatCurrency)}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = TextSecondary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                softWrap = false,
                             )
                         }
                     }
@@ -485,6 +513,14 @@ private fun UtxoCard(
                     }
 
                 Column(horizontalAlignment = Alignment.End) {
+                    if (utxo.isSilentPayment) {
+                        SpBadge()
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
+                    if (utxo.isSuspectedDust) {
+                        DustBadge()
+                        Spacer(modifier = Modifier.height(4.dp))
+                    }
                     // Confirmation status
                     Box(
                         modifier =
@@ -689,6 +725,43 @@ private fun UtxoCard(
 }
 
 @Composable
+private fun SpBadge() {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(TorPurple.copy(alpha = 0.16f))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = "SP",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = TorPurple,
+        )
+    }
+}
+
+@Composable
+private fun DustBadge() {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(WarningYellow.copy(alpha = 0.2f))
+            .padding(horizontal = 8.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.dust_badge),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = WarningYellow,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
 private fun CompactInfoRow(
     label: String,
     value: String,
@@ -778,6 +851,7 @@ private fun utxoMatchesSearch(
         amountTerms.any { normalizeAmountSearchValue(it).contains(normalizedAmountQuery) } ||
         (if (utxo.isConfirmed) "confirmed" else "pending").contains(normalizedQuery) ||
         (if (utxo.isFrozen) "frozen" else "spendable").contains(normalizedQuery) ||
+        (if (utxo.isSilentPayment && (normalizedQuery == "sp" || normalizedQuery.contains("silent"))) "sp silent" else "").contains(normalizedQuery) ||
         (if (isNonLbtc) "usdt" else "").contains(normalizedQuery)
 }
 
@@ -802,4 +876,3 @@ private fun formatAssetAmount(asset: LiquidAsset, rawAmount: Long): String {
     }
     return "$minDecimals ${asset.ticker}"
 }
-

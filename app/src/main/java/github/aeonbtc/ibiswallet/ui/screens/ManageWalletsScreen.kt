@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -87,6 +88,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -113,11 +115,12 @@ import github.aeonbtc.ibiswallet.ui.components.DropdownOptionText
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.ScrollableAlertDialog
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
 import github.aeonbtc.ibiswallet.ui.theme.ArkRust
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
-import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrangeLight
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
@@ -130,6 +133,7 @@ import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.Bip329LabelCounts
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.BitcoinUtils
+import github.aeonbtc.ibiswallet.util.SpScanStartPolicy
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import kotlinx.coroutines.Dispatchers
@@ -238,6 +242,11 @@ fun ManageWalletsScreen(
     isWalletLockAvailable: Boolean = false,
     onSetWalletLocked: (walletId: String, Boolean) -> Unit = { _, _ -> },
     dateFormat: String = SecureStorage.DATE_FORMAT_MM_DD_YY,
+    canReceiveSilentPayments: (walletId: String) -> Boolean = { false },
+    getSilentPaymentScanStartHeight: (walletId: String) -> Int = { 0 },
+    spScanTipHeight: Int? = null,
+    spScanMinHeight: Int = 709632,
+    onSetSilentPaymentScanStartHeight: (walletId: String, height: Int?) -> Unit = { _, _ -> },
 ) {
     var walletToDelete by remember { mutableStateOf<WalletInfo?>(null) }
     var walletToView by remember { mutableStateOf<WalletInfo?>(null) }
@@ -385,6 +394,29 @@ fun ManageWalletsScreen(
         var editLiquidGapLimit by remember(walletToEdit) {
             mutableStateOf(walletToEdit!!.liquidGapLimit.toString())
         }
+        // Silent Payments scan start (seed wallets only): blank keeps the
+        // stored start, a valid change rescans from the new height on Save.
+        val spStoredHeight =
+            if (!walletToEdit!!.isLightningNode && canReceiveSilentPayments(walletToEdit!!.id)) {
+                getSilentPaymentScanStartHeight(walletToEdit!!.id)
+            } else {
+                0
+            }
+        var spScanHeightText by remember(walletToEdit) {
+            mutableStateOf(spStoredHeight.takeIf { it > 0 }?.toString().orEmpty())
+        }
+        val spParsed =
+            if (spScanHeightText.isBlank()) {
+                null
+            } else {
+                SpScanStartPolicy.parseCustomHeight(
+                    spScanHeightText,
+                    spScanMinHeight,
+                    spScanTipHeight,
+                )
+            }
+        val spScanHeightValid = spScanHeightText.isBlank() || spParsed != null
+        val spScanHeightChanged = spParsed != null && spParsed != spStoredHeight
         val liquidGapLimitInt = editLiquidGapLimit.toIntOrNull()
         val liquidGapLimitValid = !showLiquidGapLimit ||
             editLiquidGapLimit.isEmpty() ||
@@ -462,18 +494,22 @@ fun ManageWalletsScreen(
                     fingerprintValid &&
                     liquidGapLimitValid &&
                     derivationPathValid &&
+                    spScanHeightValid &&
                     (
                         nameChanged ||
                             gapLimitChanged ||
                             liquidGapLimitChanged ||
                             fingerprintChanged ||
                             derivationPathChanged ||
-                            addressTypeChanged
+                            addressTypeChanged ||
+                            spScanHeightChanged
                     )
             }
 
         ScrollableAlertDialog(
             onDismissRequest = { walletToEdit = null },
+            // Cancel left, Save right in the shared row.
+            confirmFirst = false,
             title = {
                 Text(
                     stringResource(R.string.loc_4f49447d),
@@ -750,11 +786,70 @@ fun ManageWalletsScreen(
                             modifier = Modifier.fillMaxWidth(),
                         )
                     }
+                    // Silent Payments scan start (seed wallets only). State lives
+                    // at dialog level so Save can gate on it; a change here
+                    // rescans from the new height on Save.
+                    if (!isLightningNodeEdit && canReceiveSilentPayments(walletToEdit!!.id)) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(R.string.sp_scan_start_title),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = spScanHeightText,
+                            onValueChange = { value ->
+                                if (value.isEmpty() || value.all { it.isDigit() }) {
+                                    spScanHeightText = value
+                                }
+                            },
+                            label = { Text(stringResource(R.string.sp_scan_start_custom_hint)) },
+                            singleLine = true,
+                            isError = spScanHeightText.isNotBlank() && spParsed == null,
+                            supportingText = {
+                                if (spScanHeightText.isNotBlank() && spParsed == null) {
+                                    val beyondTip = spScanTipHeight != null &&
+                                        (spScanHeightText.toIntOrNull() ?: 0) > spScanTipHeight
+                                    Text(
+                                        text =
+                                            if (beyondTip) {
+                                                stringResource(
+                                                    R.string.sp_scan_start_beyond_tip_format,
+                                                    spScanTipHeight!!,
+                                                )
+                                            } else {
+                                                stringResource(R.string.sp_scan_start_invalid)
+                                            },
+                                        color = ErrorRed,
+                                    )
+                                } else if (spStoredHeight > 0) {
+                                    Text(
+                                        text =
+                                            stringResource(
+                                                R.string.sp_scan_start_current_format,
+                                                spStoredHeight,
+                                            ),
+                                        color = TextSecondary.copy(alpha = 0.7f),
+                                    )
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            shape = RoundedCornerShape(8.dp),
+                            colors =
+                                OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = BitcoinOrange,
+                                    unfocusedBorderColor = BorderColor,
+                                    cursorColor = BitcoinOrange,
+                                ),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                     }
                 }
             },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         val trimmedName = editName.trim()
                         if (isLightningNodeEdit) {
@@ -771,7 +866,7 @@ fun ManageWalletsScreen(
                                 }
                             }
                             walletToEdit = null
-                            return@TextButton
+                            return@Button
                         }
                         val newGap = gapLimitInt ?: walletToEdit!!.gapLimit
                         val trimmedFp = if (showFingerprint) editFingerprint.trim().lowercase() else null
@@ -790,22 +885,33 @@ fun ManageWalletsScreen(
                         if (liquidGapLimitChanged) {
                             walletToEdit?.let { onEditLiquidGapLimit(it.id, liquidGapLimitInt) }
                         }
+                        val spRescanHeight = spParsed?.takeIf { spScanHeightChanged }
+                        if (spRescanHeight != null) {
+                            walletToEdit?.let { onSetSilentPaymentScanStartHeight(it.id, spRescanHeight) }
+                        }
                         if (gapLimitChanged || liquidGapLimitChanged || derivationPathChanged || addressTypeChanged) {
                             walletToEdit?.let { onFullSync(it) }
                         }
                         walletToEdit = null
                     },
                     enabled = canSave,
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        ),
                 ) {
-                    Text(
-                        stringResource(R.string.loc_f55495e0),
-                        color = if (canSave) BitcoinOrange else TextSecondary.copy(alpha = 0.4f),
-                    )
+                    Text(stringResource(R.string.loc_f55495e0))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { walletToEdit = null }) {
-                    Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                IbisButton(
+                    onClick = { walletToEdit = null },
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                ) {
+                    Text(stringResource(R.string.loc_51bac044))
                 }
             },
             containerColor = DarkSurface,
@@ -818,7 +924,6 @@ fun ManageWalletsScreen(
         val warningIntro =
             stringResource(R.string.wallet_view_sensitive_info_message, walletToView?.name.orEmpty())
         val warningRecovery = stringResource(R.string.loc_f9a99af0)
-        val warningPrivacy = stringResource(R.string.loc_79618ad9)
         val warningConfirm = stringResource(R.string.loc_f2415d81)
         val warningCancel = stringResource(R.string.loc_51bac044)
         ScrollableAlertDialog(
@@ -826,6 +931,8 @@ fun ManageWalletsScreen(
                 showWarningDialog = false
                 walletToView = null
             },
+            // Cancel left, confirm right in the shared row.
+            confirmFirst = false,
             icon = {
                 Icon(
                     imageVector = Icons.Default.Warning,
@@ -852,11 +959,6 @@ fun ManageWalletsScreen(
                         warningRecovery,
                         color = ErrorRed,
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text(
-                        warningPrivacy,
-                        color = TextSecondary,
-                    )
                 }
             },
             confirmButton = {
@@ -873,25 +975,26 @@ fun ManageWalletsScreen(
                         }
                         walletToView = null
                     },
-                    modifier = Modifier.height(56.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, BitcoinOrangeLight),
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    shape = RoundedCornerShape(8.dp),
                     colors =
                         ButtonDefaults.buttonColors(
                             containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
                         ),
                 ) {
                     Text(warningConfirm)
                 }
             },
             dismissButton = {
-                TextButton(
+                IbisButton(
                     onClick = {
                         showWarningDialog = false
                         walletToView = null
                     },
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                 ) {
-                    Text(warningCancel, color = TextSecondary)
+                    Text(warningCancel)
                 }
             },
             containerColor = DarkSurface,
@@ -1026,7 +1129,7 @@ fun ManageWalletsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -1042,8 +1145,6 @@ fun ManageWalletsScreen(
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         if (reorderableWallets.isEmpty()) {
             // Generate + Import wallet buttons (for empty state, not scrolling)
@@ -1581,13 +1682,23 @@ private fun SignVerifyMessageDialog(
                         label = stringResource(R.string.loc_c2f3561d),
                         singleLine = true,
                         trailingIcon = {
-                            IconButton(onClick = { showSignAddressQrScanner = true }) {
-                                Icon(
-                                    imageVector = Icons.Default.QrCode,
-                                    contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                    tint = TextSecondary,
-                                )
-                            }
+                            ScanPasteIcons(
+                                onScan = { showSignAddressQrScanner = true },
+                                onPaste = { text ->
+                                    signAddress =
+                                        try {
+                                            parseBip21Uri(text).address
+                                        } catch (_: IllegalArgumentException) {
+                                            // Duplicate keys in BIP21 URI - fall back to the raw
+                                            // input so the address validator rejects it.
+                                            text
+                                        }
+                                    signError = null
+                                },
+                                tint = TextSecondary,
+                                scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                                scanIcon = Icons.Default.QrCode,
+                            )
                         },
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -1675,13 +1786,21 @@ private fun SignVerifyMessageDialog(
                         label = stringResource(R.string.loc_c2f3561d),
                         singleLine = true,
                         trailingIcon = {
-                            IconButton(onClick = { showVerifyAddressQrScanner = true }) {
-                                Icon(
-                                    imageVector = Icons.Default.QrCode,
-                                    contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                    tint = TextSecondary,
-                                )
-                            }
+                            ScanPasteIcons(
+                                onScan = { showVerifyAddressQrScanner = true },
+                                onPaste = { text ->
+                                    verifyAddress =
+                                        try {
+                                            parseBip21Uri(text).address
+                                        } catch (_: IllegalArgumentException) {
+                                            text
+                                        }
+                                    verifyResult = null
+                                },
+                                tint = TextSecondary,
+                                scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                                scanIcon = Icons.Default.QrCode,
+                            )
                         },
                     )
                     Spacer(modifier = Modifier.height(8.dp))
@@ -2323,6 +2442,7 @@ private fun KeyMaterialDialog(
     var copied by remember { mutableStateOf(false) }
     var selectedViewType by remember { mutableStateOf<KeyViewType?>(null) }
     var showQrCode by remember { mutableStateOf(false) }
+    var showEnlargedQr by remember { mutableStateOf(false) }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val hasSeedPhrase = keyMaterialInfo.mnemonic != null
@@ -2383,16 +2503,51 @@ private fun KeyMaterialDialog(
     LaunchedEffect(selectedViewType) {
         copied = false
         showQrCode = false
+        showEnlargedQr = false
     }
 
     ScrollableAlertDialog(
         onDismissRequest = onDismiss,
         title = {
-            Text(
-                stringResource(R.string.loc_0917a3e1),
-                color = MaterialTheme.colorScheme.onBackground,
-                style = MaterialTheme.typography.titleMedium,
-            )
+            val dialogTitle =
+                when (selectedViewType) {
+                    null -> keyMaterialInfo.walletName
+                    KeyViewType.SEED_PHRASE -> stringResource(R.string.loc_24d8d452)
+                    KeyViewType.EXTENDED_PUBLIC_KEY -> stringResource(R.string.loc_66008e32)
+                    KeyViewType.LIQUID_DESCRIPTOR -> stringResource(R.string.loc_bf0bb69f)
+                    KeyViewType.MULTISIG_DESCRIPTOR -> stringResource(R.string.loc_3e248346)
+                    KeyViewType.LOCAL_COSIGNER -> stringResource(R.string.loc_9589b41e)
+                    KeyViewType.PRIVATE_KEY -> stringResource(R.string.loc_e109877e)
+                    KeyViewType.EXTENDED_PRIVATE_KEY ->
+                        stringResource(R.string.key_material_extended_private_key)
+                    KeyViewType.WATCH_ADDRESS -> stringResource(R.string.loc_8ca7adae)
+                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    dialogTitle,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                if (selectedViewType != null) {
+                    TextButton(onClick = { selectedViewType = null }) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = null,
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = stringResource(R.string.loc_ad04894c),
+                            color = TextSecondary,
+                        )
+                    }
+                }
+            }
         },
         text = {
             Column(
@@ -2584,7 +2739,7 @@ private fun KeyMaterialDialog(
                                 )
                                 Text(
                                     text = keyMaterialInfo.masterFingerprint,
-                                    style = MaterialTheme.typography.bodySmall,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
                             }
@@ -2613,7 +2768,8 @@ private fun KeyMaterialDialog(
                                             Modifier
                                                 .size(200.dp)
                                                 .clip(RoundedCornerShape(12.dp))
-                                                .background(Color.White),
+                                                .background(Color.White)
+                                                .clickable { showEnlargedQr = true },
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Image(
@@ -2672,7 +2828,7 @@ private fun KeyMaterialDialog(
                         ) {
                             Text(
                                 text = currentKeyMaterial,
-                                style = MaterialTheme.typography.bodySmall,
+                                style = MaterialTheme.typography.bodyLarge,
                                 color = MaterialTheme.colorScheme.onBackground,
                                 modifier = Modifier.padding(16.dp),
                             )
@@ -2772,19 +2928,6 @@ private fun KeyMaterialDialog(
                         }
                     }
 
-                    // Back button to selection
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    TextButton(
-                        onClick = { selectedViewType = null },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.loc_ad04894c),
-                            color = TextSecondary,
-                        )
-                    }
-
                     if (copied) {
                         Text(
                             text = stringResource(R.string.loc_795ed2a1),
@@ -2798,12 +2941,65 @@ private fun KeyMaterialDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.loc_d2c0aec0), color = BitcoinOrange)
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                    ),
+            ) {
+                Text(stringResource(R.string.loc_d2c0aec0))
             }
         },
         containerColor = DarkSurface,
     )
+
+    if (showEnlargedQr && qrBitmap != null) {
+        Dialog(
+            onDismissRequest = { showEnlargedQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            SecureDialogSideEffect()
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.9f))
+                        .clickable { showEnlargedQr = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(320.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color.White)
+                                .padding(16.dp),
+                    ) {
+                        Image(
+                            bitmap = qrBitmap!!.asImageBitmap(),
+                            contentDescription = stringResource(R.string.loc_6e2afb3f),
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
+                    Text(
+                        text = stringResource(R.string.loc_e1041b50),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -2815,18 +3011,18 @@ private fun WordChip(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(vertical = 3.dp),
+                .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = "$index.",
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.bodySmall,
             color = TextSecondary.copy(alpha = 0.6f),
-            modifier = Modifier.width(24.dp),
+            modifier = Modifier.width(28.dp),
         )
         Text(
             text = word,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onBackground,
             maxLines = 1,
         )

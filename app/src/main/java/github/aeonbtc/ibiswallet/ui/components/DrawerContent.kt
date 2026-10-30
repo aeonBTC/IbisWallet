@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
@@ -63,6 +64,11 @@ sealed class DrawerItem(
         icon = Icons.Default.Settings,
     )
 
+    data object Tools : DrawerItem(
+        titleRes = R.string.tools_title,
+        icon = Icons.Default.Build,
+    )
+
     data object Layer2Options : DrawerItem(
         titleRes = R.string.loc_2f73501f,
         icon = Icons.Default.Layers,
@@ -91,6 +97,7 @@ fun getDrawerItems(): List<DrawerItem> =
         DrawerItem.Settings,
         DrawerItem.Security,
         DrawerItem.Layer2Options,
+        DrawerItem.Tools,
         DrawerItem.ElectrumServer,
         DrawerItem.BackupRestore,
         DrawerItem.About,
@@ -172,6 +179,7 @@ fun DrawerContent(
                     color = footerTextColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
 
                 if (appUpdateStatus is AppUpdateStatus.UpdateAvailable) {
@@ -249,6 +257,9 @@ private fun DrawerMenuItem(
             text = title,
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
     }
 }

@@ -12,6 +12,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -48,6 +50,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,16 +69,23 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveState
 import github.aeonbtc.ibiswallet.data.model.SparkPendingLnInvoice
+import github.aeonbtc.ibiswallet.data.model.SparkToken
+import github.aeonbtc.ibiswallet.data.model.SparkTokenBalance
+import github.aeonbtc.ibiswallet.data.model.filterSparkTokenAmountInput
+import github.aeonbtc.ibiswallet.data.model.parseSparkTokenAmountToBaseUnits
+import github.aeonbtc.ibiswallet.data.repository.SparkTokenPolicy
 import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
 import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
@@ -94,10 +104,12 @@ import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TextTertiary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
+import github.aeonbtc.ibiswallet.util.buildSparkAddressRequest
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URLEncoder
 import java.text.NumberFormat
@@ -112,7 +124,7 @@ fun SparkReceiveScreen(
     btcPrice: Double? = null,
     fiatCurrency: String = SecureStorage.DEFAULT_PRICE_CURRENCY,
     privacyMode: Boolean,
-    onReceive: (SparkReceiveKind, Long?, String, Boolean) -> Unit,
+    onReceive: (SparkReceiveKind, Long?, String, Boolean, String?, java.math.BigInteger?) -> Unit,
     onSaveAddressLabel: (String, String) -> Unit = { _, _ -> },
     onResetReceive: () -> Unit,
     onToggleDenomination: () -> Unit,
@@ -120,6 +132,12 @@ fun SparkReceiveScreen(
     onPrimeLnInvoice: () -> Unit = {},
     walletId: String? = null,
     walletReady: Boolean = true,
+    tokenBalances: List<SparkTokenBalance> = emptyList(),
+    /** Remembered tokens (held before, now at zero) offered alongside held ones. */
+    knownTokens: List<SparkToken> = emptyList(),
+    /** Metadata-authoritative lookup for a hand-typed id; null when unknown. */
+    onResolveToken: suspend (String) -> SparkToken? = { null },
+    onRememberToken: (SparkToken) -> Unit = {},
 ) {
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -135,6 +153,33 @@ fun SparkReceiveScreen(
     var isUsdMode by remember { mutableStateOf(false) }
     var showEnlargedQr by remember { mutableStateOf(false) }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    // Token mode on the Spark tab (Liquid-USDt parity): null = BTC. The plain
+    // Spark address is shared across assets, so an invoice is only minted for
+    // token mode when an amount or label must be embedded.
+    var selectedToken by remember { mutableStateOf<SparkToken?>(null) }
+    val usdtToken = remember(tokenBalances) { tokenBalances.firstOrNull { it.token.isUsdt }?.token }
+    LaunchedEffect(usdtToken?.tokenIdentifier) {
+        if (usdtToken == null) selectedToken = null
+    }
+    // Session-added tokens (resolved from a typed id below) plus remembered
+    // ones, minus anything currently held (held balances render above with
+    // live metadata). Lets a first-time USDT invoice be built before any
+    // balance exists — plain Spark addresses need no id at all.
+    var sessionTokens by remember(walletId) { mutableStateOf(listOf<SparkToken>()) }
+    val extraTokens =
+        remember(knownTokens, sessionTokens, tokenBalances) {
+            val heldIds = tokenBalances.map { it.token.tokenIdentifier.lowercase() }.toSet()
+            (knownTokens + sessionTokens)
+                .distinctBy { it.tokenIdentifier.lowercase() }
+                .filter { it.tokenIdentifier.lowercase() !in heldIds }
+        }
+    var showTokenIdInput by remember(walletId) { mutableStateOf(false) }
+    var tokenIdText by remember(walletId) { mutableStateOf("") }
+    var resolvingToken by remember(walletId) { mutableStateOf(false) }
+    var resolvedToken by remember(walletId) { mutableStateOf<SparkToken?>(null) }
+    var tokenIdInvalid by remember(walletId) { mutableStateOf(false) }
+    var tokenLookupFailed by remember(walletId) { mutableStateOf(false) }
+    val tokenScope = rememberCoroutineScope()
     val amountBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showAmountField, "spark_receive_amount")
     val labelBringIntoViewRequester = rememberBringIntoViewRequesterOnExpand(showLabelField, "spark_receive_label")
 
@@ -164,15 +209,31 @@ fun SparkReceiveScreen(
             }
         }
     val requestedAmountSats = amountSats?.takeIf { showAmountField && it > 0 }
-    // Local label (typed) vs embedded label (in QR/invoice). A plain Spark address has no
-    // per-payment identity in history, so a typed label forces invoice mode to stay attachable.
+    val isTokenMode = selectedToken != null && receiveTab == 0
+    val requestedTokenAmount =
+        remember(amountText, selectedToken, receiveTab) {
+            if (!isTokenMode) {
+                null
+            } else {
+                val token = selectedToken ?: return@remember null
+                parseSparkTokenAmountToBaseUnits(amountText, token.decimals)
+                    ?.takeIf { showAmountField && it.signum() > 0 }
+            }
+        }
+    // Local label (typed) vs embedded label (in QR/URI). A plain Spark address has no
+    // per-payment identity in history, so a typed label is attached locally.
     val typedLabel = descriptionText.trim().takeIf { showLabelField && it.isNotBlank() }
     val embeddedLabel = typedLabel?.takeIf { embedLabelInQr }
     val isLightningMode = activeKind == SparkReceiveKind.BOLT11_INVOICE
+    // BTC amount/label requests stay on the reusable static address as a
+    // BIP21-style `spark:` URI (readable amount, interoperable with wallets
+    // that only know Spark addresses). Only token mode needs an SDK Spark
+    // invoice — the token id has no URI field and Glow-class wallets do not
+    // recognize amount-bearing invoices (issue #31).
     val requestKind =
         when {
-            activeKind == SparkReceiveKind.SPARK_ADDRESS &&
-                (requestedAmountSats != null || typedLabel != null) -> SparkReceiveKind.SPARK_INVOICE
+            activeKind == SparkReceiveKind.SPARK_ADDRESS && isTokenMode &&
+                (requestedTokenAmount != null || typedLabel != null) -> SparkReceiveKind.SPARK_INVOICE
             else -> activeKind
         }
     val paid = receiveState as? SparkReceiveState.Paid
@@ -186,6 +247,16 @@ fun SparkReceiveScreen(
                     amountSats = requestedAmountSats,
                     label = embeddedLabel,
                 )
+            SparkReceiveKind.SPARK_ADDRESS ->
+                if (requestKind == SparkReceiveKind.SPARK_INVOICE) {
+                    baseRequestText
+                } else {
+                    buildSparkAddressRequest(
+                        address = baseRequestText,
+                        amountSats = requestedAmountSats,
+                        label = embeddedLabel,
+                    )
+                }
             else -> baseRequestText
         }
     val currentQrBitmap = qrBitmap
@@ -245,21 +316,33 @@ fun SparkReceiveScreen(
     LaunchedEffect(walletId) {
         qrBitmap = null
     }
-    // Match the other receive screens by showing a default request immediately, and
-    // switch Spark QR generation to invoice mode when amount/label must be embedded.
+    // Match the other receive screens by showing a default request immediately.
+    // BTC amount/label ride on the static address as a `spark:` URI built
+    // locally above — no invoice round-trip. Token mode still mints an SDK
+    // invoice to bind the token id.
     // walletId/walletReady are keys so switching wallets while staying on this
     // screen re-requests for the new wallet once its SDK handle is loaded; firing
     // before the new wallet loads would hit the old handle (or fail) and strand
     // the QR in Idle/Error until the user toggles tabs.
-    LaunchedEffect(walletId, requestKind, requestedAmountSats, embeddedLabel, typedLabel, walletReady) {
+    LaunchedEffect(walletId, requestKind, requestedTokenAmount, selectedToken?.tokenIdentifier, embeddedLabel, typedLabel, walletReady) {
         if (walletId == null || !walletReady) return@LaunchedEffect
         when (requestKind) {
             SparkReceiveKind.BOLT11_INVOICE -> Unit
             // Pass the typed label through so the repository persists it for the (cached or fresh)
             // on-chain address; the QR itself only embeds it when the toggle is on.
-            SparkReceiveKind.BITCOIN_ADDRESS -> onReceive(requestKind, null, typedLabel.orEmpty(), false)
-            SparkReceiveKind.SPARK_ADDRESS -> onReceive(requestKind, null, "", false)
-            SparkReceiveKind.SPARK_INVOICE -> onReceive(requestKind, requestedAmountSats, embeddedLabel.orEmpty(), false)
+            SparkReceiveKind.BITCOIN_ADDRESS -> onReceive(requestKind, null, typedLabel.orEmpty(), false, null, null)
+            // Same for the static Spark address: the URI only embeds the label
+            // when the toggle is on, so local-only labels persist here.
+            SparkReceiveKind.SPARK_ADDRESS -> onReceive(requestKind, null, typedLabel.orEmpty(), false, null, null)
+            SparkReceiveKind.SPARK_INVOICE ->
+                onReceive(
+                    requestKind,
+                    null,
+                    embeddedLabel.orEmpty(),
+                    false,
+                    selectedToken?.tokenIdentifier,
+                    requestedTokenAmount,
+                )
         }
     }
 
@@ -287,13 +370,14 @@ fun SparkReceiveScreen(
         }
     }
 
-    // Local-only labels (embed toggle off) are not in the invoice/QR payload, so attach them to
-    // the generated invoice here — otherwise they would be silently dropped. Embedded labels are
+    // Local-only labels (embed toggle off) are not in the invoice/URI payload, so attach them to
+    // the generated request here — otherwise they would be silently dropped. Embedded labels are
     // already persisted by the repository on generation; this is idempotent for those.
     LaunchedEffect(baseRequestText, typedLabel, requestKind, isLightningReady) {
         val invoice =
             when {
                 requestKind == SparkReceiveKind.SPARK_INVOICE -> baseRequestText
+                requestKind == SparkReceiveKind.SPARK_ADDRESS -> baseRequestText
                 isLightningReady -> requestText
                 else -> null
             }
@@ -359,6 +443,7 @@ fun SparkReceiveScreen(
     if (showEnlargedQr && qrBitmap != null) {
         Dialog(
             onDismissRequest = { showEnlargedQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             SecureDialogSideEffect()
             Box(
@@ -468,6 +553,148 @@ fun SparkReceiveScreen(
                     SparkReceiveTab("On-chain", receiveTab == 2, BitcoinOrange, Modifier.weight(1f)) {
                         receiveTab = 2
                         onResetReceive()
+                    }
+                }
+
+                if (receiveTab == 0) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+                    ) {
+                        SparkAssetChip(
+                            text = "BTC",
+                            selected = selectedToken == null,
+                            onClick = {
+                                selectedToken = null
+                                amountText = ""
+                                isUsdMode = false
+                                onResetReceive()
+                            },
+                        )
+                        if (usdtToken != null) {
+                            SparkAssetChip(
+                                text = usdtToken.ticker,
+                                selected = selectedToken?.tokenIdentifier.equals(usdtToken.tokenIdentifier, ignoreCase = true),
+                                onClick = {
+                                    selectedToken = if (selectedToken?.tokenIdentifier.equals(usdtToken.tokenIdentifier, ignoreCase = true)) null else usdtToken
+                                    amountText = ""
+                                    isUsdMode = false
+                                    onResetReceive()
+                                },
+                            )
+                        }
+                        extraTokens.forEach { token ->
+                            SparkAssetChip(
+                                text = token.ticker,
+                                selected = selectedToken?.tokenIdentifier.equals(token.tokenIdentifier, ignoreCase = true),
+                                onClick = {
+                                    selectedToken = if (selectedToken?.tokenIdentifier.equals(token.tokenIdentifier, ignoreCase = true)) null else token
+                                    amountText = ""
+                                    isUsdMode = false
+                                    onResetReceive()
+                                },
+                            )
+                        }
+                        SparkAssetChip(
+                            text = stringResource(R.string.spark_token_add),
+                            selected = showTokenIdInput,
+                            onClick = { showTokenIdInput = !showTokenIdInput },
+                        )
+                    }
+                    if (showTokenIdInput) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = tokenIdText,
+                            onValueChange = {
+                                tokenIdText = it
+                                resolvedToken = null
+                                tokenIdInvalid = false
+                                tokenLookupFailed = false
+                            },
+                            label = { Text(stringResource(R.string.spark_token_id_hint)) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            colors = sparkTextFieldColors(),
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (tokenIdInvalid) {
+                            Text(
+                                text = stringResource(R.string.spark_token_invalid),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ErrorRed,
+                            )
+                        }
+                        if (tokenLookupFailed) {
+                            Text(
+                                text = stringResource(R.string.spark_token_unknown),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = ErrorRed,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IbisButton(
+                                onClick = {
+                                    tokenScope.launch {
+                                        resolvedToken = null
+                                        tokenIdInvalid = false
+                                        tokenLookupFailed = false
+                                        if (!SparkTokenPolicy.isPlausibleTokenIdentifier(tokenIdText)) {
+                                            tokenIdInvalid = true
+                                            return@launch
+                                        }
+                                        resolvingToken = true
+                                        val meta = runCatching { onResolveToken(tokenIdText) }.getOrNull()
+                                        resolvingToken = false
+                                        if (meta == null) {
+                                            tokenLookupFailed = true
+                                        } else {
+                                            resolvedToken = meta
+                                        }
+                                    }
+                                },
+                            ) {
+                                Text(text = stringResource(R.string.spark_token_lookup))
+                            }
+                            if (resolvingToken) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = SparkPurple,
+                                    strokeWidth = 2.dp,
+                                )
+                            }
+                            resolvedToken?.let { meta ->
+                                Text(
+                                    text = meta.ticker,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = SuccessGreen,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IbisButton(
+                                    onClick = {
+                                        onRememberToken(meta)
+                                        sessionTokens =
+                                            (sessionTokens + meta)
+                                                .distinctBy { it.tokenIdentifier.lowercase() }
+                                        selectedToken = meta
+                                        amountText = ""
+                                        isUsdMode = false
+                                        showTokenIdInput = false
+                                        tokenIdText = ""
+                                        resolvedToken = null
+                                        onResetReceive()
+                                    },
+                                ) {
+                                    Text(text = stringResource(R.string.spark_token_use))
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -780,7 +1007,16 @@ fun SparkReceiveScreen(
                             icon = Icons.Default.Refresh,
                             tint = SparkPurple,
                             enabled = canGenerateNewRequest,
-                            onClick = { onReceive(requestKind, requestedAmountSats, embeddedLabel.orEmpty(), true) },
+                            onClick = {
+                                onReceive(
+                                    requestKind,
+                                    if (isTokenMode) null else requestedAmountSats,
+                                    embeddedLabel.orEmpty(),
+                                    true,
+                                    if (isTokenMode) selectedToken?.tokenIdentifier else null,
+                                    if (isTokenMode) requestedTokenAmount else null,
+                                )
+                            },
                             iconSize = 20.dp,
                         )
                         ReceiveActionButton(
@@ -844,13 +1080,21 @@ fun SparkReceiveScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                AmountLabel(
-                                    useSats = useSats,
-                                    isUsdMode = isUsdMode,
-                                    fiatCurrency = fiatCurrency,
-                                    onToggleDenomination = onToggleDenomination,
-                                )
-                                if (btcPrice != null && btcPrice > 0) {
+                                if (isTokenMode) {
+                                    Text(
+                                        text = "Amount (${selectedToken?.ticker.orEmpty()})",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = TextSecondary,
+                                    )
+                                } else {
+                                    AmountLabel(
+                                        useSats = useSats,
+                                        isUsdMode = isUsdMode,
+                                        fiatCurrency = fiatCurrency,
+                                        onToggleDenomination = onToggleDenomination,
+                                    )
+                                }
+                                if (!isTokenMode && btcPrice != null && btcPrice > 0) {
                                     Card(
                                         modifier =
                                             Modifier
@@ -889,7 +1133,9 @@ fun SparkReceiveScreen(
                             }
 
                             val conversionText =
-                                if (amountText.isNotEmpty() && amountSats != null && amountSats > 0 && btcPrice != null && btcPrice > 0) {
+                                if (isTokenMode) {
+                                    null
+                                } else if (amountText.isNotEmpty() && amountSats != null && amountSats > 0 && btcPrice != null && btcPrice > 0) {
                                     if (privacyMode) {
                                         "≈ ****"
                                     } else if (isUsdMode) {
@@ -906,6 +1152,9 @@ fun SparkReceiveScreen(
                                 value = amountText,
                                 onValueChange = { input ->
                                     when {
+                                        isTokenMode -> {
+                                            amountText = filterSparkTokenAmountInput(input, selectedToken?.decimals ?: 6)
+                                        }
                                         isUsdMode -> {
                                             if (input.isEmpty() || input.matches(Regex("^\\d*\\.?\\d{0,2}$"))) {
                                                 amountText = input
@@ -928,6 +1177,7 @@ fun SparkReceiveScreen(
                                 placeholder = {
                                     Text(
                                         when {
+                                            isTokenMode -> "0.00"
                                             isUsdMode -> "0.00"
                                             useSats -> "0"
                                             else -> "0.00000000"
@@ -1078,7 +1328,7 @@ fun SparkReceiveScreen(
                 onClick = {
                     focusManager.clearFocus(force = true)
                     amountSats?.let { amount ->
-                        onReceive(SparkReceiveKind.BOLT11_INVOICE, amount, lightningRequestDescription, true)
+                        onReceive(SparkReceiveKind.BOLT11_INVOICE, amount, lightningRequestDescription, true, null, null)
                     }
                 },
                 modifier =
@@ -1101,6 +1351,29 @@ fun SparkReceiveScreen(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun SparkAssetChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (selected) SparkPurple.copy(alpha = 0.15f) else DarkSurface)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (selected) SparkPurple else TextSecondary,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+        )
     }
 }
 

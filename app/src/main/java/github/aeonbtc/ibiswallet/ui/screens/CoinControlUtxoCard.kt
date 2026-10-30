@@ -41,6 +41,7 @@ import github.aeonbtc.ibiswallet.ui.theme.AccentGreen
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.ui.theme.TorPurple
 import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
 
 private const val HIDDEN_AMOUNT = "****"
@@ -146,12 +147,20 @@ internal fun CoinControlUtxoCard(
                     }
                 }
                 Spacer(modifier = Modifier.width(8.dp))
-                if ((isNonLbtcAsset && resolvedAsset != null) || !utxo.isConfirmed) {
+                if ((isNonLbtcAsset && resolvedAsset != null) || !utxo.isConfirmed || utxo.isSilentPayment ||
+                    utxo.isSuspectedDust
+                ) {
                     Column(
                         modifier = Modifier.wrapContentWidth(),
                         horizontalAlignment = Alignment.End,
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
+                        if (utxo.isSilentPayment) {
+                            SpBadge(isDisabled = isDisabled)
+                        }
+                        if (utxo.isSuspectedDust) {
+                            DustBadge(isDisabled = isDisabled)
+                        }
                         if (isNonLbtcAsset && resolvedAsset != null) {
                             Box(
                                 modifier =
@@ -167,6 +176,7 @@ internal fun CoinControlUtxoCard(
                                     color = AccentTeal,
                                     maxLines = 1,
                                     softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -184,6 +194,7 @@ internal fun CoinControlUtxoCard(
                                     color = WarningYellow.copy(alpha = if (isDisabled) 0.4f else 1f),
                                     maxLines = 1,
                                     softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -221,6 +232,47 @@ internal fun CoinControlUtxoCard(
                 )
             }
         }
+    }
+}
+@Composable
+private fun SpBadge(isDisabled: Boolean = false) {
+    Box(
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(TorPurple.copy(alpha = if (isDisabled) 0.1f else 0.16f))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = "SP",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = TorPurple.copy(alpha = if (isDisabled) 0.4f else 1f),
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun DustBadge(isDisabled: Boolean = false) {
+    Box(
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(4.dp))
+                .background(WarningYellow.copy(alpha = if (isDisabled) 0.1f else 0.2f))
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = stringResource(R.string.dust_badge),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = WarningYellow.copy(alpha = if (isDisabled) 0.4f else 1f),
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

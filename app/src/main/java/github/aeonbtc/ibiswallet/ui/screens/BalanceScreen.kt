@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -125,6 +126,7 @@ import github.aeonbtc.ibiswallet.ui.components.MAX_FEE_RATE_SAT_VB
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.StatusBadge
 import github.aeonbtc.ibiswallet.ui.components.TransactionHistoryHideAllDialog
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
@@ -142,6 +144,8 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.ui.theme.WarningYellow
+import github.aeonbtc.ibiswallet.util.LabelUtils
 import github.aeonbtc.ibiswallet.util.ParsedSendRecipient
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
@@ -203,6 +207,8 @@ fun BalanceScreen(
     onConnectElectrumServer: () -> Unit = {},
     onOpenElectrumServerSettings: () -> Unit = {},
     onDismissElectrumBanner: () -> Unit = {},
+    dustUtxoCount: Int = 0,
+    onReviewDust: () -> Unit = {},
 ) {
     if (showLayer2RequiredPlaceholder) {
         Layer2RequiredPlaceholder(
@@ -269,7 +275,8 @@ fun BalanceScreen(
     // Show transaction detail dialog when a transaction is selected
     selectedTransaction?.let { tx ->
         val explicitTxLabel = transactionLabels[tx.txid]
-        val txLabel = explicitTxLabel ?: tx.address?.let { addressLabels[it] }
+        val addressLabel = tx.address?.let { addressLabels[it] }
+        val txLabel = LabelUtils.resolve(explicitTxLabel, addressLabel)
 
         TransactionDetailDialog(
             transaction = tx,
@@ -296,22 +303,15 @@ fun BalanceScreen(
                 }
             },
             onSaveLabel = { label ->
-                val linkedAddress = tx.address?.takeIf { it.isNotBlank() }
-                if (linkedAddress != null) {
-                    onSaveAddressLabelFromTransaction(linkedAddress, label)
-                    if (explicitTxLabel != null) onDeleteTransactionLabel(tx.txid)
-                } else {
-                    onSaveTransactionLabel(tx.txid, label)
-                }
+                onSaveTransactionLabel(tx.txid, label)
             },
             onDeleteLabel =
                 txLabel?.let {
                     {
+                        onDeleteTransactionLabel(tx.txid)
                         tx.address
                             ?.takeIf { it.isNotBlank() }
                             ?.let(onDeleteAddressLabelFromTransaction)
-                            ?: onDeleteTransactionLabel(tx.txid)
-                        if (explicitTxLabel != null) onDeleteTransactionLabel(tx.txid)
                     }
             },
             boltzRescueMnemonic = boltzRescueMnemonic,
@@ -453,6 +453,15 @@ fun BalanceScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
             }
+            if (dustUtxoCount > 0) {
+                item {
+                    DustReviewBanner(
+                        count = dustUtxoCount,
+                        onReview = onReviewDust,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+            }
             item {
                 val cardAccentColor = BitcoinOrange
 
@@ -556,6 +565,29 @@ fun BalanceScreen(
                                     )
                                 }
                             }
+
+                            if (isNfcReaderActive) {
+                                val nfcStatusLabel =
+                                    when (nfcReaderState) {
+                                        NfcReaderUiState.Inactive,
+                                        NfcReaderUiState.Ready,
+                                        -> stringResource(R.string.nfc_status_ready)
+                                        NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                                        NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                                    }
+                                val nfcStatusColor =
+                                    if (nfcReaderState == NfcReaderUiState.Detecting) {
+                                        BitcoinOrange
+                                    } else {
+                                        SuccessGreen
+                                    }
+                                NfcStatusIndicator(
+                                    label = nfcStatusLabel,
+                                    contentDescription = nfcStatusLabel,
+                                    modifier = Modifier.align(Alignment.Center),
+                                    color = nfcStatusColor,
+                                )
+                            }
                         }
 
                         // Balance content — vertically centered in the card
@@ -633,32 +665,6 @@ fun BalanceScreen(
                                 contentDescription = stringResource(R.string.loc_60129540),
                                 tint = cardAccentColor,
                                 modifier = Modifier.size(24.dp),
-                            )
-                        }
-
-                        if (isNfcReaderActive) {
-                            val nfcStatusLabel =
-                                when (nfcReaderState) {
-                                    NfcReaderUiState.Inactive,
-                                    NfcReaderUiState.Ready,
-                                    -> stringResource(R.string.nfc_status_ready)
-                                    NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
-                                    NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
-                                }
-                            val nfcStatusColor =
-                                if (nfcReaderState == NfcReaderUiState.Detecting) {
-                                    BitcoinOrange
-                                } else {
-                                    SuccessGreen
-                                }
-                            NfcStatusIndicator(
-                                label = nfcStatusLabel,
-                                contentDescription = nfcStatusLabel,
-                                modifier =
-                                    Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 2.dp),
-                                color = nfcStatusColor,
                             )
                         }
                     }
@@ -935,10 +941,11 @@ fun BalanceScreen(
                 }
             } else {
                 items(visibleTransactions, key = { it.txid }) { tx ->
-                    // Imported tx labels remain a fallback, but user edits are address labels when possible.
                     val label =
-                        tx.address?.let { addressLabels[it] }
-                            ?: transactionLabels[tx.txid]
+                        LabelUtils.resolve(
+                            transactionLabels[tx.txid],
+                            tx.address?.let { addressLabels[it] },
+                        )
 
                     TransactionItem(
                         transaction = tx,
@@ -1203,7 +1210,10 @@ private fun TransactionItem(
 
             // Details
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
                     Text(
                         text =
                             when {
@@ -1214,6 +1224,10 @@ private fun TransactionItem(
                             },
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                         color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = false,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                 }
                 if (label != null) {
@@ -1249,6 +1263,9 @@ private fun TransactionItem(
                     fontWeight = FontWeight.SemiBold,
                     color = if (isReceived) AccentGreen else AccentRed,
                     textAlign = TextAlign.End,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    softWrap = false,
                 )
                 // USD value
                 if (effectiveBtcPrice != null && effectiveBtcPrice > 0 && !privacyMode) {
@@ -2128,6 +2145,7 @@ fun TransactionDetailDialog(
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.weight(1f, fill = false),
                                 ) {
                                     Icon(
                                         imageVector =
@@ -2150,6 +2168,10 @@ fun TransactionDetailDialog(
                                             },
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = if (transaction.isConfirmed) AccentGreen else BitcoinOrange,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        softWrap = false,
+                                        modifier = Modifier.weight(1f, fill = false),
                                     )
                                     confirmationProgressText?.let { progress ->
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -2157,6 +2179,9 @@ fun TransactionDetailDialog(
                                             text = progress,
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = if (transaction.isConfirmed) AccentGreen else BitcoinOrange,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            softWrap = false,
                                         )
                                     }
                                 }
@@ -2165,6 +2190,10 @@ fun TransactionDetailDialog(
                                         text = formatFullTimestamp(transaction.timestamp * 1000, dateFormat),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = TextSecondary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        softWrap = false,
+                                        modifier = Modifier.weight(1f, fill = false),
                                     )
                                 }
                             }
@@ -2941,7 +2970,7 @@ internal fun SpeedUpDialog(
                     Modifier
                         .fillMaxWidth()
                         .padding(16.dp),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(12.dp),
                 color = DarkSurface,
             ) {
                 Column(
@@ -3114,8 +3143,8 @@ internal fun SpeedUpDialog(
                                         text =
                                             stringResource(
                                                 R.string.balance_cpfp_estimate_format,
-                                                estimatedChildVsize.toString(),
-                                                kotlin.math.ceil(appliedFeeRate).toLong().toString(),
+                                                formatFeeRate(appliedFeeRate),
+                                                formatVBytes(estimatedChildVsize.toDouble()),
                                             ),
                                         style = MaterialTheme.typography.labelSmall,
                                         color = TextSecondary,
@@ -3239,14 +3268,18 @@ internal fun SpeedUpDialog(
                                     )
                                 },
                                 trailingIcon = {
-                                    IconButton(onClick = { showCustomDestinationQrScanner = true }) {
-                                        Icon(
-                                            imageVector = Icons.Default.QrCodeScanner,
-                                            contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                            tint = BitcoinOrange,
-                                            modifier = Modifier.size(20.dp),
-                                        )
-                                    }
+                                    ScanPasteIcons(
+                                        onScan = { showCustomDestinationQrScanner = true },
+                                        onPaste = { text ->
+                                            customDestinationInput =
+                                                when (val parsed = parseSendRecipient(text)) {
+                                                    is ParsedSendRecipient.Bitcoin -> parsed.address
+                                                    else -> text
+                                                }
+                                        },
+                                        tint = BitcoinOrange,
+                                        scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                                    )
                                 },
                                 isError = customDestinationError != null,
                                 singleLine = true,
@@ -3276,7 +3309,7 @@ internal fun SpeedUpDialog(
 
                 // Confirm button
                 val canConfirm = isValidFeeRate && canAfford && customDestinationError == null && hasValidCustomDestination
-                IbisButton(
+                Button(
                     onClick = {
                         onConfirm(
                             appliedFeeRate,
@@ -3292,6 +3325,12 @@ internal fun SpeedUpDialog(
                             .fillMaxWidth()
                             .height(48.dp),
                     enabled = canConfirm,
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = BitcoinOrange,
+                            disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                        ),
                 ) {
                     Text(
                         text =
@@ -3353,5 +3392,54 @@ private fun TransactionExplorerBadge(
             tint = tint,
             modifier = Modifier.size(16.dp),
         )
+    }
+}
+
+/**
+ * Compact banner shown while unreviewed suspected-dust UTXOs exist.
+ * Tapping Review opens the full UTXO list.
+ */
+@Composable
+private fun DustReviewBanner(
+    count: Int,
+    onReview: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onReview)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = WarningYellow,
+                modifier = Modifier.size(20.dp),
+            )
+            Text(
+                text =
+                    if (count == 1) {
+                        stringResource(R.string.dust_banner_single)
+                    } else {
+                        stringResource(R.string.dust_banner_format, count)
+                    },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = stringResource(R.string.dust_alert_review),
+                style = MaterialTheme.typography.labelLarge,
+                color = BitcoinOrange,
+            )
+        }
     }
 }

@@ -40,6 +40,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.model.FeeEstimateSource
@@ -419,6 +420,9 @@ internal fun FeeTargetButton(
                 style = MaterialTheme.typography.bodySmall,
                 color = if (isSelected) MaterialTheme.colorScheme.onBackground else TextSecondary,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                softWrap = false,
             )
             if (isLoading) {
                 CircularProgressIndicator(
@@ -433,6 +437,9 @@ internal fun FeeTargetButton(
                     fontWeight = FontWeight.SemiBold,
                     color = textColor,
                     textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    softWrap = false,
                 )
             }
             Text(
@@ -440,6 +447,9 @@ internal fun FeeTargetButton(
                 style = MaterialTheme.typography.labelSmall,
                 color = TextSecondary,
                 textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                softWrap = false,
             )
         }
     }

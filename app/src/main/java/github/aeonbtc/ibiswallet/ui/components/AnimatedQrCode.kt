@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -80,6 +81,8 @@ data class AnimatedQrEncodingDiagnostics(
     val totalParts: Int,
     val density: SecureStorage.QrDensity,
     val exportProfile: AnimatedQrExportProfile,
+    /** Precomputed off-main so the animated frame loop never re-encodes every part. */
+    val forcedQrVersion: Int? = null,
 )
 
 data class AnimatedQrEncodingPlan(
@@ -122,10 +125,7 @@ fun AnimatedQrCode(
     var showEnlarged by remember { mutableStateOf(false) }
     val qrParts = encodingPlan.qrParts
     val totalParts = encodingPlan.diagnostics.totalParts
-    val forcedQrVersion =
-        remember(qrParts) {
-            qrParts.maxOfOrNull { part -> resolveQrVersion(part.uppercase()) ?: 1 }
-        }
+    val forcedQrVersion = encodingPlan.diagnostics.forcedQrVersion
     val effectiveFrameDelayMs =
         remember(totalParts, encodingPlan.diagnostics.density) {
             resolveUrFrameDelay(
@@ -150,7 +150,18 @@ fun AnimatedQrCode(
     }
 
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    val qrBitmapCache =
+        remember(qrParts, forcedQrVersion) {
+            object : LinkedHashMap<String, Bitmap>(4, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>): Boolean =
+                    size > 4
+            }
+        }
     LaunchedEffect(currentPart, forcedQrVersion) {
+        synchronized(qrBitmapCache) { qrBitmapCache[currentPart] }?.let {
+            qrBitmap = it
+            return@LaunchedEffect
+        }
         val nextBitmap =
             withContext(Dispatchers.Default) {
                 generateQrBitmap(
@@ -160,6 +171,7 @@ fun AnimatedQrCode(
                 )
             }
         if (nextBitmap != null) {
+            synchronized(qrBitmapCache) { qrBitmapCache[currentPart] = nextBitmap }
             qrBitmap = nextBitmap
         }
     }
@@ -196,6 +208,7 @@ fun AnimatedQrCode(
             onDismissRequest = dismissEnlarged,
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
+            SecureDialogSideEffect()
             Box(
                 modifier =
                     Modifier
@@ -219,7 +232,8 @@ fun AnimatedQrCode(
                     Box(
                         modifier =
                             Modifier
-                                .size(360.dp)
+                                .fillMaxWidth(0.85f)
+                                .heightIn(max = 360.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(Color.White)
                                 .padding(20.dp),
@@ -316,6 +330,7 @@ internal fun buildAnimatedQrEncodingPlan(
     val ur = cryptoPsbt.toUR()
     val encoder = UREncoder(ur, fragmentSize, 10, 0)
     val qrParts = List(encoder.seqLen) { encoder.nextPart() }
+    val forcedQrVersion = qrParts.maxOfOrNull { part -> resolveQrVersion(part.uppercase()) ?: 1 }
 
     return AnimatedQrEncodingPlan(
         qrParts = qrParts,
@@ -326,6 +341,7 @@ internal fun buildAnimatedQrEncodingPlan(
                 totalParts = qrParts.size,
                 density = density,
                 exportProfile = exportProfile,
+                forcedQrVersion = forcedQrVersion,
             ),
     )
 }
@@ -475,8 +491,19 @@ fun AnimatedQrCodeBytes(
     }
 
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    val qrBitmapCache =
+        remember(bbqrParts, forcedQrVersion) {
+            object : LinkedHashMap<String, Bitmap>(4, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>): Boolean =
+                    size > 4
+            }
+        }
     LaunchedEffect(currentPart, forcedQrVersion) {
         currentPart?.let { part ->
+            synchronized(qrBitmapCache) { qrBitmapCache[part] }?.let {
+                qrBitmap = it
+                return@LaunchedEffect
+            }
             val nextBitmap =
                 withContext(Dispatchers.Default) {
                     generateQrBitmap(
@@ -486,6 +513,7 @@ fun AnimatedQrCodeBytes(
                     )
                 }
             if (nextBitmap != null) {
+                synchronized(qrBitmapCache) { qrBitmapCache[part] = nextBitmap }
                 qrBitmap = nextBitmap
             }
         }
@@ -523,6 +551,7 @@ fun AnimatedQrCodeBytes(
             onDismissRequest = dismissEnlarged,
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
+            SecureDialogSideEffect()
             Box(
                 modifier =
                     Modifier

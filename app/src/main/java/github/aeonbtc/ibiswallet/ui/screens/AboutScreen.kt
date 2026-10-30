@@ -8,11 +8,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,8 +26,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.R
@@ -62,7 +64,6 @@ import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
-import github.aeonbtc.ibiswallet.viewmodel.AppUpdateStatus
 import kotlinx.coroutines.delay
 
 const val DONATE_BITCOIN_ADDRESS = "bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8"
@@ -70,15 +71,10 @@ const val DONATE_BITCOIN_URI = "bitcoin:$DONATE_BITCOIN_ADDRESS"
 
 @Composable
 fun AboutScreen(
-    appUpdateStatus: AppUpdateStatus,
-    appUpdateCheckEnabled: Boolean,
-    onAppUpdateCheckEnabledChange: (Boolean) -> Unit,
-    onDownloadUpdateClick: (String) -> Unit,
     onDonateClick: () -> Unit,
     onBack: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val updateAvailable = appUpdateStatus as? AppUpdateStatus.UpdateAvailable
     var showDonateDialog by remember { mutableStateOf(false) }
 
     if (showDonateDialog) {
@@ -102,13 +98,13 @@ fun AboutScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
@@ -118,8 +114,6 @@ fun AboutScreen(
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         Surface(
             modifier =
@@ -173,25 +167,6 @@ fun AboutScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
 
-                    if (updateAvailable != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text =
-                                stringResource(
-                                    R.string.drawer_update_available,
-                                    updateAvailable.latestVersionName,
-                                ),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = BitcoinOrange,
-                            textAlign = TextAlign.Center,
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onDownloadUpdateClick(updateAvailable.releaseUrl) }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
-                    }
-
                     Spacer(modifier = Modifier.height(24.dp))
 
                     Row(
@@ -230,31 +205,6 @@ fun AboutScreen(
                     )
 
                     Spacer(modifier = Modifier.height(20.dp))
-
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { onAppUpdateCheckEnabledChange(!appUpdateCheckEnabled) }
-                                .padding(horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(
-                            checked = appUpdateCheckEnabled,
-                            onCheckedChange = { onAppUpdateCheckEnabledChange(it) },
-                            colors =
-                                CheckboxDefaults.colors(
-                                    checkedColor = BitcoinOrange,
-                                ),
-                        )
-
-                        Text(
-                            text = stringResource(R.string.app_update_check_title),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = TextPrimary,
-                        )
-                    }
                 }
 
                 Button(
@@ -305,6 +255,7 @@ private fun DonateDialog(
     if (showEnlargedQr && qrBitmap != null) {
         Dialog(
             onDismissRequest = { showEnlargedQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             Box(
                 modifier =
@@ -348,19 +299,23 @@ private fun DonateDialog(
     ScrollableDialogSurface(
         onDismissRequest = onDismiss,
         actions = {
-            Row(
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.Center,
             ) {
                 IbisButton(
                     onClick = onDismiss,
-                    modifier = Modifier.widthIn(min = 84.dp),
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                     activeColor = TextSecondary,
                 ) {
                     Text(
                         text = stringResource(R.string.loc_d2c0aec0),
                         style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        softWrap = true,
                     )
                 }
 
@@ -368,7 +323,7 @@ private fun DonateDialog(
 
                 Button(
                     onClick = onDonateClick,
-                    modifier = Modifier.widthIn(min = 84.dp),
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors =
                         ButtonDefaults.buttonColors(
@@ -378,6 +333,9 @@ private fun DonateDialog(
                     Text(
                         text = stringResource(R.string.loc_7a3f1c9e),
                         style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        softWrap = true,
                     )
                 }
             }

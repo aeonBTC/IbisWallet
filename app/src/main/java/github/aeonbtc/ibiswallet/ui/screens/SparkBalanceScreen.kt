@@ -56,6 +56,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -95,8 +96,12 @@ import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.BitcoinTxSource
 import github.aeonbtc.ibiswallet.data.model.SparkPayment
+import github.aeonbtc.ibiswallet.data.model.SparkToken
+import github.aeonbtc.ibiswallet.data.model.formatSparkTokenAmount
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveState
+import github.aeonbtc.ibiswallet.data.model.SparkClaimStatus
 import github.aeonbtc.ibiswallet.data.model.SparkDepositClaimQuote
+import github.aeonbtc.ibiswallet.data.repository.SparkClaimPolicy
 import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
 import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.data.model.TransactionDetails
@@ -164,7 +169,7 @@ fun SparkBalanceScreen(
     onDeleteAllSparkHistory: () -> Unit = {},
     onOpenExit: () -> Unit = {},
     onFetchInstantClaimQuote: suspend (String, UInt) -> SparkDepositClaimQuote? = { _, _ -> null },
-    onClaimDepositNow: (SparkDepositClaimQuote) -> Unit = {},
+    onClaimDepositNow: (SparkDepositClaimQuote, Long) -> Unit = { _, _ -> },
 ) {
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     val showQrScanner = remember { mutableStateOf(false) }
@@ -182,6 +187,7 @@ fun SparkBalanceScreen(
     var showSparkTransactions by remember { mutableStateOf(false) }
     var showLightningTransactions by remember { mutableStateOf(false) }
     var showSwapTransactions by remember { mutableStateOf(false) }
+    var showUsdtTransactions by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var displayLimit by remember { mutableIntStateOf(25) }
     val isPullRefreshing = remember { mutableStateOf(false) }
@@ -254,6 +260,7 @@ fun SparkBalanceScreen(
         showSparkTransactions,
         showLightningTransactions,
         showSwapTransactions,
+        showUsdtTransactions,
     ) {
         displayLimit = 25
     }
@@ -265,16 +272,26 @@ fun SparkBalanceScreen(
             showSparkTransactions,
             showLightningTransactions,
             showSwapTransactions,
+            showUsdtTransactions,
         ) {
-            if (!hasRailFilters) {
-                sparkState.payments
-            } else {
-                sparkState.payments.filter { payment ->
-                    val rail = sparkRailBadge(payment).rail
-                    (showSparkTransactions && rail == SparkRail.SPARK) ||
-                        (showLightningTransactions && rail == SparkRail.LIGHTNING) ||
-                        (showSwapTransactions && rail == SparkRail.SWAP)
+            val railFiltered =
+                if (!hasRailFilters) {
+                    sparkState.payments
+                } else {
+                    sparkState.payments.filter { payment ->
+                        val rail = sparkRailBadge(payment).rail
+                        (showSparkTransactions && rail == SparkRail.SPARK) ||
+                            (showLightningTransactions && rail == SparkRail.LIGHTNING) ||
+                            (showSwapTransactions && rail == SparkRail.SWAP)
+                    }
                 }
+            if (showUsdtTransactions) {
+                railFiltered.filter { payment ->
+                    payment.isToken &&
+                        payment.tokenTicker?.equals(SparkToken.USDT_TICKER, ignoreCase = true) == true
+                }
+            } else {
+                railFiltered
             }
         }
     val railFilteredDeposits =
@@ -289,6 +306,10 @@ fun SparkBalanceScreen(
             } else {
                 emptyList()
             }
+        }
+    val layer1TxById =
+        remember(layer1Transactions) {
+            layer1Transactions.associateBy { it.txid.lowercase(Locale.US) }
         }
     val trimmedSearchQuery = searchQuery.trim()
     val searchedHistoryItems =
@@ -330,6 +351,9 @@ fun SparkBalanceScreen(
                             payment.method,
                             payment.amountSats.toString(),
                             payment.feeSats.toString(),
+                            payment.tokenIdentifier.orEmpty(),
+                            payment.tokenTicker.orEmpty(),
+                            payment.tokenAmount.orEmpty(),
                             label,
                             badge.rail.name,
                             date,
@@ -455,10 +479,14 @@ fun SparkBalanceScreen(
             layer1Transactions.firstOrNull { it.txid.equals(deposit.txid, ignoreCase = true) }
         val depositLabel = sparkDepositLabel(deposit, depositLayer1, sparkAddressLabels, sparkTransactionLabels)
         val depositLabelRef = sparkDepositLabelRef(deposit, depositLayer1)
-        // Quote once per dialog open; matured deposits never offer early claims.
-        LaunchedEffect(deposit.txid, deposit.vout) {
+        // Quote once per dialog open. Matured deposits get standard-claim
+        // terms (the manual path for failed mature claims); credited or
+        // settling deposits offer nothing.
+        LaunchedEffect(deposit.txid, deposit.vout, deposit.claimStatus) {
             instantClaimQuote = null
-            if (!deposit.isMature) {
+            if (deposit.claimStatus != SparkClaimStatus.CLAIMED &&
+                deposit.claimStatus != SparkClaimStatus.SUBMITTED
+            ) {
                 isQuotingClaim = true
                 instantClaimQuote =
                     runCatching { onFetchInstantClaimQuote(deposit.txid, deposit.vout) }.getOrNull()
@@ -501,12 +529,12 @@ fun SparkBalanceScreen(
             },
             instantClaimQuote = instantClaimQuote,
             isQuotingClaim = isQuotingClaim,
-            onClaimDeposit = { quote ->
+            onClaimDeposit = { quote, feeSats ->
                 // Close first: the claim runs fire-and-forget behind spend
                 // auth with snackbar reporting; the pending list refresh drops
                 // the deposit on success.
                 selectedSparkDeposit.value = null
-                onClaimDepositNow(quote)
+                onClaimDepositNow(quote, feeSats)
             },
             onDismiss = { selectedSparkDeposit.value = null },
         )
@@ -552,6 +580,16 @@ fun SparkBalanceScreen(
                     isNfcReaderActive = isNfcReaderActive,
                     nfcReaderState = nfcReaderState,
                 )
+            }
+
+            if (sparkState.tokenBalances.isNotEmpty()) {
+                item {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    SparkTokenBalancesCard(
+                        tokenBalances = sparkState.tokenBalances,
+                        privacyMode = privacyMode,
+                    )
+                }
             }
 
             item {
@@ -641,6 +679,12 @@ fun SparkBalanceScreen(
                             isSelected = showSwapTransactions,
                             onClick = { showSwapTransactions = !showSwapTransactions },
                         )
+                        if (sparkState.hasUsdtTransactions) {
+                            SparkUsdtFilterButton(
+                                isSelected = showUsdtTransactions,
+                                onClick = { showUsdtTransactions = !showUsdtTransactions },
+                            )
+                        }
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
@@ -752,13 +796,29 @@ fun SparkBalanceScreen(
                 items(visibleHistoryItems, key = { it.id }) { item ->
                     when (item) {
                         is SparkHistoryItem.Payment -> {
+                            val resolvedLayer1 =
+                                remember(item.payment, layer1Transactions) {
+                                    sparkResolveLayer1Transaction(item.payment, layer1Transactions)
+                                }
                             val paymentLabel =
-                                sparkPaymentLabelWithOnchainFallback(
-                                    item.payment,
-                                    sparkAddressLabels,
-                                    sparkTransactionLabels,
-                                    layer1Transactions,
-                                )
+                                remember(item.payment, sparkAddressLabels, sparkTransactionLabels, resolvedLayer1) {
+                                    sparkPaymentLabelWithOnchainFallback(
+                                        item.payment,
+                                        sparkAddressLabels,
+                                        sparkTransactionLabels,
+                                        layer1Transactions,
+                                        resolvedLayer1,
+                                    )
+                                }
+                            val isCenterSwap =
+                                remember(item.payment, sparkTransactionSources, resolvedLayer1) {
+                                    sparkPaymentIsCenterSwap(
+                                        payment = item.payment,
+                                        sparkTransactionSources = sparkTransactionSources,
+                                        layer1Transactions = layer1Transactions,
+                                        resolvedLayer1 = resolvedLayer1,
+                                    )
+                                }
                             SparkTransactionRow(
                                 payment = item.payment,
                                 useSats = useSats,
@@ -773,20 +833,12 @@ fun SparkBalanceScreen(
                                     },
                                 privacyMode = privacyMode,
                                 label = paymentLabel,
-                                isCenterSwap =
-                                    sparkPaymentIsCenterSwap(
-                                        payment = item.payment,
-                                        sparkTransactionSources = sparkTransactionSources,
-                                        layer1Transactions = layer1Transactions,
-                                    ),
+                                isCenterSwap = isCenterSwap,
                                 onClick = { selectedSparkPayment.value = item.payment },
                             )
                         }
                         is SparkHistoryItem.Deposit -> {
-                            val layer1Transaction =
-                                layer1Transactions.firstOrNull {
-                                    it.txid.equals(item.deposit.txid, ignoreCase = true)
-                                }
+                            val layer1Transaction = layer1TxById[item.deposit.txid.lowercase(Locale.US)]
                             val depositLabel =
                                 sparkDepositLabel(
                                     item.deposit,
@@ -944,6 +996,29 @@ private fun SparkBalanceCard(
                         )
                     }
                 }
+
+                if (isNfcReaderActive) {
+                    val nfcStatusLabel =
+                        when (nfcReaderState) {
+                            NfcReaderUiState.Inactive,
+                            NfcReaderUiState.Ready,
+                            -> stringResource(R.string.nfc_status_ready)
+                            NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                            NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                        }
+                    val nfcStatusColor =
+                        if (nfcReaderState == NfcReaderUiState.Detecting) {
+                            SparkPurple
+                        } else {
+                            SuccessGreen
+                        }
+                    NfcStatusIndicator(
+                        label = nfcStatusLabel,
+                        contentDescription = nfcStatusLabel,
+                        modifier = Modifier.align(Alignment.Center),
+                        color = nfcStatusColor,
+                    )
+                }
             }
 
             Column(
@@ -1006,32 +1081,6 @@ private fun SparkBalanceCard(
                     contentDescription = stringResource(R.string.loc_60129540),
                     tint = SparkPurple,
                     modifier = Modifier.size(24.dp),
-                )
-            }
-
-            if (isNfcReaderActive) {
-                val nfcStatusLabel =
-                    when (nfcReaderState) {
-                        NfcReaderUiState.Inactive,
-                        NfcReaderUiState.Ready,
-                        -> stringResource(R.string.nfc_status_ready)
-                        NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
-                        NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
-                    }
-                val nfcStatusColor =
-                    if (nfcReaderState == NfcReaderUiState.Detecting) {
-                        SparkPurple
-                    } else {
-                        SuccessGreen
-                    }
-                NfcStatusIndicator(
-                    label = nfcStatusLabel,
-                    contentDescription = nfcStatusLabel,
-                    modifier =
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 2.dp),
-                    color = nfcStatusColor,
                 )
             }
         }
@@ -1177,14 +1226,52 @@ private fun SparkPendingDepositRow(
     }
 }
 
+/** One way of claiming: the early spread offer or the standard maturity claim. */
+private data class ClaimOption(
+    val label: String,
+    val feeSats: Long,
+    val creditSats: Long,
+    /** Depth the option becomes claimable at; null when the quote omits it. */
+    val required: Long?,
+    val waitBlocks: Long,
+    val isEstimate: Boolean,
+)
+
 @Composable
 private fun InstantClaimSection(
     quote: SparkDepositClaimQuote?,
     quoting: Boolean,
     useSats: Boolean,
     privacyMode: Boolean,
-    onClaim: (SparkDepositClaimQuote) -> Unit,
+    onClaim: (SparkDepositClaimQuote, Long) -> Unit,
+    claimStatus: SparkClaimStatus = SparkClaimStatus.NONE,
 ) {
+    // Credited or settling deposits offer no action — status, not a button.
+    // (Claimed entries linger until the provider spends the output.)
+    if (claimStatus == SparkClaimStatus.CLAIMED || claimStatus == SparkClaimStatus.SUBMITTED) {
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 6.dp),
+            color = TextSecondary.copy(alpha = 0.1f),
+        )
+        Text(
+            text = stringResource(R.string.spark_deposit_claim_section_title),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text =
+                if (claimStatus == SparkClaimStatus.CLAIMED) {
+                    stringResource(R.string.spark_deposit_claim_done)
+                } else {
+                    stringResource(R.string.spark_deposit_claim_submitted)
+                },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (claimStatus == SparkClaimStatus.CLAIMED) AccentGreen else BitcoinOrange,
+        )
+        return
+    }
     if (!quoting && quote == null) return
     HorizontalDivider(
         modifier = Modifier.padding(vertical = 6.dp),
@@ -1209,6 +1296,102 @@ private fun InstantClaimSection(
     val amountText: (Long) -> String = { sats ->
         if (privacyMode) SPARK_HIDDEN_AMOUNT else formatAmount(sats.toULong(), useSats, includeUnit = true)
     }
+    val earlyLabel = stringResource(R.string.spark_deposit_claim_early)
+    val standardLabel = stringResource(R.string.spark_deposit_claim_standard)
+    val availableNow = stringResource(R.string.spark_deposit_claim_available_now)
+    // One row per way of claiming. Claiming under a row's fee arms exactly
+    // that ceiling (early spread vs. standard fee); a not-yet-reachable row
+    // defers and settles on its own. The card below follows the selection so
+    // credit/fee always match the tapped Claim.
+    val options =
+        remember(current, earlyLabel, standardLabel) {
+            buildList {
+                if (current.isEarlyOffer) {
+                    add(
+                        ClaimOption(
+                            label = earlyLabel,
+                            feeSats = current.feeSats,
+                            creditSats = current.creditSats,
+                            required = current.instantConfirmationsRequired,
+                            waitBlocks =
+                                current.instantConfirmationsRequired?.let {
+                                    SparkClaimPolicy.blocksToWait(it, current.confirmations)
+                                } ?: 0L,
+                            isEstimate = current.isEstimate,
+                        ),
+                    )
+                }
+                current.matureFeeSats?.let { matureFee ->
+                    add(
+                        ClaimOption(
+                            label = standardLabel,
+                            feeSats = matureFee,
+                            creditSats = (current.amountSats - matureFee).coerceAtLeast(0L),
+                            required = current.matureConfirmationsRequired,
+                            waitBlocks =
+                                current.matureConfirmationsRequired?.let {
+                                    SparkClaimPolicy.blocksToWait(it, current.confirmations)
+                                } ?: 0L,
+                            isEstimate = current.matureIsEstimate,
+                        ),
+                    )
+                }
+            }
+        }
+    if (options.isEmpty()) return
+    // Default to the early claim when it is claimable now; otherwise the
+    // standard claim (picking early still arms its ceiling for later).
+    var selectedIndex by remember(current, earlyLabel, standardLabel) {
+        mutableIntStateOf(
+            if (options.first().waitBlocks == 0L && current.isEarlyOffer) {
+                0
+            } else {
+                options.size - 1
+            },
+        )
+    }
+    val selected = options.getOrNull(selectedIndex.coerceIn(options.indices)) ?: return
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        options.forEachIndexed { index, option ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = index == selectedIndex,
+                    onClick = { selectedIndex = index },
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = option.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                    // Numeric x/y progress, matching the deposit-row pattern —
+                    // no plural forms needed across locales.
+                    Text(
+                        text =
+                            if (option.waitBlocks == 0L) {
+                                availableNow
+                            } else {
+                                "${current.confirmations}/${option.required ?: current.confirmations}"
+                            },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
+                }
+                Text(
+                    text = amountText(option.feeSats),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+            }
+        }
+    }
+    Spacer(modifier = Modifier.height(4.dp))
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
@@ -1229,7 +1412,7 @@ private fun InstantClaimSection(
                     color = TextSecondary,
                 )
                 Text(
-                    text = amountText(current.creditSats),
+                    text = amountText(selected.creditSats),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = AccentGreen,
@@ -1246,7 +1429,7 @@ private fun InstantClaimSection(
                     color = TextSecondary,
                 )
                 Text(
-                    text = amountText(current.feeSats),
+                    text = amountText(selected.feeSats),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
@@ -1260,7 +1443,7 @@ private fun InstantClaimSection(
                 style = MaterialTheme.typography.bodySmall,
                 color = TextSecondary,
             )
-            if (current.isEstimate) {
+            if (selected.isEstimate) {
                 Text(
                     text = stringResource(R.string.spark_deposit_claim_estimated),
                     style = MaterialTheme.typography.bodySmall,
@@ -1273,7 +1456,7 @@ private fun InstantClaimSection(
     // Slim action row mirroring the tx-detail Speed Up button (36.dp
     // outlined, accent border) instead of a full 48.dp primary.
     OutlinedButton(
-        onClick = { onClaim(current) },
+        onClick = { onClaim(current, selected.feeSats) },
         modifier =
             Modifier
                 .fillMaxWidth()
@@ -1312,7 +1495,7 @@ private fun SparkPendingDepositDetailDialog(
     onHideFromHistory: () -> Unit = {},
     instantClaimQuote: SparkDepositClaimQuote? = null,
     isQuotingClaim: Boolean = false,
-    onClaimDeposit: (SparkDepositClaimQuote) -> Unit = {},
+    onClaimDeposit: (SparkDepositClaimQuote, Long) -> Unit = { _, _ -> },
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -1575,13 +1758,17 @@ private fun SparkPendingDepositDetailDialog(
                             }
                         }
 
-                        if (!isConfirmed) {
+                        // Failed mature claims surface here too: the section
+                        // falls back to standard-claim terms so a confirmed
+                        // deposit with a claim error can still be claimed.
+                        if (!isConfirmed || deposit.claimError != null) {
                             InstantClaimSection(
                                 quote = instantClaimQuote,
                                 quoting = isQuotingClaim,
                                 useSats = useSats,
                                 privacyMode = privacyMode,
-                                onClaim = { quote -> onClaimDeposit(quote) },
+                                onClaim = { quote, feeSats -> onClaimDeposit(quote, feeSats) },
+                                claimStatus = deposit.claimStatus,
                             )
                         }
 
@@ -1918,6 +2105,12 @@ private fun SparkTransactionRow(
                     )
                     Spacer(modifier = Modifier.size(3.dp))
                     SparkHistoryRailBadge(railBadge = railBadge)
+                    if (payment.isToken &&
+                        payment.tokenTicker?.equals(SparkToken.USDT_TICKER, ignoreCase = true) == true
+                    ) {
+                        Spacer(modifier = Modifier.size(3.dp))
+                        SparkUsdtBadge()
+                    }
                 }
                 if (!displayLabel.isNullOrBlank()) {
                     Text(
@@ -1936,10 +2129,18 @@ private fun SparkTransactionRow(
             }
 
             Column(horizontalAlignment = Alignment.End) {
+                val tokenDisplay: String? =
+                    payment.resolvedToken()?.let { token ->
+                        payment.tokenAmountBigInteger()?.let { baseUnits ->
+                            "${if (isReceive) "+" else "-"}${formatSparkTokenAmount(baseUnits.abs(), token)}"
+                        }
+                    }
                 Text(
                     text =
                         if (privacyMode) {
                             SPARK_HIDDEN_AMOUNT
+                        } else if (tokenDisplay != null) {
+                            tokenDisplay
                         } else if (isFailedLightningPayment) {
                             formatAmount(totalSats, useSats, includeUnit = true)
                         } else {
@@ -1951,7 +2152,7 @@ private fun SparkTransactionRow(
                     textAlign = TextAlign.End,
                 )
                 val effectiveBtcPrice = historicalBtcPrice ?: btcPrice
-                if (!privacyMode && effectiveBtcPrice != null && effectiveBtcPrice > 0) {
+                if (!privacyMode && !payment.isToken && effectiveBtcPrice != null && effectiveBtcPrice > 0) {
                     SparkHistoricalFiatText(
                         text = formatFiat((totalSats.toDouble() / 100_000_000.0) * effectiveBtcPrice, fiatCurrency),
                         isHistorical = historicalBtcPrice != null,
@@ -2094,6 +2295,14 @@ private fun SparkPaymentDetailDialog(
     val paymentAmountText =
         if (privacyMode) {
             SPARK_HIDDEN_AMOUNT
+        } else if (payment.isToken) {
+            val token = payment.resolvedToken()
+            val baseUnits = payment.tokenAmountBigInteger()
+            if (token != null && baseUnits != null) {
+                "${if (isReceive) "+" else "-"}${formatSparkTokenAmount(baseUnits.abs(), token)}"
+            } else {
+                "${if (isReceive) "+" else "-"}${formatAmount(totalSats, useSats, includeUnit = true)}"
+            }
         } else {
             "${if (isReceive) "+" else "-"}${formatAmount(totalSats, useSats, includeUnit = true)}"
         }
@@ -2474,13 +2683,19 @@ private fun SparkPaymentDetailDialog(
                                         // Deposit receives show the gross face value that
                                         // arrived on-chain here; the header above stays
                                         // the exact net credit and the fee row nets out.
+                                        // Token payments have no deposit path: always
+                                        // the plain invoice amount.
                                         val recipientSats =
-                                            if (isDepositReceive) {
+                                            if (isDepositReceive && !payment.isToken) {
                                                 (payment.amountSats.coerceAtLeast(0L) + payment.feeSats.coerceAtLeast(0L)).toULong()
                                             } else {
                                                 invoiceSats
                                             }
-                                        "${if (isReceive) "+" else "-"}${formatAmount(recipientSats, useSats, includeUnit = true)}"
+                                        if (payment.isToken) {
+                                            sparkPaymentInvoiceText(payment, isReceive, useSats)
+                                        } else {
+                                            "${if (isReceive) "+" else "-"}${formatAmount(recipientSats, useSats, includeUnit = true)}"
+                                        }
                                     },
                                 amountColor = if (isReceive) AccentGreen else AccentRed,
                                 onCopy = {
@@ -2502,7 +2717,9 @@ private fun SparkPaymentDetailDialog(
 
                         // Breakdown for sends without a recipient row (e.g. lightning with no stored invoice):
                         // show invoice amount separately so header total = amount + fee is explainable.
-                        if (!isReceive && recipient == null && payment.feeSats > 0L) {
+                        if (!isReceive && recipient == null &&
+                            (payment.feeSats > 0L || payment.tokenFeeBigInteger()?.signum() == 1)
+                        ) {
                             HorizontalDivider(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 color = TextSecondary.copy(alpha = 0.1f),
@@ -2518,14 +2735,14 @@ private fun SparkPaymentDetailDialog(
                                     if (privacyMode) {
                                         SPARK_HIDDEN_AMOUNT
                                     } else {
-                                        "-${formatAmount(invoiceSats, useSats, includeUnit = true)}"
+                                        sparkPaymentInvoiceText(payment, isReceive = false, useSats)
                                     },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = AccentRed,
                             )
                         }
 
-                        if (!isReceive && payment.feeSats > 0L) {
+                        if (!isReceive && (payment.feeSats > 0L || payment.tokenFeeBigInteger()?.signum() == 1)) {
                             HorizontalDivider(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 color = TextSecondary.copy(alpha = 0.1f),
@@ -2541,7 +2758,7 @@ private fun SparkPaymentDetailDialog(
                                     if (privacyMode) {
                                         SPARK_HIDDEN_AMOUNT
                                     } else {
-                                        "-${formatAmount(payment.feeSats.toULong(), useSats, includeUnit = true)}"
+                                        sparkPaymentFeeText(payment, useSats)
                                     },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = feeColor,
@@ -2552,7 +2769,7 @@ private fun SparkPaymentDetailDialog(
                         // as "10,000 became 9,802" with no explanation. The
                         // claim is an on-chain spend of the deposit output, so
                         // its mining fee comes out of the deposit itself.
-                        if (isReceive && payment.feeSats > 0L) {
+                        if (isReceive && (payment.feeSats > 0L || payment.tokenFeeBigInteger()?.signum() == 1)) {
                             HorizontalDivider(
                                 modifier = Modifier.padding(vertical = 6.dp),
                                 color = TextSecondary.copy(alpha = 0.1f),
@@ -2568,7 +2785,7 @@ private fun SparkPaymentDetailDialog(
                                     if (privacyMode) {
                                         SPARK_HIDDEN_AMOUNT
                                     } else {
-                                        "-${formatAmount(payment.feeSats.toULong(), useSats, includeUnit = true)}"
+                                        sparkPaymentFeeText(payment, useSats)
                                     },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = feeColor,
@@ -2576,7 +2793,7 @@ private fun SparkPaymentDetailDialog(
                             // Claim-fee note only for on-chain deposit receives,
                             // where the deduction surprises (Lightning fee
                             // semantics differ).
-                            if (railBadge.rail == SparkRail.SWAP) {
+                            if (railBadge.rail == SparkRail.SWAP && !payment.isToken) {
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = stringResource(R.string.spark_deposit_claim_fee_note),
@@ -2712,6 +2929,99 @@ private fun SparkCopyRow(
                 modifier = Modifier.size(18.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun SparkTokenBalancesCard(
+    tokenBalances: List<github.aeonbtc.ibiswallet.data.model.SparkTokenBalance>,
+    privacyMode: Boolean,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            tokenBalances.forEach { tokenBalance ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = tokenBalance.token.ticker,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = TextSecondary,
+                    )
+                    Text(
+                        text =
+                            if (privacyMode) {
+                                SPARK_HIDDEN_AMOUNT
+                            } else {
+                                formatSparkTokenAmount(tokenBalance.amount, tokenBalance.token)
+                            },
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SparkUsdtFilterButton(
+    isSelected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier =
+            Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(DarkSurfaceVariant)
+                .border(
+                    width = 1.dp,
+                    color = if (isSelected) SuccessGreen else BorderColor,
+                    shape = RoundedCornerShape(6.dp),
+                )
+                .clickable(onClick = onClick),
+    ) {
+        Text(
+            text = "$",
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, lineHeight = 22.sp),
+            fontWeight = FontWeight.Bold,
+            color = if (isSelected) SuccessGreen else TextSecondary,
+        )
+    }
+}
+
+@Composable
+private fun SparkUsdtBadge() {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier =
+            Modifier
+                .size(22.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(SuccessGreen.copy(alpha = 0.16f)),
+    ) {
+        Text(
+            text = "$",
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp, lineHeight = 18.sp),
+            fontWeight = FontWeight.Bold,
+            color = SuccessGreen,
+        )
     }
 }
 
@@ -2855,6 +3165,8 @@ private fun sparkPaymentLabelKey(payment: SparkPayment): String =
         payment.type,
         payment.status,
         payment.amountSats.toString(),
+        payment.tokenIdentifier.orEmpty(),
+        payment.tokenAmount.orEmpty(),
         payment.timestamp.toString(),
         payment.method,
     ).joinToString(separator = "|")
@@ -2888,6 +3200,7 @@ private fun sparkPaymentLabelWithOnchainFallback(
     addressLabels: Map<String, String>,
     transactionLabels: Map<String, String>,
     layer1Transactions: List<TransactionDetails>,
+    resolvedLayer1: TransactionDetails? = null,
 ): String? {
     sparkPaymentLabel(payment, addressLabels, transactionLabels)?.let { return it }
     if (sparkRailBadge(payment).rail != SparkRail.SWAP) return null
@@ -2898,7 +3211,9 @@ private fun sparkPaymentLabelWithOnchainFallback(
     transactionLabels[txid]?.let { return it }
     transactionLabels.entries.firstOrNull { it.key.equals(txid, ignoreCase = true) }?.value?.let { return it }
     val layer1Address =
-        layer1Transactions.firstOrNull { it.txid.equals(txid, ignoreCase = true) }?.address
+        (resolvedLayer1?.takeIf { it.txid.equals(txid, ignoreCase = true) }
+            ?: layer1Transactions.firstOrNull { it.txid.equals(txid, ignoreCase = true) })
+            ?.address
             ?.takeIf { it.isNotBlank() } ?: return null
     return normalizeSparkAddressLabelRef(layer1Address).takeIf { it.isNotBlank() }?.let { addressLabels[it] }
 }
@@ -2998,18 +3313,41 @@ private fun sparkPaymentTotalSats(payment: SparkPayment): Long {
     return amount + payment.feeSats.coerceAtLeast(0L)
 }
 
+/** Fee line for the detail dialog: token fees render in token units, BTC in sats. */
+private fun sparkPaymentFeeText(payment: SparkPayment, useSats: Boolean): String {
+    val token = payment.resolvedToken()
+    val tokenFee = payment.tokenFeeBigInteger()
+    if (token != null && tokenFee != null && tokenFee.signum() > 0) {
+        return "-${formatSparkTokenAmount(tokenFee.abs(), token)}"
+    }
+    return "-${formatAmount(payment.feeSats.toULong(), useSats, includeUnit = true)}"
+}
+
+/** Invoice-amount line for the detail dialog: token amounts render in token units. */
+private fun sparkPaymentInvoiceText(payment: SparkPayment, isReceive: Boolean, useSats: Boolean): String {
+    val token = payment.resolvedToken()
+    val tokenAmount = payment.tokenAmountBigInteger()
+    if (token != null && tokenAmount != null) {
+        return "${if (isReceive) "+" else "-"}${formatSparkTokenAmount(tokenAmount.abs(), token)}"
+    }
+    return "${if (isReceive) "+" else "-"}${formatAmount(payment.amountSats.coerceAtLeast(0L).toULong(), useSats, includeUnit = true)}"
+}
+
 /** True for center Swap control L1↔Spark pegs (not peer Bitcoin/LN/Spark sends). */
+private val sparkLayer1TxidRegex = Regex("""\b[0-9a-fA-F]{64}\b""")
+
 private fun sparkPaymentIsCenterSwap(
     payment: SparkPayment,
     sparkTransactionSources: Map<String, String>,
     layer1Transactions: List<TransactionDetails>,
+    resolvedLayer1: TransactionDetails? = null,
 ): Boolean {
     val stored = sparkTransactionSources[payment.id]
         ?: sparkTransactionSources.entries
             .firstOrNull { it.key.equals(payment.id, ignoreCase = true) }
             ?.value
     if (BitcoinTxSource.isSwapHistory(stored)) return true
-    val linked = sparkResolveLayer1Transaction(payment, layer1Transactions)
+    val linked = resolvedLayer1 ?: sparkResolveLayer1Transaction(payment, layer1Transactions)
     return linked?.isSwapHistory == true
 }
 
@@ -3040,7 +3378,6 @@ private fun sparkExtractLayer1Txid(payment: SparkPayment): String? {
         ?.takeIf { it.length == 64 && it.all { ch -> ch.isDigit() || ch in 'a'..'f' || ch in 'A'..'F' } }
         ?.let { return it.lowercase(Locale.US) }
 
-    val txidPattern = Regex("""\b[0-9a-fA-F]{64}\b""")
     val candidates =
         buildList {
             add(payment.methodDetails)
@@ -3050,7 +3387,9 @@ private fun sparkExtractLayer1Txid(payment: SparkPayment): String? {
 
     return candidates
         .asSequence()
-        .flatMap { candidate -> txidPattern.findAll(candidate).map { it.value.lowercase(Locale.US) } }
+        .flatMap { candidate ->
+            sparkLayer1TxidRegex.findAll(candidate).map { it.value.lowercase(Locale.US) }
+        }
         .firstOrNull()
 }
 

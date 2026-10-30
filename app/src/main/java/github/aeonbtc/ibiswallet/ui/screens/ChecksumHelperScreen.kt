@@ -70,8 +70,10 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.components.Bip39SuggestionRow
+import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SensitiveSeedIme
 import github.aeonbtc.ibiswallet.ui.components.rememberBringIntoViewRequesterOnExpand
@@ -102,7 +104,6 @@ import java.security.SecureRandom
 @Composable
 fun ChecksumHelperScreen(
     onBack: () -> Unit,
-    onUsePhrase: (phrase: String) -> Unit,
 ) {
     val context = LocalContext.current
     var twelveWordMode by remember { mutableStateOf(true) }
@@ -195,13 +196,6 @@ fun ChecksumHelperScreen(
             )
         }
 
-        Text(
-            text = stringResource(R.string.loc_3d8b44f1),
-            style = MaterialTheme.typography.bodySmall,
-            color = TextSecondary,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -287,7 +281,7 @@ fun ChecksumHelperScreen(
                         shape = RoundedCornerShape(8.dp),
                         placeholder = {
                             Text(
-                                stringResource(R.string.loc_08c3f5a2),
+                                stringResource(R.string.loc_3d8b44f1),
                                 color = TextSecondary.copy(alpha = 0.5f),
                             )
                         },
@@ -600,69 +594,35 @@ fun ChecksumHelperScreen(
                             color = MaterialTheme.colorScheme.onBackground,
                         )
                         Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        IbisButton(
+                            onClick = { showQrDialog = true },
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp),
                         ) {
-                            Button(
-                                onClick = { showQrDialog = true },
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .height(48.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors =
-                                    ButtonDefaults.buttonColors(
-                                        containerColor = DarkSurfaceVariant,
-                                        contentColor = TextSecondary,
-                                    ),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContentCopy,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.Default.QrCode,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = stringResource(R.string.loc_8d2f5b10),
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                            }
-                            Button(
-                                onClick = { onUsePhrase(phrase) },
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .height(48.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors =
-                                    ButtonDefaults.buttonColors(
-                                        containerColor = BitcoinOrange,
-                                    ),
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.loc_b9e614f0),
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                            }
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Icon(
+                                imageVector = Icons.Default.QrCode,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.loc_8d2f5b10),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
                         }
                     }
                 }
                 Spacer(modifier = Modifier.height(16.dp))
             }
         } else {
-            Text(
-                text = stringResource(R.string.loc_e1c7405d),
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-                modifier = Modifier.padding(vertical = 8.dp),
-            )
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
@@ -705,7 +665,10 @@ private fun SeedQrDialog(
     onCopy: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         SecureDialogSideEffect()
         Surface(
             modifier =

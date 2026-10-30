@@ -1,4 +1,4 @@
-﻿package github.aeonbtc.ibiswallet.ui.screens
+package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -68,6 +69,8 @@ import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
+import github.aeonbtc.ibiswallet.ui.components.SendExternalOriginBanner
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.ArkRust
@@ -90,6 +93,7 @@ import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.isLightningAddressPayment
 import github.aeonbtc.ibiswallet.util.layer2RecipientValidationError
 import github.aeonbtc.ibiswallet.util.parseSendRecipient
+import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
 import java.util.Locale
 import kotlin.math.roundToLong
@@ -110,6 +114,8 @@ fun ArkSendScreen(
     onSendPreparedMany: () -> Unit = {},
     onResetSend: () -> Unit,
     onToggleDenomination: () -> Unit,
+    externalOriginOrigin: WalletViewModel.PendingSendOrigin? = null,
+    onClearExternalOriginNotice: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val mainActivity = context as? MainActivity
@@ -190,7 +196,9 @@ fun ArkSendScreen(
     val amountLockedByInvoice =
         when (val p = parsedRecipient) {
             is ParsedSendRecipient.Lightning ->
-                p.kind == LightningKind.BOLT11 && p.amountSats != null && p.amountSats > 0L
+                (p.kind == LightningKind.BOLT11 || p.kind == LightningKind.BOLT12) &&
+                    p.amountSats != null &&
+                    p.amountSats > 0L
             else -> false
         }
 
@@ -560,6 +568,11 @@ fun ArkSendScreen(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
+                if (externalOriginOrigin != null) {
+                    SendExternalOriginBanner(origin = externalOriginOrigin)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -631,9 +644,9 @@ fun ArkSendScreen(
                             }
                     }
                 } else {
-                    OutlinedTextField(
-                        value = paymentRequest,
-                        onValueChange = { input ->
+                    val onPaymentInput: (String) -> Unit =
+                        onPaymentInput@{ input ->
+                            onClearExternalOriginNotice()
                             val normalized = input.trim()
                             when (val parsed = parseSendRecipient(normalized, context)) {
                                 is ParsedSendRecipient.Bitcoin,
@@ -649,7 +662,10 @@ fun ArkSendScreen(
                                     isMaxMode = false
                                 }
                             }
-                        },
+                        }
+                    OutlinedTextField(
+                        value = paymentRequest,
+                        onValueChange = onPaymentInput,
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = {
                             Text(
@@ -660,14 +676,12 @@ fun ArkSendScreen(
                             )
                         },
                         trailingIcon = {
-                            IconButton(onClick = { showQrScanner = true }) {
-                                Icon(
-                                    imageVector = Icons.Default.QrCodeScanner,
-                                    contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                    tint = ArkRust,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
+                            ScanPasteIcons(
+                                onScan = { showQrScanner = true },
+                                onPaste = onPaymentInput,
+                                tint = ArkRust,
+                                scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                            )
                         },
                         supportingText =
                             recipientValidationError?.let {
@@ -773,6 +787,7 @@ fun ArkSendScreen(
                         },
                     onValueChange = { value ->
                         if (amountLockedByInvoice) return@OutlinedTextField
+                        onClearExternalOriginNotice()
                         amountInput = filterArkAmountInput(value, useSats, isUsdMode)
                         isMaxMode = false
                     },
@@ -920,7 +935,7 @@ fun ArkSendScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(48.dp),
+                    .heightIn(min = 48.dp),
             shape = RoundedCornerShape(8.dp),
             enabled = canArkReview,
             colors =
@@ -1048,7 +1063,7 @@ private fun ArkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = false,
                         colors =
@@ -1073,7 +1088,7 @@ private fun ArkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1086,7 +1101,7 @@ private fun ArkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         colors =
                             ButtonDefaults.buttonColors(
@@ -1110,7 +1125,7 @@ private fun ArkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1123,7 +1138,7 @@ private fun ArkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                         enabled = false,
                         colors =
@@ -1160,7 +1175,7 @@ private fun ArkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                     }
@@ -1177,7 +1192,7 @@ private fun ArkSendConfirmationDialog(
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .height(48.dp),
+                                    .heightIn(min = 48.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors =
                                 ButtonDefaults.buttonColors(
@@ -1207,7 +1222,7 @@ private fun ArkSendConfirmationDialog(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                     ) {
                         Text(stringResource(R.string.loc_d2c0aec0), style = MaterialTheme.typography.titleMedium)
                     }

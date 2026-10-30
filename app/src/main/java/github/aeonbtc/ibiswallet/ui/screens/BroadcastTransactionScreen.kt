@@ -14,12 +14,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -33,11 +33,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,9 +54,9 @@ import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.components.AnimatedQrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
-import github.aeonbtc.ibiswallet.ui.theme.DarkBackground
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
@@ -82,6 +79,7 @@ import github.aeonbtc.ibiswallet.viewmodel.ManualBroadcastState
 fun BroadcastTransactionScreen(
     broadcastState: ManualBroadcastState,
     isConnected: Boolean,
+    privacyMode: Boolean = false,
     onPreview: (String) -> Unit,
     onBroadcast: (String) -> Unit,
     onClear: () -> Unit,
@@ -145,46 +143,171 @@ fun BroadcastTransactionScreen(
         mutableStateOf(false)
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        stringResource(R.string.loc_89bab973),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        onClear()
-                        onBack()
-                    }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                        )
-                    }
-                },
-                colors =
-                    TopAppBarDefaults.topAppBarColors(
-                        containerColor = DarkBackground,
-                    ),
-            )
-        },
-        containerColor = DarkBackground,
-    ) { paddingValues ->
-        Column(
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+    ) {
+        Row(
             modifier =
                 Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(horizontal = 16.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Spacer(modifier = Modifier.height(8.dp))
+            IconButton(
+                onClick = {
+                    onClear()
+                    onBack()
+                },
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = stringResource(R.string.loc_89bab973),
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+        }
 
-            // --- Input card (input field, format indicator, load file) ---
+        // --- Input card (input field, format indicator, load file) ---
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors =
+                CardDefaults.cardColors(
+                    containerColor = DarkCard,
+                ),
+        ) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.tools_broadcast_field_title),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = TextSecondary,
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Input text field with QR button at bottom right
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    OutlinedTextField(
+                        value = inputData,
+                        onValueChange = {
+                            inputData = it
+                            // Clear previous result when user edits input
+                            if (broadcastState.txid != null || broadcastState.error != null) {
+                                onClear()
+                            }
+                        },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(180.dp),
+                        placeholder = {
+                            Text(
+                                stringResource(R.string.loc_7177b2f3),
+                                color = TextSecondary.copy(alpha = 0.6f),
+                            )
+                        },
+                        textStyle =
+                            MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                            ),
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                cursorColor = BitcoinOrange,
+                            ),
+                    )
+
+                    // Paste + QR scan at bottom right
+                    ScanPasteIcons(
+                        onScan = { showQrScanner = true },
+                        onPaste = { text ->
+                            inputData = text
+                            if (broadcastState.txid != null || broadcastState.error != null) {
+                                onClear()
+                            }
+                        },
+                        tint = BitcoinOrange,
+                        scanContentDescription = stringResource(R.string.sign_scan_qr),
+                        modifier =
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(bottom = 4.dp),
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text =
+                        stringResource(R.string.loc_e1614c61) +
+                            stringResource(R.string.broadcast_use_original_psbt_note),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+
+                // Format detection indicator
+                if (trimmedInput.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text =
+                            when (detectedFormat) {
+                                InputFormat.RAW_HEX -> stringResource(R.string.broadcast_format_raw_hex)
+                                InputFormat.PSBT_BASE64 -> stringResource(R.string.broadcast_format_psbt)
+                                InputFormat.INVALID -> stringResource(R.string.broadcast_format_invalid)
+                            },
+                        style = MaterialTheme.typography.bodySmall,
+                        color =
+                            when (detectedFormat) {
+                                InputFormat.RAW_HEX, InputFormat.PSBT_BASE64 -> TextSecondary
+                                InputFormat.INVALID -> WarningYellow
+                            },
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Import from file
+                IbisButton(
+                    onClick = {
+                        mainActivity?.skipNextBackgroundLockForActivityResult()
+                        filePickerLauncher.launch(arrayOf("*/*"))
+                    },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.loc_a5e83581),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // --- Decoded outputs review ---
+        val preview =
+            broadcastState.preview?.takeIf { broadcastState.previewInput == trimmedInput }
+        if (preview != null) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
@@ -199,371 +322,265 @@ fun BroadcastTransactionScreen(
                             .fillMaxWidth()
                             .padding(16.dp),
                 ) {
-                    // Input text field with QR button at bottom right
-                    Box(
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        OutlinedTextField(
-                            value = inputData,
-                            onValueChange = {
-                                inputData = it
-                                // Clear previous result when user edits input
-                                if (broadcastState.txid != null || broadcastState.error != null) {
-                                    onClear()
-                                }
-                            },
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(180.dp),
-                            placeholder = {
-                                Text(
-                                    stringResource(R.string.loc_7177b2f3),
-                                    color = TextSecondary.copy(alpha = 0.6f),
-                                )
-                            },
-                            textStyle =
-                                MaterialTheme.typography.bodySmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                ),
-                            shape = RoundedCornerShape(8.dp),
-                            colors =
-                                OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = BitcoinOrange,
-                                    unfocusedBorderColor = BorderColor,
-                                    cursorColor = BitcoinOrange,
-                                ),
+                    Text(
+                        text = stringResource(R.string.broadcast_review_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = stringResource(R.string.broadcast_txid_format, preview.txid),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        fontFamily = FontFamily.Monospace,
+                        overflow = TextOverflow.Ellipsis,
+                        maxLines = 1,
+                    )
+                    if (!preview.isFromLoadedWallet) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = stringResource(R.string.broadcast_inputs_not_wallet),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = WarningYellow,
                         )
-
-                        // QR scan button at bottom right
-                        IconButton(
-                            onClick = { showQrScanner = true },
-                            modifier = Modifier.align(Alignment.BottomEnd),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR",
-                                tint = BitcoinOrange,
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    preview.outputs.forEachIndexed { index, output ->
+                        val tag =
+                            if (output.ownedByLoadedWallet) {
+                                stringResource(R.string.broadcast_output_tag_own)
+                            } else {
+                                stringResource(R.string.broadcast_output_tag_external)
+                            }
+                        val tagColor =
+                            if (output.ownedByLoadedWallet) SuccessGreen else WarningYellow
+                        Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                            Text(
+                                text =
+                                    "#$index  " +
+                                        (
+                                            if (privacyMode) {
+                                                "****"
+                                            } else {
+                                                stringResource(
+                                                    R.string.tools_result_amount_sats,
+                                                    output.amountSats.toString(),
+                                                )
+                                            }
+                                        ) +
+                                        "  $tag",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = tagColor,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = output.address ?: stringResource(R.string.broadcast_output_unparseable),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                                fontFamily = FontFamily.Monospace,
+                                overflow = TextOverflow.Ellipsis,
+                                maxLines = 2,
                             )
                         }
                     }
+                    if (preview.anyOutputUnowned) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = stringResource(R.string.broadcast_external_outputs_warning),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = WarningYellow,
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Checkbox(
+                            checked = reviewed,
+                            onCheckedChange = { reviewed = it },
+                            colors =
+                                CheckboxDefaults.colors(
+                                    checkedColor = BitcoinOrange,
+                                    uncheckedColor = TextSecondary,
+                                ),
+                        )
+                        Text(
+                            text = stringResource(R.string.broadcast_reviewed_checkbox),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary,
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        } else if (trimmedInput.isNotEmpty() &&
+            detectedFormat != InputFormat.INVALID &&
+            broadcastState.previewInput == trimmedInput
+        ) {
+            // The repo could not decode the payload at all even though the
+            // surface-level format check passed (e.g. PSBT body bytes are
+            // malformed). Surface this loudly so the user does not bypass
+            // the review by checking a stale "reviewed" box.
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = WarningYellow.copy(alpha = 0.1f),
+                    ),
+            ) {
+                Text(
+                    text = stringResource(R.string.broadcast_decode_failed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WarningYellow,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        // --- Not connected warning ---
+        if (!isConnected) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = WarningYellow.copy(alpha = 0.1f),
+                    ),
+            ) {
+                Text(
+                    text = stringResource(R.string.loc_d893f956),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WarningYellow,
+                    modifier = Modifier.padding(16.dp),
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        // --- Broadcast button ---
+        val canBroadcast =
+            trimmedInput.isNotEmpty() &&
+                detectedFormat != InputFormat.INVALID &&
+                isConnected &&
+                !broadcastState.isBroadcasting &&
+                preview != null &&
+                reviewed
+
+        Button(
+            onClick = { onBroadcast(trimmedInput) },
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+            shape = RoundedCornerShape(8.dp),
+            enabled = canBroadcast,
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor = BitcoinOrange,
+                    disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                ),
+        ) {
+            if (broadcastState.isBroadcasting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(24.dp),
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Text(
+                    text = stringResource(R.string.loc_1900fe56),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+        }
+
+        // --- Broadcast status ---
+        if (broadcastState.isBroadcasting && broadcastState.broadcastStatus != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = broadcastState.broadcastStatus,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Center,
+            )
+        }
+
+        // --- Success card ---
+        if (broadcastState.txid != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = SuccessGreen.copy(alpha = 0.1f),
+                    ),
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.loc_caad9ed8),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = SuccessGreen,
+                    )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text =
-                            stringResource(R.string.loc_e1614c61) +
-                                "Use the original PSBT flow when available.",
+                        text = broadcastState.txid,
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
+                        fontFamily = FontFamily.Monospace,
+                        color = SuccessGreen.copy(alpha = 0.8f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
                     )
 
-                    // Format detection indicator
-                    if (trimmedInput.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text =
-                                when (detectedFormat) {
-                                    InputFormat.RAW_HEX -> "Raw transaction hex detected"
-                                    InputFormat.PSBT_BASE64 -> "Signed PSBT detected"
-                                    InputFormat.INVALID -> "Unrecognized format"
-                                },
-                            style = MaterialTheme.typography.bodySmall,
-                            color =
-                                when (detectedFormat) {
-                                    InputFormat.RAW_HEX, InputFormat.PSBT_BASE64 -> TextSecondary
-                                    InputFormat.INVALID -> WarningYellow
-                                },
-                        )
-                    }
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Import from file
-                    IbisButton(
+                    TextButton(
                         onClick = {
-                            mainActivity?.skipNextBackgroundLockForActivityResult()
-                            filePickerLauncher.launch(arrayOf("*/*"))
+                            SecureClipboard.copyAndScheduleClear(
+                                context,
+                                broadcastState.txid,
+                            )
                         },
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .height(48.dp),
                     ) {
                         Text(
-                            text = stringResource(R.string.loc_a5e83581),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // --- Decoded outputs review ---
-            val preview =
-                broadcastState.preview?.takeIf { broadcastState.previewInput == trimmedInput }
-            if (preview != null) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor = DarkCard,
-                        ),
-                ) {
-                    Column(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                    ) {
-                        Text(
-                            text = "Review decoded outputs",
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Txid: ${preview.txid}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            fontFamily = FontFamily.Monospace,
-                            overflow = TextOverflow.Ellipsis,
-                            maxLines = 1,
-                        )
-                        if (!preview.isFromLoadedWallet) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Inputs are not from the loaded wallet.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = WarningYellow,
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        preview.outputs.forEachIndexed { index, output ->
-                            val tag =
-                                if (output.ownedByLoadedWallet) "[own]" else "[external]"
-                            val tagColor =
-                                if (output.ownedByLoadedWallet) SuccessGreen else WarningYellow
-                            Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                Text(
-                                    text = "#$index  ${output.amountSats} sats  $tag",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = tagColor,
-                                    fontWeight = FontWeight.SemiBold,
-                                )
-                                Text(
-                                    text = output.address ?: "<unparseable scriptPubKey>",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = TextSecondary,
-                                    fontFamily = FontFamily.Monospace,
-                                    overflow = TextOverflow.Ellipsis,
-                                    maxLines = 2,
-                                )
-                            }
-                        }
-                        if (preview.anyOutputUnowned) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text =
-                                    "At least one output is not owned by the loaded wallet — " +
-                                        "double-check the destination(s) before broadcasting.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = WarningYellow,
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Checkbox(
-                                checked = reviewed,
-                                onCheckedChange = { reviewed = it },
-                                colors =
-                                    CheckboxDefaults.colors(
-                                        checkedColor = BitcoinOrange,
-                                        uncheckedColor = TextSecondary,
-                                    ),
-                            )
-                            Text(
-                                text = "I have reviewed the decoded outputs",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            } else if (trimmedInput.isNotEmpty() &&
-                detectedFormat != InputFormat.INVALID &&
-                broadcastState.previewInput == trimmedInput
-            ) {
-                // The repo could not decode the payload at all even though the
-                // surface-level format check passed (e.g. PSBT body bytes are
-                // malformed). Surface this loudly so the user does not bypass
-                // the review by checking a stale "reviewed" box.
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor = WarningYellow.copy(alpha = 0.1f),
-                        ),
-                ) {
-                    Text(
-                        text = "Could not decode this payload. Broadcast disabled.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = WarningYellow,
-                        modifier = Modifier.padding(16.dp),
-                    )
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // --- Not connected warning ---
-            if (!isConnected) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor = WarningYellow.copy(alpha = 0.1f),
-                        ),
-                ) {
-                    Text(
-                        text = stringResource(R.string.loc_d893f956),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = WarningYellow,
-                        modifier = Modifier.padding(16.dp),
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            // --- Broadcast button ---
-            val canBroadcast =
-                trimmedInput.isNotEmpty() &&
-                    detectedFormat != InputFormat.INVALID &&
-                    isConnected &&
-                    !broadcastState.isBroadcasting &&
-                    preview != null &&
-                    reviewed
-
-            Button(
-                onClick = { onBroadcast(trimmedInput) },
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                shape = RoundedCornerShape(8.dp),
-                enabled = canBroadcast,
-                colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor = BitcoinOrange,
-                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
-                    ),
-            ) {
-                if (broadcastState.isBroadcasting) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Text(
-                        text = stringResource(R.string.loc_1900fe56),
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
-            }
-
-            // --- Broadcast status ---
-            if (broadcastState.isBroadcasting && broadcastState.broadcastStatus != null) {
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = broadcastState.broadcastStatus,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = TextSecondary,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = TextAlign.Center,
-                )
-            }
-
-            // --- Success card ---
-            if (broadcastState.txid != null) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor = SuccessGreen.copy(alpha = 0.1f),
-                        ),
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.loc_caad9ed8),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold,
+                            stringResource(R.string.loc_e934eeef),
                             color = SuccessGreen,
                         )
-
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        Text(
-                            text = broadcastState.txid,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = SuccessGreen.copy(alpha = 0.8f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        TextButton(
-                            onClick = {
-                                SecureClipboard.copyAndScheduleClear(
-                                    context,
-                                    broadcastState.txid,
-                                )
-                            },
-                        ) {
-                            Text(
-                                stringResource(R.string.loc_e934eeef),
-                                color = SuccessGreen,
-                            )
-                        }
                     }
                 }
             }
-
-            // --- Error card ---
-            if (broadcastState.error != null) {
-                Spacer(modifier = Modifier.height(16.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors =
-                        CardDefaults.cardColors(
-                            containerColor = ErrorRed.copy(alpha = 0.1f),
-                        ),
-                ) {
-                    Text(
-                        text = broadcastState.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = ErrorRed,
-                        modifier = Modifier.padding(16.dp),
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(48.dp))
         }
+
+        // --- Error card ---
+        if (broadcastState.error != null) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors =
+                    CardDefaults.cardColors(
+                        containerColor = ErrorRed.copy(alpha = 0.1f),
+                    ),
+            ) {
+                Text(
+                    text = broadcastState.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ErrorRed,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(48.dp))
     }
 }
 

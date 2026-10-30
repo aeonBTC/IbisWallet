@@ -89,6 +89,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.net.toUri
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
+import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.BoltzSubmarineRefundState
 import github.aeonbtc.ibiswallet.data.model.LiquidAsset
@@ -135,6 +136,7 @@ import github.aeonbtc.ibiswallet.ui.theme.LightningYellow
 import github.aeonbtc.ibiswallet.ui.theme.LiquidTeal
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.util.LabelUtils
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.startActivityWithTaskFallback
@@ -223,7 +225,7 @@ fun LiquidBalanceScreen(
                 ?.takeIf { it.isNotBlank() }
                 ?: tx.recipientAddress?.takeIf { it.isNotBlank() }
         val explicitTxLabel = liquidTransactionLabels[tx.txid]
-        val txLabel = linkedAddress?.let { liquidAddressLabels[it] } ?: explicitTxLabel
+        val txLabel = LabelUtils.resolve(explicitTxLabel, linkedAddress?.let { liquidAddressLabels[it] })
         LiquidTransactionDetailDialog(
             transaction = tx,
             useSats = useSats,
@@ -237,19 +239,13 @@ fun LiquidBalanceScreen(
             label = txLabel,
             pendingLightningPayment = lookupPendingLightningPayment(tx.txid),
             onSaveLabel = { label ->
-                if (linkedAddress != null) {
-                    onSaveLiquidAddressLabelFromTransaction(linkedAddress, label)
-                    if (explicitTxLabel != null) onDeleteLiquidTransactionLabel(tx.txid)
-                } else {
-                    onSaveLiquidTransactionLabel(tx.txid, label)
-                }
+                onSaveLiquidTransactionLabel(tx.txid, label)
             },
             onDeleteLabel =
                 txLabel?.let {
                     {
+                        onDeleteLiquidTransactionLabel(tx.txid)
                         linkedAddress?.let(onDeleteLiquidAddressLabelFromTransaction)
-                            ?: onDeleteLiquidTransactionLabel(tx.txid)
-                        if (explicitTxLabel != null) onDeleteLiquidTransactionLabel(tx.txid)
                     }
             },
             boltzRescueMnemonic = boltzRescueMnemonic,
@@ -517,6 +513,29 @@ fun LiquidBalanceScreen(
                                     )
                                 }
                             }
+
+                            if (isNfcReaderActive) {
+                                val nfcStatusLabel =
+                                    when (nfcReaderState) {
+                                        NfcReaderUiState.Inactive,
+                                        NfcReaderUiState.Ready,
+                                        -> stringResource(R.string.nfc_status_ready)
+                                        NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                                        NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                                    }
+                                val nfcStatusColor =
+                                    if (nfcReaderState == NfcReaderUiState.Detecting) {
+                                        BitcoinOrange
+                                    } else {
+                                        SuccessGreen
+                                    }
+                                NfcStatusIndicator(
+                                    label = nfcStatusLabel,
+                                    contentDescription = nfcStatusLabel,
+                                    modifier = Modifier.align(Alignment.Center),
+                                    color = nfcStatusColor,
+                                )
+                            }
                         }
 
                         Column(
@@ -588,32 +607,6 @@ fun LiquidBalanceScreen(
                                 contentDescription = stringResource(R.string.loc_60129540),
                                 tint = LiquidTeal,
                                 modifier = Modifier.size(24.dp),
-                            )
-                        }
-
-                        if (isNfcReaderActive) {
-                            val nfcStatusLabel =
-                                when (nfcReaderState) {
-                                    NfcReaderUiState.Inactive,
-                                    NfcReaderUiState.Ready,
-                                    -> stringResource(R.string.nfc_status_ready)
-                                    NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
-                                    NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
-                                }
-                            val nfcStatusColor =
-                                if (nfcReaderState == NfcReaderUiState.Detecting) {
-                                    BitcoinOrange
-                                } else {
-                                    SuccessGreen
-                                }
-                            NfcStatusIndicator(
-                                label = nfcStatusLabel,
-                                contentDescription = nfcStatusLabel,
-                                modifier =
-                                    Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 2.dp),
-                                color = nfcStatusColor,
                             )
                         }
                     }
@@ -831,7 +824,11 @@ fun LiquidBalanceScreen(
                                 null
                             },
                         privacyMode = privacyMode,
-                        label = linkedAddress?.let { liquidAddressLabels[it] } ?: liquidTransactionLabels[tx.txid],
+                        label =
+                            LabelUtils.resolve(
+                                liquidTransactionLabels[tx.txid],
+                                linkedAddress?.let { liquidAddressLabels[it] },
+                            ),
                         onClick = { selectedLiquidTransaction = tx },
                     )
                     Spacer(modifier = Modifier.height(4.dp))
@@ -1221,6 +1218,7 @@ private fun LiquidTransactionDetailDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        SecureDialogSideEffect()
         ProvideLocalizedResources {
             Surface(
                 modifier =
@@ -2428,6 +2426,7 @@ private fun LiquidTorBrowserErrorDialog(onDismiss: () -> Unit) {
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        SecureDialogSideEffect()
         ProvideLocalizedResources {
             Surface(
                 modifier =

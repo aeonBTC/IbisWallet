@@ -34,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import github.aeonbtc.ibiswallet.R
@@ -201,6 +202,9 @@ private fun SwapPill(
             color = textColor,
             style = MaterialTheme.typography.labelMedium.copy(lineHeight = 16.sp),
             fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
         )
         Spacer(modifier = Modifier.width(3.dp))
         Icon(
@@ -271,6 +275,9 @@ private fun ChannelsPill(
             color = textColor,
             style = MaterialTheme.typography.labelMedium.copy(lineHeight = 16.sp),
             fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
         )
     }
 }
@@ -300,11 +307,11 @@ private fun LayerPill(
     Box(
         modifier = Modifier
             .heightIn(min = 36.dp)
-            .widthIn(min = 92.dp)
+            .widthIn(min = 76.dp)
             .clip(RoundedCornerShape(20.dp))
             .background(bgColor)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 6.dp),
+            .padding(horizontal = 14.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
@@ -312,6 +319,9 @@ private fun LayerPill(
             color = textColor,
             style = MaterialTheme.typography.labelMedium.copy(fontSize = 14.sp, lineHeight = 16.sp),
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
         )
     }
 }

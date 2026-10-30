@@ -29,14 +29,18 @@ import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -57,6 +61,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
@@ -127,8 +132,11 @@ import github.aeonbtc.ibiswallet.data.model.Layer2Provider
 import github.aeonbtc.ibiswallet.data.model.LightningNodeEvent
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
 import github.aeonbtc.ibiswallet.data.model.LiquidWalletState
+import github.aeonbtc.ibiswallet.data.model.SparkClaimOutcome
 import github.aeonbtc.ibiswallet.data.model.SparkEvent
+import github.aeonbtc.ibiswallet.data.model.SparkExitAlreadyCompleteException
 import github.aeonbtc.ibiswallet.data.model.SparkExitFlowState
+import github.aeonbtc.ibiswallet.data.model.SparkToken
 import github.aeonbtc.ibiswallet.data.model.SparkExitFundingUtxo
 import github.aeonbtc.ibiswallet.data.model.SparkExitLiveUtxo
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
@@ -138,6 +146,8 @@ import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.data.model.SyncProgress
 import github.aeonbtc.ibiswallet.data.model.WalletLayer
 import github.aeonbtc.ibiswallet.data.model.WalletPolicyType
+import github.aeonbtc.ibiswallet.data.repository.SingleTxBoardOutcome
+import github.aeonbtc.ibiswallet.data.repository.planSingleTxBoard
 import github.aeonbtc.ibiswallet.navigation.Screen
 import github.aeonbtc.ibiswallet.navigation.bottomNavItems
 import github.aeonbtc.ibiswallet.tor.TorStatus
@@ -168,6 +178,7 @@ import github.aeonbtc.ibiswallet.ui.screens.BroadcastTransactionScreen
 import github.aeonbtc.ibiswallet.ui.screens.ChecksumHelperScreen
 import github.aeonbtc.ibiswallet.ui.screens.CombinedServerConfigScreen
 import github.aeonbtc.ibiswallet.ui.screens.CurrentServerCard
+import github.aeonbtc.ibiswallet.ui.screens.DecoderScreen
 import github.aeonbtc.ibiswallet.ui.screens.DONATE_BITCOIN_URI
 import github.aeonbtc.ibiswallet.ui.screens.ElectrumConfigScreen
 import github.aeonbtc.ibiswallet.ui.screens.FullBackupPreview
@@ -198,6 +209,7 @@ import github.aeonbtc.ibiswallet.ui.screens.SecurityScreen
 import github.aeonbtc.ibiswallet.ui.screens.SendScreen
 import github.aeonbtc.ibiswallet.ui.screens.ServerConfigSection
 import github.aeonbtc.ibiswallet.ui.screens.SettingsScreen
+import github.aeonbtc.ibiswallet.ui.screens.SignTransactionScreen
 import github.aeonbtc.ibiswallet.ui.screens.SparkBalanceScreen
 import github.aeonbtc.ibiswallet.ui.screens.SparkReceiveScreen
 import github.aeonbtc.ibiswallet.ui.screens.SparkSendScreen
@@ -205,6 +217,8 @@ import github.aeonbtc.ibiswallet.ui.screens.SparkExitScreen
 import github.aeonbtc.ibiswallet.ui.screens.SparkTransferScreen
 import github.aeonbtc.ibiswallet.ui.screens.SwapScreen
 import github.aeonbtc.ibiswallet.ui.screens.SweepPrivateKeyScreen
+import github.aeonbtc.ibiswallet.ui.screens.ToolsScreen
+import github.aeonbtc.ibiswallet.ui.screens.VerifyMessageScreen
 import github.aeonbtc.ibiswallet.ui.screens.WalletInfo
 import github.aeonbtc.ibiswallet.ui.screens.WelcomeDialog
 import github.aeonbtc.ibiswallet.ui.theme.ArkRust
@@ -221,6 +235,7 @@ import github.aeonbtc.ibiswallet.ui.theme.SparkPurple
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
+import github.aeonbtc.ibiswallet.util.AppUpdateInstaller
 import github.aeonbtc.ibiswallet.util.Bip329LabelCounts
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.InputLimits
@@ -235,6 +250,7 @@ import github.aeonbtc.ibiswallet.util.parseSendRecipient
 import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import github.aeonbtc.ibiswallet.util.resolveLayer2SendDraft
 import github.aeonbtc.ibiswallet.util.resolveSendRoute
+import github.aeonbtc.ibiswallet.viewmodel.AppUpdateDownloadState
 import github.aeonbtc.ibiswallet.viewmodel.ArkDbTransferProgress
 import github.aeonbtc.ibiswallet.viewmodel.ArkViewModel
 import github.aeonbtc.ibiswallet.viewmodel.LightningNodeViewModel
@@ -355,6 +371,7 @@ fun IbisWalletApp(
     val btcPrice by viewModel.btcPriceState.collectAsStateWithLifecycle()
     val appUpdateStatus by viewModel.appUpdateStatus.collectAsStateWithLifecycle()
     val appUpdatePrompt by viewModel.appUpdatePrompt.collectAsStateWithLifecycle()
+    val appUpdateDownload by viewModel.appUpdateDownload.collectAsStateWithLifecycle()
     val priceCurrency by viewModel.priceCurrencyState.collectAsStateWithLifecycle()
     val historicalTxFiatEnabled by viewModel.historicalTxFiatEnabledState.collectAsStateWithLifecycle()
     val historicalTxBtcPrices by viewModel.historicalTxBtcPriceState.collectAsStateWithLifecycle()
@@ -387,7 +404,6 @@ fun IbisWalletApp(
     val sparkReceiveState by sparkViewModel.receiveState.collectAsStateWithLifecycle()
     val sparkPendingLnInvoice by sparkViewModel.pendingLnInvoice.collectAsStateWithLifecycle()
     val sparkAddressLabels by sparkViewModel.sparkAddressLabels.collectAsStateWithLifecycle()
-    val sparkSendDraft by sparkViewModel.sendDraft.collectAsStateWithLifecycle()
     val loadedSparkWalletId by sparkViewModel.loadedWalletId.collectAsStateWithLifecycle()
     val isSparkConnected by sparkViewModel.isSparkConnected.collectAsStateWithLifecycle()
     val isSparkConnecting by sparkViewModel.isSparkConnecting.collectAsStateWithLifecycle()
@@ -401,7 +417,6 @@ fun IbisWalletApp(
     val arkMailboxRescanBlocked by arkViewModel.mailboxRescanBlocked.collectAsStateWithLifecycle()
     val arkAddressLabels by arkViewModel.arkAddressLabels.collectAsStateWithLifecycle()
     val arkMovementLabels by arkViewModel.arkMovementLabels.collectAsStateWithLifecycle()
-    val arkSendDraft by arkViewModel.sendDraft.collectAsStateWithLifecycle()
     val loadedArkWalletId by arkViewModel.loadedWalletId.collectAsStateWithLifecycle()
     val isArkConnected by arkViewModel.isArkConnected.collectAsStateWithLifecycle()
     val isArkConnecting by arkViewModel.isArkConnecting.collectAsStateWithLifecycle()
@@ -436,7 +451,6 @@ fun IbisWalletApp(
     val lightningSendState by lightningNodeViewModel.sendState.collectAsStateWithLifecycle()
     val lightningReceiveState by lightningNodeViewModel.receiveState.collectAsStateWithLifecycle()
     val lightningOnchainState by lightningNodeViewModel.onchainState.collectAsStateWithLifecycle()
-    val lightningSendDraft by lightningNodeViewModel.sendDraft.collectAsStateWithLifecycle()
     val loadedLightningWalletId by lightningNodeViewModel.loadedWalletId.collectAsStateWithLifecycle()
     val isLightningConnected by lightningNodeViewModel.isConnected.collectAsStateWithLifecycle()
     val isLightningConnecting by lightningNodeViewModel.isConnecting.collectAsStateWithLifecycle()
@@ -839,11 +853,54 @@ fun IbisWalletApp(
         }
     }
 
-    // Handle incoming send payload from external intent or NFC
+    // Handle incoming send payload from external intent or NFC. External
+    // requests are never applied silently: they get an explicit confirmation
+    // so a link/tag cannot replace an in-progress draft under the user.
+    var pendingExternalSendInput by remember { mutableStateOf<String?>(null) }
+    var pendingExternalSendOrigin by remember {
+        mutableStateOf(WalletViewModel.PendingSendOrigin.DEEP_LINK)
+    }
     LaunchedEffect(pendingSendInput) {
         val input = pendingSendInput ?: return@LaunchedEffect
+        val origin = viewModel.pendingSendOrigin.value
         viewModel.consumePendingSendInput()
-        handleParsedSendInput(input)
+        if (origin == WalletViewModel.PendingSendOrigin.USER_TYPED) {
+            handleParsedSendInput(input)
+        } else {
+            pendingExternalSendOrigin = origin
+            pendingExternalSendInput = input
+        }
+    }
+    pendingExternalSendInput?.let { request ->
+        IbisConfirmDialog(
+            onDismissRequest = { pendingExternalSendInput = null },
+            title =
+                stringResource(
+                    if (pendingExternalSendOrigin == WalletViewModel.PendingSendOrigin.NFC) {
+                        R.string.send_external_origin_nfc_title
+                    } else {
+                        R.string.send_external_origin_link_title
+                    },
+                ),
+            message = stringResource(R.string.send_external_origin_message),
+            confirmText = stringResource(android.R.string.ok),
+            dismissText = stringResource(android.R.string.cancel),
+            onDismissAction = { pendingExternalSendInput = null },
+            onConfirm = {
+                val accepted = request
+                val origin = pendingExternalSendOrigin
+                pendingExternalSendInput = null
+                viewModel.setSendExternalOriginNotice(origin)
+                handleParsedSendInput(accepted)
+            },
+            body = {
+                Text(
+                    text = request,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+            },
+        )
     }
 
     // Close wallet picker and reset PIN setup state when navigating to a different screen
@@ -884,6 +941,7 @@ fun IbisWalletApp(
                 Screen.Swap.route,
                 Screen.SparkTransfer.route,
                 Screen.ArkTransfer.route,
+                Screen.ArkLifecycle.route,
                 Screen.LightningNodeChannels.route,
                 Screen.AllAddresses.route,
                 Screen.AllUtxos.route,
@@ -1164,63 +1222,154 @@ fun IbisWalletApp(
                     ReleaseNotesFormatter.toAnnotatedString(releaseNotes)
                 }
             }
+        val hasInAppApk = prompt.apkUrl != null
+        val download = appUpdateDownload
+        val isDownloading = download is AppUpdateDownloadState.Downloading
+        val downloadPercent =
+            (download as? AppUpdateDownloadState.Downloading)
+                ?.progress?.times(100)?.toInt() ?: 0
+        val openReleasePage = {
+            viewModel.dismissAppUpdatePromptAndDownload()
+            runCatching {
+                context.startActivity(Intent(Intent.ACTION_VIEW, prompt.releaseUrl.toUri()))
+            }
+        }
         IbisConfirmDialog(
-            onDismissRequest = { viewModel.dismissAppUpdatePrompt() },
+            onDismissRequest = {
+                if (hasInAppApk) {
+                    viewModel.dismissAppUpdatePromptAndDownload()
+                } else {
+                    viewModel.dismissAppUpdatePrompt()
+                }
+            },
             title = stringResource(R.string.update_popup_title),
             message = stringResource(R.string.update_popup_message, prompt.latestVersionName),
-            confirmText = stringResource(R.string.update_popup_view),
+            confirmText =
+                when {
+                    !hasInAppApk -> stringResource(R.string.update_popup_view)
+                    download is AppUpdateDownloadState.Ready -> stringResource(R.string.update_popup_install)
+                    isDownloading -> stringResource(R.string.update_popup_downloading_format, downloadPercent)
+                    else -> stringResource(R.string.update_popup_download)
+                },
             dismissText = stringResource(R.string.update_popup_close),
-            onDismissAction = { viewModel.dismissAppUpdatePrompt() },
+            neutralText = if (hasInAppApk) stringResource(R.string.update_popup_github) else null,
+            onNeutralAction = { openReleasePage() },
+            onDismissAction = {
+                if (hasInAppApk) {
+                    viewModel.dismissAppUpdatePromptAndDownload()
+                } else {
+                    viewModel.dismissAppUpdatePrompt()
+                }
+            },
+            confirmEnabled = !isDownloading,
             properties = DialogProperties(usePlatformDefaultWidth = false),
             maxWidth = 720.dp,
             onConfirm = {
-                viewModel.dismissAppUpdatePrompt()
-                runCatching {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, prompt.releaseUrl.toUri()))
+                if (!hasInAppApk) {
+                    openReleasePage()
+                } else {
+                    when (val state = download) {
+                        is AppUpdateDownloadState.Ready -> {
+                            if (!state.apkFile.exists()) {
+                                viewModel.startAppUpdateDownload()
+                            } else if (!AppUpdateInstaller.verifyDownloadedApk(context, state.apkFile)) {
+                                viewModel.markAppUpdateApkInvalid()
+                            } else {
+                                viewModel.dismissAppUpdatePrompt()
+                                runCatching {
+                                    if (!AppUpdateInstaller.canRequestInstalls(context)) {
+                                        context.startActivity(
+                                            AppUpdateInstaller.unknownSourcesIntent(context),
+                                        )
+                                    } else {
+                                        context.startActivity(
+                                            AppUpdateInstaller.installIntent(context, state.apkFile),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        is AppUpdateDownloadState.Downloading -> Unit
+
+                        else -> viewModel.startAppUpdateDownload()
+                    }
                 }
             },
             body =
-                if (releaseNotes.isNotEmpty()) {
+                if (releaseNotes.isNotEmpty() || hasInAppApk) {
                     {
-                        HorizontalDivider(color = BorderColor)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = stringResource(R.string.update_popup_changelog),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
-                        Text(
-                            text = formattedReleaseNotes ?: AnnotatedString(releaseNotes),
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 8.dp),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary,
-                            maxLines = if (changelogExpanded) Int.MAX_VALUE else 6,
-                            overflow = TextOverflow.Ellipsis,
-                            onTextLayout = { result ->
-                                if (!changelogExpanded) {
-                                    changelogOverflows = result.hasVisualOverflow
+                        if (releaseNotes.isNotEmpty()) {
+                            HorizontalDivider(color = BorderColor)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = stringResource(R.string.update_popup_changelog),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                            Text(
+                                text = formattedReleaseNotes ?: AnnotatedString(releaseNotes),
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 8.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                                maxLines = if (changelogExpanded) Int.MAX_VALUE else 6,
+                                overflow = TextOverflow.Ellipsis,
+                                onTextLayout = { result ->
+                                    if (!changelogExpanded) {
+                                        changelogOverflows = result.hasVisualOverflow
+                                    }
+                                },
+                            )
+                            if (changelogOverflows || changelogExpanded) {
+                                TextButton(
+                                    onClick = { changelogExpanded = !changelogExpanded },
+                                    modifier = Modifier.padding(top = 4.dp),
+                                ) {
+                                    Text(
+                                        text =
+                                            stringResource(
+                                                if (changelogExpanded) {
+                                                    R.string.update_popup_changelog_show_less
+                                                } else {
+                                                    R.string.update_popup_changelog_show_more
+                                                },
+                                            ),
+                                        color = BitcoinOrange,
+                                    )
                                 }
-                            },
-                        )
-                        if (changelogOverflows || changelogExpanded) {
-                            TextButton(
-                                onClick = { changelogExpanded = !changelogExpanded },
-                                modifier = Modifier.padding(top = 4.dp),
-                            ) {
-                                Text(
-                                    text =
-                                        stringResource(
-                                            if (changelogExpanded) {
-                                                R.string.update_popup_changelog_show_less
-                                            } else {
-                                                R.string.update_popup_changelog_show_more
-                                            },
-                                        ),
-                                    color = BitcoinOrange,
-                                )
+                            }
+                        }
+                        if (hasInAppApk) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            when (val state = download) {
+                                is AppUpdateDownloadState.Downloading -> {
+                                    LinearProgressIndicator(
+                                        progress = { state.progress },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        color = BitcoinOrange,
+                                    )
+                                }
+
+                                is AppUpdateDownloadState.Error -> {
+                                    Text(
+                                        text = stringResource(R.string.update_popup_download_failed),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = ErrorRed,
+                                    )
+                                }
+
+                                is AppUpdateDownloadState.Invalid -> {
+                                    Text(
+                                        text = stringResource(R.string.update_popup_invalid_download),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = ErrorRed,
+                                    )
+                                }
+
+                                else -> Unit
                             }
                         }
                     }
@@ -1792,6 +1941,9 @@ fun IbisWalletApp(
     val sparkExitInvalidDestinationMessage = stringResource(R.string.loc_04536bb4)
     val sparkExitImportOkFormat = stringResource(R.string.spark_exit_import_ok_format)
     val sparkDepositClaimDoneMessage = stringResource(R.string.spark_deposit_claim_done)
+    val sparkDepositClaimSubmittedMessage = stringResource(R.string.spark_deposit_claim_submitted)
+    val sparkDepositClaimDeferredMessage = stringResource(R.string.spark_deposit_claim_deferred)
+    val sparkExitDoneMessage = stringResource(R.string.spark_exit_done)
     // Friendly Spark error mapping: curated validation messages pass through
     // verbatim; SDK/transport internals collapse to localized generics so raw
     // protocol text never reaches a snackbar.
@@ -2879,7 +3031,7 @@ fun IbisWalletApp(
                         modifier =
                             Modifier
                                 .fillMaxWidth()
-                                .height(48.dp),
+                                .heightIn(min = 48.dp),
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Text(stringResource(R.string.ln_node_setup_connection))
@@ -3683,6 +3835,9 @@ fun IbisWalletApp(
                         DrawerItem.BackupRestore -> {
                             navController.navigate(Screen.BackupRestore.route)
                         }
+                        DrawerItem.Tools -> {
+                            navController.navigate(Screen.Tools.route)
+                        }
                         DrawerItem.About -> {
                             navController.navigate(Screen.About.route)
                         }
@@ -3707,6 +3862,7 @@ fun IbisWalletApp(
                         expandedHeight = if (isMainScreen) 40.dp else TopAppBarDefaults.TopAppBarExpandedHeight,
                         title = {
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 if (isMainScreen && isSecurityEnabled) {
@@ -3728,12 +3884,17 @@ fun IbisWalletApp(
                                         text = subScreenTitle,
                                         style = MaterialTheme.typography.titleLarge,
                                         color = MaterialTheme.colorScheme.onBackground,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        softWrap = false,
+                                        modifier = Modifier.weight(1f, fill = false),
                                     )
                                 } else {
                                     WalletSelectorDropdown(
                                         activeWallet = walletState.activeWallet,
                                         expanded = walletSelectorExpanded,
                                         onToggle = { walletSelectorExpanded = !walletSelectorExpanded },
+                                        modifier = Modifier.weight(1f, fill = false),
                                     )
                                 }
                             }
@@ -3804,6 +3965,9 @@ fun IbisWalletApp(
                                                 style = MaterialTheme.typography.labelMedium,
                                                 color = layer2StatusColor,
                                                 maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                softWrap = false,
+                                                modifier = Modifier.weight(1f, fill = false),
                                             )
                                         } else {
                                             // Electrum Bitcoin + L2 provider (Liquid / Spark)
@@ -3828,6 +3992,9 @@ fun IbisWalletApp(
                                                 style = MaterialTheme.typography.labelMedium,
                                                 color = electrumStatusColor,
                                                 maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                softWrap = false,
+                                                modifier = Modifier.weight(1f, fill = false),
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
@@ -3876,6 +4043,9 @@ fun IbisWalletApp(
                                                 style = MaterialTheme.typography.labelMedium,
                                                 color = layer2StatusColor,
                                                 maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                softWrap = false,
+                                                modifier = Modifier.weight(1f, fill = false),
                                             )
                                         }
                                     } else {
@@ -3900,6 +4070,9 @@ fun IbisWalletApp(
                                             style = MaterialTheme.typography.labelMedium,
                                             color = electrumStatusColor,
                                             maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            softWrap = false,
+                                            modifier = Modifier.weight(1f, fill = false),
                                         )
                                     }
                                 }
@@ -3937,6 +4110,9 @@ fun IbisWalletApp(
                                     Text(
                                         text = itemTitle,
                                         style = MaterialTheme.typography.labelMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        softWrap = false,
                                     )
                                 },
                                 selected = selected,
@@ -4274,6 +4450,19 @@ fun IbisWalletApp(
                                                 onToggleDenomination = toggleLayer2Denomination,
                                             )
                                         } else if (isSparkAvailable) {
+                                            var knownSparkTokens by remember(activeWalletId) {
+                                                mutableStateOf(emptyList<SparkToken>())
+                                            }
+                                            // Off the composition path: encrypted-prefs
+                                            // reads decrypt per key. Refreshes when
+                                            // balances change (held tokens auto-register).
+                                            LaunchedEffect(activeWalletId, visibleSparkState.tokenBalances) {
+                                                knownSparkTokens =
+                                                    withContext(Dispatchers.IO) {
+                                                        activeWalletId?.let { sparkViewModel.getKnownSparkTokens(it) }
+                                                            .orEmpty()
+                                                    }
+                                            }
                                             SparkReceiveScreen(
                                                 receiveState = sparkReceiveState,
                                                 sparkAddressLabels = sparkAddressLabels,
@@ -4281,8 +4470,8 @@ fun IbisWalletApp(
                                                 btcPrice = btcPrice,
                                                 fiatCurrency = priceCurrency,
                                                 privacyMode = privacyMode,
-                                                onReceive = { kind, amount, description, forceNew ->
-                                                    sparkViewModel.receive(kind, amount, description, forceNew)
+                                                onReceive = { kind, amount, description, forceNew, tokenIdentifier, tokenAmount ->
+                                                    sparkViewModel.receive(kind, amount, description, forceNew, tokenIdentifier, tokenAmount)
                                                 },
                                                 onSaveAddressLabel = { addressOrRequest, label ->
                                                     activeWalletId?.let { walletId ->
@@ -4295,6 +4484,12 @@ fun IbisWalletApp(
                                                 onPrimeLnInvoice = { sparkViewModel.primeLnInvoiceFromCache() },
                                                 walletId = activeWalletId,
                                                 walletReady = loadedSparkWalletId == activeWalletId,
+                                                tokenBalances = visibleSparkState.tokenBalances,
+                                                knownTokens = knownSparkTokens,
+                                                onResolveToken = { id -> sparkViewModel.resolveSparkToken(id) },
+                                                onRememberToken = { token ->
+                                                    activeWalletId?.let { sparkViewModel.rememberSparkToken(it, token) }
+                                                },
                                             )
                                         } else if (isArkAvailable) {
                                             ArkReceiveScreen(
@@ -4409,6 +4604,10 @@ fun IbisWalletApp(
                                             onSilentReceiveChange = { viewModel.setSilentPaymentReceiveMode(it) },
                                             silentScanDisclosureAcknowledged = viewModel.hasAcknowledgedSilentPaymentScanDisclosure(),
                                             onAcknowledgeSilentScanDisclosure = { viewModel.acknowledgeSilentPaymentScanDisclosure() },
+                                            spScanTipHeight = viewModel.getSpScanTipHeight(),
+                                            spScanMinHeight = viewModel.getSpScanStartMinHeight(),
+                                            onApplySilentScanStartHeight = { viewModel.setSilentPaymentScanStartHeight(it) },
+                                            onOpenServerSettings = { navController.navigate(Screen.ElectrumConfig.route) },
                                         )
                                     }
                                 }
@@ -4430,6 +4629,10 @@ fun IbisWalletApp(
                                     onSilentReceiveChange = { viewModel.setSilentPaymentReceiveMode(it) },
                                     silentScanDisclosureAcknowledged = viewModel.hasAcknowledgedSilentPaymentScanDisclosure(),
                                     onAcknowledgeSilentScanDisclosure = { viewModel.acknowledgeSilentPaymentScanDisclosure() },
+                                    spScanTipHeight = viewModel.getSpScanTipHeight(),
+                                    spScanMinHeight = viewModel.getSpScanStartMinHeight(),
+                                    onApplySilentScanStartHeight = { viewModel.setSilentPaymentScanStartHeight(it) },
+                                    onOpenServerSettings = { navController.navigate(Screen.ElectrumConfig.route) },
                                 )
                             }
                         }
@@ -4447,6 +4650,8 @@ fun IbisWalletApp(
                         val sparkTransactionLabels by sparkViewModel.sparkTransactionLabels.collectAsStateWithLifecycle()
                         val sparkTransactionSources by sparkViewModel.sparkTransactionSources.collectAsStateWithLifecycle()
                         val boltzRescueMnemonic by liquidViewModel.boltzRescueMnemonic.collectAsStateWithLifecycle()
+                        val balanceDustUtxos by viewModel.allUtxos.collectAsStateWithLifecycle()
+                        val balanceDustCount = balanceDustUtxos.count { it.isSuspectedDust && !it.isFrozen }
 
                         val handleScanQrResult: (String) -> Unit = { code ->
                             handleParsedSendInput(code.trim())
@@ -4504,6 +4709,12 @@ fun IbisWalletApp(
                                                 quickReceiveState = lightningReceiveState,
                                                 onScanQrResult = { code ->
                                                     handleParsedSendInput(code)
+                                                },
+                                                onSavePaymentLabel = { payment, label ->
+                                                    lightningNodeViewModel.savePaymentLabel(payment, label)
+                                                },
+                                                onDeletePaymentLabel = { payment ->
+                                                    lightningNodeViewModel.deletePaymentLabel(payment)
                                                 },
                                             )
                                         } else if (isSparkAvailable) {
@@ -4568,21 +4779,35 @@ fun IbisWalletApp(
                                                 onFetchInstantClaimQuote = { txid, vout ->
                                                     sparkViewModel.fetchDepositClaimQuote(txid, vout)
                                                 },
-                                                onClaimDepositNow = { quote ->
+                                                onClaimDepositNow = { quote, feeSats ->
                                                     requireSpendAuth {
                                                         scope.launch {
                                                             try {
                                                                 // claimDepositNow refreshes wallet state
-                                                                // itself, dropping the deposit from pending.
-                                                                sparkViewModel.claimDepositNow(
-                                                                    quote.txid,
-                                                                    quote.vout,
-                                                                    quote.amountSats,
-                                                                    quote.feeSats,
-                                                                )
-                                                                snackbarHostState.showSnackbar(
-                                                                    sparkDepositClaimDoneMessage,
-                                                                )
+                                                                // itself. A Deferred outcome is ordinary:
+                                                                // the ceiling stands and the SDK retries
+                                                                // on its own — say so, don't error.
+                                                                when (
+                                                                    sparkViewModel.claimDepositNow(
+                                                                        quote.txid,
+                                                                        quote.vout,
+                                                                        quote.amountSats,
+                                                                        feeSats,
+                                                                    )
+                                                                ) {
+                                                                    is SparkClaimOutcome.Settled ->
+                                                                        snackbarHostState.showSnackbar(
+                                                                            sparkDepositClaimDoneMessage,
+                                                                        )
+                                                                    SparkClaimOutcome.Submitted ->
+                                                                        snackbarHostState.showSnackbar(
+                                                                            sparkDepositClaimSubmittedMessage,
+                                                                        )
+                                                                    is SparkClaimOutcome.Deferred ->
+                                                                        snackbarHostState.showSnackbar(
+                                                                            sparkDepositClaimDeferredMessage,
+                                                                        )
+                                                                }
                                                             } catch (e: CancellationException) {
                                                                 throw e
                                                             } catch (e: Exception) {
@@ -4639,6 +4864,11 @@ fun IbisWalletApp(
                                                 },
                                                 onOpenLifecycle = {
                                                     navController.navigate(Screen.ArkLifecycle.createRoute())
+                                                },
+                                                onOpenRefresh = {
+                                                    navController.navigate(
+                                                        Screen.ArkLifecycle.createRoute(ArkManageTab.REFRESH.name),
+                                                    )
                                                 },
                                                 onOpenArkBackup = {
                                                     navController.navigate(
@@ -4819,6 +5049,12 @@ fun IbisWalletApp(
                                                     confirmations,
                                                 )
                                             },
+                                            onSaveOnchainLabel = { txid, label ->
+                                                lightningNodeViewModel.saveOnchainLabel(txid, label)
+                                            },
+                                            onDeleteOnchainLabel = { txid ->
+                                                lightningNodeViewModel.deleteOnchainLabel(txid)
+                                            },
                                         )
                                     } else {
                                         BalanceScreen(
@@ -4899,6 +5135,8 @@ fun IbisWalletApp(
                                             onDismissElectrumBanner = {
                                                 viewModel.dismissElectrumConnectionBanner()
                                             },
+                                            dustUtxoCount = balanceDustCount,
+                                            onReviewDust = { navController.navigate(Screen.AllUtxos.route) },
                                         )
                                     }
                                 }
@@ -4983,6 +5221,8 @@ fun IbisWalletApp(
                                     onDismissElectrumBanner = {
                                         viewModel.dismissElectrumConnectionBanner()
                                     },
+                                    dustUtxoCount = balanceDustCount,
+                                    onReviewDust = { navController.navigate(Screen.AllUtxos.route) },
                                 )
                             }
                         }
@@ -4994,6 +5234,7 @@ fun IbisWalletApp(
                         val dryRunResult by viewModel.dryRunResult.collectAsStateWithLifecycle()
                         val isDryRunInProgress by viewModel.isDryRunInProgress.collectAsStateWithLifecycle()
                         val sendRecipientIsSelfTransfer by viewModel.sendRecipientIsSelfTransfer.collectAsStateWithLifecycle()
+                        val sendExternalOriginNotice by viewModel.sendExternalOriginNotice.collectAsStateWithLifecycle()
                         val layer2SendDraft by liquidViewModel.sendDraft.collectAsStateWithLifecycle()
                         val liquidSendState by liquidViewModel.sendState.collectAsStateWithLifecycle()
                         val liquidUtxos by liquidViewModel.allLiquidUtxos.collectAsStateWithLifecycle()
@@ -5052,9 +5293,11 @@ fun IbisWalletApp(
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                                 )
                                 Box(modifier = Modifier.weight(1f)) {
-                                    key(activeLayer, liquidSendScreenKey) {
+                                    key(activeWalletId, activeLayer, liquidSendScreenKey) {
                                         if (activeLayer == WalletLayer.LAYER2) {
                                             if (isLightningAvailable) {
+                                                val lightningSendDraft by
+                                                    lightningNodeViewModel.sendDraft.collectAsStateWithLifecycle()
                                                 LightningNodeSendScreen(
                                                     sendState = lightningSendState,
                                                     sendDraft = lightningSendDraft,
@@ -5068,10 +5311,11 @@ fun IbisWalletApp(
                                                     btcPrice = btcPrice,
                                                     fiatCurrency = priceCurrency,
                                                     onUpdateDraft = { draft -> lightningNodeViewModel.setSendDraft(draft) },
-                                                    onPrepareSend = { paymentRequest, amountSats ->
+                                                    onPrepareSend = { paymentRequest, amountSats, label ->
                                                         lightningNodeViewModel.prepareSend(
                                                             paymentRequest,
                                                             amountSats,
+                                                            label = label,
                                                         )
                                                     },
                                                     onSendPrepared = {
@@ -5089,8 +5333,12 @@ fun IbisWalletApp(
                                                             ),
                                                         )
                                                     },
+                                                    externalOriginOrigin = sendExternalOriginNotice,
+                                                    onClearExternalOriginNotice = { viewModel.setSendExternalOriginNotice(null) },
                                                 )
                                             } else if (isSparkAvailable) {
+                                                val sparkSendDraft by
+                                                    sparkViewModel.sendDraft.collectAsStateWithLifecycle()
                                                 SparkSendScreen(
                                                     draft = sparkSendDraft,
                                                     sendState = sparkSendState,
@@ -5109,16 +5357,31 @@ fun IbisWalletApp(
                                                     onPrepareSendMany = { recipients, label ->
                                                         sparkViewModel.prepareSendMany(recipients, label)
                                                     },
-                                                      onSendPrepared = {
-                                                          requireSpendAuth { sparkViewModel.sendPrepared() }
-                                                      },
+                                                    onSendPrepared = {
+                                                        requireSpendAuth { sparkViewModel.sendPrepared() }
+                                                    },
                                                     onSendPreparedMany = {
                                                         requireSpendAuth { sparkViewModel.sendPreparedMany() }
                                                     },
                                                     onResetSend = { sparkViewModel.resetSendState() },
                                                     onToggleDenomination = toggleLayer2Denomination,
+                                                    tokenBalances = visibleSparkState.tokenBalances,
+                                                    onPrepareTokenSend = { paymentRequest, tokenIdentifier, tokenAmount, useAllFunds, label ->
+                                                        sparkViewModel.prepareSend(
+                                                            paymentRequest = paymentRequest,
+                                                            amountSats = null,
+                                                            useAllFunds = useAllFunds,
+                                                            label = label,
+                                                            tokenIdentifier = tokenIdentifier,
+                                                            tokenAmount = tokenAmount,
+                                                        )
+                                                    },
+                                                    externalOriginOrigin = sendExternalOriginNotice,
+                                                    onClearExternalOriginNotice = { viewModel.setSendExternalOriginNotice(null) },
                                                 )
                                             } else if (isArkAvailable) {
+                                                val arkSendDraft by
+                                                    arkViewModel.sendDraft.collectAsStateWithLifecycle()
                                                 ArkSendScreen(
                                                     draft = arkSendDraft,
                                                     sendState = arkSendState,
@@ -5147,6 +5410,8 @@ fun IbisWalletApp(
                                                     },
                                                     onResetSend = { arkViewModel.resetSendState() },
                                                     onToggleDenomination = toggleLayer2Denomination,
+                                                    externalOriginOrigin = sendExternalOriginNotice,
+                                                    onClearExternalOriginNotice = { viewModel.setSendExternalOriginNotice(null) },
                                                 )
                                             } else {
                                                 LiquidSendScreen(
@@ -5286,6 +5551,8 @@ fun IbisWalletApp(
                                                 onClearDraft = { liquidViewModel.clearSendDraft() },
                                                 onResetSend = { liquidViewModel.resetSendState() },
                                                 onToggleDenomination = toggleLayer2Denomination,
+                                                externalOriginOrigin = sendExternalOriginNotice,
+                                                onClearExternalOriginNotice = { viewModel.setSendExternalOriginNotice(null) },
                                             )
                                             }
                                         } else if (isLightningAvailable) {
@@ -5441,10 +5708,12 @@ fun IbisWalletApp(
                                             onCreatePsbtMulti = { recipients, feeRate, selectedUtxos, label, precomputedFeeSats ->
                                                 viewModel.createPsbtMulti(recipients, feeRate, selectedUtxos, label, precomputedFeeSats)
                                             },
-                                            onNavigateToBroadcast = {
-                                                navController.navigate(Screen.BroadcastTransaction.route)
+                                            onNavigateToSign = {
+                                                navController.navigate(Screen.SignTransaction.route)
                                             },
                                             onToggleDenomination = toggleLayer1Denomination,
+                                            externalOriginOrigin = sendExternalOriginNotice,
+                                            onClearExternalOriginNotice = { viewModel.setSendExternalOriginNotice(null) },
                                         )
                                     }
                                 }
@@ -5537,10 +5806,12 @@ fun IbisWalletApp(
                                     onCreatePsbtMulti = { recipients, feeRate, selectedUtxos, label, precomputedFeeSats ->
                                         viewModel.createPsbtMulti(recipients, feeRate, selectedUtxos, label, precomputedFeeSats)
                                     },
-                                    onNavigateToBroadcast = {
-                                        navController.navigate(Screen.BroadcastTransaction.route)
+                                    onNavigateToSign = {
+                                        navController.navigate(Screen.SignTransaction.route)
                                     },
                                     onToggleDenomination = toggleLayer1Denomination,
+                                    externalOriginOrigin = sendExternalOriginNotice,
+                                    onClearExternalOriginNotice = { viewModel.setSendExternalOriginNotice(null) },
                                 )
                             }
                         }
@@ -5866,6 +6137,17 @@ fun IbisWalletApp(
                             onReorderWallets = { orderedIds ->
                                 viewModel.reorderWallets(orderedIds)
                             },
+                            canReceiveSilentPayments = { walletId ->
+                                viewModel.canReceiveSilentPaymentsForWallet(walletId)
+                            },
+                            getSilentPaymentScanStartHeight = { walletId ->
+                                viewModel.getSilentPaymentScanStartHeightForWallet(walletId)
+                            },
+                            spScanTipHeight = viewModel.getSpScanTipHeight(),
+                            spScanMinHeight = viewModel.getSpScanStartMinHeight(),
+                            onSetSilentPaymentScanStartHeight = { walletId, height ->
+                                viewModel.setSilentPaymentScanStartHeightForWallet(walletId, height)
+                            },
                             onFullSync = { wallet ->
                                 if (liquidViewModel.isLiquidEnabledForWallet(wallet.id)) {
                                     liquidViewModel.requestFullSync(wallet.id)
@@ -6025,8 +6307,6 @@ fun IbisWalletApp(
                                 viewModel.importLiquidWatchOnlyWallet(name, ctDescriptor, gapLimit)
                             },
                             onBack = { navController.popBackStack() },
-                            onSweepPrivateKey = { navController.navigate(Screen.SweepPrivateKey.route) },
-                            onOpenChecksumHelper = { navController.navigate(Screen.ChecksumHelper.route) },
                             prefillResult = checksumResult,
                             onChecksumResultConsumed = {
                                 it.savedStateHandle.remove<String?>("checksum_result")
@@ -6055,12 +6335,74 @@ fun IbisWalletApp(
                     ) {
                         ChecksumHelperScreen(
                             onBack = { navController.popBackStack() },
-                            onUsePhrase = { phrase ->
-                                navController.previousBackStackEntry
-                                    ?.savedStateHandle
-                                    ?.set("checksum_result", phrase)
-                                navController.popBackStack()
-                            },
+                        )
+                    }
+                    composable(
+                        route = Screen.Tools.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        ToolsScreen(
+                            onBack = { navController.popBackStack() },
+                            onOpenChecksumHelper = { navController.navigate(Screen.ChecksumHelper.route) },
+                            onOpenBroadcast = { navController.navigate(Screen.BroadcastTransaction.route) },
+                            onOpenVerifyMessage = { navController.navigate(Screen.VerifyMessage.route) },
+                            onOpenDecoder = { navController.navigate(Screen.Decoder.route) },
+                            onOpenSweepPrivateKey = { navController.navigate(Screen.SweepPrivateKey.route) },
+                        )
+                    }
+                    composable(
+                        route = Screen.VerifyMessage.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        VerifyMessageScreen(
+                            onBack = { navController.popBackStack() },
+                        )
+                    }
+                    composable(
+                        route = Screen.Decoder.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        DecoderScreen(
+                            onBack = { navController.popBackStack() },
                         )
                     }
                     composable(
@@ -6178,6 +6520,12 @@ fun IbisWalletApp(
                         var consolidateChange by remember(walletSettingsRefreshVersion) {
                             mutableStateOf(viewModel.getConsolidateChange())
                         }
+                        var dustMaxSats by remember(walletSettingsRefreshVersion) {
+                            mutableLongStateOf(viewModel.getDustMaxSats())
+                        }
+                        var dustExcludeFromAutoSelect by remember(walletSettingsRefreshVersion) {
+                            mutableStateOf(viewModel.getDustExcludeFromAutoSelect())
+                        }
                         var nfcEnabled by remember(walletSettingsRefreshVersion) {
                             mutableStateOf(viewModel.isNfcEnabled())
                         }
@@ -6211,6 +6559,16 @@ fun IbisWalletApp(
                             onConsolidateChangeChange = { enabled ->
                                 viewModel.setConsolidateChange(enabled)
                                 consolidateChange = enabled
+                            },
+                            dustMaxSats = dustMaxSats,
+                            onDustMaxSatsChange = { sats ->
+                                viewModel.setDustMaxSats(sats)
+                                dustMaxSats = sats
+                            },
+                            dustExcludeFromAutoSelect = dustExcludeFromAutoSelect,
+                            onDustExcludeFromAutoSelectChange = { enabled ->
+                                viewModel.setDustExcludeFromAutoSelect(enabled)
+                                dustExcludeFromAutoSelect = enabled
                             },
                             walletNotificationsEnabled = walletNotificationsEnabled,
                             walletNotificationDeliveryState = walletNotificationDeliveryState,
@@ -6352,6 +6710,9 @@ fun IbisWalletApp(
                                     launchSingleTop = true
                                 }
                             },
+                            appUpdateCheckEnabled = appUpdateCheckEnabled,
+                            onAppUpdateCheckEnabledChange = ::updateAppUpdateCheckEnabled,
+                            appUpdateStatus = appUpdateStatus,
                             onBack = { navController.popBackStack() },
                         )
                     }
@@ -6432,7 +6793,21 @@ fun IbisWalletApp(
                             },
                             currentArkEsploraUrl = arkEsploraAddress,
                             onArkEsploraUrlChange = { url ->
+                                val wasOnion = isOnionHostUrl(arkEsploraAddress)
                                 arkViewModel.setArkEsploraAddressAndReload(url)
+                                if (wasOnion && !isOnionHostUrl(url)) {
+                                    viewModel.stopTor()
+                                }
+                            },
+                            currentArkServerUrl = arkViewModel.getArkServerAddress(),
+                            customArkEsploraUrl = arkViewModel.getArkCustomEsploraAddress(),
+                            onCustomArkEsploraUrlSave = { url ->
+                                val wasOnion = isOnionHostUrl(arkEsploraAddress)
+                                arkViewModel.setArkCustomEsploraAddress(url)
+                                arkViewModel.setArkEsploraAddressAndReload(url)
+                                if (wasOnion && !isOnionHostUrl(url)) {
+                                    viewModel.stopTor()
+                                }
                             },
                             layer2TorStatus = arkTorState.status,
                             onOpenLiquidElectrum = {
@@ -6829,14 +7204,6 @@ fun IbisWalletApp(
                         },
                     ) {
                         AboutScreen(
-                            appUpdateStatus = appUpdateStatus,
-                            appUpdateCheckEnabled = appUpdateCheckEnabled,
-                            onAppUpdateCheckEnabledChange = ::updateAppUpdateCheckEnabled,
-                            onDownloadUpdateClick = { releaseUrl ->
-                                runCatching {
-                                    context.startActivity(Intent(Intent.ACTION_VIEW, releaseUrl.toUri()))
-                                }
-                            },
                             onDonateClick = { handleParsedSendInput(DONATE_BITCOIN_URI) },
                             onBack = { navController.popBackStack() },
                         )
@@ -6893,8 +7260,8 @@ fun IbisWalletApp(
                                 val json = viewModel.parseFullBackup(uri, password)
                                 val walletsArr = json.optJSONArray("wallets")
                                 val previewWallets = List(walletsArr?.length() ?: 0) { i ->
-                                    val entry = walletsArr!!.getJSONObject(i)
-                                    val walletObj = entry.optJSONObject("wallet")
+                                    val entry = walletsArr?.optJSONObject(i)
+                                    val walletObj = entry?.optJSONObject("wallet")
                                     val rawType = walletObj?.optString("addressType", "").orEmpty()
                                     val rawPolicy = walletObj?.optString("policyType", "").orEmpty()
                                     val displayType =
@@ -6913,7 +7280,7 @@ fun IbisWalletApp(
                                         name = walletObj?.optString("name", "Unnamed") ?: "Unnamed",
                                         type = displayType,
                                         isWatchOnly = walletObj?.optBoolean("isWatchOnly", false) == true,
-                                        hasLabels = entry.has("labels"),
+                                        hasLabels = entry?.has("labels") == true,
                                     )
                                 }
                                 FullBackupPreview(
@@ -7151,6 +7518,7 @@ fun IbisWalletApp(
                         PsbtScreen(
                             psbtState = psbtState,
                             uiState = uiState,
+                            privacyMode = privacyMode,
                             qrDensity = psbtQrDensity,
                             onQrDensityChange = { density ->
                                 viewModel.setPsbtQrDensity(density)
@@ -7197,6 +7565,7 @@ fun IbisWalletApp(
                         LiquidPsetScreen(
                             psetState = liquidPsetState,
                             isConnected = isLiquidConnected,
+                            privacyMode = privacyMode,
                             qrDensity = psbtQrDensity,
                             onQrDensityChange = { density ->
                                 viewModel.setPsbtQrDensity(density)
@@ -7242,6 +7611,7 @@ fun IbisWalletApp(
                         BroadcastTransactionScreen(
                             broadcastState = manualBroadcastState,
                             isConnected = uiState.isConnected,
+                            privacyMode = privacyMode,
                             onPreview = { data ->
                                 viewModel.previewManualBroadcast(data)
                             },
@@ -7252,6 +7622,52 @@ fun IbisWalletApp(
                                 viewModel.clearManualBroadcastState()
                             },
                             onBack = {
+                                navController.popBackStack()
+                            },
+                        )
+                    }
+                    composable(
+                        route = Screen.SignTransaction.route,
+                        enterTransition = { slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) },
+                        exitTransition = { slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300)) },
+                        popEnterTransition = {
+                            slideInHorizontally(
+                                initialOffsetX = { -it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                        popExitTransition = {
+                            slideOutHorizontally(
+                                targetOffsetX = { it },
+                                animationSpec = tween(300),
+                            )
+                        },
+                    ) {
+                        val signState by viewModel.signState.collectAsStateWithLifecycle()
+                        val signQrDensity by viewModel.psbtQrDensityState.collectAsStateWithLifecycle()
+                        val signQrBrightness by viewModel.psbtQrBrightnessState.collectAsStateWithLifecycle()
+                        SignTransactionScreen(
+                            signState = signState,
+                            privacyMode = privacyMode,
+                            qrDensity = signQrDensity,
+                            onQrDensityChange = { density ->
+                                viewModel.setPsbtQrDensity(density)
+                            },
+                            qrBrightness = signQrBrightness,
+                            onQrBrightnessChange = { brightness ->
+                                viewModel.setPsbtQrBrightness(brightness)
+                            },
+                            onInputReceived = { data ->
+                                viewModel.setSignerInput(data)
+                            },
+                            onSign = {
+                                requireSpendAuth { viewModel.signImportedPsbt() }
+                            },
+                            onClear = {
+                                viewModel.clearSignState()
+                            },
+                            onBack = {
+                                viewModel.clearSignState()
                                 navController.popBackStack()
                             },
                         )
@@ -7475,6 +7891,9 @@ fun IbisWalletApp(
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                             )
                             Box(modifier = Modifier.weight(1f)) {
+                                val lightningPeers by lightningNodeViewModel.peers.collectAsStateWithLifecycle()
+                                val lightningPeersLoading by lightningNodeViewModel.peersLoading.collectAsStateWithLifecycle()
+                                val lightningChannelOp by lightningNodeViewModel.channelOpState.collectAsStateWithLifecycle()
                                 LightningNodeChannelsScreen(
                                     channels = lightningChannels,
                                     isLoading = lightningChannelsLoading,
@@ -7485,6 +7904,38 @@ fun IbisWalletApp(
                                     denomination = layer2Denomination,
                                     privacyMode = privacyMode,
                                     onRefresh = { lightningNodeViewModel.refreshChannels() },
+                                    peers = lightningPeers,
+                                    peersLoading = lightningPeersLoading,
+                                    channelOpState = lightningChannelOp,
+                                    onRefreshPeers = { lightningNodeViewModel.refreshPeers() },
+                                    onConnectPeer = { pubkey, host ->
+                                        lightningNodeViewModel.connectPeer(pubkey, host)
+                                    },
+                                    onDisconnectPeer = { pubkey, force ->
+                                        lightningNodeViewModel.disconnectPeer(pubkey, force)
+                                    },
+                                    onOpenChannel = { pubkey, amount, fee, isPrivate, push, closeAddr, peerHost ->
+                                        requireSpendAuth {
+                                            lightningNodeViewModel.openChannel(
+                                                pubkey,
+                                                amount,
+                                                fee,
+                                                isPrivate,
+                                                push,
+                                                closeAddr,
+                                                peerHost,
+                                            )
+                                        }
+                                    },
+                                    onCloseChannel = { channel, force, fee, addr ->
+                                        requireSpendAuth {
+                                            lightningNodeViewModel.closeChannel(channel, force, fee, addr)
+                                        }
+                                    },
+                                    onUpdateFeePolicy = { channel, baseMsat, ppm, cltv ->
+                                        lightningNodeViewModel.updateChannelFeePolicy(channel, baseMsat, ppm, cltv)
+                                    },
+                                    onResetChannelOp = { lightningNodeViewModel.resetChannelOpState() },
                                 )
                             }
                         }
@@ -7767,6 +8218,12 @@ fun IbisWalletApp(
                                                     }
                                                 } catch (e: CancellationException) {
                                                     throw e
+                                                } catch (e: SparkExitAlreadyCompleteException) {
+                                                    // Re-quote after a finished exit: the
+                                                    // repository already painted Completed.
+                                                    snackbarHostState.showSnackbar(
+                                                        sparkExitDoneMessage,
+                                                    )
                                                 } catch (e: Exception) {
                                                     snackbarHostState.showSnackbar(
                                                         sparkErrorMessage(e),
@@ -7909,6 +8366,12 @@ fun IbisWalletApp(
                                          )
                                      }
                                  },
+                                 onClearStaleRefresh = {
+                                     arkViewModel.clearStaleRefreshParticipations()
+                                 },
+                                 onDiscardPendingClaim = {
+                                     arkViewModel.discardPendingClaimIfSafe()
+                                 },
                                  onExportArkDb = { uri -> arkViewModel.exportArkDbToUri(uri) },
                                  onImportArkDb = { uri -> arkViewModel.importArkDbFromUri(uri) },
                                  dbTransferInProgress = arkDbTransferInProgress,
@@ -7945,13 +8408,14 @@ fun IbisWalletApp(
                                  onPrepareClaim = { dest, ids, feeRate ->
                                      arkViewModel.prepareClaimExits(dest, ids, feeRate)
                                  },
-                                  onExecuteClaim = {
-                                      requireSpendAuth {
-                                          val preview =
-                                              arkViewModel.lifecycleState.value
-                                                  as? github.aeonbtc.ibiswallet.data.model.ArkLifecycleState.ClaimPreview
-                                          arkViewModel.executeClaimExits(
-                                              expectedPsbtBase64 = preview?.psbtBase64,
+                                   onExecuteClaim = {
+                                       val confirmedPsbt =
+                                           (arkViewModel.lifecycleState.value as?
+                                               github.aeonbtc.ibiswallet.data.model.ArkLifecycleState.ClaimPreview)
+                                               ?.psbtBase64
+                                       requireSpendAuth {
+                                           arkViewModel.executeClaimExits(
+                                               expectedPsbtBase64 = confirmedPsbt ?: "",
                                           )
                                       }
                                   },
@@ -8017,6 +8481,34 @@ fun IbisWalletApp(
                                           )
                                       }
                                   },
+                                  onRecoverSelectedOnchain = { outpoints ->
+                                      if (isRecoveringArkOnchain) return@ArkLifecycleScreen
+                                      val dest = walletState.currentAddress?.trim().orEmpty()
+                                      if (dest.isBlank()) {
+                                          viewModel.getNewAddress()
+                                          scope.launch {
+                                              snackbarHostState.showSnackbar(
+                                                  arkRecoverOnchainNeedL1AddressMessage,
+                                              )
+                                          }
+                                          return@ArkLifecycleScreen
+                                      }
+                                      if (outpoints.isEmpty()) return@ArkLifecycleScreen
+                                      requireSpendAuth {
+                                          val feeRate =
+                                              ((feeEstimationState as? FeeEstimationResult.Success)
+                                                  ?.estimates
+                                                  ?.halfHourFee
+                                                  ?: 2.0)
+                                                  .toLong()
+                                                  .coerceAtLeast(1L)
+                                          arkViewModel.recoverSelectedOnchainDeposits(
+                                              vtxoOutpoints = outpoints,
+                                              destinationAddress = dest,
+                                              feeRateSatPerVb = feeRate,
+                                          )
+                                      }
+                                  },
                                   isBoarding = isBoardingArkOnchain,
                                   isRecoveringOnchain = isRecoveringArkOnchain,
                                  onReset = { arkViewModel.resetLifecycleState() },
@@ -8065,7 +8557,7 @@ fun IbisWalletApp(
                               )
                               Box(modifier = Modifier.weight(1f)) {
                                   val arkFundingUtxos by viewModel.allUtxos.collectAsStateWithLifecycle()
-                                  ArkTransferScreen(
+                                  key(activeWalletId) { ArkTransferScreen(
                                       arkState = visibleArkState,
                                       transferState = arkTransferState,
                                       layer1Address = walletState.currentAddress,
@@ -8114,51 +8606,52 @@ fun IbisWalletApp(
                                               isMaxSend = isMaxSend,
                                           )
                                       },
-                                      onExecuteBoard = { address, amount, feeRate, isMaxSend, selectedUtxos, precomputedFeeSats ->
+                                       onExecuteBoard = { address, amount, feeRate, isMaxSend, selectedUtxos, precomputedFeeSats ->
+                                           val reviewedWalletId = activeWalletId
+                                           val reviewedPreview = arkTransferState as? ArkTransferState.BoardPreview
                                           // Single-tx self-board (default): build + sign the funding tx in L1,
                                           // register it with Bark via boardPsbt, then broadcast. Falls back to
                                           // the legacy 2-tx fund-then-board path when Bark rejects the PSBT.
                                           requireSpendAuth {
                                               scope.launch {
-                                                  try {
+                                                   try {
+                                                       require(reviewedWalletId == viewModel.walletState.value.activeWallet?.id &&
+                                                           reviewedPreview?.walletId == reviewedWalletId &&
+                                                           reviewedPreview?.bitcoinDepositAddress == address) {
+                                                           arkBoardBroadcastMismatchMessage
+                                                       }
                                                       // Capture the reviewed preview BEFORE marking in-progress:
                                                       // markBoardFundingInProgress flips transferState, so any
                                                       // later read would miss the BoardPreview.
-                                                      val preview =
-                                                          arkTransferState as? ArkTransferState.BoardPreview
+                                                       val preview = reviewedPreview
                                                       val funding =
                                                           preview?.boardFunding?.takeIf { it.address == address }
                                                       arkViewModel.markBoardFundingInProgress()
                                                       // Phase 1+2 (safe to fall back): build+sign, then register
                                                       // with Bark. Nothing is registered until boardPsbt succeeds.
-                                                      val signed =
-                                                          if (funding != null) {
-                                                              runCatching {
-                                                                  viewModel.buildBoardFundingTx(
-                                                                      recipientAddress = address,
-                                                                      amountSats = amount,
-                                                                      feeRate = feeRate,
-                                                                      selectedUtxos = selectedUtxos,
-                                                                      isMaxSend = isMaxSend,
-                                                                      precomputedFeeSats = precomputedFeeSats,
-                                                                  )
-                                                              }.getOrNull()
-                                                          } else {
-                                                              null
-                                                          }
-                                                      val boardTxid =
-                                                          if (funding != null && signed != null) {
-                                                              arkViewModel.boardSingleTxFunding(
-                                                                  signed.signedPsbtBase64,
-                                                                  funding,
-                                                              ).getOrNull()
-                                                          } else {
-                                                              null
-                                                          }
-                                                      if (signed == null ||
-                                                          boardTxid == null ||
-                                                          !boardTxid.equals(signed.txid, ignoreCase = true)
-                                                      ) {
+                                                       val outcome =
+                                                           planSingleTxBoard(
+                                                               funding = funding,
+                                                               build = {
+                                                                   viewModel.buildBoardFundingTx(
+                                                                       recipientAddress = address,
+                                                                       amountSats = amount,
+                                                                       feeRate = feeRate,
+                                                                       selectedUtxos = selectedUtxos,
+                                                                       isMaxSend = isMaxSend,
+                                                                       precomputedFeeSats = precomputedFeeSats,
+                                                                   )
+                                                               },
+                                                               register = { psbt, boardFunding ->
+                                                                   arkViewModel.boardSingleTxFunding(psbt, boardFunding)
+                                                               },
+                                                           )
+                                                       // Bark registered a board for a txid we did not sign:
+                                                       // a second funding tx would be unregistered, so stop.
+                                                       if (outcome is SingleTxBoardOutcome.TxidMismatch) {
+                                                           throw IllegalStateException(arkBoardBroadcastMismatchMessage)
+                                                       }
+                                                       if (outcome !is SingleTxBoardOutcome.Registered) {
                                                           // Single-tx unavailable (legacy preview, build/sign
                                                           // failed, or boardPsbt rejected): L1 → Bark DEPOSIT
                                                           // address only (Spark-style). Board later via
@@ -8172,9 +8665,15 @@ fun IbisWalletApp(
                                                           val fallbackAddress =
                                                               arkViewModel.legacyDepositAddressForFallback()
                                                                   ?: address.takeIf { funding == null }
-                                                          require(!fallbackAddress.isNullOrBlank()) {
-                                                              arkBoardNoFallbackMessage
-                                                          }
+                                                           if (fallbackAddress.isNullOrBlank()) {
+                                                               // Surface the real build/register error when there
+                                                               // is no legacy path (e.g. passphrase wallets).
+                                                               throw IllegalStateException(
+                                                                   (outcome as? SingleTxBoardOutcome.Fallback)
+                                                                       ?.cause?.message?.takeIf { it.isNotBlank() }
+                                                                       ?: arkBoardNoFallbackMessage,
+                                                               )
+                                                           }
                                                           val (txid, _) =
                                                               viewModel.sendBitcoinForSwap(
                                                                   recipientAddress = fallbackAddress,
@@ -8187,8 +8686,9 @@ fun IbisWalletApp(
                                                           arkViewModel.completeLayer1Funding(txid)
                                                           return@launch
                                                       }
-                                                      // Phase 3 (no fallback past this point): the board is
-                                                      // registered for signed.txid — broadcast exactly that tx.
+                                                       val signed = outcome.signed
+                                                       // Phase 3 (no fallback past this point): the board is
+                                                       // registered for signed.txid — broadcast exactly that tx.
                                                       // A broadcast failure is verified against the network
                                                       // first (Bark may have broadcast it via Esplora); only a
                                                       // genuinely missing tx surfaces as an error for retry.
@@ -8213,8 +8713,8 @@ fun IbisWalletApp(
                                                       throw e
                                                   } catch (e: Exception) {
                                                       arkViewModel.markBoardFundingFailed(
-                                                          e.message ?: "Transfer failed",
-                                                      )
+                                                            e.message ?: arkBoardFailedGenericMessage,
+                                                       )
                                                   }
                                               }
                                           }
@@ -8227,8 +8727,8 @@ fun IbisWalletApp(
                                       },
                                       onReset = { arkViewModel.resetTransferState() },
                                       onGenerateLayer1Address = { viewModel.getNewAddress() },
-                                      onToggleDenomination = toggleLayer2Denomination,
-                                  )
+                                       onToggleDenomination = toggleLayer2Denomination,
+                                   ) }
                              }
                          }
                      }
@@ -8420,6 +8920,8 @@ private fun FullSyncProgressDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(horizontal = 20.dp, vertical = 18.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -8462,24 +8964,37 @@ private fun FullSyncProgressDialog(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Row(
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(top = 4.dp),
                     horizontalArrangement = Arrangement.Center,
+                    verticalArrangement = Arrangement.Center,
                 ) {
                     onCancel?.let { cancel ->
-                        TextButton(onClick = cancel) {
+                        TextButton(
+                            onClick = cancel,
+                            modifier = Modifier.heightIn(min = 40.dp),
+                        ) {
                             Text(
                                 text = stringResource(R.string.loc_51bac044),
                                 color = ErrorRed,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                softWrap = true,
                             )
                         }
                     }
-                    TextButton(onClick = onClose) {
+                    IbisButton(
+                        onClick = onClose,
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    ) {
                         Text(
                             text = stringResource(R.string.loc_d2c0aec0),
-                            color = TextSecondary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true,
                         )
                     }
                 }

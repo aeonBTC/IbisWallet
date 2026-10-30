@@ -2,12 +2,15 @@ package github.aeonbtc.ibiswallet.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -16,16 +19,17 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
@@ -45,9 +49,13 @@ fun CertificateDialog(
     onAccept: () -> Unit,
     onReject: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onReject) {
+    Dialog(
+        onDismissRequest = onReject,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         SecureDialogSideEffect()
         Card(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = DarkSurface),
         ) {
@@ -108,28 +116,39 @@ fun CertificateDialog(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                // Buttons
-                Row(
+                // Buttons - wraps to vertical stack on narrow screens / large fonts.
+                @OptIn(ExperimentalLayoutApi::class)
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
                 ) {
-                    OutlinedButton(
+                    IbisButton(
                         onClick = onReject,
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                     ) {
-                        Text(stringResource(R.string.loc_a269638f))
+                        Text(
+                            stringResource(R.string.loc_a269638f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true,
+                        )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Button(
                         onClick = onAccept,
+                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                         shape = RoundedCornerShape(8.dp),
                         colors =
                             ButtonDefaults.buttonColors(
                                 containerColor = if (state.isFirstUse) BitcoinOrange else ErrorRed,
                             ),
                     ) {
-                        Text(if (state.isFirstUse) "Trust" else "Accept New Certificate")
+                        Text(
+                            if (state.isFirstUse) "Trust" else "Accept New Certificate",
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true,
+                        )
                     }
                 }
             }
@@ -157,8 +176,8 @@ private fun CertField(
                 if (isFingerprint) {
                     MaterialTheme.typography.bodySmall.copy(
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 16.sp,
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
                     )
                 } else {
                     MaterialTheme.typography.bodySmall

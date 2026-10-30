@@ -9,8 +9,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.ContentCopy
@@ -61,7 +64,7 @@ fun BoltzRescueKeyButton(
 ) {
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.height(32.dp),
+        modifier = modifier.heightIn(min = 32.dp),
         shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, BorderColor),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
@@ -95,6 +98,7 @@ fun BoltzRescueMnemonicDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        SecureDialogSideEffect()
         ProvideLocalizedResources {
             val context = LocalContext.current
             val titleText = stringResource(R.string.loc_54bf6d2a)
@@ -114,6 +118,8 @@ fun BoltzRescueMnemonicDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
+                        .heightIn(max = 480.dp)
+                        .verticalScroll(rememberScrollState())
                         .padding(16.dp),
             ) {
                 Text(
@@ -205,9 +211,15 @@ fun BoltzRescueMnemonicDialog(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .heightIn(min = 48.dp),
                 ) {
-                    Text(closeText, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        closeText,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 2,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        softWrap = true,
+                    )
                 }
             }
         }

@@ -19,14 +19,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
@@ -34,6 +37,12 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -60,6 +69,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
@@ -68,6 +78,8 @@ import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
+import github.aeonbtc.ibiswallet.ui.components.CompactDropdownField
+import github.aeonbtc.ibiswallet.ui.components.DropdownOptionText
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
@@ -79,9 +91,11 @@ import github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
 import github.aeonbtc.ibiswallet.ui.theme.DarkCard
 import github.aeonbtc.ibiswallet.ui.theme.DarkSurface
+import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.util.SecureClipboard
+import github.aeonbtc.ibiswallet.util.SpScanStartPolicy
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +103,7 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlin.math.roundToLong
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ReceiveScreen(
     walletState: WalletState = WalletState(),
@@ -105,6 +120,10 @@ fun ReceiveScreen(
     onSilentReceiveChange: (Boolean) -> Unit = {},
     silentScanDisclosureAcknowledged: Boolean = true,
     onAcknowledgeSilentScanDisclosure: () -> Unit = {},
+    spScanTipHeight: Int? = null,
+    spScanMinHeight: Int = 709632,
+    onApplySilentScanStartHeight: (Int?) -> Unit = {},
+    onOpenServerSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val copyReceiveToast = stringResource(R.string.loc_b6b10bfe)
@@ -134,6 +153,11 @@ fun ReceiveScreen(
         } else {
             walletState.currentAddress
         }
+    // Loud fail-closed share state: when the server cannot scan SP, sharing
+    // the sp1 address would accept funds this wallet cannot detect. Block
+    // copy/share/NFC payload in that state; the address stays visible so a
+    // pending receive can still be compared, but it cannot be handed out.
+    val silentUnavailable = silentMode && showSilentToggle && walletState.silentPaymentsSupported == false
 
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var labelText by remember { mutableStateOf("") }
@@ -192,9 +216,11 @@ fun ReceiveScreen(
             }
         }
     val copyReceiveRequest: () -> Unit = {
-        qrContent?.let { content ->
-            SecureClipboard.copyAndScheduleClear(context, content)
-            Toast.makeText(context, copyReceiveToast, Toast.LENGTH_SHORT).show()
+        if (!silentUnavailable) {
+            qrContent?.let { content ->
+                SecureClipboard.copyAndScheduleClear(context, content)
+                Toast.makeText(context, copyReceiveToast, Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
@@ -227,7 +253,7 @@ fun ReceiveScreen(
     val mainActivity = context as? MainActivity
     val nfcShareOwner = remember { Any() }
     val nfcAvailable = context.getNfcAvailability().canBroadcast
-    val hasNfcSharePayload = nfcAvailable && qrContent != null
+    val hasNfcSharePayload = nfcAvailable && qrContent != null && !silentUnavailable
     val nfcShareState by NfcRuntimeStatus.shareState.collectAsState()
     DisposableEffect(mainActivity, hasNfcSharePayload) {
         if (mainActivity != null && hasNfcSharePayload) {
@@ -238,9 +264,13 @@ fun ReceiveScreen(
         }
     }
     val isNfcBroadcasting = hasNfcSharePayload && mainActivity?.isPreferredHceServiceActive == true
-    DisposableEffect(qrContent, nfcAvailable) {
-        if (nfcAvailable && qrContent != null) {
+    DisposableEffect(hasNfcSharePayload, qrContent) {
+        // Never publish an sp1 address the configured server cannot scan:
+        // hasNfcSharePayload already excludes silentUnavailable.
+        if (hasNfcSharePayload && qrContent != null) {
             NdefHostApduService.setNdefPayload(qrContent)
+        } else {
+            NdefHostApduService.setNdefPayload(null)
         }
         onDispose {
             NdefHostApduService.setNdefPayload(null)
@@ -257,6 +287,7 @@ fun ReceiveScreen(
     if (showEnlargedQr && qrBitmap != null) {
         Dialog(
             onDismissRequest = { showEnlargedQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             SecureDialogSideEffect()
             Box(
@@ -425,7 +456,7 @@ fun ReceiveScreen(
                         icon = Icons.Default.ContentCopy,
                         tint = BitcoinOrange,
                         onClick = copyReceiveRequest,
-                        enabled = displayAddress != null,
+                        enabled = displayAddress != null && !silentUnavailable,
                         iconSize = 17.dp,
                     )
                     ReceiveActionButton(
@@ -441,30 +472,32 @@ fun ReceiveScreen(
                         icon = Icons.Default.Share,
                         tint = BitcoinOrange,
                         onClick = {
-                            qrContent?.let { content ->
-                                val shareIntent =
-                                    Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_TEXT, content)
+                            if (!silentUnavailable) {
+                                qrContent?.let { content ->
+                                    val shareIntent =
+                                        Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, content)
+                                        }
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent.createChooser(
+                                                shareIntent,
+                                                receiveShareRequestTitle,
+                                            ),
+                                        )
+                                    }.onFailure {
+                                        Toast
+                                            .makeText(
+                                                context,
+                                                receiveNoShareAppMessage,
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
                                     }
-                                runCatching {
-                                    context.startActivity(
-                                        Intent.createChooser(
-                                            shareIntent,
-                                            receiveShareRequestTitle,
-                                        ),
-                                    )
-                                }.onFailure {
-                                    Toast
-                                        .makeText(
-                                            context,
-                                            receiveNoShareAppMessage,
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
                                 }
                             }
                         },
-                        enabled = qrContent != null,
+                        enabled = qrContent != null && !silentUnavailable,
                     )
                 }
 
@@ -495,16 +528,54 @@ fun ReceiveScreen(
                                 },
                             )
                         }
-                        if (silentMode && walletState.silentPaymentsSupported == false) {
-                            Text(
-                                text = stringResource(R.string.receive_silent_server_unavailable),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = TextSecondary,
+                        if (silentUnavailable) {
+                            Row(
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
-                            )
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.receive_silent_server_unavailable),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = ErrorRed,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IconButton(
+                                    onClick = onOpenServerSettings,
+                                    modifier = Modifier.size(32.dp),
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                        contentDescription = stringResource(R.string.sp_scan_start_open_servers),
+                                        tint = ErrorRed,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                }
+                            }
                         }
                     }
                     if (showSilentScanDisclosure) {
+                        var scanStartUseTip by remember(walletState.activeWallet?.id) {
+                            mutableStateOf(true)
+                        }
+                        var scanStartCustom by remember(walletState.activeWallet?.id) {
+                            mutableStateOf("")
+                        }
+                        var scanStartMenuExpanded by remember { mutableStateOf(false) }
+                        val scanSelection =
+                            remember(scanStartUseTip, scanStartCustom, spScanTipHeight, spScanMinHeight) {
+                                SpScanStartPolicy.resolveSelection(
+                                    scanStartUseTip,
+                                    scanStartCustom,
+                                    spScanMinHeight,
+                                    spScanTipHeight,
+                                )
+                            }
+                        val tipLabel =
+                            if (spScanTipHeight != null) {
+                                stringResource(R.string.sp_scan_start_tip_format, spScanTipHeight)
+                            } else {
+                                stringResource(R.string.sp_scan_start_tip_option)
+                            }
                         ScrollableAlertDialog(
                             onDismissRequest = {
                                 showSilentScanDisclosure = false
@@ -519,18 +590,138 @@ fun ReceiveScreen(
                                 )
                             },
                             text = {
-                                Text(
-                                    stringResource(R.string.receive_silent_disclosure_message),
-                                    color = TextSecondary,
-                                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
-                                )
+                                Column {
+                                    Text(
+                                        stringResource(R.string.receive_silent_disclosure_message),
+                                        color = TextSecondary,
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+                                    )
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Text(
+                                        text = stringResource(R.string.sp_scan_start_title),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary,
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    ExposedDropdownMenuBox(
+                                        expanded = scanStartMenuExpanded,
+                                        onExpandedChange = { scanStartMenuExpanded = it },
+                                    ) {
+                                        CompactDropdownField(
+                                            value =
+                                                if (scanStartUseTip) {
+                                                    tipLabel
+                                                } else {
+                                                    stringResource(R.string.sp_scan_start_custom_option)
+                                                },
+                                            expanded = scanStartMenuExpanded,
+                                            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+                                        )
+                                        ExposedDropdownMenu(
+                                            expanded = scanStartMenuExpanded,
+                                            onDismissRequest = { scanStartMenuExpanded = false },
+                                            modifier =
+                                                Modifier
+                                                    .exposedDropdownSize(true)
+                                                    .background(DarkSurface),
+                                        ) {
+                                            DropdownMenuItem(
+                                                text = {
+                                                    DropdownOptionText(
+                                                        title = tipLabel,
+                                                        subtitle = "",
+                                                        selected = scanStartUseTip,
+                                                    )
+                                                },
+                                                onClick = {
+                                                    scanStartUseTip = true
+                                                    scanStartMenuExpanded = false
+                                                },
+                                            )
+                                            DropdownMenuItem(
+                                                text = {
+                                                    DropdownOptionText(
+                                                        title = stringResource(R.string.sp_scan_start_custom_option),
+                                                        subtitle = "",
+                                                        selected = !scanStartUseTip,
+                                                    )
+                                                },
+                                                onClick = {
+                                                    scanStartUseTip = false
+                                                    scanStartMenuExpanded = false
+                                                },
+                                            )
+                                        }
+                                    }
+                                    if (!scanStartUseTip) {
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        OutlinedTextField(
+                                            value = scanStartCustom,
+                                            onValueChange = { value ->
+                                                if (value.isEmpty() || value.all { it.isDigit() }) {
+                                                    scanStartCustom = value
+                                                }
+                                            },
+                                            label = { Text(stringResource(R.string.sp_scan_start_custom_hint)) },
+                                            singleLine = true,
+                                            isError = scanSelection is SpScanStartPolicy.Selection.Invalid &&
+                                                scanStartCustom.isNotBlank(),
+                                            supportingText = {
+                                                if (scanSelection is SpScanStartPolicy.Selection.Invalid &&
+                                                    scanStartCustom.isNotBlank()
+                                                ) {
+                                                    val beyondTip = spScanTipHeight != null &&
+                                                        (scanStartCustom.toIntOrNull() ?: 0) > spScanTipHeight
+                                                    Text(
+                                                        text =
+                                                            if (beyondTip) {
+                                                                stringResource(
+                                                                    R.string.sp_scan_start_beyond_tip_format,
+                                                                    spScanTipHeight!!,
+                                                                )
+                                                            } else {
+                                                                stringResource(R.string.sp_scan_start_invalid)
+                                                            },
+                                                        color = ErrorRed,
+                                                    )
+                                                }
+                                            },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            shape = RoundedCornerShape(8.dp),
+                                            colors =
+                                                OutlinedTextFieldDefaults.colors(
+                                                    focusedBorderColor = BitcoinOrange,
+                                                    unfocusedBorderColor = BorderColor,
+                                                    cursorColor = BitcoinOrange,
+                                                ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = stringResource(R.string.sp_scan_start_manage_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TextSecondary,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
                             },
                             confirmButton = {
                                 Button(
                                     onClick = {
                                         showSilentScanDisclosure = false
                                         onAcknowledgeSilentScanDisclosure()
+                                        when (scanSelection) {
+                                            is SpScanStartPolicy.Selection.Tip ->
+                                                onApplySilentScanStartHeight(null)
+                                            is SpScanStartPolicy.Selection.Height ->
+                                                onApplySilentScanStartHeight(scanSelection.value)
+                                            is SpScanStartPolicy.Selection.Invalid -> Unit
+                                        }
                                     },
+                                    enabled = scanSelection is SpScanStartPolicy.Selection.Tip ||
+                                        scanSelection is SpScanStartPolicy.Selection.Height,
+                                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
                                     shape = RoundedCornerShape(8.dp),
                                     colors =
                                         ButtonDefaults.buttonColors(

@@ -104,7 +104,7 @@ fun GenerateWalletScreen(
     var selectedAddressType by remember { mutableStateOf(AddressType.SEGWIT) }
     var selectedWordCount by remember { mutableStateOf(WordCount.WORDS12) }
 
-    // Advanced options
+    // Advanced
     var showAdvancedOptions by remember { mutableStateOf(false) }
     var usePassphrase by remember { mutableStateOf(false) }
     var passphrase by remember { mutableStateOf("") }
@@ -121,6 +121,9 @@ fun GenerateWalletScreen(
     var copied by remember { mutableStateOf(false) }
     var diceText by remember { mutableStateOf("") }
     var showDice by remember { mutableStateOf(false) }
+
+    val createWalletBringIntoViewRequester =
+        rememberBringIntoViewRequesterOnExpand(generatedMnemonic != null, "generate_create_wallet", delayMs = 260L)
 
     val minDiceRolls =
         remember(selectedWordCount) {
@@ -234,6 +237,12 @@ fun GenerateWalletScreen(
             )
         }
 
+        Text(
+            text = stringResource(R.string.loc_748eece4),
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Spacer(modifier = Modifier.height(8.dp))
 
         // Main form card
@@ -249,12 +258,6 @@ fun GenerateWalletScreen(
                         .padding(16.dp),
             ) {
                 // Wallet Name
-                Text(
-                    text = stringResource(R.string.loc_748eece4),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = stringResource(R.string.loc_6e9ddcf4),
                     style = MaterialTheme.typography.labelLarge,
@@ -421,13 +424,19 @@ fun GenerateWalletScreen(
                 }
                 if (generatedMnemonic == null) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    IbisButton(
+                    Button(
                         onClick = { generateMnemonic() },
                         enabled = diceValid,
                         modifier =
                             Modifier
                                 .fillMaxWidth()
                                 .height(48.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            ButtonDefaults.buttonColors(
+                                containerColor = BitcoinOrange,
+                                disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                            ),
                     ) {
                         Text(
                             text = stringResource(R.string.loc_e3b008f1),
@@ -437,7 +446,9 @@ fun GenerateWalletScreen(
                 } else {
                     Spacer(modifier = Modifier.height(16.dp))
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = DarkBackground),
                         border = BorderStroke(1.dp, BorderColor),
@@ -535,28 +546,46 @@ fun GenerateWalletScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    Row(
+                    Card(
                         modifier =
                             Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { backedUp = !backedUp },
-                        verticalAlignment = Alignment.CenterVertically,
+                                .fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            CardDefaults.cardColors(
+                                containerColor =
+                                    if (backedUp) {
+                                        SuccessGreen.copy(alpha = 0.12f)
+                                    } else {
+                                        BitcoinOrange.copy(alpha = 0.12f)
+                                    },
+                            ),
+                        border = BorderStroke(1.dp, if (backedUp) SuccessGreen else BitcoinOrange),
                     ) {
-                        Checkbox(
-                            checked = backedUp,
-                            onCheckedChange = { backedUp = it },
-                            colors =
-                                CheckboxDefaults.colors(
-                                    checkedColor = BitcoinOrange,
-                                    uncheckedColor = TextSecondary,
-                                ),
-                        )
-                        Text(
-                            text = stringResource(R.string.loc_77aacbaf),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onBackground,
-                        )
+                        Row(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { backedUp = !backedUp }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = backedUp,
+                                onCheckedChange = { backedUp = it },
+                                colors =
+                                    CheckboxDefaults.colors(
+                                        checkedColor = BitcoinOrange,
+                                        uncheckedColor = TextSecondary,
+                                    ),
+                            )
+                            Text(
+                                text = stringResource(R.string.loc_77aacbaf),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
                     }
                 }
             }
@@ -564,7 +593,7 @@ fun GenerateWalletScreen(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Advanced Options
+        // Advanced
         Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
@@ -789,7 +818,7 @@ fun GenerateWalletScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             // Create Wallet button
-            Button(
+            IbisButton(
                 onClick = {
                     val passphraseValue = if (usePassphrase && passphrase.isNotBlank()) passphrase else null
                     val customPathValue = if (useCustomPath && customPath.isNotBlank()) customPath else null
@@ -805,22 +834,17 @@ fun GenerateWalletScreen(
                         )
                     onGenerate(config)
                 },
+                enabled = canCreate,
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
-                shape = RoundedCornerShape(8.dp),
-                enabled = canCreate,
-                colors =
-                    ButtonDefaults.buttonColors(
-                        containerColor = BitcoinOrange,
-                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
-                    ),
+                        .height(48.dp)
+                        .bringIntoViewRequester(createWalletBringIntoViewRequester),
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = TextSecondary,
                         strokeWidth = 2.dp,
                     )
                 } else {
@@ -830,6 +854,8 @@ fun GenerateWalletScreen(
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(24.dp))
         }
 
         // Error message

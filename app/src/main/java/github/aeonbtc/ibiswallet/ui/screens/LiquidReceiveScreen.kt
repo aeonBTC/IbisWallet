@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -73,6 +75,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
@@ -347,7 +350,10 @@ fun LiquidReceiveScreen(
     }
 
     if (showEnlargedQr && liquidQrBitmap != null) {
-        Dialog(onDismissRequest = { showEnlargedQr = false }) {
+        Dialog(
+            onDismissRequest = { showEnlargedQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
             SecureDialogSideEffect()
             Box(
                 modifier = Modifier
@@ -387,21 +393,31 @@ fun LiquidReceiveScreen(
     pendingInvoiceToDelete?.let { invoice ->
         AlertDialog(
             onDismissRequest = { pendingInvoiceToDelete = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
             title = { Text(stringResource(R.string.pending_lightning_invoice_delete_title)) },
             text = { Text(stringResource(R.string.pending_lightning_invoice_delete_message)) },
             confirmButton = {
-                TextButton(
+                Button(
                     onClick = {
                         pendingInvoiceToDelete = null
                         onDeletePendingLightningInvoice(invoice.swapId)
                     },
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = ErrorRed,
+                        ),
                 ) {
-                    Text(stringResource(R.string.loc_3dbe79b1), color = ErrorRed)
+                    Text(stringResource(R.string.loc_3dbe79b1))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingInvoiceToDelete = null }) {
-                    Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                IbisButton(
+                    onClick = { pendingInvoiceToDelete = null },
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                ) {
+                    Text(stringResource(R.string.loc_51bac044))
                 }
             },
             containerColor = DarkCard,
@@ -883,6 +899,19 @@ fun LiquidReceiveScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                     )
 
+                                    lightningInvoiceState.label
+                                        ?.takeIf { it.isNotBlank() }
+                                        ?.let { label ->
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = LiquidTeal,
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                        }
+
                                     Spacer(modifier = Modifier.height(4.dp))
 
                                     Text(
@@ -933,7 +962,6 @@ fun LiquidReceiveScreen(
                                             color = TextSecondary,
                                             textAlign = TextAlign.Center,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
                                             modifier =
                                                 Modifier
                                                     .weight(1f, fill = false)
@@ -1401,7 +1429,10 @@ private fun PendingLightningInvoiceRow(
     }
 
     if (showEnlargedPendingQr && invoiceQrBitmap != null) {
-        Dialog(onDismissRequest = { showEnlargedPendingQr = false }) {
+        Dialog(
+            onDismissRequest = { showEnlargedPendingQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
             SecureDialogSideEffect()
             Box(
                 modifier = Modifier
@@ -1473,7 +1504,6 @@ private fun PendingLightningInvoiceRow(
                         color = MaterialTheme.colorScheme.onBackground,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                     invoice.label.takeIf { it.isNotBlank() }?.let { label ->
                         Text(
@@ -1578,7 +1608,6 @@ private fun PendingLightningInvoiceRow(
                             color = TextSecondary,
                             textAlign = TextAlign.Center,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
                             modifier =
                                 Modifier
                                     .weight(1f, fill = false)
@@ -1627,9 +1656,10 @@ private fun PendingLightningInvoiceRow(
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TextButton(
+                        IbisButton(
                             onClick = onClaim,
                             enabled = !invoice.isClaiming,
+                            activeColor = LightningYellow,
                         ) {
                             Text(
                                 text = if (invoice.isClaiming) {
@@ -1637,7 +1667,6 @@ private fun PendingLightningInvoiceRow(
                                 } else {
                                     stringResource(R.string.spark_deposit_claim_title)
                                 },
-                                color = if (invoice.isClaiming) TextSecondary else LightningYellow,
                             )
                         }
                         TextButton(onClick = onDelete) {

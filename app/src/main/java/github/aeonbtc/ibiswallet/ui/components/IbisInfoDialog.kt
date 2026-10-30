@@ -29,7 +29,7 @@ fun IbisInfoDialog(
     confirmText: String,
     accentColor: Color = BitcoinOrange,
     note: String? = null,
-    properties: DialogProperties = DialogProperties(),
+    properties: DialogProperties = DialogProperties(usePlatformDefaultWidth = false),
 ) {
     IbisConfirmDialog(
         onDismissRequest = onDismissRequest,

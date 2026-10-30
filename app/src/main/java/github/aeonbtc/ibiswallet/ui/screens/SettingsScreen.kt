@@ -2,6 +2,11 @@
 
 package github.aeonbtc.ibiswallet.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,25 +27,40 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.CallMerge
+import androidx.compose.material.icons.automirrored.filled.CompareArrows
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Api
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CurrencyBitcoin
+import androidx.compose.material.icons.filled.DisplaySettings
+import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.FilterList
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.HourglassTop
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.SwapHoriz
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.TextFields
+import androidx.compose.material.icons.filled.TravelExplore
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -49,6 +69,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuBoxScope
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -56,6 +77,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +89,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -95,8 +118,11 @@ import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextPrimary
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
 import github.aeonbtc.ibiswallet.ui.theme.TorPurple
+import github.aeonbtc.ibiswallet.util.ArkEndpointValidator
+import github.aeonbtc.ibiswallet.util.DustPolicy
 import github.aeonbtc.ibiswallet.util.ServerUrlValidator
 import github.aeonbtc.ibiswallet.util.WalletNotificationDeliveryState
+import github.aeonbtc.ibiswallet.viewmodel.AppUpdateStatus
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -114,6 +140,10 @@ fun SettingsScreen(
     onRequireCoinControlChange: (Boolean) -> Unit = {},
     consolidateChange: Boolean = false,
     onConsolidateChangeChange: (Boolean) -> Unit = {},
+    dustMaxSats: Long = 1000L,
+    onDustMaxSatsChange: (Long) -> Unit = {},
+    dustExcludeFromAutoSelect: Boolean = true,
+    onDustExcludeFromAutoSelectChange: (Boolean) -> Unit = {},
     walletNotificationsEnabled: Boolean = false,
     walletNotificationDeliveryState: WalletNotificationDeliveryState =
         WalletNotificationDeliveryState.APP_DISABLED,
@@ -150,22 +180,43 @@ fun SettingsScreen(
     isLiquidAvailable: Boolean = false,
     torStatus: TorStatus = TorStatus.DISCONNECTED,
     onOpenBitcoinElectrum: () -> Unit = {},
+    appUpdateCheckEnabled: Boolean = false,
+    onAppUpdateCheckEnabledChange: (Boolean) -> Unit = {},
+    appUpdateStatus: AppUpdateStatus = AppUpdateStatus.Disabled,
     onBack: () -> Unit = {},
 ) {
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        val appUpdateStatusText =
+            when (val status = appUpdateStatus) {
+                AppUpdateStatus.Disabled -> ""
+                AppUpdateStatus.Checking -> stringResource(R.string.settings_update_status_checking)
+                AppUpdateStatus.UpToDate -> stringResource(R.string.settings_update_status_uptodate)
+                AppUpdateStatus.Error -> stringResource(R.string.settings_update_status_error)
+                is AppUpdateStatus.UpdateAvailable ->
+                    stringResource(R.string.drawer_update_available, status.latestVersionName)
+            }
+        val appUpdateStatusColor =
+            when (appUpdateStatus) {
+                is AppUpdateStatus.UpdateAvailable -> BitcoinOrange
+                AppUpdateStatus.Error -> ErrorRed
+                AppUpdateStatus.UpToDate -> SuccessGreen
+                else -> TextSecondary
+            }
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = SETTINGS_UPDATE_FOOTER_SPACE_DP.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         // Header
         Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -182,9 +233,8 @@ fun SettingsScreen(
             )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
-
         val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
+
         val walletNotificationsSubtitle =
             when (walletNotificationDeliveryState) {
                 WalletNotificationDeliveryState.PERMISSION_REQUIRED ->
@@ -210,7 +260,11 @@ fun SettingsScreen(
             }
 
         // ── Display ──
-        SettingsSectionCard(title = stringResource(R.string.settings_general_section_display)) {
+        SettingsSectionCard(
+            sectionId = "layer1_display",
+            icon = Icons.Default.DisplaySettings,
+            title = stringResource(R.string.settings_general_section_display),
+        ) {
             Row(
                 modifier =
                     Modifier
@@ -269,19 +323,6 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             SettingsLabeledControl(
-                icon = Icons.Default.SwapHoriz,
-                label = stringResource(R.string.loc_db88d4ce),
-            ) {
-                SwipeModeDropdown(
-                    currentMode = currentSwipeMode,
-                    onModeSelected = onSwipeModeChange,
-                    isLiquidAvailable = isLiquidAvailable,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(12.dp))
-
-            SettingsLabeledControl(
                 icon = Icons.Default.Palette,
                 label = stringResource(R.string.settings_theme_title),
             ) {
@@ -306,6 +347,18 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             SettingsLabeledControl(
+                icon = Icons.Default.Language,
+                label = stringResource(R.string.settings_language_title),
+            ) {
+                LanguageDropdown(
+                    currentLocale = currentAppLocale,
+                    onLocaleSelected = onAppLocaleChange,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            SettingsLabeledControl(
                 icon = Icons.Default.TextFields,
                 label = stringResource(R.string.settings_typeface_title),
             ) {
@@ -318,12 +371,13 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(12.dp))
 
             SettingsLabeledControl(
-                icon = Icons.Default.Language,
-                label = stringResource(R.string.settings_language_title),
+                icon = Icons.Default.SwapHoriz,
+                label = stringResource(R.string.loc_db88d4ce),
             ) {
-                LanguageDropdown(
-                    currentLocale = currentAppLocale,
-                    onLocaleSelected = onAppLocaleChange,
+                SwipeModeDropdown(
+                    currentMode = currentSwipeMode,
+                    onModeSelected = onSwipeModeChange,
+                    isLiquidAvailable = isLiquidAvailable,
                 )
             }
         }
@@ -331,7 +385,11 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         // ── Transactions ──
-        SettingsSectionCard(title = stringResource(R.string.settings_general_section_transactions)) {
+        SettingsSectionCard(
+            sectionId = "layer1_transactions",
+            icon = Icons.AutoMirrored.Filled.ReceiptLong,
+            title = stringResource(R.string.settings_general_section_transactions),
+        ) {
             Row(
                 modifier =
                     Modifier
@@ -379,7 +437,7 @@ fun SettingsScreen(
                     modifier = Modifier.weight(1f),
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Speed,
+                        imageVector = Icons.AutoMirrored.Filled.CompareArrows,
                         contentDescription = null,
                         tint = BitcoinOrange,
                         modifier = Modifier.size(24.dp),
@@ -412,7 +470,7 @@ fun SettingsScreen(
                     modifier = Modifier.weight(1f),
                 ) {
                     Icon(
-                        imageVector = Icons.Default.FilterList,
+                        imageVector = Icons.Default.Tune,
                         contentDescription = null,
                         tint = BitcoinOrange,
                         modifier = Modifier.size(24.dp),
@@ -461,12 +519,57 @@ fun SettingsScreen(
                     onCheckedChange = onConsolidateChangeChange,
                 )
             }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onDustExcludeFromAutoSelectChange(!dustExcludeFromAutoSelect) },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.FilterList,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    ToggleOptionText(
+                        title = stringResource(R.string.settings_dust_exclude_title),
+                        subtitle = stringResource(R.string.settings_dust_exclude_subtitle),
+                    )
+                }
+                SquareToggle(
+                    checked = dustExcludeFromAutoSelect,
+                    onCheckedChange = onDustExcludeFromAutoSelectChange,
+                )
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            DustThresholdDropdown(
+                currentMaxSats = dustMaxSats,
+                onMaxSatsSelected = onDustMaxSatsChange,
+                modifier = Modifier.padding(start = 36.dp),
+            )
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
         // ── Connectivity ──
-        SettingsSectionCard(title = stringResource(R.string.settings_general_section_connectivity)) {
+        SettingsSectionCard(
+            sectionId = "layer1_connectivity",
+            icon = Icons.Default.Wifi,
+            title = stringResource(R.string.settings_general_section_connectivity),
+        ) {
             Row(
                 modifier =
                     Modifier
@@ -515,7 +618,7 @@ fun SettingsScreen(
                     modifier = Modifier.weight(1f),
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Language,
+                        imageVector = Icons.Default.Sync,
                         contentDescription = null,
                         tint = BitcoinOrange,
                         modifier = Modifier.size(24.dp),
@@ -581,14 +684,21 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(8.dp))
 
         // ── External Services ──
-        SettingsSectionCard(title = stringResource(R.string.loc_23c9f3ad)) {
+        SettingsSectionCard(
+            sectionId = "layer1_services",
+            icon = Icons.Default.Public,
+            title = stringResource(R.string.loc_23c9f3ad),
+        ) {
             SettingsLabeledControl(
                 icon = Icons.Default.Speed,
                 label = stringResource(R.string.loc_31ab2a4e),
             ) {
                 FeeSourceDropdown(
                     currentSource = currentFeeSource,
+                    customUrl = customFeeSourceUrl,
+                    torStatus = torStatus,
                     onSourceSelected = onFeeSourceChange,
+                    onCustomSave = onCustomFeeSourceUrlSave,
                 )
             }
 
@@ -599,82 +709,18 @@ fun SettingsScreen(
                 )
             }
 
-            if (currentFeeSource == SecureStorage.FEE_SOURCE_CUSTOM) {
-                Spacer(modifier = Modifier.height(6.dp))
-
-                var feeUrlDraft by remember(customFeeSourceUrl) {
-                    mutableStateOf(customFeeSourceUrl)
-                }
-                var feeUrlError by remember { mutableStateOf<String?>(null) }
-                var feeUrlSaved by remember { mutableStateOf<String?>(null) }
-
-                LaunchedEffect(feeUrlSaved) {
-                    if (feeUrlSaved != null) {
-                        delay(3000)
-                        feeUrlSaved = null
-                    }
-                }
-
-                val isOnionUrl =
-                    try {
-                        java.net.URI(feeUrlDraft).host?.endsWith(".onion") == true
-                    } catch (_: Exception) {
-                        feeUrlDraft.endsWith(".onion")
-                    }
-                val torStatusColor =
-                    when (torStatus) {
-                        TorStatus.CONNECTED -> TorPurple
-                        TorStatus.CONNECTING, TorStatus.STARTING -> TorPurple.copy(alpha = 0.6f)
-                        TorStatus.ERROR -> ErrorRed
-                        TorStatus.DISCONNECTED, TorStatus.STOPPING -> TextSecondary
-                    }
-                val torStatusText =
-                    when (torStatus) {
-                        TorStatus.CONNECTED -> stringResource(R.string.loc_892c0ce5)
-                        TorStatus.CONNECTING -> stringResource(R.string.loc_1a2bbf31)
-                        TorStatus.STARTING -> stringResource(R.string.loc_a4c47a71)
-                        TorStatus.ERROR -> stringResource(R.string.loc_27d8399b)
-                        TorStatus.DISCONNECTED, TorStatus.STOPPING -> stringResource(R.string.loc_d6353c61)
-                    }
-
-                CompactTextFieldWithSave(
-                    value = feeUrlDraft,
-                    onValueChange = {
-                        feeUrlDraft = it
-                        feeUrlError = null
-                        feeUrlSaved = null
-                    },
-                    onSave = {
-                        val error = ServerUrlValidator.validate(feeUrlDraft)
-                        if (error != null) {
-                            feeUrlError = error
-                            feeUrlSaved = null
-                        } else {
-                            val normalizedUrl = ServerUrlValidator.normalize(feeUrlDraft)
-                            feeUrlError = null
-                            feeUrlDraft = normalizedUrl
-                            onCustomFeeSourceUrlSave(normalizedUrl)
-                            feeUrlSaved = "saved"
-                        }
-                    },
-                    placeholder = stringResource(R.string.settings_custom_server_placeholder),
-                    errorMessage = feeUrlError,
-                    successMessage = feeUrlSaved,
-                    torStatusText = if (isOnionUrl) torStatusText else null,
-                    torStatusColor = if (isOnionUrl) torStatusColor else null,
-                    modifier = Modifier.padding(start = 28.dp),
-                )
-            }
-
             Spacer(modifier = Modifier.height(12.dp))
 
             SettingsLabeledControl(
-                icon = Icons.Default.Language,
+                icon = Icons.Default.Explore,
                 label = stringResource(R.string.loc_a688468b),
             ) {
                 MempoolServerDropdown(
                     currentServer = currentMempoolServer,
+                    customUrl = customMempoolUrl,
+                    torStatus = torStatus,
                     onServerSelected = onMempoolServerChange,
+                    onCustomSave = onCustomMempoolUrlSave,
                 )
             }
 
@@ -688,59 +734,6 @@ fun SettingsScreen(
                 TorStatusIndicator(
                     torStatus = torStatus,
                     modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-
-            if (currentMempoolServer == SecureStorage.MEMPOOL_CUSTOM) {
-                Spacer(modifier = Modifier.height(6.dp))
-
-                var mempoolUrlDraft by remember(customMempoolUrl) {
-                    mutableStateOf(customMempoolUrl)
-                }
-                var mempoolUrlError by remember { mutableStateOf<String?>(null) }
-                var mempoolUrlSaved by remember { mutableStateOf<String?>(null) }
-                val isCustomMempoolOnion = settingsIsOnionUrl(mempoolUrlDraft)
-                val mempoolTorStatusColor =
-                    when (torStatus) {
-                        TorStatus.CONNECTED -> TorPurple
-                        TorStatus.CONNECTING, TorStatus.STARTING -> TorPurple.copy(alpha = 0.6f)
-                        TorStatus.ERROR -> ErrorRed
-                        TorStatus.DISCONNECTED, TorStatus.STOPPING -> TextSecondary
-                    }
-                val mempoolTorStatusText =
-                    when (torStatus) {
-                        TorStatus.CONNECTED -> stringResource(R.string.loc_892c0ce5)
-                        TorStatus.CONNECTING -> stringResource(R.string.loc_1a2bbf31)
-                        TorStatus.STARTING -> stringResource(R.string.loc_a4c47a71)
-                        TorStatus.ERROR -> stringResource(R.string.loc_27d8399b)
-                        TorStatus.DISCONNECTED, TorStatus.STOPPING -> stringResource(R.string.loc_d6353c61)
-                    }
-
-                CompactTextFieldWithSave(
-                    value = mempoolUrlDraft,
-                    onValueChange = {
-                        mempoolUrlDraft = it
-                        mempoolUrlError = null
-                        mempoolUrlSaved = null
-                    },
-                    onSave = {
-                        val error = ServerUrlValidator.validate(mempoolUrlDraft)
-                        if (error != null) {
-                            mempoolUrlError = error
-                            mempoolUrlSaved = null
-                        } else {
-                            val normalizedUrl = ServerUrlValidator.normalize(mempoolUrlDraft)
-                            mempoolUrlError = null
-                            mempoolUrlDraft = normalizedUrl
-                            onCustomMempoolUrlSave(normalizedUrl)
-                            mempoolUrlSaved = "saved"
-                        }
-                    },
-                    placeholder = stringResource(R.string.settings_custom_server_placeholder),
-                    errorMessage = mempoolUrlError,
-                    successMessage = mempoolUrlSaved,
-                    torStatusText = if (isCustomMempoolOnion) mempoolTorStatusText else null,
-                    torStatusColor = if (isCustomMempoolOnion) mempoolTorStatusColor else null,
                 )
             }
 
@@ -848,7 +841,88 @@ fun SettingsScreen(
             }
         }
 
+
         Spacer(modifier = Modifier.height(32.dp))
+        }
+
+        SettingsUpdateFooter(
+            enabled = appUpdateCheckEnabled,
+            onEnabledChange = onAppUpdateCheckEnabledChange,
+            statusText = appUpdateStatusText,
+            statusColor = appUpdateStatusColor,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
+    }
+}
+
+/** Height reserved at the bottom of the scrolling settings so the pinned footer never covers content. */
+private const val SETTINGS_UPDATE_FOOTER_SPACE_DP = 96
+
+/** Pinned app-update footer: not a setting, so it stays outside the scrolling preferences list. */
+@Composable
+private fun SettingsUpdateFooter(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    statusText: String,
+    statusColor: androidx.compose.ui.graphics.Color,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+    ) {
+        HorizontalDivider(color = BorderColor.copy(alpha = 0.45f))
+        Spacer(modifier = Modifier.height(6.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkCard),
+        ) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onEnabledChange(!enabled) }
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = stringResource(R.string.app_update_check_title),
+                            style = TextStyle(fontSize = 15.sp),
+                            color = MaterialTheme.colorScheme.onBackground,
+                        )
+                        if (enabled && statusText.isNotEmpty()) {
+                            Text(
+                                text = statusText,
+                                style = TextStyle(fontSize = 13.sp),
+                                color = statusColor,
+                            )
+                        }
+                    }
+                }
+                SquareToggle(
+                    checked = enabled,
+                    onCheckedChange = onEnabledChange,
+                )
+            }
+        }
     }
 }
 
@@ -876,6 +950,9 @@ fun Layer2OptionsScreen(
     onCustomLiquidExplorerUrlSave: (String) -> Unit = {},
     currentArkEsploraUrl: String = "",
     onArkEsploraUrlChange: (String) -> Unit = {},
+    currentArkServerUrl: String = "",
+    customArkEsploraUrl: String = "",
+    onCustomArkEsploraUrlSave: (String) -> Unit = {},
     layer2TorStatus: TorStatus = TorStatus.DISCONNECTED,
     onOpenLiquidElectrum: () -> Unit = {},
     onBack: () -> Unit = {},
@@ -893,7 +970,7 @@ fun Layer2OptionsScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -909,6 +986,12 @@ fun Layer2OptionsScreen(
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
+
+        Layer2DisplayCard(
+            layer2Enabled = layer2Enabled,
+            currentDenomination = currentDenomination,
+            onDenominationChange = onDenominationChange,
+        )
 
         Spacer(modifier = Modifier.height(8.dp))
 
@@ -934,6 +1017,9 @@ fun Layer2OptionsScreen(
             ArkExternalServicesCard(
                 currentArkEsploraUrl = currentArkEsploraUrl,
                 onArkEsploraUrlChange = onArkEsploraUrlChange,
+                currentArkServerUrl = currentArkServerUrl,
+                customArkEsploraUrl = customArkEsploraUrl,
+                onCustomArkEsploraUrlSave = onCustomArkEsploraUrlSave,
                 layer2TorStatus = layer2TorStatus,
             )
             Spacer(modifier = Modifier.height(8.dp))
@@ -952,14 +1038,7 @@ fun Layer2OptionsScreen(
                 layer2TorStatus = layer2TorStatus,
                 onOpenLiquidElectrum = onOpenLiquidElectrum,
             )
-            Spacer(modifier = Modifier.height(8.dp))
         }
-
-        Layer2DisplayCard(
-            layer2Enabled = layer2Enabled,
-            currentDenomination = currentDenomination,
-            onDenominationChange = onDenominationChange,
-        )
 
         Spacer(modifier = Modifier.height(32.dp))
     }
@@ -967,13 +1046,15 @@ fun Layer2OptionsScreen(
 
 @Composable
 private fun LightningNodeConnectionCard(onOpenConnection: () -> Unit) {
-    SettingsSectionCard(title = stringResource(R.string.ln_node_connection_title)) {
+    SettingsStaticCard(
+        title = stringResource(R.string.ln_node_connection_title),
+    ) {
         Button(
             onClick = onOpenConnection,
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(48.dp),
+                    .heightIn(min = 48.dp),
             shape = RoundedCornerShape(8.dp),
             colors = ButtonDefaults.buttonColors(containerColor = BitcoinOrange),
         ) {
@@ -993,7 +1074,9 @@ private fun Layer2OptionsCard(
     lightningNodeEnabled: Boolean,
     onLightningNodeEnabledChange: (Boolean) -> Unit,
 ) {
-    SettingsSectionCard(title = stringResource(R.string.protocols_title)) {
+    SettingsStaticCard(
+        title = stringResource(R.string.protocols_title),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1085,7 +1168,9 @@ private fun Layer2DisplayCard(
 ) {
     val isSats = currentDenomination == SecureStorage.DENOMINATION_SATS
 
-    SettingsSectionCard(title = stringResource(R.string.settings_general_section_display)) {
+    SettingsStaticCard(
+        title = stringResource(R.string.settings_general_section_display),
+    ) {
         Row(
             modifier =
                 Modifier
@@ -1154,21 +1239,29 @@ private fun Layer2DisplayCard(
 private fun ArkExternalServicesCard(
     currentArkEsploraUrl: String,
     onArkEsploraUrlChange: (String) -> Unit,
+    currentArkServerUrl: String,
+    customArkEsploraUrl: String,
+    onCustomArkEsploraUrlSave: (String) -> Unit,
     layer2TorStatus: TorStatus,
 ) {
-    val selectedPreset =
-        ArkEsploraPreset.match(currentArkEsploraUrl) ?: ArkEsploraPreset.MEMPOOL_SPACE
-    SettingsSectionCard(title = stringResource(R.string.settings_ark_external_services_title)) {
+    val arkEsploraNeedsTor = settingsIsOnionUrl(currentArkEsploraUrl)
+    SettingsStaticCard(
+        title = stringResource(R.string.settings_ark_external_services_title),
+    ) {
         SettingsLabeledControl(
-            icon = Icons.Default.Language,
+            icon = Icons.Default.Public,
             label = stringResource(R.string.ark_connection_esplora_label),
         ) {
             ArkEsploraDropdown(
                 currentUrl = currentArkEsploraUrl,
-                onUrlSelected = onArkEsploraUrlChange,
+                customUrl = customArkEsploraUrl,
+                aspUrl = currentArkServerUrl,
+                torStatus = layer2TorStatus,
+                onPresetSelected = onArkEsploraUrlChange,
+                onCustomSave = onCustomArkEsploraUrlSave,
             )
         }
-        if (selectedPreset.requiresTor) {
+        if (arkEsploraNeedsTor) {
             TorStatusIndicator(
                 torStatus = layer2TorStatus,
                 modifier = Modifier.padding(top = 4.dp),
@@ -1186,7 +1279,28 @@ private fun ArkExternalServicesCard(
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
         )
+
     }
+}
+
+private fun arkEsploraValidationMessage(
+    raw: String,
+    aspUrl: String,
+    invalid: String,
+    httpsRequired: String,
+    onionScheme: String,
+    networkMismatch: String,
+): String? {
+    val normalized = ArkEndpointValidator.normalize(raw)
+    val reason = ArkEndpointValidator.validate(normalized)
+    if (reason != null) {
+        return when (reason) {
+            "Clearnet URL must use https://" -> httpsRequired
+            "Onion URL must use http:// or https://" -> onionScheme
+            else -> invalid
+        }
+    }
+    return ArkEndpointValidator.validatePair(aspUrl, normalized)?.let { networkMismatch }
 }
 
 @Composable
@@ -1202,7 +1316,9 @@ private fun Layer2ExternalServicesCard(
     layer2TorStatus: TorStatus,
     onOpenLiquidElectrum: () -> Unit,
 ) {
-    SettingsSectionCard(title = stringResource(R.string.loc_64f10f32)) {
+    SettingsStaticCard(
+        title = stringResource(R.string.loc_64f10f32),
+    ) {
         SettingsLabeledControl(
             icon = Icons.Default.Api,
             label = stringResource(R.string.loc_14b0f0b9),
@@ -1223,7 +1339,7 @@ private fun Layer2ExternalServicesCard(
         Spacer(modifier = Modifier.height(12.dp))
 
         SettingsLabeledControl(
-            icon = Icons.Default.Api,
+            icon = Icons.Default.Hub,
             label = stringResource(R.string.loc_799c4cd6),
         ) {
             SideSwapApiSourceDropdown(
@@ -1242,48 +1358,15 @@ private fun Layer2ExternalServicesCard(
         Spacer(modifier = Modifier.height(12.dp))
 
         SettingsLabeledControl(
-            icon = Icons.Default.Language,
+            icon = Icons.Default.TravelExplore,
             label = stringResource(R.string.loc_a688468b),
         ) {
             LiquidExplorerDropdown(
                 currentExplorer = currentLiquidExplorer,
+                customUrl = customLiquidExplorerUrl,
+                torStatus = layer2TorStatus,
                 onExplorerSelected = onLiquidExplorerChange,
-            )
-        }
-
-        if (currentLiquidExplorer == SecureStorage.LIQUID_EXPLORER_CUSTOM) {
-            Spacer(modifier = Modifier.height(6.dp))
-
-            var liquidExplorerUrlDraft by remember(customLiquidExplorerUrl) {
-                mutableStateOf(customLiquidExplorerUrl)
-            }
-            var liquidExplorerUrlError by remember { mutableStateOf<String?>(null) }
-            var liquidExplorerUrlSaved by remember { mutableStateOf<String?>(null) }
-
-            CompactTextFieldWithSave(
-                value = liquidExplorerUrlDraft,
-                onValueChange = {
-                    liquidExplorerUrlDraft = it
-                    liquidExplorerUrlError = null
-                    liquidExplorerUrlSaved = null
-                },
-                onSave = {
-                    val error = ServerUrlValidator.validate(liquidExplorerUrlDraft)
-                    if (error != null) {
-                        liquidExplorerUrlError = error
-                        liquidExplorerUrlSaved = null
-                    } else {
-                        val normalizedUrl = ServerUrlValidator.normalize(liquidExplorerUrlDraft)
-                        liquidExplorerUrlError = null
-                        liquidExplorerUrlDraft = normalizedUrl
-                        onCustomLiquidExplorerUrlSave(normalizedUrl)
-                        liquidExplorerUrlSaved = "saved"
-                    }
-                },
-                placeholder = stringResource(R.string.settings_custom_server_placeholder),
-                errorMessage = liquidExplorerUrlError,
-                successMessage = liquidExplorerUrlSaved,
-                modifier = Modifier.padding(start = 28.dp),
+                onCustomSave = onCustomLiquidExplorerUrlSave,
             )
         }
 
@@ -1337,10 +1420,11 @@ private data class MempoolServerOption(
 @Composable
 private fun MempoolServerDropdown(
     currentServer: String,
+    customUrl: String,
+    torStatus: TorStatus,
     onServerSelected: (String) -> Unit,
+    onCustomSave: (String) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-
     val serverOptions =
         listOf(
             MempoolServerOption(
@@ -1367,39 +1451,206 @@ private fun MempoolServerDropdown(
 
     val selectedOption = serverOptions.find { it.id == currentServer } ?: serverOptions.first()
 
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-    ) {
-        CompactDropdownField(
-            value = selectedOption.name,
-            expanded = expanded,
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-        )
+    CustomUrlDropdownBox(
+        isCustom = currentServer == SecureStorage.MEMPOOL_CUSTOM,
+        closedLabel = selectedOption.name,
+        customUrl = customUrl,
+        torStatus = torStatus,
+        accent = BitcoinOrange,
+        validate = { ServerUrlValidator.validate(it) },
+        normalize = { ServerUrlValidator.normalize(it) },
+        onSave = onCustomSave,
+    ) { closeMenu ->
+        serverOptions.forEach { option ->
+            DropdownMenuItem(
+                text = {
+                    DropdownOptionText(
+                        title = option.name,
+                        subtitle = option.description,
+                        selected = option.id == currentServer,
+                    )
+                },
+                onClick = {
+                    onServerSelected(option.id)
+                    closeMenu()
+                },
+                leadingIcon = {
+                    if (option.id == currentServer) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = stringResource(R.string.common_selected),
+                            tint = BitcoinOrange,
+                        )
+                    }
+                },
+            )
+        }
+    }
+}
+private data class SwipeModeOption(
+    val id: String,
+    val name: String,
+    val description: String,
+)
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DustThresholdDropdown(
+    currentMaxSats: Long,
+    onMaxSatsSelected: (Long) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val isCustomValue = currentMaxSats !in DustPolicy.MAX_DUST_OPTIONS_SATS
+    var customSelected by remember(currentMaxSats) { mutableStateOf(isCustomValue) }
+    var customDraft by remember(currentMaxSats) {
+        mutableStateOf(if (isCustomValue) currentMaxSats.toString() else "")
+    }
+    var customError by remember(currentMaxSats) { mutableStateOf(false) }
+    var customSaved by remember(currentMaxSats) { mutableStateOf(false) }
+
+    Column(modifier = modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(R.string.settings_dust_threshold_title),
+                style = TextStyle(fontSize = 13.sp),
+                color = TextSecondary,
+                modifier = Modifier.weight(1f),
+            )
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = it },
+                modifier = Modifier.width(DUST_THRESHOLD_FIELD_WIDTH),
+            ) {
+                DustThresholdAnchor(
+                    customSelected = customSelected,
+                    currentMaxSats = currentMaxSats,
+                    customDraft = customDraft,
+                    customError = customError,
+                    customSaved = customSaved,
+                    expanded = expanded,
+                    onDraftChange = { input ->
+                        customDraft = input.filter { it.isDigit() }.take(CUSTOM_DUST_MAX_DIGITS)
+                        customError = false
+                        customSaved = false
+                    },
+                    onSave = {
+                        val sats = customDraft.toLongOrNull()
+                        if (sats != null && sats in 1L..DustPolicy.MAX_CUSTOM_DUST_SATS) {
+                            customError = false
+                            customSaved = true
+                            onMaxSatsSelected(sats)
+                        } else {
+                            customError = true
+                            customSaved = false
+                        }
+                    },
+                    scope = this,
+                )
+                DustThresholdMenu(
+                    expanded = expanded,
+                    customSelected = customSelected,
+                    currentMaxSats = currentMaxSats,
+                    onDismiss = { expanded = false },
+                    onPreset = { sats ->
+                        customSelected = false
+                        onMaxSatsSelected(sats)
+                        expanded = false
+                    },
+                    onCustom = {
+                        if (customDraft.isEmpty()) customDraft = currentMaxSats.toString()
+                        customSelected = true
+                        expanded = false
+                    },
+                    scope = this,
+                )
+            }
+        }
+        if (customError) {
+            Text(
+                text = stringResource(R.string.dust_threshold_custom_error, DustPolicy.MAX_CUSTOM_DUST_SATS),
+                style = TextStyle(fontSize = 12.sp),
+                color = ErrorRed,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                textAlign = TextAlign.End,
+            )
+        }
+    }
+}
+
+private val DUST_THRESHOLD_FIELD_WIDTH = 176.dp
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DustThresholdAnchor(
+    customSelected: Boolean,
+    currentMaxSats: Long,
+    customDraft: String,
+    customError: Boolean,
+    customSaved: Boolean,
+    expanded: Boolean,
+    onDraftChange: (String) -> Unit,
+    onSave: () -> Unit,
+    scope: ExposedDropdownMenuBoxScope,
+) {
+    with(scope) {
+        if (customSelected) {
+            DustCustomField(
+                value = customDraft,
+                isError = customError,
+                isSaved = customSaved,
+                expanded = expanded,
+                onValueChange = onDraftChange,
+                onSave = onSave,
+                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
+            )
+        } else {
+            CompactDropdownField(
+                value = stringResource(R.string.dust_threshold_option_format, currentMaxSats),
+                expanded = expanded,
+                dense = true,
+                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DustThresholdMenu(
+    expanded: Boolean,
+    customSelected: Boolean,
+    currentMaxSats: Long,
+    onDismiss: () -> Unit,
+    onPreset: (Long) -> Unit,
+    onCustom: () -> Unit,
+    scope: ExposedDropdownMenuBoxScope,
+) {
+    with(scope) {
         ExposedDropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false },
+            onDismissRequest = onDismiss,
             modifier =
                 Modifier
                     .exposedDropdownSize(true)
                     .background(DarkSurface),
         ) {
-            serverOptions.forEach { option ->
+            DustPolicy.MAX_DUST_OPTIONS_SATS.forEach { sats ->
+                val selected = !customSelected && sats == currentMaxSats
                 DropdownMenuItem(
                     text = {
                         DropdownOptionText(
-                            title = option.name,
-                            subtitle = option.description,
-                            selected = option.id == currentServer,
+                            title = stringResource(R.string.dust_threshold_option_format, sats),
+                            subtitle = "",
+                            selected = selected,
                         )
                     },
-                    onClick = {
-                        onServerSelected(option.id)
-                        expanded = false
-                    },
+                    onClick = { onPreset(sats) },
                     leadingIcon = {
-                        if (option.id == currentServer) {
+                        if (selected) {
                             Icon(
                                 imageVector = Icons.Default.Check,
                                 contentDescription = stringResource(R.string.common_selected),
@@ -1409,15 +1660,108 @@ private fun MempoolServerDropdown(
                     },
                 )
             }
+            DropdownMenuItem(
+                text = {
+                    DropdownOptionText(
+                        title = stringResource(R.string.loc_f22813ad),
+                        subtitle = "",
+                        selected = customSelected,
+                    )
+                },
+                onClick = onCustom,
+                leadingIcon = {
+                    if (customSelected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = stringResource(R.string.common_selected),
+                            tint = BitcoinOrange,
+                        )
+                    }
+                },
+            )
         }
     }
 }
 
-private data class SwipeModeOption(
-    val id: String,
-    val name: String,
-    val description: String,
-)
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DustCustomField(
+    value: String,
+    isError: Boolean,
+    isSaved: Boolean,
+    expanded: Boolean,
+    onValueChange: (String) -> Unit,
+    onSave: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val borderColor =
+        when {
+            isError -> ErrorRed
+            expanded -> BitcoinOrange
+            else -> BorderColor
+        }
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+                .padding(start = 10.dp, end = 4.dp, top = 7.dp, bottom = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            textStyle =
+                TextStyle(
+                    fontSize = 13.5.sp,
+                    color = MaterialTheme.colorScheme.onBackground,
+                ),
+            cursorBrush = SolidColor(BitcoinOrange),
+            modifier = Modifier.weight(1f),
+            decorationBox = { innerTextField ->
+                Box(contentAlignment = Alignment.CenterStart) {
+                    if (value.isEmpty()) {
+                        Text(
+                            text =
+                                stringResource(
+                                    R.string.dust_threshold_custom_hint,
+                                    DustPolicy.MAX_CUSTOM_DUST_SATS,
+                                ),
+                            style = TextStyle(fontSize = 13.5.sp),
+                            color = TextSecondary.copy(alpha = 0.5f),
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+        )
+        Text(
+            text =
+                if (isSaved) {
+                    stringResource(R.string.loc_3822fc21)
+                } else {
+                    stringResource(R.string.loc_f55495e0)
+                },
+            style = TextStyle(fontSize = 13.5.sp),
+            color = if (isSaved) SuccessGreen else BitcoinOrange,
+            modifier =
+                Modifier
+                    .clickable(onClick = onSave)
+                    .padding(horizontal = 6.dp),
+        )
+        Icon(
+            imageVector = Icons.Default.ArrowDropDown,
+            contentDescription = null,
+            tint = TextSecondary,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+private const val CUSTOM_DUST_MAX_DIGITS = 5
 
 private data class ThemeModeOption(
     val id: String,
@@ -1599,10 +1943,11 @@ private data class FeeSourceOption(
 @Composable
 private fun FeeSourceDropdown(
     currentSource: String,
+    customUrl: String,
+    torStatus: TorStatus,
     onSourceSelected: (String) -> Unit,
+    onCustomSave: (String) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-
     val sourceOptions =
         listOf(
             FeeSourceOption(
@@ -1639,52 +1984,42 @@ private fun FeeSourceDropdown(
 
     val selectedOption = sourceOptions.find { it.id == currentSource } ?: sourceOptions.first()
 
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-    ) {
-        CompactDropdownField(
-            value = selectedOption.name,
-            expanded = expanded,
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-        )
-
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier =
-                Modifier
-                    .exposedDropdownSize(true)
-                    .background(DarkSurface),
-        ) {
-            sourceOptions.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        DropdownOptionText(
-                            title = option.name,
-                            subtitle = option.description,
-                            selected = option.id == currentSource,
+    CustomUrlDropdownBox(
+        isCustom = currentSource == SecureStorage.FEE_SOURCE_CUSTOM,
+        closedLabel = selectedOption.name,
+        customUrl = customUrl,
+        torStatus = torStatus,
+        accent = BitcoinOrange,
+        validate = { ServerUrlValidator.validate(it) },
+        normalize = { ServerUrlValidator.normalize(it) },
+        onSave = onCustomSave,
+    ) { closeMenu ->
+        sourceOptions.forEach { option ->
+            DropdownMenuItem(
+                text = {
+                    DropdownOptionText(
+                        title = option.name,
+                        subtitle = option.description,
+                        selected = option.id == currentSource,
+                    )
+                },
+                onClick = {
+                    onSourceSelected(option.id)
+                    closeMenu()
+                },
+                leadingIcon = {
+                    if (option.id == currentSource) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = stringResource(R.string.common_selected),
+                            tint = BitcoinOrange,
                         )
-                    },
-                    onClick = {
-                        onSourceSelected(option.id)
-                        expanded = false
-                    },
-                    leadingIcon = {
-                        if (option.id == currentSource) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = stringResource(R.string.common_selected),
-                                tint = BitcoinOrange,
-                            )
-                        }
-                    },
-                )
-            }
+                    }
+                },
+            )
         }
     }
 }
-
 /**
  * Data class for price source options
  */
@@ -2014,64 +2349,332 @@ private fun truncateOnionEsploraUrl(url: String): String {
 @Composable
 private fun ArkEsploraDropdown(
     currentUrl: String,
-    onUrlSelected: (String) -> Unit,
+    customUrl: String,
+    aspUrl: String,
+    torStatus: TorStatus,
+    onPresetSelected: (String) -> Unit,
+    onCustomSave: (String) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val selected =
-        ArkEsploraPreset.match(currentUrl) ?: ArkEsploraPreset.MEMPOOL_SPACE
+    val selected = ArkEsploraPreset.match(currentUrl)
+    var customSelected by remember(currentUrl) {
+        mutableStateOf(currentUrl.isNotBlank() && selected == null)
+    }
+    val invalidLabel = stringResource(R.string.ark_custom_esplora_invalid)
+    val httpsRequiredLabel = stringResource(R.string.ark_custom_esplora_https_required)
+    val onionSchemeLabel = stringResource(R.string.ark_custom_esplora_onion_scheme)
+    val networkMismatchLabel = stringResource(R.string.ark_custom_esplora_network_mismatch)
     val selectedLabel =
-        if (selected.requiresTor) {
-            "${selected.label} · Tor"
-        } else {
-            selected.label
+        when {
+            selected == null -> currentUrl
+            selected.requiresTor -> "${selected.label} · Tor"
+            else -> selected.label
         }
 
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-    ) {
-        CompactDropdownField(
-            value = selectedLabel,
-            expanded = expanded,
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-        )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.exposedDropdownSize(true).background(DarkSurface),
-        ) {
-            ArkEsploraPreset.entries.forEach { preset ->
-                val isSelected =
-                    selected.url.trimEnd('/').equals(preset.url.trimEnd('/'), ignoreCase = true)
-                val displayUrl =
-                    if (preset.requiresTor) {
-                        truncateOnionEsploraUrl(preset.url)
-                    } else {
-                        preset.url
-                    }
-                DropdownMenuItem(
-                    text = {
-                        DropdownOptionText(
-                            title = preset.label,
-                            subtitle = displayUrl,
-                            selected = isSelected,
+    CustomUrlDropdownBox(
+        isCustom = customSelected,
+        closedLabel = selectedLabel,
+        customUrl =
+            customUrl.ifBlank {
+                currentUrl.takeIf { it.isNotBlank() && selected == null }.orEmpty()
+            },
+        torStatus = torStatus,
+        accent = ArkRust,
+        validate = { raw ->
+            arkEsploraValidationMessage(
+                raw = raw,
+                aspUrl = aspUrl,
+                invalid = invalidLabel,
+                httpsRequired = httpsRequiredLabel,
+                onionScheme = onionSchemeLabel,
+                networkMismatch = networkMismatchLabel,
+            )
+        },
+        normalize = { ArkEndpointValidator.normalize(it) },
+        onSave = onCustomSave,
+    ) { closeMenu ->
+        ArkEsploraPreset.entries.forEach { preset ->
+            val isSelected = !customSelected && selected == preset
+            val displayUrl =
+                if (preset.requiresTor) {
+                    truncateOnionEsploraUrl(preset.url)
+                } else {
+                    preset.url
+                }
+            DropdownMenuItem(
+                text = {
+                    DropdownOptionText(
+                        title = preset.label,
+                        subtitle = displayUrl,
+                        selected = isSelected,
+                    )
+                },
+                onClick = {
+                    customSelected = false
+                    onPresetSelected(preset.url)
+                    closeMenu()
+                },
+                leadingIcon = {
+                    if (isSelected) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = stringResource(R.string.common_selected),
+                            tint = ArkRust,
                         )
+                    }
+                },
+            )
+        }
+        DropdownMenuItem(
+            text = {
+                DropdownOptionText(
+                    title = stringResource(R.string.loc_c032eff3),
+                    subtitle = stringResource(R.string.loc_b3694f7f),
+                    selected = customSelected,
+                )
+            },
+            onClick = {
+                customSelected = true
+                closeMenu()
+            },
+            leadingIcon = {
+                if (customSelected) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = stringResource(R.string.common_selected),
+                        tint = ArkRust,
+                    )
+                }
+            },
+        )
+    }
+}
+
+/**
+ * Self-contained dropdown whose anchor turns into a typing field (with Save and Tor status)
+ * when [isCustom] is true. Only the arrow opens the menu in custom mode, so tapping the
+ * field or Save never pops the menu. The caller supplies validation, normalisation, the
+ * save callback and the menu items.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CustomUrlDropdownBox(
+    isCustom: Boolean,
+    closedLabel: String,
+    customUrl: String,
+    torStatus: TorStatus,
+    accent: androidx.compose.ui.graphics.Color,
+    validate: (String) -> String?,
+    normalize: (String) -> String,
+    onSave: (String) -> Unit,
+    menu: @Composable androidx.compose.foundation.layout.ColumnScope.(closeMenu: () -> Unit) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var draft by remember(isCustom, customUrl) { mutableStateOf(customUrl) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var saved by remember { mutableStateOf(false) }
+    LaunchedEffect(saved) {
+        if (saved) {
+            delay(3000)
+            saved = false
+        }
+    }
+    val isDraftOnion = settingsIsOnionUrl(draft)
+    val torStatusText =
+        when (torStatus) {
+            TorStatus.CONNECTED -> stringResource(R.string.loc_892c0ce5)
+            TorStatus.CONNECTING -> stringResource(R.string.loc_1a2bbf31)
+            TorStatus.STARTING -> stringResource(R.string.loc_a4c47a71)
+            TorStatus.ERROR -> stringResource(R.string.loc_27d8399b)
+            TorStatus.DISCONNECTED, TorStatus.STOPPING -> stringResource(R.string.loc_d6353c61)
+        }
+    val torStatusColor =
+        when (torStatus) {
+            TorStatus.CONNECTED -> TorPurple
+            TorStatus.CONNECTING, TorStatus.STARTING -> TorPurple.copy(alpha = 0.6f)
+            TorStatus.ERROR -> ErrorRed
+            TorStatus.DISCONNECTED, TorStatus.STOPPING -> TextSecondary
+        }
+
+    Column {
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            // In custom mode the field is for typing/saving: only the arrow toggles the menu.
+            onExpandedChange = { if (!isCustom) expanded = it },
+        ) {
+            if (isCustom) {
+                CustomUrlAnchorField(
+                    value = draft,
+                    placeholder = stringResource(R.string.settings_custom_server_placeholder),
+                    accent = accent,
+                    isError = error != null,
+                    isSaved = saved,
+                    expanded = expanded,
+                    onArrowClick = { expanded = !expanded },
+                    onValueChange = {
+                        draft = it
+                        error = null
+                        saved = false
                     },
-                    onClick = {
-                        onUrlSelected(preset.url)
-                        expanded = false
-                    },
-                    leadingIcon = {
-                        if (isSelected) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = stringResource(R.string.common_selected),
-                                tint = ArkRust,
-                            )
+                    onSave = {
+                        val message = validate(draft)
+                        if (message != null) {
+                            error = message
+                            saved = false
+                        } else {
+                            val normalizedUrl = normalize(draft)
+                            error = null
+                            draft = normalizedUrl
+                            saved = true
+                            onSave(normalizedUrl)
                         }
                     },
+                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryEditable),
+                )
+            } else {
+                CompactDropdownField(
+                    value = closedLabel,
+                    expanded = expanded,
+                    modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
                 )
             }
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false },
+                modifier = Modifier.exposedDropdownSize(true).background(DarkSurface),
+            ) {
+                menu { expanded = false }
+            }
+        }
+
+        // Validation error and/or Tor status, directly under the field.
+        if (isCustom && (error != null || isDraftOnion)) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (error != null) {
+                    Text(
+                        text = error.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = ErrorRed,
+                        modifier = Modifier.weight(1f).padding(start = 4.dp),
+                    )
+                } else {
+                    Spacer(modifier = Modifier.width(1.dp))
+                }
+                if (isDraftOnion) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier =
+                                Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(torStatusColor),
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = torStatusText,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = torStatusColor,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Editable dropdown anchor: URL text, Save label, and a roomy arrow that reopens the menu. */
+@Composable
+private fun CustomUrlAnchorField(
+    value: String,
+    placeholder: String,
+    accent: androidx.compose.ui.graphics.Color,
+    isError: Boolean,
+    isSaved: Boolean,
+    expanded: Boolean,
+    onArrowClick: () -> Unit,
+    onValueChange: (String) -> Unit,
+    onSave: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val borderColor =
+        when {
+            isError -> ErrorRed
+            isSaved -> SuccessGreen
+            expanded -> accent
+            else -> BorderColor
+        }
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+                .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+            textStyle =
+                TextStyle(
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onBackground,
+                ),
+            cursorBrush = SolidColor(accent),
+            modifier = Modifier.weight(1f),
+            decorationBox = { innerTextField ->
+                Box(
+                    modifier = Modifier.padding(vertical = 8.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (value.isEmpty()) {
+                        Text(
+                            text = placeholder,
+                            style = TextStyle(fontSize = 13.sp),
+                            color = TextSecondary.copy(alpha = 0.5f),
+                            maxLines = 1,
+                            softWrap = false,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+        )
+        Text(
+            text =
+                if (isSaved) {
+                    stringResource(R.string.loc_3822fc21)
+                } else {
+                    stringResource(R.string.loc_f55495e0)
+                },
+            style = TextStyle(fontSize = 13.sp),
+            color = if (isSaved) SuccessGreen else accent,
+            modifier =
+                Modifier
+                    .clickable(onClick = onSave)
+                    .padding(horizontal = 8.dp, vertical = 8.dp),
+        )
+        Box(
+            modifier =
+                Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onArrowClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                tint = TextSecondary,
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
 }
@@ -2080,9 +2683,11 @@ private fun ArkEsploraDropdown(
 @Composable
 private fun LiquidExplorerDropdown(
     currentExplorer: String,
+    customUrl: String,
+    torStatus: TorStatus,
     onExplorerSelected: (String) -> Unit,
+    onCustomSave: (String) -> Unit,
 ) {
-    var expanded by remember { mutableStateOf(false) }
     val options =
         listOf(
             LiquidExplorerOption(
@@ -2113,51 +2718,46 @@ private fun LiquidExplorerDropdown(
         )
     val selectedOption = options.find { it.id == currentExplorer } ?: options.first()
 
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = it },
-    ) {
-        CompactDropdownField(
-            value = selectedOption.name,
-            expanded = expanded,
-            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-        )
-
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.exposedDropdownSize(true).background(DarkSurface),
-        ) {
-            options.forEach { option ->
-                DropdownMenuItem(
-                    text = {
-                        DropdownOptionText(
-                            title = option.name,
-                            subtitle = option.description,
-                            selected = option.id == currentExplorer,
+    CustomUrlDropdownBox(
+        isCustom = currentExplorer == SecureStorage.LIQUID_EXPLORER_CUSTOM,
+        closedLabel = selectedOption.name,
+        customUrl = customUrl,
+        torStatus = torStatus,
+        accent = BitcoinOrange,
+        validate = { ServerUrlValidator.validate(it) },
+        normalize = { ServerUrlValidator.normalize(it) },
+        onSave = onCustomSave,
+    ) { closeMenu ->
+        options.forEach { option ->
+            DropdownMenuItem(
+                text = {
+                    DropdownOptionText(
+                        title = option.name,
+                        subtitle = option.description,
+                        selected = option.id == currentExplorer,
+                    )
+                },
+                onClick = {
+                    onExplorerSelected(option.id)
+                    closeMenu()
+                },
+                leadingIcon = {
+                    if (option.id == currentExplorer) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = stringResource(R.string.common_selected),
+                            tint = BitcoinOrange,
                         )
-                    },
-                    onClick = {
-                        onExplorerSelected(option.id)
-                        expanded = false
-                    },
-                    leadingIcon = {
-                        if (option.id == currentExplorer) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = stringResource(R.string.common_selected),
-                                tint = BitcoinOrange,
-                            )
-                        }
-                    },
-                )
-            }
+                    }
+                },
+            )
         }
     }
 }
 
+/** Always-visible card used by the Layer 2 screen (no expand/collapse header). */
 @Composable
-private fun SettingsSectionCard(
+private fun SettingsStaticCard(
     title: String,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -2166,19 +2766,106 @@ private fun SettingsSectionCard(
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = DarkCard),
     ) {
-        Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-        ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
-                color = BitcoinOrange,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(16.dp),
             )
-            Spacer(modifier = Modifier.height(12.dp))
-            content()
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+            ) {
+                content()
+            }
+        }
+    }
+}
+
+/** Owned by the app process, rather than a navigation entry that is destroyed on Back. */
+internal class SettingsSectionSessionState {
+    private val sections = mutableMapOf<String, MutableState<Boolean>>()
+
+    fun expandedState(sectionId: String): MutableState<Boolean> =
+        sections.getOrPut(sectionId) { mutableStateOf(false) }
+}
+
+private val settingsSectionSessionState = SettingsSectionSessionState()
+
+@Composable
+private fun SettingsSectionCard(
+    sectionId: String,
+    icon: ImageVector,
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by settingsSectionSessionState.expandedState(sectionId)
+    val titleColor by
+        animateColorAsState(
+            targetValue = if (expanded) BitcoinOrange else MaterialTheme.colorScheme.onBackground,
+            animationSpec = tween(200),
+            label = "settingsSectionTitleColor",
+        )
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkCard),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable { expanded = !expanded }
+                        .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = BitcoinOrange,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = titleColor,
+                    )
+                }
+                Icon(
+                    imageVector =
+                        if (expanded) {
+                            Icons.Default.KeyboardArrowUp
+                        } else {
+                            Icons.Default.KeyboardArrowDown
+                        },
+                    contentDescription = null,
+                    tint = TextSecondary,
+                )
+            }
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(),
+                exit = shrinkVertically(),
+            ) {
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                ) {
+                    content()
+                }
+            }
         }
     }
 }
@@ -2287,116 +2974,5 @@ private fun TorStatusIndicator(
             style = MaterialTheme.typography.bodySmall,
             color = torStatusColor,
         )
-    }
-}
-
-@Composable
-private fun CompactTextFieldWithSave(
-    value: String,
-    onValueChange: (String) -> Unit,
-    onSave: () -> Unit,
-    placeholder: String,
-    modifier: Modifier = Modifier,
-    errorMessage: String? = null,
-    successMessage: String? = null,
-    torStatusText: String? = null,
-    torStatusColor: androidx.compose.ui.graphics.Color? = null,
-) {
-    val borderColor =
-        when {
-            errorMessage != null -> ErrorRed
-            successMessage != null -> SuccessGreen
-            else -> BorderColor
-        }
-
-    Column(modifier = modifier) {
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .border(1.dp, borderColor, RoundedCornerShape(8.dp))
-                    .padding(start = 12.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                singleLine = true,
-                textStyle =
-                    TextStyle(
-                        fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    ),
-                cursorBrush = SolidColor(BitcoinOrange),
-                modifier = Modifier.weight(1f),
-                decorationBox = { innerTextField ->
-                    Box(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        if (value.isEmpty()) {
-                            Text(
-                                text = placeholder,
-                                style = TextStyle(fontSize = 13.sp),
-                                color = TextSecondary.copy(alpha = 0.5f),
-                            )
-                        }
-                        innerTextField()
-                    }
-                },
-            )
-
-            Text(
-                text = if (successMessage != null) stringResource(R.string.loc_3822fc21) else stringResource(R.string.loc_f55495e0),
-                style = TextStyle(fontSize = 13.sp),
-                color = if (successMessage != null) SuccessGreen else BitcoinOrange,
-                modifier =
-                    Modifier
-                        .clickable(onClick = onSave)
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-            )
-        }
-
-        // Error and/or Tor status on the same line
-        if (errorMessage != null || torStatusText != null) {
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(top = 2.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (errorMessage != null) {
-                    Text(
-                        text = errorMessage,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = ErrorRed,
-                        modifier = Modifier.padding(start = 4.dp),
-                    )
-                } else {
-                    Spacer(modifier = Modifier.width(1.dp))
-                }
-                if (torStatusText != null && torStatusColor != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier =
-                                Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(torStatusColor),
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = torStatusText,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = torStatusColor,
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(8.dp))
     }
 }

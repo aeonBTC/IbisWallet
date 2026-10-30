@@ -1,4 +1,4 @@
-﻿package github.aeonbtc.ibiswallet.ui.screens
+package github.aeonbtc.ibiswallet.ui.screens
 
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -82,6 +83,7 @@ import github.aeonbtc.ibiswallet.ui.components.FeeRateOption
 import github.aeonbtc.ibiswallet.ui.components.FeeRateSection
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.theme.ArkRust
 import github.aeonbtc.ibiswallet.ui.theme.BorderColor
@@ -367,7 +369,7 @@ fun ArkTransferScreen(
             amountSats != null &&
             amountSats > 0 &&
             !belowMinBoard &&
-            isElectrumConnected &&
+            (!isLayer1ToArk || isElectrumConnected) &&
             !(isLayer1ToArk && !arkOnchainBoardingAvailable && !arkSingleTxBoardingAvailable) &&
             !isCustomDestinationMissing &&
             destinationValidationError == null &&
@@ -1016,17 +1018,21 @@ fun ArkTransferScreen(
                                         )
                                     },
                                     trailingIcon = {
-                                        IconButton(
-                                            onClick = { showCustomDestinationQrScanner = true },
+                                        ScanPasteIcons(
+                                            onScan = { showCustomDestinationQrScanner = true },
+                                            onPaste = { text ->
+                                                customDestination =
+                                                    when (val parsed = parseSendRecipient(text)) {
+                                                        is ParsedSendRecipient.Bitcoin -> parsed.address
+                                                        else -> text
+                                                    }
+                                                localError = null
+                                                if (transferState !is ArkTransferState.Idle) onReset()
+                                            },
+                                            tint = toColor,
+                                            scanContentDescription = stringResource(R.string.loc_59b2cdc5),
                                             enabled = !isBusy,
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.QrCodeScanner,
-                                                contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                                tint = toColor,
-                                                modifier = Modifier.size(20.dp),
-                                            )
-                                        }
+                                        )
                                     },
                                     isError = destinationValidationError != null,
                                     singleLine = true,
@@ -1185,7 +1191,7 @@ fun ArkTransferScreen(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .heightIn(min = 48.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors =
                         ButtonDefaults.buttonColors(
@@ -1440,9 +1446,9 @@ private fun ArkTransferReviewDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(50.dp),
+                        .height(48.dp),
                 enabled = !isExecuting,
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = ArkRust),
             ) {
                 if (isExecuting) {
@@ -1474,7 +1480,7 @@ private fun ArkTransferReviewDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
             ) {
                 Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
             }
@@ -2062,4 +2068,3 @@ private fun formatArkBtcInput(amountSats: Long): String =
     String.format(Locale.US, "%.8f", amountSats / 100_000_000.0)
         .trimEnd('0')
         .trimEnd('.')
-

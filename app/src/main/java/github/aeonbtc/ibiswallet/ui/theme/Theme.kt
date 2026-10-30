@@ -7,6 +7,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -59,13 +60,16 @@ fun IbisWalletTheme(
         } else {
             StandardIbisThemeColors
         }
-    val colorScheme = darkColorSchemeFor(themeColors)
+    val colorScheme = remember(themeColors) { darkColorSchemeFor(themeColors) }
     val density = LocalDensity.current
     val clampedDensity =
-        Density(
-            density = density.density,
-            fontScale = min(density.fontScale, 1.15f),
-        )
+        remember(density.density, density.fontScale) {
+            Density(
+                density = density.density,
+                fontScale = min(density.fontScale, 1.15f),
+            )
+        }
+    val typography = remember(typeface) { ibisTypography(typeface) }
 
     val view = LocalView.current
     if (!view.isInEditMode) {
@@ -84,7 +88,7 @@ fun IbisWalletTheme(
     ) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = ibisTypography(typeface),
+            typography = typography,
             content = content,
         )
     }

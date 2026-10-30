@@ -57,7 +57,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -97,6 +96,8 @@ import github.aeonbtc.ibiswallet.data.model.StoredWallet
 import github.aeonbtc.ibiswallet.data.model.WalletImportConfig
 import github.aeonbtc.ibiswallet.data.model.WalletNetwork
 import github.aeonbtc.ibiswallet.ui.components.Bip39SuggestionRow
+import github.aeonbtc.ibiswallet.ui.components.CompactDropdownField
+import github.aeonbtc.ibiswallet.ui.components.DropdownOptionText
 import github.aeonbtc.ibiswallet.ui.components.IbisConfirmDialog
 import github.aeonbtc.ibiswallet.ui.components.SensitiveSeedIme
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
@@ -259,7 +260,7 @@ fun SecurityScreen(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 4.dp),
+                        .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
@@ -275,8 +276,6 @@ fun SecurityScreen(
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
 
             val isBiometricEnabled = currentSecurityMethod == SecureStorage.SecurityMethod.BIOMETRIC
             val isPinEnabled = currentSecurityMethod == SecureStorage.SecurityMethod.PIN
@@ -1567,7 +1566,7 @@ private fun PinNumberPad(
                 Modifier
                     .fillMaxWidth()
                     .widthIn(max = 240.dp)
-                    .heightIn(min = 48.dp),
+                    .height(48.dp),
             shape = RoundedCornerShape(8.dp),
             colors =
                 ButtonDefaults.buttonColors(
@@ -1631,27 +1630,10 @@ private fun ClearClipboardModeDropdown(
         onExpandedChange = { expanded = it },
         modifier = modifier,
     ) {
-        OutlinedTextField(
+        CompactDropdownField(
             value = clearClipboardModeLabel(currentMode),
-            onValueChange = {},
-            readOnly = true,
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-            trailingIcon = {
-                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
-            },
-            colors =
-                OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = BitcoinOrange,
-                    unfocusedBorderColor = BorderColor,
-                    focusedLabelColor = BitcoinOrange,
-                    unfocusedLabelColor = TextSecondary,
-                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                ),
-            shape = RoundedCornerShape(8.dp),
+            expanded = expanded,
+            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
         )
 
         ExposedDropdownMenu(
@@ -1665,15 +1647,10 @@ private fun ClearClipboardModeDropdown(
             options.forEach { mode ->
                 DropdownMenuItem(
                     text = {
-                        Text(
-                            text = clearClipboardModeLabel(mode),
-                            style = MaterialTheme.typography.titleMedium,
-                            color =
-                                if (mode == currentMode) {
-                                    BitcoinOrange
-                                } else {
-                                    MaterialTheme.colorScheme.onBackground
-                                },
+                        DropdownOptionText(
+                            title = clearClipboardModeLabel(mode),
+                            subtitle = "",
+                            selected = mode == currentMode,
                         )
                     },
                     onClick = {
@@ -1707,27 +1684,10 @@ private fun LockTimingDropdown(
         expanded = expanded,
         onExpandedChange = { expanded = it },
     ) {
-        OutlinedTextField(
+        CompactDropdownField(
             value = lockTimingLabel(currentTiming),
-            onValueChange = {},
-            readOnly = true,
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
-            trailingIcon = {
-                ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded)
-            },
-            colors =
-                OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = BitcoinOrange,
-                    unfocusedBorderColor = BorderColor,
-                    focusedLabelColor = BitcoinOrange,
-                    unfocusedLabelColor = TextSecondary,
-                    focusedTextColor = MaterialTheme.colorScheme.onBackground,
-                    unfocusedTextColor = MaterialTheme.colorScheme.onBackground,
-                ),
-            shape = RoundedCornerShape(8.dp),
+            expanded = expanded,
+            modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
         )
 
         ExposedDropdownMenu(
@@ -1741,15 +1701,10 @@ private fun LockTimingDropdown(
             SecureStorage.LockTiming.entries.forEach { timing ->
                 DropdownMenuItem(
                     text = {
-                        Text(
-                            text = lockTimingLabel(timing),
-                            style = MaterialTheme.typography.titleMedium,
-                            color =
-                                if (timing == currentTiming) {
-                                    BitcoinOrange
-                                } else {
-                                    MaterialTheme.colorScheme.onBackground
-                                },
+                        DropdownOptionText(
+                            title = lockTimingLabel(timing),
+                            subtitle = "",
+                            selected = timing == currentTiming,
                         )
                     },
                     onClick = {
@@ -1890,7 +1845,7 @@ private fun DuressSetupScreen(
         copiedGeneratedSeed = false
     }
     var showAdvancedOptions by remember { mutableStateOf(false) }
-    // Advanced options (matching ImportWalletScreen pattern)
+    // Advanced (matching ImportWalletScreen pattern)
     var usePassphrase by remember { mutableStateOf(false) }
     var passphrase by remember { mutableStateOf("") }
     var showPassphrase by remember { mutableStateOf(false) }
@@ -2403,12 +2358,10 @@ private fun DuressSetupScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = stringResource(R.string.loc_ad46d69f),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
 
             Card(
                 modifier = Modifier.fillMaxWidth(),

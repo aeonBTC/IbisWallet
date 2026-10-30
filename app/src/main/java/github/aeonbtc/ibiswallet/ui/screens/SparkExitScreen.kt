@@ -1,4 +1,4 @@
-﻿package github.aeonbtc.ibiswallet.ui.screens
+package github.aeonbtc.ibiswallet.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -59,6 +60,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import android.net.Uri
 import github.aeonbtc.ibiswallet.R
 import java.text.SimpleDateFormat
@@ -224,20 +226,22 @@ fun SparkExitScreen(
     ) {
         item {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onBack) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = null,
-                        tint = TextSecondary,
+                        contentDescription = stringResource(R.string.loc_cdfc6e09),
                     )
                 }
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = stringResource(R.string.spark_exit_title),
                     style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onBackground,
                 )
             }
@@ -751,6 +755,25 @@ private fun ExitQuoteCard(
                 feeRateSatPerVb = quote.feeRateSatPerVb,
                 amountText = amountText,
             )
+            // Chain progress read while preparing: steps already on-chain are
+            // not rebuilt, which is also why a partially-exited tree quotes a
+            // lower fee than a fresh one.
+            quote.chainProgress?.let { progress ->
+                if (progress.hasProgress) {
+                    Text(
+                        text = stringResource(R.string.spark_exit_chain_progress_format, progress.onChainSteps),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = SuccessGreen,
+                    )
+                }
+                if (progress.hasUnverified) {
+                    Text(
+                        text = stringResource(R.string.spark_exit_unverified),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = BitcoinOrange,
+                    )
+                }
+            }
             HorizontalDivider(color = BorderColor)
             when (economics) {
                 is SparkUnilateralExitPolicy.QuoteEconomics.Empty -> {
@@ -1193,8 +1216,12 @@ private fun ExitFeeBumpDialog(
     onConfirm: (Double) -> Unit,
 ) {
     var rate by remember(initialRate) { mutableDoubleStateOf(initialRate) }
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         Card(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = DarkCard),
         ) {
@@ -1232,8 +1259,12 @@ private fun ExitDiscardDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         Card(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = DarkCard),
         ) {
@@ -1282,8 +1313,12 @@ private fun ExitBuildConfirmDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
         Card(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = DarkCard),
         ) {

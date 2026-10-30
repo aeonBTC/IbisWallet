@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,6 +33,8 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -83,6 +86,7 @@ import github.aeonbtc.ibiswallet.ui.theme.DarkSurfaceVariant
 import github.aeonbtc.ibiswallet.ui.theme.ErrorRed
 import github.aeonbtc.ibiswallet.ui.theme.SuccessGreen
 import github.aeonbtc.ibiswallet.ui.theme.TextSecondary
+import github.aeonbtc.ibiswallet.ui.theme.TorPurple
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.generateQrBitmap
 import kotlinx.coroutines.Dispatchers
@@ -158,11 +162,19 @@ fun AllAddressesScreen(
                 qrBitmap = null
             },
             confirmButton = {
-                TextButton(onClick = {
-                    showQrForAddress = null
-                    qrBitmap = null
-                }) {
-                    Text(stringResource(R.string.loc_d2c0aec0), color = accentColor)
+                Button(
+                    onClick = {
+                        showQrForAddress = null
+                        qrBitmap = null
+                    },
+                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = accentColor,
+                        ),
+                ) {
+                    Text(stringResource(R.string.loc_d2c0aec0))
                 }
             },
             title = {
@@ -224,9 +236,11 @@ fun AllAddressesScreen(
                 receiveAddresses.take(receiveDisplayCount)
             } else {
                 val query = searchQuery.lowercase()
+                val matchesSp = query == "sp" || query.contains("silent")
                 receiveAddresses.filter { addr ->
                     addr.address.lowercase().contains(query) ||
-                        addr.label?.lowercase()?.contains(query) == true
+                        addr.label?.lowercase()?.contains(query) == true ||
+                        (matchesSp && addr.isSilentPayment)
                 }
             }
         }
@@ -236,9 +250,11 @@ fun AllAddressesScreen(
                 changeAddresses.take(changeDisplayCount)
             } else {
                 val query = searchQuery.lowercase()
+                val matchesSp = query == "sp" || query.contains("silent")
                 changeAddresses.filter { addr ->
                     addr.address.lowercase().contains(query) ||
-                        addr.label?.lowercase()?.contains(query) == true
+                        addr.label?.lowercase()?.contains(query) == true ||
+                        (matchesSp && addr.isSilentPayment)
                 }
             }
         }
@@ -262,9 +278,11 @@ fun AllAddressesScreen(
                 sortedUsedAddresses
             } else {
                 val query = searchQuery.lowercase()
+                val matchesSp = query == "sp" || query.contains("silent")
                 sortedUsedAddresses.filter { addr ->
                     addr.address.lowercase().contains(query) ||
-                        addr.label?.lowercase()?.contains(query) == true
+                        addr.label?.lowercase()?.contains(query) == true ||
+                        (matchesSp && addr.isSilentPayment)
                 }
             }
         }
@@ -319,6 +337,9 @@ fun AllAddressesScreen(
                             text = title,
                             modifier = Modifier.fillMaxWidth(),
                             textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = false,
                         )
                     },
                     modifier = Modifier.weight(1f),
@@ -571,6 +592,7 @@ private fun AddressCard(
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f, fill = false),
                 ) {
                     Text(
                         text =
@@ -581,7 +603,14 @@ private fun AddressCard(
                             ),
                         style = MaterialTheme.typography.labelMedium,
                         color = accentColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = false,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
+                    if (address.isSilentPayment) {
+                        SpBadge()
+                    }
                     if (!addressAssetBalances.isNullOrEmpty()) {
                         addressAssetBalances.keys.forEach { assetId ->
                             val asset = LiquidAsset.resolve(assetId)
@@ -765,16 +794,22 @@ private fun AddressCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f, fill = false)) {
                     Text(
                         text = stringResource(R.string.loc_63492662),
                         style = MaterialTheme.typography.labelSmall,
                         color = TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = false,
                     )
                     Text(
                         text = if (privacyMode) HIDDEN_AMOUNT else formatAmount(address.balanceSats, useSats, includeUnit = true),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = false,
                     )
                     if (!addressAssetBalances.isNullOrEmpty() && !privacyMode) {
                         addressAssetBalances.forEach { (assetId, rawAmount) ->
@@ -784,6 +819,9 @@ private fun AddressCard(
                                 text = "$formatted ${asset.ticker}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                softWrap = false,
                             )
                         }
                     }
@@ -794,15 +832,38 @@ private fun AddressCard(
                         text = stringResource(R.string.loc_f299c1b4),
                         style = MaterialTheme.typography.labelSmall,
                         color = TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = false,
                     )
                     Text(
                         text = address.transactionCount.toString(),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onBackground,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        softWrap = false,
                     )
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SpBadge() {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(TorPurple.copy(alpha = 0.16f))
+            .padding(horizontal = 5.dp, vertical = 1.dp),
+    ) {
+        Text(
+            text = "SP",
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
+            color = TorPurple,
+        )
     }
 }
 

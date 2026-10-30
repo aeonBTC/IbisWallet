@@ -78,13 +78,13 @@ fun CombinedServerConfigScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "Back",
+                    contentDescription = stringResource(R.string.loc_cdfc6e09),
                 )
             }
             Spacer(modifier = Modifier.width(8.dp))
@@ -94,8 +94,6 @@ fun CombinedServerConfigScreen(
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         if (showLiquidSection) {
             Row(

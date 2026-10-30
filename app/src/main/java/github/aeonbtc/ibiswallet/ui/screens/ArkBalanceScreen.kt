@@ -1,4 +1,4 @@
-﻿package github.aeonbtc.ibiswallet.ui.screens
+package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Context
 import android.content.Intent
@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -101,6 +102,8 @@ import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.data.model.ArkMovement
+import github.aeonbtc.ibiswallet.data.model.ArkPendingKind
+import github.aeonbtc.ibiswallet.data.model.arkPendingBalanceSummary
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.ArkReceiveState
 import github.aeonbtc.ibiswallet.data.model.ArkWalletState
@@ -171,6 +174,7 @@ fun ArkBalanceScreen(
     onDeleteMovementFromHistory: (Int) -> Unit = {},
     onDeleteAllMovementsFromHistory: () -> Unit = {},
     onOpenLifecycle: () -> Unit = {},
+    onOpenRefresh: () -> Unit = onOpenLifecycle,
     onOpenArkBackup: () -> Unit = onOpenLifecycle,
     onQuickRefreshVtxos: () -> Unit = {},
     isDbBackupProtected: Boolean = false,
@@ -228,8 +232,13 @@ fun ArkBalanceScreen(
     val showBackupRequiredDialog = needsBackupAlert && !backupAlertDismissed && !backupDismissedLocally
     // Recommended (not yet due) can be dismissed this session; due / near-expiry cannot.
     var refreshAlertDismissed by remember(arkState.walletId) { mutableStateOf(false) }
+    // Expired-but-unswept VTXOs need action: cooperative refresh may still
+    // succeed, unilateral exit is guaranteed. They force the blocking alert
+    // regardless of auto-refresh or pending rounds.
+    val hasExpiredVtxos = arkState.hasExpiredVtxos
     val refreshDueCount =
         when {
+            hasExpiredVtxos -> arkState.expiredVtxos.size.coerceAtLeast(1)
             arkState.needsRefresh -> arkState.vtxosToRefresh.size.coerceAtLeast(1)
             arkState.expiringSoonVtxos.isNotEmpty() -> arkState.expiringSoonVtxos.size
             arkState.refreshSoon -> 1
@@ -237,7 +246,8 @@ fun ArkBalanceScreen(
         }
     val blocksUntilRefresh = arkState.blocksUntilRequiredRefresh
     val refreshIsBlocking =
-        arkState.needsRefresh ||
+        hasExpiredVtxos ||
+            arkState.needsRefresh ||
             (blocksUntilRefresh != null && blocksUntilRefresh <= ARK_REFRESH_BLOCKING_BLOCKS)
     // A refresh submitted for the next ASP round already covers the due VTXOs —
     // don't keep nagging with the optional heads-up. When the soon signal comes
@@ -253,11 +263,12 @@ fun ArkBalanceScreen(
     val needsRefreshAlert =
         arkState.isInitialized &&
             arkState.aspHydrated &&
-            (!autoRefreshEnabled || arkState.autoRefreshNeedsAttention) &&
             !arkState.isAutoRefreshing &&
-            !refreshAlreadyScheduled &&
-            (arkState.needsRefresh || arkState.refreshSoon) &&
-            refreshDueCount > 0
+            (hasExpiredVtxos ||
+                ((!autoRefreshEnabled || arkState.autoRefreshNeedsAttention) &&
+                    !refreshAlreadyScheduled &&
+                    (arkState.needsRefresh || arkState.refreshSoon) &&
+                    refreshDueCount > 0))
     val showRefreshRequiredDialog =
         needsRefreshAlert &&
             !showBackupRequiredDialog &&
@@ -276,6 +287,7 @@ fun ArkBalanceScreen(
         arkState.walletId,
         arkState.needsRefresh,
         arkState.refreshSoon,
+        hasExpiredVtxos,
         refreshDueCount,
         arkState.pendingRefreshVtxoIds,
     ) {
@@ -478,7 +490,12 @@ fun ArkBalanceScreen(
                 }
             },
             title = stringResource(R.string.ark_refresh_required_title),
-            confirmText = stringResource(R.string.ark_refresh_required_confirm),
+            confirmText =
+                if (hasExpiredVtxos) {
+                    stringResource(R.string.ark_open_lifecycle)
+                } else {
+                    stringResource(R.string.ark_refresh_required_confirm)
+                },
             dismissText = stringResource(R.string.ark_refresh_required_dismiss),
             showDismissButton = true,
             dismissEnabled = true,
@@ -497,7 +514,7 @@ fun ArkBalanceScreen(
                 ),
             onConfirm = {
                 refreshAlertDismissed = true
-                onOpenLifecycle()
+                onOpenRefresh()
             },
             onDismissAction = {
                 if (refreshIsBlocking) {
@@ -516,7 +533,9 @@ fun ArkBalanceScreen(
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                         Text(
                             text =
-                                if (refreshIsBlocking) {
+                                if (hasExpiredVtxos) {
+                                    stringResource(R.string.ark_expired_required_status)
+                                } else if (refreshIsBlocking) {
                                     stringResource(R.string.ark_refresh_required_status)
                                 } else {
                                     stringResource(R.string.ark_refresh_required_status_soon)
@@ -528,7 +547,17 @@ fun ArkBalanceScreen(
                         Spacer(modifier = Modifier.height(10.dp))
                         Text(
                             text =
-                                if (refreshIsBlocking) {
+                                if (hasExpiredVtxos) {
+                                    stringResource(
+                                        R.string.ark_expired_required_message,
+                                        refreshDueCount,
+                                        if (privacyMode) {
+                                            ARK_HIDDEN_AMOUNT
+                                        } else {
+                                            formatArkAmount(arkState.expiredSats, useSats)
+                                        },
+                                    )
+                                } else if (refreshIsBlocking) {
                                     stringResource(
                                         R.string.ark_refresh_required_message,
                                         refreshDueCount,
@@ -1019,7 +1048,7 @@ private fun ArkBalanceCard(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(32.dp)
+                        .heightIn(min = 32.dp)
                         .padding(bottom = 4.dp)
                         .align(Alignment.TopCenter),
             ) {
@@ -1090,15 +1119,38 @@ private fun ArkBalanceCard(
                         )
                     }
                 }
+
+                if (isNfcReaderActive) {
+                    val nfcStatusLabel =
+                        when (nfcReaderState) {
+                            NfcReaderUiState.Inactive,
+                            NfcReaderUiState.Ready,
+                            -> stringResource(R.string.nfc_status_ready)
+                            NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
+                            NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
+                        }
+                    val nfcStatusColor =
+                        if (nfcReaderState == NfcReaderUiState.Detecting) {
+                            ArkRust
+                        } else {
+                            SuccessGreen
+                        }
+                    NfcStatusIndicator(
+                        label = nfcStatusLabel,
+                        contentDescription = nfcStatusLabel,
+                        modifier = Modifier.align(Alignment.Center),
+                        color = nfcStatusColor,
+                    )
+                }
             }
 
-            // In-flight funds are not spendable yet but are not lost: surface
-            // the total so a mid-refresh/exit/board header never reads as
-            // missing money.
-            val pendingTotal =
-                arkState.pendingInRoundSats.coerceAtLeast(0L) +
-                    arkState.pendingBoardSats.coerceAtLeast(0L) +
-                    arkState.pendingExitSats.coerceAtLeast(0L)
+            // Funds that are owned but not currently spendable: in-flight
+            // refresh/board/exit sats plus VTXOs that need a refresh before they
+            // can be sent again (bark 0.8.0 keeps those out of spendableSats).
+            // Surfaced so a mid-refresh/expired header never reads as missing
+            // money.
+            val pendingSummary = arkPendingBalanceSummary(arkState)
+            val pendingTotal = pendingSummary.totalSats
 
             Column(
                 modifier =
@@ -1135,13 +1187,6 @@ private fun ArkBalanceCard(
                         color = TextSecondary,
                     )
                 }
-                // In-flight funds are not spendable yet but are not lost: surface
-                // the total so a mid-refresh/exit/board header never reads as
-                // missing money.
-                val pendingTotal =
-                    arkState.pendingInRoundSats.coerceAtLeast(0L) +
-                        arkState.pendingBoardSats.coerceAtLeast(0L) +
-                        arkState.pendingExitSats.coerceAtLeast(0L)
             }
 
             // Bottom control strip: QR corners only.
@@ -1149,7 +1194,7 @@ private fun ArkBalanceCard(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(32.dp)
+                        .heightIn(min = 32.dp)
                         .align(Alignment.BottomCenter),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1172,13 +1217,22 @@ private fun ArkBalanceCard(
                 }
 
                 if (pendingTotal > 0L) {
+                    val pendingFormatRes =
+                        when (pendingSummary.kind) {
+                            ArkPendingKind.REFRESH -> R.string.ark_balance_pending_refresh_format
+                            ArkPendingKind.BOARDING -> R.string.ark_balance_pending_boarding_format
+                            ArkPendingKind.EXIT -> R.string.ark_balance_pending_exit_format
+                            ArkPendingKind.SEND -> R.string.ark_balance_pending_send_format
+                            ArkPendingKind.OFFBOARD -> R.string.ark_balance_pending_offboard_format
+                            ArkPendingKind.MIXED -> R.string.ark_balance_pending_format
+                        }
                     Text(
                         text =
                             if (privacyMode) {
-                                stringResource(R.string.ark_balance_pending_refresh_format, "****")
+                                stringResource(pendingFormatRes, "****")
                             } else {
                                 stringResource(
-                                    R.string.ark_balance_pending_refresh_format,
+                                    pendingFormatRes,
                                     formatAmount(pendingTotal.toULong(), useSats, includeUnit = true),
                                 )
                             },
@@ -1191,28 +1245,6 @@ private fun ArkBalanceCard(
                             Modifier
                                 .weight(1f)
                                 .padding(top = 4.dp, start = 8.dp, end = 8.dp),
-                    )
-                }
-
-                if (isNfcReaderActive) {
-                    val nfcStatusLabel =
-                        when (nfcReaderState) {
-                            NfcReaderUiState.Inactive,
-                            NfcReaderUiState.Ready,
-                            -> stringResource(R.string.nfc_status_ready)
-                            NfcReaderUiState.Detecting -> stringResource(R.string.nfc_status_detecting)
-                            NfcReaderUiState.Received -> stringResource(R.string.nfc_status_received)
-                        }
-                    val nfcStatusColor =
-                        if (nfcReaderState == NfcReaderUiState.Detecting) {
-                            ArkRust
-                        } else {
-                            SuccessGreen
-                        }
-                    NfcStatusIndicator(
-                        label = nfcStatusLabel,
-                        contentDescription = nfcStatusLabel,
-                        color = nfcStatusColor,
                     )
                 }
 
@@ -1335,7 +1367,7 @@ private fun ArkMovementRow(
     val rail = remember(movement.subsystemName, movement.subsystemKind) { arkMovementRail(movement) }
     val title =
         label?.takeIf { it.isNotBlank() }
-            ?: arkMovementDisplayTitle(movement, layer1Transactions)
+            ?: arkMovementDisplayTitle(movement, layer1Transactions, layer1Transaction)
     val formattedTimestamp =
         remember(movement.createdAt, movement.completedAt, movement.updatedAt, dateFormat) {
             formatArkMovementTimestamp(
@@ -1394,7 +1426,6 @@ private fun ArkMovementRow(
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     Spacer(modifier = Modifier.size(3.dp))
@@ -1406,7 +1437,6 @@ private fun ArkMovementRow(
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                         color = ArkRust,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Text(
@@ -1583,6 +1613,7 @@ private fun ArkMarkIcon(
                         ),
                 ),
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             softWrap = false,
         )
     }
@@ -1607,6 +1638,8 @@ private fun ArkPendingBadge(
             color = color,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
         )
     }
 }
@@ -1724,6 +1757,7 @@ private fun arkMovementIsRefresh(movement: ArkMovement): Boolean {
 private fun arkMovementIsCenterSwap(
     movement: ArkMovement,
     layer1Transactions: List<TransactionDetails> = emptyList(),
+    resolvedLayer1: TransactionDetails? = null,
 ): Boolean {
     val blob =
         listOf(movement.subsystemName, movement.subsystemKind)
@@ -1731,19 +1765,24 @@ private fun arkMovementIsCenterSwap(
             .lowercase(Locale.US)
     if (blob.contains("lightning")) return false
     if (arkMovementIsRefresh(movement)) return false
-    // Synthetic unboarded deposit is always Received (self-fund or external).
-    if (ArkDepositPolicy.isSyntheticPendingOnchainDeposit(movement)) return false
+    // Synthetic unboarded deposit: Received (self-fund or external) unless its funding
+    // txid exactly matches an L1 tx started from the center Swap control. Heuristic
+    // (amount/time) matches are ignored here — they could mislabel external deposits.
+    if (ArkDepositPolicy.isSyntheticPendingOnchainDeposit(movement)) {
+        val candidates = listOfNotNull(resolvedLayer1) + layer1Transactions
+        return ArkDepositPolicy.isFundedByCenterSwap(movement, candidates)
+    }
     // Board/deposit inbound: Swap only when L1 funding was center Swap (Transfer).
     if (
         (blob.contains("board") && !blob.contains("offboard")) ||
         blob.contains("deposit")
     ) {
-        return arkResolveLayer1Transaction(movement, layer1Transactions)?.isSwapHistory == true
+        return (resolvedLayer1 ?: arkResolveLayer1Transaction(movement, layer1Transactions))?.isSwapHistory == true
     }
     // Offboard/withdraw: Swap only when L1 leg is tagged center-swap. Self-fund and plain
-    // on-chain sends → Sent (not Swap).
+    // on-chain sends ?' Sent (not Swap).
     if (blob.contains("offboard") || blob.contains("withdraw")) {
-        return arkResolveLayer1Transaction(movement, layer1Transactions)?.isSwapHistory == true
+        return (resolvedLayer1 ?: arkResolveLayer1Transaction(movement, layer1Transactions))?.isSwapHistory == true
     }
     return false
 }
@@ -1752,6 +1791,7 @@ private fun arkMovementIsCenterSwap(
 private fun arkMovementDisplayTitle(
     movement: ArkMovement,
     layer1Transactions: List<TransactionDetails> = emptyList(),
+    resolvedLayer1: TransactionDetails? = null,
 ): String {
     if (arkMovementIsExitClaim(movement)) {
         return stringResource(R.string.ark_exit_claim_history_title)
@@ -1766,7 +1806,7 @@ private fun arkMovementDisplayTitle(
         return stringResource(R.string.ark_history_title_recovered)
     }
     // Center Swap control board/offboard → Swap; peer pays → Received/Sent. LN excluded.
-    if (arkMovementIsCenterSwap(movement, layer1Transactions)) {
+    if (arkMovementIsCenterSwap(movement, layer1Transactions, resolvedLayer1)) {
         return stringResource(R.string.loc_85a12a5f)
     }
     return if (movement.displayBalanceSats() >= 0) {
@@ -3150,6 +3190,8 @@ private fun arkResolveLayer1Transaction(
     if (layer1Transactions.isEmpty()) return null
     // Lightning has no L1 counterpart; never match payment-hash hex against chain txids.
     if (arkMovementRail(movement) == ArkHistoryRail.LIGHTNING) return null
+    // Exact funding/board txid first (single-tx boards carry it as boardTxid).
+    ArkDepositPolicy.explicitLayer1Match(movement, layer1Transactions)?.let { return it }
     movement.onchainTxids.firstOrNull()?.let { txid ->
         layer1Transactions.firstOrNull { it.txid.equals(txid, ignoreCase = true) }?.let { return it }
     }
@@ -3220,7 +3262,7 @@ private fun ArkExplorerBadge(
         verticalAlignment = Alignment.CenterVertically,
         modifier =
             Modifier
-                .height(28.dp)
+                .heightIn(min = 28.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(tint.copy(alpha = 0.16f))
                 .clickable(onClick = onClick)
@@ -3230,6 +3272,9 @@ private fun ArkExplorerBadge(
             text = stringResource(R.string.loc_1e89ceb8),
             style = MaterialTheme.typography.labelMedium,
             color = tint,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            softWrap = false,
         )
         Spacer(modifier = Modifier.width(4.dp))
         Icon(

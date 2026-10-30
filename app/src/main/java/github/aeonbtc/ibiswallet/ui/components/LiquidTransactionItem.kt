@@ -162,7 +162,6 @@ fun LiquidTransactionItem(
                         style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, lineHeight = 25.sp),
                         color = MaterialTheme.colorScheme.onBackground,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                     if (showNetworkBadge) {
                         Spacer(modifier = Modifier.width(3.dp))
@@ -215,7 +214,6 @@ fun LiquidTransactionItem(
                         style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 18.sp),
                         color = AccentTeal,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
                 Text(

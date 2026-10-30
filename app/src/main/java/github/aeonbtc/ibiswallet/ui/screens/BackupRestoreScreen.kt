@@ -41,7 +41,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -139,7 +138,7 @@ fun BackupRestoreScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
@@ -155,8 +154,6 @@ fun BackupRestoreScreen(
                 color = MaterialTheme.colorScheme.onBackground,
             )
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         if (resultMessage != null) {
             ResultBanner(
@@ -558,13 +555,15 @@ private fun BackupDialog(
         confirmButton = {
         },
         dismissButton = {
-            TextButton(
+            IbisButton(
                 onClick = onDismiss,
                 enabled = !isLoading,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) {
-                Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                Text(stringResource(R.string.loc_51bac044))
             }
         },
+        bottomSpacing = 16.dp,
     )
 }
 
@@ -589,12 +588,13 @@ private fun FullBackupExportConfirmationDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp),
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(12.dp),
             color = DarkSurface,
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(max = 560.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(20.dp),
             ) {
@@ -706,29 +706,31 @@ private fun FullBackupExportConfirmationDialog(
 
                 Spacer(modifier = Modifier.height(20.dp))
 
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    OutlinedButton(
+                    IbisButton(
                         onClick = onBack,
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .heightIn(min = 48.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, BorderColor),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
                         enabled = !isLoading,
                     ) {
-                        Text(stringResource(R.string.loc_cdfc6e09))
+                        Text(
+                            stringResource(R.string.loc_cdfc6e09),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            softWrap = true,
+                        )
                     }
                     Button(
                         onClick = onExport,
                         enabled = canExport,
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .heightIn(min = 48.dp),
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = BitcoinOrange,
                             disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
@@ -741,7 +743,12 @@ private fun FullBackupExportConfirmationDialog(
                                 strokeWidth = 2.dp,
                             )
                         } else {
-                            Text(stringResource(R.string.loc_452013a2))
+                            Text(
+                                stringResource(R.string.loc_452013a2),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                softWrap = true,
+                            )
                         }
                     }
                 }
@@ -1110,7 +1117,7 @@ private fun RestoreDialog(
             }
         },
         confirmButton = {
-            IbisButton(
+            Button(
                 onClick = {
                     restoreUri?.let { uri ->
                         onImportFullBackup(
@@ -1125,17 +1132,24 @@ private fun RestoreDialog(
                     }
                 },
                 enabled = preview != null && hasRestorableContent && !isLoading && !isParsing,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors =
+                    ButtonDefaults.buttonColors(
+                        containerColor = BitcoinOrange,
+                        disabledContainerColor = BitcoinOrange.copy(alpha = 0.3f),
+                    ),
             ) {
                 Text(stringResource(R.string.loc_486a1663))
             }
         },
         dismissButton = {
-            TextButton(
+            IbisButton(
                 onClick = onDismiss,
                 enabled = !isLoading && !isParsing,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
             ) {
-                Text(stringResource(R.string.loc_51bac044), color = TextSecondary)
+                Text(stringResource(R.string.loc_51bac044))
             }
         },
     )

@@ -1,4 +1,4 @@
-﻿package github.aeonbtc.ibiswallet.ui.screens
+package github.aeonbtc.ibiswallet.ui.screens
 
 import android.content.Intent
 import android.graphics.Bitmap
@@ -12,6 +12,8 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -65,6 +67,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import github.aeonbtc.ibiswallet.MainActivity
 import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
@@ -332,12 +335,11 @@ fun ArkReceiveScreen(
         }
     }
 
-    // Local-only lightning labels (embed toggle off) are not in the invoice payload, so attach
-    // them to the generated invoice here — otherwise they would be silently dropped.
+    // Attach the typed label to the generated invoice so it survives navigation and is
+    // visible in history / BIP 329 even when it was also embedded in the BOLT11 description.
     LaunchedEffect(requestText, isLightningReady, descriptionText, showLabelField, embedLabelInQr) {
         if (!isLightningReady || requestText.isNullOrBlank()) return@LaunchedEffect
         val typedLabel = descriptionText.trim().takeIf { showLabelField && it.isNotBlank() } ?: return@LaunchedEffect
-        if (embedLabelInQr) return@LaunchedEffect
         onSaveAddressLabel(normalizeSparkAddressLabelRef(requestText), typedLabel)
     }
 
@@ -355,7 +357,7 @@ fun ArkReceiveScreen(
     val mainActivity = context as? MainActivity
     val nfcShareOwner = remember { Any() }
     val nfcAvailable = context.getNfcAvailability().canBroadcast
-    val hasNfcSharePayload = nfcAvailable && requestText != null && !isLightningPaid
+    val hasNfcSharePayload = nfcAvailable && requestText != null && !privacyMode && !isLightningPaid
     val nfcShareState by NfcRuntimeStatus.shareState.collectAsState()
     DisposableEffect(mainActivity, hasNfcSharePayload) {
         if (mainActivity != null && hasNfcSharePayload) {
@@ -366,7 +368,7 @@ fun ArkReceiveScreen(
         }
     }
     val isNfcBroadcasting = hasNfcSharePayload && mainActivity?.isPreferredHceServiceActive == true
-    DisposableEffect(requestText, nfcAvailable, isLightningPaid) {
+    DisposableEffect(requestText, nfcAvailable, isLightningPaid, privacyMode) {
         if (hasNfcSharePayload) {
             NdefHostApduService.setNdefPayload(requestText)
         }
@@ -378,6 +380,7 @@ fun ArkReceiveScreen(
     if (showEnlargedQr && qrBitmap != null) {
         Dialog(
             onDismissRequest = { showEnlargedQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
             SecureDialogSideEffect()
             Box(
@@ -803,10 +806,11 @@ fun ArkReceiveScreen(
                 if (!isLightningMode) {
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    Row(
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         ReceiveActionButton(
                             text = stringResource(R.string.loc_ed8814bc),

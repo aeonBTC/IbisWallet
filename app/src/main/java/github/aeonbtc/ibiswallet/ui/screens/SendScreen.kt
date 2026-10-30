@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -31,6 +32,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -86,7 +88,9 @@ import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.IbisButton
 import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
+import github.aeonbtc.ibiswallet.ui.components.SendExternalOriginBanner
 import github.aeonbtc.ibiswallet.ui.components.formatFeeRate
 import github.aeonbtc.ibiswallet.ui.theme.AccentRed
 import github.aeonbtc.ibiswallet.ui.theme.AccentTeal
@@ -103,7 +107,10 @@ import github.aeonbtc.ibiswallet.util.SilentPayment
 import github.aeonbtc.ibiswallet.util.canOpenBitcoinSendReview
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.viewmodel.SendScreenDraft
+import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import github.aeonbtc.ibiswallet.viewmodel.WalletUiState
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.util.Locale
 import kotlin.math.roundToLong
 
@@ -176,10 +183,12 @@ fun SendScreen(
         label: String?,
         precomputedFeeSats: Long?,
     ) -> Unit = { _, _, _, _, _ -> },
-    onNavigateToBroadcast: () -> Unit = {},
+    onNavigateToSign: () -> Unit = {},
     onHandleScannedInput: (String) -> Boolean = { false },
     onHandleRecipientInput: (String) -> Boolean = { false },
     onToggleDenomination: () -> Unit = {},
+    externalOriginOrigin: WalletViewModel.PendingSendOrigin? = null,
+    onClearExternalOriginNotice: () -> Unit = {},
 ) {
     // Initialize state from draft
     var recipientAddress by remember { mutableStateOf(draft.recipientAddress) }
@@ -361,10 +370,8 @@ fun SendScreen(
                         if (satsLong == null || satsLong <= 0) 0.0 else satsLong.toDouble()
                     }
                     else -> {
-                        // Input is in BTC, convert to sats
-                        val btc = amountInput.toDoubleOrNull() ?: return@remember 0.0
-                        if (!btc.isFinite() || btc <= 0.0) return@remember 0.0
-                        (btc * 100_000_000).toSafeSatsLong()?.toDouble() ?: 0.0
+                        // Input is in BTC, convert to sats exactly.
+                        parseBtcInputToSats(amountInput)?.toDouble() ?: 0.0
                     }
                 }
             } catch (_: Exception) {
@@ -401,15 +408,8 @@ fun SendScreen(
                                     }
                                 }
                                 useSats -> amt.replace(",", "").toLongOrNull()?.takeIf { it > 0 }?.toULong() ?: 0UL
-                                else -> {
-                                    val btc = amt.toDoubleOrNull() ?: 0.0
-                                    if (!btc.isFinite() || btc <= 0.0) 0UL
-                                    else {
-                                        val raw = btc * 100_000_000
-                                        if (!raw.isFinite() || raw <= 0.0 || raw > Long.MAX_VALUE.toDouble()) 0UL
-                                        else raw.roundToLong().takeIf { it > 0 }?.toULong() ?: 0UL
-                                    }
-                                }
+                                else ->
+                                    parseBtcInputToSats(amt)?.takeIf { it > 0L }?.toULong() ?: 0UL
                             }
                         } catch (_: Exception) {
                             0UL
@@ -561,6 +561,7 @@ fun SendScreen(
             dryRunError = dryRunError,
             validRecipientCount = multiRecipientList.size,
             totalSendingSats = multiTotalSats,
+            onFieldEdited = onClearExternalOriginNotice,
             onDone = { showMultiDialog = false },
             onDismiss = { showMultiDialog = false },
         )
@@ -590,18 +591,15 @@ fun SendScreen(
                 recipientAddress = bip21.address
 
                 // Set amount if present in URI
-                bip21.amount?.let { btcAmount ->
+                bip21.amountSats?.let { amountSats ->
                     isMaxMode = false
                     if (isUsdMode && btcPrice != null && btcPrice > 0) {
-                        // Convert BTC to USD
-                        val usdAmount = btcAmount * btcPrice
+                        val usdAmount = (amountSats.toDouble() / 100_000_000.0) * btcPrice
                         amountInput = String.format(Locale.US, "%.2f", usdAmount)
                     } else if (useSats) {
-                        // Convert BTC to sats
-                        amountInput = (btcAmount * 100_000_000).roundToLong().toString()
+                        amountInput = amountSats.toString()
                     } else {
-                        // Keep as BTC
-                        amountInput = String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
+                        amountInput = formatBtcFromSats(amountSats)
                     }
                 }
 
@@ -802,6 +800,11 @@ fun SendScreen(
                 }
 
                 Spacer(modifier = Modifier.height(20.dp))
+
+                if (externalOriginOrigin != null) {
+                    SendExternalOriginBanner(origin = externalOriginOrigin)
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
 
                 // Recipient Address header with Multiple toggle
                 Row(
@@ -1039,12 +1042,12 @@ fun SendScreen(
                     }
                 } else {
                     // Single recipient
-                    OutlinedTextField(
-                        value = recipientAddress,
-                        onValueChange = { input ->
+                    val onRecipientInput: (String) -> Unit =
+                        onRecipientInput@{ input ->
+                            onClearExternalOriginNotice()
                             val normalizedInput = input.trim()
                             if (onHandleRecipientInput(normalizedInput)) {
-                                return@OutlinedTextField
+                                return@onRecipientInput
                             }
                             if (normalizedInput.lowercase().startsWith("bitcoin:")) {
                                 val bip21 =
@@ -1058,16 +1061,17 @@ fun SendScreen(
                                     }
                                 if (bip21 != null) {
                                     recipientAddress = bip21.address
-                                    bip21.amount?.let { btcAmount ->
+                                    bip21.amountSats?.let { amountSats ->
                                         isMaxMode = false
                                         amountInput = when {
                                             isUsdMode && btcPrice != null && btcPrice > 0 ->
-                                                String.format(Locale.US, "%.2f", btcAmount * btcPrice)
-                                            useSats ->
-                                                (btcAmount * 100_000_000).roundToLong().toString()
-                                            else ->
-                                                String.format(Locale.US, "%.8f", btcAmount)
-                                                    .trimEnd('0').trimEnd('.')
+                                                String.format(
+                                                    Locale.US,
+                                                    "%.2f",
+                                                    (amountSats.toDouble() / 100_000_000.0) * btcPrice,
+                                                )
+                                            useSats -> amountSats.toString()
+                                            else -> formatBtcFromSats(amountSats)
                                         }
                                     }
                                     bip21.label?.let { label ->
@@ -1078,7 +1082,10 @@ fun SendScreen(
                             } else {
                                 recipientAddress = input
                             }
-                        },
+                        }
+                    OutlinedTextField(
+                        value = recipientAddress,
+                        onValueChange = onRecipientInput,
                         modifier = Modifier.fillMaxWidth(),
                         placeholder = {
                             Text(
@@ -1087,14 +1094,12 @@ fun SendScreen(
                             )
                         },
                         trailingIcon = {
-                            IconButton(onClick = { showQrScanner = true }) {
-                                Icon(
-                                    imageVector = Icons.Default.QrCodeScanner,
-                                    contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                    tint = BitcoinOrange,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
+                            ScanPasteIcons(
+                                onScan = { showQrScanner = true },
+                                onPaste = onRecipientInput,
+                                tint = BitcoinOrange,
+                                scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                            )
                         },
                         supportingText =
                             if (addressValidationError != null && recipientAddress.isNotBlank()) {
@@ -1228,6 +1233,7 @@ fun SendScreen(
                     OutlinedTextField(
                         value = amountInput,
                         onValueChange = { value ->
+                            onClearExternalOriginNotice()
                             isMaxMode = false
                             when {
                                 isUsdMode -> {
@@ -1470,7 +1476,7 @@ fun SendScreen(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .height(48.dp),
+                    .heightIn(min = 48.dp),
             shape = RoundedCornerShape(8.dp),
             enabled = isButtonEnabled,
             colors =
@@ -1498,41 +1504,43 @@ fun SendScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        if (!isWatchOnly) {
+            Spacer(modifier = Modifier.height(14.dp))
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            HorizontalDivider(
-                modifier = Modifier.weight(1f),
-                color = BorderColor,
-            )
-            Text(
-                text = stringResource(R.string.loc_1db77587),
-                style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary,
-                modifier = Modifier.padding(horizontal = 12.dp),
-            )
-            HorizontalDivider(
-                modifier = Modifier.weight(1f),
-                color = BorderColor,
-            )
-        }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                HorizontalDivider(
+                    modifier = Modifier.weight(1f),
+                    color = BorderColor,
+                )
+                Text(
+                    text = stringResource(R.string.loc_1db77587),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                HorizontalDivider(
+                    modifier = Modifier.weight(1f),
+                    color = BorderColor,
+                )
+            }
 
-        Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
-        IbisButton(
-            onClick = onNavigateToBroadcast,
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-        ) {
-            Text(
-                text = stringResource(R.string.loc_89bab973),
-                style = MaterialTheme.typography.titleMedium,
-            )
+            IbisButton(
+                onClick = onNavigateToSign,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.sign_button),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -1649,6 +1657,8 @@ internal fun CoinControlDialog(
         remember(selectedUtxos.toList()) {
             selectedUtxos.mapTo(hashSetOf()) { it.outpoint }
         }
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredUtxos = remember(utxos, searchQuery) { filterCoinControlUtxos(utxos, searchQuery) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1735,6 +1745,23 @@ internal fun CoinControlDialog(
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                CoinControlSearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    accentColor = BitcoinOrange,
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (filteredUtxos.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.loc_3a296c42),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = TextSecondary,
+                        modifier = Modifier.padding(vertical = 24.dp),
+                    )
+                }
+
                 LazyColumn(
                     modifier =
                         Modifier
@@ -1742,7 +1769,7 @@ internal fun CoinControlDialog(
                             .height(350.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    items(utxos, key = { it.outpoint }) { utxo ->
+                    items(filteredUtxos, key = { it.outpoint }) { utxo ->
                         CoinControlUtxoCard(
                             utxo = utxo,
                             isSelected = selectedOutpoints.contains(utxo.outpoint),
@@ -1764,7 +1791,7 @@ internal fun CoinControlDialog(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
+                            .heightIn(min = 48.dp),
                     shape = RoundedCornerShape(8.dp),
                     colors =
                         ButtonDefaults.buttonColors(
@@ -1779,6 +1806,45 @@ internal fun CoinControlDialog(
             }
         }
     }
+}
+
+/**
+ * Warning shown in send review when manually selected inputs include
+ * suspected dust. Spending dust together with other coins links them
+ * on-chain (common-input-ownership) — this is the dusting attack payoff.
+ */
+@Composable
+private fun DustSpendWarning(selectedUtxos: List<UtxoInfo>?) {
+    val dustCount = selectedUtxos?.count { it.isSuspectedDust } ?: 0
+    if (dustCount <= 0) return
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(WarningYellow.copy(alpha = 0.12f))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Default.Warning,
+            contentDescription = null,
+            tint = WarningYellow,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text =
+                if (dustCount == 1) {
+                    stringResource(R.string.dust_send_warning_single)
+                } else {
+                    stringResource(R.string.dust_send_warning_format, dustCount)
+                },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
+    Spacer(modifier = Modifier.height(12.dp))
 }
 
 /**
@@ -1837,7 +1903,7 @@ private fun SendConfirmationDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                 shape = RoundedCornerShape(8.dp),
                 enabled = !isSending && isPreviewReady,
                 colors =
@@ -1887,7 +1953,7 @@ private fun SendConfirmationDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                 enabled = !isSending,
             ) {
                 Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
@@ -1974,6 +2040,8 @@ private fun SendConfirmationDialog(
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                DustSpendWarning(selectedUtxos = selectedUtxos)
 
                 // Amount
                 Row(
@@ -2220,7 +2288,7 @@ private fun abbreviateReviewAddress(
  */
 internal data class Bip21Uri(
     val address: String,
-    val amount: Double? = null, // Amount in BTC
+    val amountSats: Long? = null,
     val label: String? = null,
     val message: String? = null,
 )
@@ -2282,22 +2350,47 @@ internal fun parseBip21Uri(input: String): Bip21Uri {
 
     return Bip21Uri(
         address = address,
-        amount = params["amount"]?.let(::parseBip21AmountBtc),
+        amountSats = params["amount"]?.let(::parseBip21AmountSats),
         label = BitcoinUtils.sanitizeExternalLabel(params["label"]),
         message = BitcoinUtils.sanitizeExternalLabel(params["message"]),
     )
 }
 
 /**
- * Strict BIP21 amount parser: decimal BTC, max 8 decimal places, finite,
- * non-negative, and within the 21M supply cap. NaN/Infinity/scientific
- * notation/negatives are rejected instead of being coerced downstream.
+ * Strict BIP21 amount parser: decimal BTC, max 8 decimal places, non-negative,
+ * and within the 21M supply cap. Parsed directly to sats with BigDecimal so a
+ * QR/NFC amount cannot be nudged by ±1 sat through binary floating point.
  */
-private fun parseBip21AmountBtc(raw: String): Double? {
-    if (!raw.matches(Regex("^\\d+(\\.\\d{1,8})?$"))) return null
-    val value = raw.toDoubleOrNull() ?: return null
-    if (!value.isFinite() || value > 21_000_000.0) return null
-    return value
+private fun parseBip21AmountSats(raw: String): Long? {
+    if (raw.length > 20 || !raw.matches(Regex("^\\d+(\\.\\d{1,8})?$"))) return null
+    val btc = raw.toBigDecimalOrNull() ?: return null
+    if (btc.signum() < 0 || btc > BigDecimal("21000000")) return null
+    return runCatching {
+        btc.setScale(8, RoundingMode.UNNECESSARY)
+            .movePointRight(8)
+            .longValueExact()
+    }.getOrNull()
+}
+
+/** Exact BTC display from a sat amount (no binary floating-point formatting). */
+private fun formatBtcFromSats(sats: Long): String =
+    BigDecimal.valueOf(sats, 8).stripTrailingZeros().toPlainString()
+
+/**
+ * Parse a BTC-denominated text field directly to sats with BigDecimal. The
+ * legacy Double path rounded near the 0.5-sat boundary, which could move a
+ * payment by ±1 sat for some decimal inputs.
+ */
+private fun parseBtcInputToSats(raw: String): Long? {
+    val text = raw.trim().replace(",", "")
+    if (text.isEmpty() || text.length > 20) return null
+    val btc = text.toBigDecimalOrNull() ?: return null
+    if (btc <= BigDecimal.ZERO || btc > BigDecimal("21000000")) return null
+    return runCatching {
+        btc.setScale(8, RoundingMode.HALF_UP)
+            .movePointRight(8)
+            .longValueExact()
+    }.getOrNull()
 }
 
 /**
@@ -2483,6 +2576,7 @@ internal fun MultiRecipientDialog(
     parseScannedCode: ((String) -> Pair<String, Long?>)? = null,
     sequentialNote: String? = null,
     addressPlaceholder: String? = null,
+    onFieldEdited: () -> Unit = {},
     onDone: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2491,61 +2585,64 @@ internal fun MultiRecipientDialog(
     val resolvedAddressPlaceholder =
         addressPlaceholder ?: stringResource(R.string.loc_a18fd453)
 
+    // Shared by the QR scanner and the paste button so both resolve BIP21 / custom
+    // payloads identically.
+    fun applyRecipientInput(
+        index: Int,
+        code: String,
+    ) {
+        if (index !in recipients.indices) return
+        val currentAmt = recipients[index].second
+        val custom = parseScannedCode?.invoke(code.trim())
+        if (custom != null) {
+            val (address, amountSats) = custom
+            val amountStr =
+                amountSats?.let { sats ->
+                    when {
+                        isUsdMode && btcPrice != null && btcPrice > 0 -> {
+                            val usdAmount = (sats / 100_000_000.0) * btcPrice
+                            String.format(Locale.US, "%.2f", usdAmount)
+                        }
+                        useSats -> sats.toString()
+                        else ->
+                            String.format(Locale.US, "%.8f", sats / 100_000_000.0)
+                                .trimEnd('0')
+                                .trimEnd('.')
+                    }
+                } ?: currentAmt
+            recipients[index] = Pair(address, amountStr)
+            return
+        }
+        val bip21 =
+            try {
+                parseBip21Uri(code)
+            } catch (_: IllegalArgumentException) {
+                // Tampered URI with duplicate params — stuff the raw
+                // string into the address field and let validation
+                // surface the failure.
+                recipients[index] = Pair(code, currentAmt)
+                return
+            }
+        recipients[index] = Pair(bip21.address, currentAmt)
+
+        // Set amount if present in URI
+        bip21.amountSats?.let { amountSats ->
+            val amountStr = when {
+                isUsdMode && btcPrice != null && btcPrice > 0 -> {
+                    val usdAmount = (amountSats.toDouble() / 100_000_000.0) * btcPrice
+                    String.format(Locale.US, "%.2f", usdAmount)
+                }
+                useSats -> amountSats.toString()
+                else -> formatBtcFromSats(amountSats)
+            }
+            recipients[index] = Pair(bip21.address, amountStr)
+        }
+    }
+
     if (qrScanRecipientIndex >= 0) {
         QrScannerDialog(
             onCodeScanned = { code ->
-                val index = qrScanRecipientIndex
-                if (index !in recipients.indices) {
-                    qrScanRecipientIndex = -1
-                    return@QrScannerDialog
-                }
-                val currentAmt = recipients[index].second
-                val custom = parseScannedCode?.invoke(code.trim())
-                if (custom != null) {
-                    val (address, amountSats) = custom
-                    val amountStr =
-                        amountSats?.let { sats ->
-                            when {
-                                isUsdMode && btcPrice != null && btcPrice > 0 -> {
-                                    val usdAmount = (sats / 100_000_000.0) * btcPrice
-                                    String.format(Locale.US, "%.2f", usdAmount)
-                                }
-                                useSats -> sats.toString()
-                                else ->
-                                    String.format(Locale.US, "%.8f", sats / 100_000_000.0)
-                                        .trimEnd('0')
-                                        .trimEnd('.')
-                            }
-                        } ?: currentAmt
-                    recipients[index] = Pair(address, amountStr)
-                    qrScanRecipientIndex = -1
-                    return@QrScannerDialog
-                }
-                val bip21 =
-                    try {
-                        parseBip21Uri(code)
-                    } catch (_: IllegalArgumentException) {
-                        // Tampered URI with duplicate params — stuff the raw
-                        // string into the address field and let validation
-                        // surface the failure.
-                        recipients[index] = Pair(code, currentAmt)
-                        qrScanRecipientIndex = -1
-                        return@QrScannerDialog
-                    }
-                recipients[index] = Pair(bip21.address, currentAmt)
-
-                // Set amount if present in URI
-                bip21.amount?.let { btcAmount ->
-                    val amountStr = when {
-                        isUsdMode && btcPrice != null && btcPrice > 0 -> {
-                            val usdAmount = btcAmount * btcPrice
-                            String.format(Locale.US, "%.2f", usdAmount)
-                        }
-                        useSats -> (btcAmount * 100_000_000).roundToLong().toString()
-                        else -> String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
-                    }
-                    recipients[index] = Pair(bip21.address, amountStr)
-                }
+                applyRecipientInput(qrScanRecipientIndex, code)
                 qrScanRecipientIndex = -1
             },
             onDismiss = { qrScanRecipientIndex = -1 },
@@ -2646,7 +2743,7 @@ internal fun MultiRecipientDialog(
 
                                 OutlinedTextField(
                                     value = addr,
-                                    onValueChange = { recipients[index] = Pair(it, amt) },
+                                    onValueChange = { recipients[index] = Pair(it, amt); onFieldEdited() },
                                     modifier = Modifier.fillMaxWidth(),
                                     placeholder = {
                                         Text(
@@ -2655,14 +2752,15 @@ internal fun MultiRecipientDialog(
                                         )
                                     },
                                     trailingIcon = {
-                                        IconButton(onClick = { qrScanRecipientIndex = index }) {
-                                            Icon(
-                                                imageVector = Icons.Default.QrCodeScanner,
-                                                contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                                tint = accentColor,
-                                                modifier = Modifier.size(20.dp),
-                                            )
-                                        }
+                                        ScanPasteIcons(
+                                            onScan = { qrScanRecipientIndex = index },
+                                            onPaste = { text ->
+                                                applyRecipientInput(index, text)
+                                                onFieldEdited()
+                                            },
+                                            tint = accentColor,
+                                            scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                                        )
                                     },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
@@ -2682,6 +2780,7 @@ internal fun MultiRecipientDialog(
                                 OutlinedTextField(
                                     value = amt,
                                     onValueChange = { value ->
+                                        onFieldEdited()
                                         val filtered =
                                             when {
                                                 isUsdMode -> if (value.isEmpty() || value.matches(Regex("^\\d*\\.?\\d{0,2}$"))) value else amt
@@ -2935,7 +3034,7 @@ private fun MultiRecipientConfirmationDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                 shape = RoundedCornerShape(8.dp),
                 enabled = !isSending && isPreviewReady,
                 colors =
@@ -2985,7 +3084,7 @@ private fun MultiRecipientConfirmationDialog(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .height(48.dp),
+                        .heightIn(min = 48.dp),
                 enabled = !isSending,
             ) {
                 Text(stringResource(R.string.loc_51bac044), style = MaterialTheme.typography.titleMedium)
@@ -3070,6 +3169,8 @@ private fun MultiRecipientConfirmationDialog(
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                DustSpendWarning(selectedUtxos = selectedUtxos)
 
                 // Per-recipient amounts
                 recipients.forEach { r ->

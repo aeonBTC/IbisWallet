@@ -111,6 +111,7 @@ import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
 import github.aeonbtc.ibiswallet.nfc.NfcReaderUiState
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
 import github.aeonbtc.ibiswallet.nfc.NfcShareUiState
+import github.aeonbtc.ibiswallet.ui.components.EditableLabelChip
 import github.aeonbtc.ibiswallet.ui.components.AmountLabel
 import github.aeonbtc.ibiswallet.ui.components.AvailableBalanceMaxRow
 import github.aeonbtc.ibiswallet.ui.components.BalanceAmountText
@@ -120,6 +121,7 @@ import github.aeonbtc.ibiswallet.ui.components.NfcStatusIndicator
 import github.aeonbtc.ibiswallet.ui.components.QrScannerDialog
 import github.aeonbtc.ibiswallet.ui.components.QuickReceiveDialog
 import github.aeonbtc.ibiswallet.ui.components.ReceiveActionButton
+import github.aeonbtc.ibiswallet.ui.components.ScanPasteIcons
 import github.aeonbtc.ibiswallet.ui.components.ScrollableDialogSurface
 import github.aeonbtc.ibiswallet.ui.components.SecureDialogSideEffect
 import github.aeonbtc.ibiswallet.ui.components.SquareToggle
@@ -177,6 +179,8 @@ fun LightningNodeOnchainBalanceScreen(
     onRefreshFees: () -> Unit = {},
     onBumpFee: (String, Double) -> Unit = { _, _ -> },
     canBumpFee: (txid: String, confirmations: Int) -> Boolean = { _, conf -> conf <= 0 },
+    onSaveOnchainLabel: (txid: String, label: String) -> Unit = { _, _ -> },
+    onDeleteOnchainLabel: (txid: String) -> Unit = {},
 ) {
     val useSats = denomination == SecureStorage.DENOMINATION_SATS
     val context = LocalContext.current
@@ -217,7 +221,8 @@ fun LightningNodeOnchainBalanceScreen(
                 } else {
                     state.transactions.filter { tx ->
                         tx.txid.contains(q, ignoreCase = true) ||
-                            (tx.address?.contains(q, ignoreCase = true) == true)
+                            (tx.address?.contains(q, ignoreCase = true) == true) ||
+                            (tx.label?.contains(q, ignoreCase = true) == true)
                     }
                 }
             // Pending first, then newest. Keeps unconfirmed channel/spend txs at the top.
@@ -275,6 +280,9 @@ fun LightningNodeOnchainBalanceScreen(
             onRefreshFees = onRefreshFees,
             onBumpFee = onBumpFee,
             onDismiss = { selectedTx = null },
+            label = tx.label,
+            onSaveLabel = { label -> onSaveOnchainLabel(tx.txid, label) },
+            onDeleteLabel = { onDeleteOnchainLabel(tx.txid) },
         )
     }
 
@@ -422,6 +430,31 @@ fun LightningNodeOnchainBalanceScreen(
                                     )
                                 }
                             }
+
+                            if (isNfcReaderActive) {
+                                val nfcStatusLabel =
+                                    when (nfcReaderState) {
+                                        NfcReaderUiState.Inactive,
+                                        NfcReaderUiState.Ready,
+                                        -> stringResource(R.string.nfc_status_ready)
+                                        NfcReaderUiState.Detecting ->
+                                            stringResource(R.string.nfc_status_detecting)
+                                        NfcReaderUiState.Received ->
+                                            stringResource(R.string.nfc_status_received)
+                                    }
+                                val nfcStatusColor =
+                                    if (nfcReaderState == NfcReaderUiState.Detecting) {
+                                        BitcoinOrange
+                                    } else {
+                                        SuccessGreen
+                                    }
+                                NfcStatusIndicator(
+                                    label = nfcStatusLabel,
+                                    contentDescription = nfcStatusLabel,
+                                    modifier = Modifier.align(Alignment.Center),
+                                    color = nfcStatusColor,
+                                )
+                            }
                         }
 
                         Column(
@@ -531,34 +564,6 @@ fun LightningNodeOnchainBalanceScreen(
                                 contentDescription = stringResource(R.string.loc_60129540),
                                 tint = cardAccentColor,
                                 modifier = Modifier.size(24.dp),
-                            )
-                        }
-
-                        if (isNfcReaderActive) {
-                            val nfcStatusLabel =
-                                when (nfcReaderState) {
-                                    NfcReaderUiState.Inactive,
-                                    NfcReaderUiState.Ready,
-                                    -> stringResource(R.string.nfc_status_ready)
-                                    NfcReaderUiState.Detecting ->
-                                        stringResource(R.string.nfc_status_detecting)
-                                    NfcReaderUiState.Received ->
-                                        stringResource(R.string.nfc_status_received)
-                                }
-                            val nfcStatusColor =
-                                if (nfcReaderState == NfcReaderUiState.Detecting) {
-                                    BitcoinOrange
-                                } else {
-                                    SuccessGreen
-                                }
-                            NfcStatusIndicator(
-                                label = nfcStatusLabel,
-                                contentDescription = nfcStatusLabel,
-                                modifier =
-                                    Modifier
-                                        .align(Alignment.BottomCenter)
-                                        .padding(bottom = 2.dp),
-                                color = nfcStatusColor,
                             )
                         }
                     }
@@ -836,6 +841,19 @@ private fun LnOnchainTransactionRow(
                         )
                     }
                 }
+                transaction.label?.takeIf { it.isNotBlank() }?.let { label ->
+                    Text(
+                        text = label,
+                        style =
+                            MaterialTheme.typography.bodySmall.copy(
+                                fontSize = 14.sp,
+                                lineHeight = 18.sp,
+                            ),
+                        color = BitcoinOrange,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
                 if (formattedTimestamp.isNotBlank()) {
                     Text(
                         text = formattedTimestamp,
@@ -972,6 +990,9 @@ private fun LnOnchainTransactionDetailDialog(
     onRefreshFees: () -> Unit = {},
     onBumpFee: (String, Double) -> Unit = { _, _ -> },
     onDismiss: () -> Unit,
+    label: String? = null,
+    onSaveLabel: (String) -> Unit = {},
+    onDeleteLabel: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val dialogUriHandler = LocalUriHandler.current
@@ -1025,6 +1046,8 @@ private fun LnOnchainTransactionDetailDialog(
     var showCopiedTxid by remember { mutableStateOf(false) }
     var showCopiedAddress by remember { mutableStateOf(false) }
     var showCopiedChangeAddress by remember { mutableStateOf(false) }
+    var isEditingLabel by remember { mutableStateOf(false) }
+    var labelText by remember(label) { mutableStateOf(label.orEmpty()) }
     val scrollState = rememberScrollState()
 
     val currentFeeRate =
@@ -1138,6 +1161,60 @@ private fun LnOnchainTransactionDetailDialog(
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
+
+                if (isEditingLabel) {
+                    OutlinedTextField(
+                        value = labelText,
+                        onValueChange = { labelText = it },
+                        placeholder = {
+                            Text(
+                                text = stringResource(R.string.loc_822c6f45),
+                                color = TextSecondary.copy(alpha = 0.5f),
+                            )
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        colors =
+                            OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = BitcoinOrange,
+                                unfocusedBorderColor = BorderColor,
+                                cursorColor = BitcoinOrange,
+                            ),
+                        trailingIcon = {
+                            TextButton(
+                                onClick = {
+                                    onSaveLabel(labelText)
+                                    isEditingLabel = false
+                                },
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.loc_f55495e0),
+                                    color = BitcoinOrange,
+                                )
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    EditableLabelChip(
+                        label = labelText.takeIf { it.isNotBlank() },
+                        accentColor = BitcoinOrange,
+                        onClick = { isEditingLabel = true },
+                        onDelete =
+                            if (labelText.isNotBlank()) {
+                                onDeleteLabel?.let { delete ->
+                                    {
+                                        labelText = ""
+                                        delete()
+                                    }
+                                }
+                            } else {
+                                null
+                            },
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 Box(
                     modifier =
@@ -1766,7 +1843,10 @@ fun LightningNodeOnchainReceiveScreen(
     }
 
     if (showEnlargedQr && qrBitmap != null) {
-        Dialog(onDismissRequest = { showEnlargedQr = false }) {
+        Dialog(
+            onDismissRequest = { showEnlargedQr = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
             SecureDialogSideEffect()
             Box(
                 modifier =
@@ -2489,15 +2569,15 @@ fun LightningNodeOnchainSendScreen(
                 return
             }
         recipientAddress = bip21.address
-        bip21.amount?.let { btcAmount ->
+        bip21.amountSats?.let { amountSats ->
             isMaxMode = false
             amountInput =
                 when {
                     isUsdMode && btcPrice != null && btcPrice > 0 ->
-                        String.format(Locale.US, "%.2f", btcAmount * btcPrice)
-                    useSats -> (btcAmount * 100_000_000).roundToLong().toString()
+                        String.format(Locale.US, "%.2f", (amountSats.toDouble() / 100_000_000.0) * btcPrice)
+                    useSats -> amountSats.toString()
                     else ->
-                        String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
+                        java.math.BigDecimal.valueOf(amountSats, 8).stripTrailingZeros().toPlainString()
                 }
         }
         bip21.label?.let {
@@ -2860,14 +2940,12 @@ fun LightningNodeOnchainSendScreen(
                         )
                     },
                     trailingIcon = {
-                        IconButton(onClick = { showQrScanner = true }) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = stringResource(R.string.loc_59b2cdc5),
-                                tint = BitcoinOrange,
-                                modifier = Modifier.size(22.dp),
-                            )
-                        }
+                        ScanPasteIcons(
+                            onScan = { showQrScanner = true },
+                            onPaste = { text -> applyBip21(text) },
+                            tint = BitcoinOrange,
+                            scanContentDescription = stringResource(R.string.loc_59b2cdc5),
+                        )
                     },
                     supportingText =
                         if (addressValidationError != null && recipientAddress.isNotBlank()) {
@@ -3552,11 +3630,8 @@ private fun OnchainConnectionBanner(
             )
             if (!isConnecting) {
                 Spacer(modifier = Modifier.height(12.dp))
-                TextButton(onClick = onOpenConnectionSettings) {
-                    Text(
-                        text = stringResource(R.string.ln_node_setup_connection),
-                        color = LightningYellow,
-                    )
+                IbisButton(onClick = onOpenConnectionSettings, activeColor = LightningYellow) {
+                    Text(text = stringResource(R.string.ln_node_setup_connection))
                 }
             }
         }
