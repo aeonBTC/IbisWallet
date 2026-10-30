@@ -13,69 +13,69 @@ Feita para usuários experientes — sem tutoriais nem rodinhas.
 ## Principais recursos
 
 ### Layer 1 — Bitcoin
-- **Multi-Wallet** - Criar, importar, exportar e alternar entre várias carteiras
-- **Multi-Seed** - Suporte a frases-semente BIP39 ou Electrum na importação
-- **Dice Entropy** - Gerar seeds a partir de dados
-- **Multisig Wallets** - Importar descritores multisig, coordenar assinatura PSBT e assinar localmente como cosignatário
-- **Watch-only Wallets** - Importar xpub/zpub, descritores de saída ou um único endereço
-- **Import Private Key** - Varrer ou importar chaves privadas (formato WIF)
-- **Silent Payments** - Suporte total BIP-352: envio e recebimento, com servidor Frigate padrão
-- **Hardware Wallet Signing** - Usar QR codes animados ou arquivos .psbt para assinatura air-gapped
-- **NFC PSBT Signing** - Envie PSBTs para uma carteira física com um toque NFC e receba a assinatura da mesma forma
-- **Offline Signer** - Use o Ibis em um telefone sem internet como assinante a frio para PSBT de observação.
-- **Dust Protection** - Sinaliza dust suspeito e o exclui da seleção automática
-- **Coin Control** - Selecionar UTXOs específicos, congelar/descongelar, enviar a partir de saídas individuais
-- **Require Coin Control** - Opção para forçar a seleção de UTXOs antes de envios on-chain
-- **RBF & CPFP** - Aumentar taxas em transações não confirmadas, inclusive fluxos PSBT seguros para multisig
-- **RBF by Default** - Envios on-chain sinalizam replace-by-fee por padrão; pode ser desativado
-- **Cancel Transactions** - Cancelar transações de saída não confirmadas com RBF
-- **Manual Broadcast** - Transmitir qualquer transação bruta assinada diretamente à rede Bitcoin
-- **Batch Sending** - Enviar para vários destinatários em uma única transação
-- **Message Signing** - Assinar e verificar mensagens com BIP137
-- **Checksum Helper** - Calcular a palavra de checksum faltante a partir de prefixo de 11/23 palavras
-- **BIP329 Labels** - Rótulos de carteira no padrão da indústria para transações e endereços
-- **Transaction Search** - Buscar o histórico por data, endereço ou rótulo
-- **Built on** [BDK](https://bitcoindevkit.org/)
+- **Multicarteira** - Criar, importar, exportar e alternar entre várias carteiras
+- **Multissemente** - Suporte a frases-semente BIP39 ou Electrum na importação
+- **Entropia por dados** - Gerar seeds a partir de dados
+- **Carteiras multisig** - Importar descritores multisig, coordenar assinatura PSBT e assinar localmente como cosignatário
+- **Carteiras somente leitura** - Importar xpub/zpub, descritores de saída ou um único endereço
+- **Importar chave privada** - Varrer ou importar chaves privadas (formato WIF)
+- **Pagamentos silenciosos** - Suporte total BIP-352: envio e recebimento, com servidor Frigate padrão
+- **Assinatura com carteira física** - Usar QR codes animados ou arquivos .psbt para assinatura air-gapped
+- **Assinatura PSBT por NFC** - Envie PSBTs para uma carteira física com um toque NFC e receba a assinatura da mesma forma
+- **Assinante offline** - Use o Ibis em um telefone sem internet como assinante a frio para PSBT de observação.
+- **Proteção contra dust** - Sinaliza dust suspeito e o exclui da seleção automática
+- **Controle de moedas** - Selecionar UTXOs específicos, congelar/descongelar, enviar a partir de saídas individuais
+- **Exigir controle de moedas** - Opção para forçar a seleção de UTXOs antes de envios on-chain
+- **RBF e CPFP** - Aumentar taxas em transações não confirmadas, inclusive fluxos PSBT seguros para multisig
+- **RBF por padrão** - Envios on-chain sinalizam replace-by-fee por padrão; pode ser desativado
+- **Cancelar transações** - Cancelar transações de saída não confirmadas com RBF
+- **Transmissão manual** - Transmitir qualquer transação bruta assinada diretamente à rede Bitcoin
+- **Envio em lote** - Enviar para vários destinatários em uma única transação
+- **Assinatura de mensagens** - Assinar e verificar mensagens com BIP137
+- **Assistente de checksum** - Calcular a palavra de checksum faltante a partir de prefixo de 11/23 palavras
+- **Rótulos BIP329** - Rótulos de carteira no padrão da indústria para transações e endereços
+- **Busca de transações** - Buscar o histórico por data, endereço ou rótulo
+- **Baseado em** [BDK](https://bitcoindevkit.org/)
 
 ### Layer 2 — Lightning nativo, Ark, Spark e Liquid
-- **Modular Integration** - Escolher qual Layer 2 ativar em cada carteira
+- **Integração modular** - Escolher qual Layer 2 ativar em cada carteira
 - **Lightning** - Conectar um nó remoto via LND (LND REST), CLN (clnrest) ou NWC (NIP-47)
-- **Ark** - Ark L2 com gerenciamento de VTXO, envio e recebimento Lightning, boarding em transação única e saídas unilaterais (Built on [Bark](https://github.com/ark-bitcoin/bark))
-- **Spark** - Spark L2 com envio e recebimento Lightning e on-chain, e saídas unilaterais (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
-- **Liquid** - Carteira Liquid completa com transações confidenciais e suporte a USDt (Built on [LWK](https://github.com/Blockstream/lwk))
-- **Watch-only Liquid Wallets** - Importar carteiras Liquid somente leitura com descritores SLIP77
-- **Lightning Payments** - Pagar faturas Bolt 11 e Bolt 12, ou endereços Lightning
-- **Lightning Invoices** - Gerar faturas Bolt 11
-- **Chain Swaps** - Trocar facilmente entre L1 e L2
-- **Coin Control** - Selecionar UTXOs específicos para swaps e pagamentos
-- **BIP329 Labels** - Suporte a rótulos para transações Ark, Spark e Liquid
+- **Ark** - Ark L2 com gerenciamento de VTXO, envio e recebimento Lightning, boarding em transação única e saídas unilaterais (Baseado em [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Spark L2 com envio e recebimento Lightning e on-chain, e saídas unilaterais (Baseado em [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Liquid** - Carteira Liquid completa com transações confidenciais e suporte a USDt (Baseado em [LWK](https://github.com/Blockstream/lwk))
+- **Carteiras Liquid somente leitura** - Importar carteiras Liquid somente leitura com descritores SLIP77
+- **Pagamentos Lightning** - Pagar faturas Bolt 11 e Bolt 12, ou endereços Lightning
+- **Faturas Lightning** - Gerar faturas Bolt 11
+- **Swaps on-chain** - Trocar facilmente entre L1 e L2
+- **Controle de moedas** - Selecionar UTXOs específicos para swaps e pagamentos
+- **Rótulos BIP329** - Suporte a rótulos para transações Ark, Spark e Liquid
 
 ### Privacidade e segurança
-- **Offline by Default** - O app inicia sem conexões externas
-- **Built-in Tor** - Tor nativo, sem Orbot nem proxies externos
-- **PIN & Biometrics** - Com tempo de bloqueio configurável
-- **Duress PIN** - PIN de coerção que abre uma carteira isca
-- **Wipe PIN** - Configurar um PIN secundário que apaga silenciosamente todos os dados de carteira no dispositivo
-- **Auto-Wipe** - Limite de desbloqueios falhos que apaga automática e irreversivelmente todos os dados do app
-- **Clear Clipboard** - Opção para limpar automaticamente a área de transferência ao bloquear ou fechar o app
-- **Cloak Mode** - Disfarçar o Ibis como um app de calculadora
-- **Privacy Toggle** - Ocultar todos os valores e saldos
-- **Wipe History** - Apagar localmente transações específicas ou todo o histórico
-- **Wallet Locks** - Bloquear carteiras específicas de forma independente
-- **Hardened Metadata** - Logs e erros de UI sanitizados para reduzir metadados visíveis ao SO
+- **Offline por padrão** - O app inicia sem conexões externas
+- **Tor integrado** - Tor nativo, sem Orbot nem proxies externos
+- **PIN e biometria** - Com tempo de bloqueio configurável
+- **PIN de coação** - PIN de coerção que abre uma carteira isca
+- **PIN de apagamento** - Configurar um PIN secundário que apaga silenciosamente todos os dados de carteira no dispositivo
+- **Apagamento automático** - Limite de desbloqueios falhos que apaga automática e irreversivelmente todos os dados do app
+- **Limpar área de transferência** - Opção para limpar automaticamente a área de transferência ao bloquear ou fechar o app
+- **Modo disfarce** - Disfarçar o Ibis como um app de calculadora
+- **Alternar privacidade** - Ocultar todos os valores e saldos
+- **Apagar histórico** - Apagar localmente transações específicas ou todo o histórico
+- **Bloqueio de carteiras** - Bloquear carteiras específicas de forma independente
+- **Metadados reforçados** - Logs e erros de UI sanitizados para reduzir metadados visíveis ao SO
 
 ### Conectividade e servidores
-- **Custom Servers** - Conectar aos seus próprios servidores Electrum, explorador de blocos e estimativa de taxas
-- **NFC Support** - Transmitir e receber pedidos de pagamento via NFC
-- **Update Notifications** - Ativar ou desativar avisos de novas versões
-- **Bitcoin URI Handling** - Registrar-se como manipulador de links `bitcoin:`
+- **Servidores personalizados** - Conectar aos seus próprios servidores Electrum, explorador de blocos e estimativa de taxas
+- **Suporte a NFC** - Transmitir e receber pedidos de pagamento via NFC
+- **Notificações de atualização** - Ativar ou desativar avisos de novas versões
+- **Tratamento de URI Bitcoin** - Registrar-se como manipulador de links `bitcoin:`
 
 ### Localização
-- **Languages** - Inglês, espanhol, russo, português (Brasil), francês, alemão, japonês e chinês simplificado
-- **Typeface** - Várias tipografias
+- **Idiomas** - Inglês, espanhol, russo, português (Brasil), francês, alemão, japonês e chinês simplificado
+- **Tipografia** - Várias tipografias
 
 ### Backup e restauração
-- **Full Encrypted Backups** - Fazer backup e restaurar todo o estado do app, incluindo carteiras, configurações e rótulos
+- **Backups criptografados completos** - Fazer backup e restaurar todo o estado do app, incluindo carteiras, configurações e rótulos
 
 ## Compilação
 
@@ -109,7 +109,7 @@ Premiações do bug bounty: [15 de agosto de 2026](https://github.com/aeonBTC/Ib
 
 O Ibis é codificado e auditado pelos modelos de IA de fronteira mais atuais.
 
-Auditoria mais recente: [15 de agosto de 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Auditorias: [29 de outubro de 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta) · [15 de agosto de 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Doações
 

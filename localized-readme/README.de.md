@@ -15,67 +15,67 @@ Für erfahrene Nutzer konzipiert – ohne Anleitung, ohne Stützräder.
 ### Layer 1 — Bitcoin
 - **Multi-Wallet** - Erstellen, importieren, exportieren und wechseln Sie zwischen mehreren Wallets
 - **Multi-Seed** - Unterstützt BIP39- oder Electrum-Seed-Phrasen beim Import
-- **Dice Entropy** - Seeds aus Würfelwürfen erzeugen
-- **Multisig Wallets** - Multisig-Deskriptoren importieren, PSBT-Signierung koordinieren und lokal als Co-Signer signieren
-- **Watch-only Wallets** - xpub/zpub, Output-Deskriptoren oder eine einzelne Adresse importieren
-- **Import Private Key** - Private Schlüssel fegen (sweep) oder importieren (WIF-Format)
-- **Silent Payments** - Volle BIP-352-Unterstützung: Senden und Empfangen, mit Frigate-Standardserver
-- **Hardware Wallet Signing** - Animierte QR-Codes oder .psbt-Dateien für Air-gapped-Signierung nutzen
-- **NFC PSBT Signing** - PSBTs per NFC-Tap an eine Hardware-Wallet senden und die Signatur auf gleichem Weg zurückerhalten
-- **Offline Signer** - Ibis auf einem Offline-Telefon als Cold-Storage-Signierer für Watch-only-PSBT.
-- **Dust Protection** - Markiert verdächtigen Dust und schließt ihn von der Auto-Auswahl aus
-- **Coin Control** - Spezifische UTXOs auswählen, einfrieren/auftauen, von einzelnen Outputs senden
-- **Require Coin Control** - Option, um die UTXO-Auswahl vor On-Chain-Sendungen zu erzwingen
-- **RBF & CPFP** - Gebühren bei unbestätigten Transaktionen erhöhen, inklusive Multisig-sicherer PSBT-Fee-Bump-Abläufe
-- **RBF by Default** - On-Chain-Sendungen signalisieren standardmäßig Replace-by-Fee; deaktivierbar
-- **Cancel Transactions** - Unbestätigte ausgehende Transaktionen per RBF abbrechen
-- **Manual Broadcast** - Jede signierte Raw-Transaktion direkt ans Bitcoin-Netzwerk senden
-- **Batch Sending** - An mehrere Empfänger in einer einzigen Transaktion senden
-- **Message Signing** - Nachrichten mit BIP137 signieren und verifizieren
-- **Checksum Helper** - Fehlendes Prüfsummenwort aus 11/23-Wörter-Präfix berechnen
-- **BIP329 Labels** - Standard-Wallet-Labels für Transaktionen und Adressen
-- **Transaction Search** - Transaktionsverlauf nach Datum, Adresse oder Label durchsuchen
-- **Built on** [BDK](https://bitcoindevkit.org/)
+- **Würfel-Entropie** - Seeds aus Würfelwürfen erzeugen
+- **Multisig-Wallets** - Multisig-Deskriptoren importieren, PSBT-Signierung koordinieren und lokal als Co-Signer signieren
+- **Watch-only-Wallets** - xpub/zpub, Output-Deskriptoren oder eine einzelne Adresse importieren
+- **Privaten Schlüssel importieren** - Private Schlüssel fegen (sweep) oder importieren (WIF-Format)
+- **Stille Zahlungen** - Volle BIP-352-Unterstützung: Senden und Empfangen, mit Frigate-Standardserver
+- **Signieren mit Hardware-Wallet** - Animierte QR-Codes oder .psbt-Dateien für Air-gapped-Signierung nutzen
+- **PSBT-Signierung per NFC** - PSBTs per NFC-Tap an eine Hardware-Wallet senden und die Signatur auf gleichem Weg zurückerhalten
+- **Offline-Signierer** - Ibis auf einem Offline-Telefon als Cold-Storage-Signierer für Watch-only-PSBT.
+- **Dust-Schutz** - Markiert verdächtigen Dust und schließt ihn von der Auto-Auswahl aus
+- **Coin-Auswahl** - Spezifische UTXOs auswählen, einfrieren/auftauen, von einzelnen Outputs senden
+- **Coin-Auswahl erzwingen** - Option, um die UTXO-Auswahl vor On-Chain-Sendungen zu erzwingen
+- **RBF und CPFP** - Gebühren bei unbestätigten Transaktionen erhöhen, inklusive Multisig-sicherer PSBT-Fee-Bump-Abläufe
+- **RBF standardmäßig** - On-Chain-Sendungen signalisieren standardmäßig Replace-by-Fee; deaktivierbar
+- **Transaktionen abbrechen** - Unbestätigte ausgehende Transaktionen per RBF abbrechen
+- **Manuelle Übertragung** - Jede signierte Raw-Transaktion direkt ans Bitcoin-Netzwerk senden
+- **Batch-Versand** - An mehrere Empfänger in einer einzigen Transaktion senden
+- **Nachrichtensignierung** - Nachrichten mit BIP137 signieren und verifizieren
+- **Prüfsummenhelfer** - Fehlendes Prüfsummenwort aus 11/23-Wörter-Präfix berechnen
+- **BIP329-Labels** - Standard-Wallet-Labels für Transaktionen und Adressen
+- **Transaktionssuche** - Transaktionsverlauf nach Datum, Adresse oder Label durchsuchen
+- **Basiert auf** [BDK](https://bitcoindevkit.org/)
 
 ### Layer 2 — Natives Lightning, Ark, Spark und Liquid
-- **Modular Integration** - Wählen Sie, welches Layer 2 Sie pro Wallet aktivieren
+- **Modulare Integration** - Wählen Sie, welches Layer 2 Sie pro Wallet aktivieren
 - **Lightning** - Remote-Node via LND (LND REST), CLN (clnrest) oder NWC (NIP-47) anbinden
-- **Ark** - Ark L2 mit VTXO-Verwaltung, Lightning-Senden und -Empfangen, Single-Transaction-Boarding und unilateralen Exits (Built on [Bark](https://github.com/ark-bitcoin/bark))
-- **Spark** - Spark L2 mit Lightning- sowie On-Chain-Senden und -Empfangen, und unilateralen Exits (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
-- **Liquid** - Vollständige Liquid-Wallet mit vertraulichen Transaktionen und USDt-Unterstützung (Built on [LWK](https://github.com/Blockstream/lwk))
-- **Watch-only Liquid Wallets** - Liquid-Watch-only-Wallets per SLIP77-Deskriptor importieren
-- **Lightning Payments** - Bolt-11- und Bolt-12-Rechnungen oder Lightning-Adressen bezahlen
-- **Lightning Invoices** - Bolt-11-Rechnungen erstellen
-- **Chain Swaps** - Einfach zwischen L1 und L2 tauschen
-- **Coin Control** - Spezifische UTXOs für Swaps und Zahlungen auswählen
-- **BIP329 Labels** - Label-Unterstützung für Ark-, Spark- und Liquid-Transaktionen
+- **Ark** - Ark L2 mit VTXO-Verwaltung, Lightning-Senden und -Empfangen, Single-Transaction-Boarding und unilateralen Exits (Basiert auf [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Spark L2 mit Lightning- sowie On-Chain-Senden und -Empfangen, und unilateralen Exits (Basiert auf [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Liquid** - Vollständige Liquid-Wallet mit vertraulichen Transaktionen und USDt-Unterstützung (Basiert auf [LWK](https://github.com/Blockstream/lwk))
+- **Liquid-Watch-only-Wallets** - Liquid-Watch-only-Wallets per SLIP77-Deskriptor importieren
+- **Lightning-Zahlungen** - Bolt-11- und Bolt-12-Rechnungen oder Lightning-Adressen bezahlen
+- **Lightning-Rechnungen** - Bolt-11-Rechnungen erstellen
+- **Chain-Swaps** - Einfach zwischen L1 und L2 tauschen
+- **Coin-Auswahl** - Spezifische UTXOs für Swaps und Zahlungen auswählen
+- **BIP329-Labels** - Label-Unterstützung für Ark-, Spark- und Liquid-Transaktionen
 
 ### Privatsphäre und Sicherheit
-- **Offline by Default** - Die App startet ohne externe Verbindungen
-- **Built-in Tor** - Natives Tor, ohne Orbot oder externe Proxies
-- **PIN & Biometrics** - Mit konfigurierbarer Sperrzeit
-- **Duress PIN** - Duress-PIN konfigurieren, der eine Köder-Wallet öffnet
-- **Wipe PIN** - Sekundären PIN konfigurieren, der alle Wallet-Daten auf dem Gerät still löscht
-- **Auto-Wipe** - Schwelle für fehlgeschlagene Entsperrungen, die alle App-Daten automatisch und unwiderruflich löscht
-- **Clear Clipboard** - Option, die Zwischenablage beim Sperren oder Schließen der App automatisch zu leeren
-- **Cloak Mode** - Ibis als Rechner-App tarnen
-- **Privacy Toggle** - Alle Beträge und Salden ausblenden
-- **Wipe History** - Bestimmte Transaktionen oder den gesamten Verlauf lokal löschen
-- **Wallet Locks** - Einzelne Wallets unabhängig sperren
-- **Hardened Metadata** - Bereinigte Logs und UI-Fehler für reduzierte OS-sichtbare Metadaten
+- **Standardmäßig offline** - Die App startet ohne externe Verbindungen
+- **Integriertes Tor** - Natives Tor, ohne Orbot oder externe Proxies
+- **PIN und Biometrie** - Mit konfigurierbarer Sperrzeit
+- **Duress-PIN** - Duress-PIN konfigurieren, der eine Köder-Wallet öffnet
+- **Wipe-PIN** - Sekundären PIN konfigurieren, der alle Wallet-Daten auf dem Gerät still löscht
+- **Automatisches Löschen** - Schwelle für fehlgeschlagene Entsperrungen, die alle App-Daten automatisch und unwiderruflich löscht
+- **Zwischenablage leeren** - Option, die Zwischenablage beim Sperren oder Schließen der App automatisch zu leeren
+- **Tarnmodus** - Ibis als Rechner-App tarnen
+- **Datenschutz-Umschalter** - Alle Beträge und Salden ausblenden
+- **Verlauf löschen** - Bestimmte Transaktionen oder den gesamten Verlauf lokal löschen
+- **Wallet-Sperren** - Einzelne Wallets unabhängig sperren
+- **Gehärtete Metadaten** - Bereinigte Logs und UI-Fehler für reduzierte OS-sichtbare Metadaten
 
 ### Konnektivität und Server
-- **Custom Servers** - Verbinden Sie sich mit eigenen Electrum-, Block-Explorer- und Gebührenschätzungs-Servern
-- **NFC Support** - Zahlungsaufforderungen per NFC senden und empfangen
-- **Update Notifications** - Benachrichtigungen über neue Versionen ein- oder ausschalten
-- **Bitcoin URI Handling** - Als Handler für `bitcoin:`-Links registrieren
+- **Eigene Server** - Verbinden Sie sich mit eigenen Electrum-, Block-Explorer- und Gebührenschätzungs-Servern
+- **NFC-Unterstützung** - Zahlungsaufforderungen per NFC senden und empfangen
+- **Update-Benachrichtigungen** - Benachrichtigungen über neue Versionen ein- oder ausschalten
+- **Bitcoin-URI-Verarbeitung** - Als Handler für `bitcoin:`-Links registrieren
 
 ### Lokalisierung
-- **Languages** - Englisch, Spanisch, Russisch, Portugiesisch (Brasilien), Französisch, Deutsch, Japanisch und Vereinfachtes Chinesisch
-- **Typeface** - Mehrere Schriftarteinstellungen
+- **Sprachen** - Englisch, Spanisch, Russisch, Portugiesisch (Brasilien), Französisch, Deutsch, Japanisch und Vereinfachtes Chinesisch
+- **Schriftart** - Mehrere Schriftarteinstellungen
 
 ### Sicherung und Wiederherstellung
-- **Full Encrypted Backups** - Gesamten App-Status inklusive Wallets, Einstellungen und Labels sichern und wiederherstellen
+- **Vollständige verschlüsselte Backups** - Gesamten App-Status inklusive Wallets, Einstellungen und Labels sichern und wiederherstellen
 
 ## Kompilierung
 
@@ -109,7 +109,7 @@ Bug-Bounty-Prämien: [15. August 2026](https://github.com/aeonBTC/IbisWallet/rel
 
 Ibis wird von den aktuellsten Frontier-KI-Modellen codiert und auditiert.
 
-Letztes Audit: [15. August 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Audits: [29. Oktober 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta) · [15. August 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Spenden
 

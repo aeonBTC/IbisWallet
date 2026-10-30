@@ -13,69 +13,69 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 ## Características principales
 
 ### Layer 1 — Bitcoin
-- **Multi-Wallet** - Crear, importar, exportar y cambiar entre varias billeteras
-- **Multi-Seed** - Compatible con frases semilla BIP39 o Electrum al importar
-- **Dice Entropy** - Genera semillas a partir de tiradas de dados
-- **Multisig Wallets** - Importar descriptores multisig, coordinar firmas PSBT y firmar localmente como cosignatario
-- **Watch-only Wallets** - Importar xpub/zpub, descriptores de salida o una sola dirección
-- **Import Private Key** - Barrer o importar claves privadas (formato WIF)
-- **Silent Payments** - Soporte completo BIP-352: envío y recepción, con servidor Frigate por defecto
-- **Hardware Wallet Signing** - Usar códigos QR animados o archivos .psbt para firmas air-gapped
-- **NFC PSBT Signing** - Envía PSBTs a un monedero físico con un toque NFC y recibe la firma de la misma forma
-- **Offline Signer** - Usa Ibis en un teléfono sin conexión como firmante en frío para PSBT de solo observación.
-- **Dust Protection** - Marca el dust sospechoso y lo excluye de la selección automática
-- **Coin Control** - Seleccionar UTXOs concretos, congelar/descongelar, enviar desde salidas individuales
-- **Require Coin Control** - Opción para forzar la selección de UTXOs antes de envíos on-chain
-- **RBF & CPFP** - Aumentar comisiones en transacciones no confirmadas, incluidos flujos PSBT seguros para multisig
-- **RBF by Default** - Los envíos on-chain marcan replace-by-fee por defecto; se puede desactivar
-- **Cancel Transactions** - Cancelar transacciones salientes no confirmadas con RBF
-- **Manual Broadcast** - Transmitir cualquier transacción firmada en bruto a la red Bitcoin
-- **Batch Sending** - Enviar a varios destinatarios en una sola transacción
-- **Message Signing** - Firmar y verificar mensajes con BIP137
-- **Checksum Helper** - Calcular la palabra de checksum faltante desde prefijo de 11/23 palabras
-- **BIP329 Labels** - Etiquetas de billetera estándar para transacciones y direcciones
-- **Transaction Search** - Buscar el historial por fecha, dirección o etiqueta
-- **Built on** [BDK](https://bitcoindevkit.org/)
+- **Multi-billetera** - Crear, importar, exportar y cambiar entre varias billeteras
+- **Multi-semilla** - Compatible con frases semilla BIP39 o Electrum al importar
+- **Entropía por dados** - Genera semillas a partir de tiradas de dados
+- **Billeteras multisig** - Importar descriptores multisig, coordinar firmas PSBT y firmar localmente como cosignatario
+- **Billeteras de solo observación** - Importar xpub/zpub, descriptores de salida o una sola dirección
+- **Importar clave privada** - Barrer o importar claves privadas (formato WIF)
+- **Pagos silenciosos** - Soporte completo BIP-352: envío y recepción, con servidor Frigate por defecto
+- **Firma con monedero físico** - Usar códigos QR animados o archivos .psbt para firmas air-gapped
+- **Firma PSBT por NFC** - Envía PSBTs a un monedero físico con un toque NFC y recibe la firma de la misma forma
+- **Firmante sin conexión** - Usa Ibis en un teléfono sin conexión como firmante en frío para PSBT de solo observación.
+- **Protección contra dust** - Marca el dust sospechoso y lo excluye de la selección automática
+- **Control de monedas** - Seleccionar UTXOs concretos, congelar/descongelar, enviar desde salidas individuales
+- **Requerir control de monedas** - Opción para forzar la selección de UTXOs antes de envíos on-chain
+- **RBF y CPFP** - Aumentar comisiones en transacciones no confirmadas, incluidos flujos PSBT seguros para multisig
+- **RBF por defecto** - Los envíos on-chain marcan replace-by-fee por defecto; se puede desactivar
+- **Cancelar transacciones** - Cancelar transacciones salientes no confirmadas con RBF
+- **Difusión manual** - Transmitir cualquier transacción firmada en bruto a la red Bitcoin
+- **Envío por lotes** - Enviar a varios destinatarios en una sola transacción
+- **Firma de mensajes** - Firmar y verificar mensajes con BIP137
+- **Asistente de checksum** - Calcular la palabra de checksum faltante desde prefijo de 11/23 palabras
+- **Etiquetas BIP329** - Etiquetas de billetera estándar para transacciones y direcciones
+- **Búsqueda de transacciones** - Buscar el historial por fecha, dirección o etiqueta
+- **Basado en** [BDK](https://bitcoindevkit.org/)
 
 ### Layer 2 — Lightning nativo, Ark, Spark y Liquid
-- **Modular Integration** - Elegir qué Layer 2 activar en cada billetera
+- **Integración modular** - Elegir qué Layer 2 activar en cada billetera
 - **Lightning** - Conectar un nodo remoto vía LND (LND REST), CLN (clnrest) o NWC (NIP-47)
-- **Ark** - Ark L2 con gestión de VTXO, envío y recepción Lightning, boarding en una sola transacción y salidas unilaterales (Built on [Bark](https://github.com/ark-bitcoin/bark))
-- **Spark** - Spark L2 con envío y recepción Lightning y on-chain, y salidas unilaterales (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
-- **Liquid** - Billetera Liquid completa con transacciones confidenciales y soporte USDt (Built on [LWK](https://github.com/Blockstream/lwk))
-- **Watch-only Liquid Wallets** - Importar billeteras Liquid de solo lectura con descriptores SLIP77
-- **Lightning Payments** - Pagar facturas Bolt 11 y Bolt 12, o direcciones Lightning
-- **Lightning Invoices** - Generar facturas Bolt 11
-- **Chain Swaps** - Intercambiar fácilmente entre L1 y L2
-- **Coin Control** - Seleccionar UTXOs concretos para swaps y pagos
-- **BIP329 Labels** - Etiquetas para transacciones Ark, Spark y Liquid
+- **Ark** - Ark L2 con gestión de VTXO, envío y recepción Lightning, boarding en una sola transacción y salidas unilaterales (Basado en [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Spark L2 con envío y recepción Lightning y on-chain, y salidas unilaterales (Basado en [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Liquid** - Billetera Liquid completa con transacciones confidenciales y soporte USDt (Basado en [LWK](https://github.com/Blockstream/lwk))
+- **Billeteras Liquid de solo observación** - Importar billeteras Liquid de solo lectura con descriptores SLIP77
+- **Pagos Lightning** - Pagar facturas Bolt 11 y Bolt 12, o direcciones Lightning
+- **Facturas Lightning** - Generar facturas Bolt 11
+- **Swaps on-chain** - Intercambiar fácilmente entre L1 y L2
+- **Control de monedas** - Seleccionar UTXOs concretos para swaps y pagos
+- **Etiquetas BIP329** - Etiquetas para transacciones Ark, Spark y Liquid
 
 ### Privacidad y seguridad
-- **Offline by Default** - La app arranca sin conexiones externas
-- **Built-in Tor** - Tor nativo, sin Orbot ni proxies externos
-- **PIN & Biometrics** - Con tiempo de bloqueo configurable
-- **Duress PIN** - PIN de coacción que abre una billetera señuelo
-- **Wipe PIN** - Configurar un PIN secundario que borra en silencio todos los datos de billetera del dispositivo
-- **Auto-Wipe** - Umbral de desbloqueos fallidos que borra de forma automática e irreversible todos los datos de la app
-- **Clear Clipboard** - Opción para vaciar automáticamente el portapapeles al bloquear o cerrar la app
-- **Cloak Mode** - Disfrazar Ibis como una app de calculadora
-- **Privacy Toggle** - Ocultar todos los importes y saldos
-- **Wipe History** - Borrar localmente transacciones concretas o todo el historial
-- **Wallet Locks** - Bloquear billeteras concretas de forma independiente
-- **Hardened Metadata** - Logs y errores de UI sanitizados para reducir metadatos visibles al SO
+- **Sin conexión por defecto** - La app arranca sin conexiones externas
+- **Tor integrado** - Tor nativo, sin Orbot ni proxies externos
+- **PIN y biometría** - Con tiempo de bloqueo configurable
+- **PIN de coacción** - PIN de coacción que abre una billetera señuelo
+- **PIN de borrado** - Configurar un PIN secundario que borra en silencio todos los datos de billetera del dispositivo
+- **Borrado automático** - Umbral de desbloqueos fallidos que borra de forma automática e irreversible todos los datos de la app
+- **Vaciar portapapeles** - Opción para vaciar automáticamente el portapapeles al bloquear o cerrar la app
+- **Modo camuflaje** - Disfrazar Ibis como una app de calculadora
+- **Alternar privacidad** - Ocultar todos los importes y saldos
+- **Borrar historial** - Borrar localmente transacciones concretas o todo el historial
+- **Bloqueo de billeteras** - Bloquear billeteras concretas de forma independiente
+- **Metadatos reforzados** - Logs y errores de UI sanitizados para reducir metadatos visibles al SO
 
 ### Conectividad y servidores
-- **Custom Servers** - Conectar a tus propios servidores Electrum, explorador de bloques y estimación de comisiones
-- **NFC Support** - Emitir y recibir solicitudes de pago por NFC
-- **Update Notifications** - Activar o desactivar avisos de nuevas versiones
-- **Bitcoin URI Handling** - Registrarse como manejador de enlaces `bitcoin:`
+- **Servidores personalizados** - Conectar a tus propios servidores Electrum, explorador de bloques y estimación de comisiones
+- **Soporte NFC** - Emitir y recibir solicitudes de pago por NFC
+- **Notificaciones de actualización** - Activar o desactivar avisos de nuevas versiones
+- **Manejo de URI de Bitcoin** - Registrarse como manejador de enlaces `bitcoin:`
 
 ### Localización
-- **Languages** - Inglés, español, ruso, portugués (Brasil), francés, alemán, japonés y chino simplificado
-- **Typeface** - Varias tipografías
+- **Idiomas** - Inglés, español, ruso, portugués (Brasil), francés, alemán, japonés y chino simplificado
+- **Tipografía** - Varias tipografías
 
 ### Copia de seguridad y restauración
-- **Full Encrypted Backups** - Respaldar y restaurar todo el estado de la app, incluidas billeteras, ajustes y etiquetas
+- **Copias de seguridad cifradas completas** - Respaldar y restaurar todo el estado de la app, incluidas billeteras, ajustes y etiquetas
 
 ## Compilación
 
@@ -109,7 +109,7 @@ Recompensas del bug bounty: [15 de agosto de 2026](https://github.com/aeonBTC/Ib
 
 Ibis está codificado y auditado por los modelos de IA de frontera más actuales.
 
-Auditoría más reciente: [15 de agosto de 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Auditorías: [29 de octubre de 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta) · [15 de agosto de 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Donaciones
 

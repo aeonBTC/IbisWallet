@@ -13,69 +13,69 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 ## Fonctionnalités principales
 
 ### Layer 1 — Bitcoin
-- **Multi-Wallet** - Créer, importer, exporter et basculer entre plusieurs portefeuilles
-- **Multi-Seed** - Prend en charge les phrases mnémoniques BIP39 ou Electrum à l'import
-- **Dice Entropy** - Générer des seeds à partir de lancers de dés
-- **Multisig Wallets** - Importer des descripteurs multisig, coordonner les signatures PSBT et signer localement comme cosignataire
-- **Watch-only Wallets** - Importer xpub/zpub, descripteurs de sortie ou une adresse unique
-- **Import Private Key** - Balayer ou importer des clés privées (format WIF)
-- **Silent Payments** - Prise en charge complète BIP-352 : envoi et réception, avec serveur Frigate par défaut
-- **Hardware Wallet Signing** - Utiliser des QR codes animés ou des fichiers .psbt pour signer en air-gap
-- **NFC PSBT Signing** - Envoyez des PSBT vers un portefeuille matériel par toucher NFC et recevez la signature de la même façon
-- **Offline Signer** - Utilisez Ibis sur un téléphone hors ligne comme signataire à froid pour les PSBT en lecture seule.
-- **Dust Protection** - Signale le dust suspect et l'exclut de la sélection auto
-- **Coin Control** - Sélectionner des UTXO précis, geler/dégeler, dépenser depuis des sorties individuelles
-- **Require Coin Control** - Option pour forcer la sélection des UTXO avant les envois on-chain
-- **RBF & CPFP** - Augmenter les frais des transactions non confirmées, y compris des flux PSBT sûrs en multisig
-- **RBF by Default** - Les envois on-chain signalent replace-by-fee par défaut ; désactivable
-- **Cancel Transactions** - Annuler les transactions sortantes non confirmées avec RBF
-- **Manual Broadcast** - Diffuser toute transaction brute signée directement sur le réseau Bitcoin
-- **Batch Sending** - Envoyer à plusieurs destinataires en une seule transaction
-- **Message Signing** - Signer et vérifier des messages avec BIP137
-- **Checksum Helper** - Calculer le mot de checksum manquant à partir d'un préfixe de 11/23 mots
-- **BIP329 Labels** - Étiquettes de portefeuille standard pour les transactions et les adresses
-- **Transaction Search** - Rechercher dans l'historique par date, adresse ou étiquette
-- **Built on** [BDK](https://bitcoindevkit.org/)
+- **Multi-portefeuille** - Créer, importer, exporter et basculer entre plusieurs portefeuilles
+- **Multi-seed** - Prend en charge les phrases mnémoniques BIP39 ou Electrum à l'import
+- **Entropie par dés** - Générer des seeds à partir de lancers de dés
+- **Portefeuilles multisig** - Importer des descripteurs multisig, coordonner les signatures PSBT et signer localement comme cosignataire
+- **Portefeuilles en lecture seule** - Importer xpub/zpub, descripteurs de sortie ou une adresse unique
+- **Importer une clé privée** - Balayer ou importer des clés privées (format WIF)
+- **Paiements silencieux** - Prise en charge complète BIP-352 : envoi et réception, avec serveur Frigate par défaut
+- **Signature avec portefeuille matériel** - Utiliser des QR codes animés ou des fichiers .psbt pour signer en air-gap
+- **Signature PSBT par NFC** - Envoyez des PSBT vers un portefeuille matériel par toucher NFC et recevez la signature de la même façon
+- **Signataire hors ligne** - Utilisez Ibis sur un téléphone hors ligne comme signataire à froid pour les PSBT en lecture seule.
+- **Protection contre le dust** - Signale le dust suspect et l'exclut de la sélection auto
+- **Contrôle des pièces** - Sélectionner des UTXO précis, geler/dégeler, dépenser depuis des sorties individuelles
+- **Contrôle des pièces obligatoire** - Option pour forcer la sélection des UTXO avant les envois on-chain
+- **RBF et CPFP** - Augmenter les frais des transactions non confirmées, y compris des flux PSBT sûrs en multisig
+- **RBF par défaut** - Les envois on-chain signalent replace-by-fee par défaut ; désactivable
+- **Annuler des transactions** - Annuler les transactions sortantes non confirmées avec RBF
+- **Diffusion manuelle** - Diffuser toute transaction brute signée directement sur le réseau Bitcoin
+- **Envoi par lots** - Envoyer à plusieurs destinataires en une seule transaction
+- **Signature de messages** - Signer et vérifier des messages avec BIP137
+- **Assistant de checksum** - Calculer le mot de checksum manquant à partir d'un préfixe de 11/23 mots
+- **Étiquettes BIP329** - Étiquettes de portefeuille standard pour les transactions et les adresses
+- **Recherche de transactions** - Rechercher dans l'historique par date, adresse ou étiquette
+- **Basé sur** [BDK](https://bitcoindevkit.org/)
 
 ### Layer 2 — Lightning natif, Ark, Spark et Liquid
-- **Modular Integration** - Choisir quel Layer 2 activer pour chaque portefeuille
+- **Intégration modulaire** - Choisir quel Layer 2 activer pour chaque portefeuille
 - **Lightning** - Connecter un nœud distant via LND (LND REST), CLN (clnrest) ou NWC (NIP-47)
-- **Ark** - Ark L2 avec gestion des VTXO, envoi et réception Lightning, boarding en une seule transaction et sorties unilatérales (Built on [Bark](https://github.com/ark-bitcoin/bark))
-- **Spark** - Spark L2 avec envoi et réception Lightning et on-chain, et sorties unilatérales (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
-- **Liquid** - Portefeuille Liquid complet avec transactions confidentielles et prise en charge USDt (Built on [LWK](https://github.com/Blockstream/lwk))
-- **Watch-only Liquid Wallets** - Importer des portefeuilles Liquid en lecture seule avec des descripteurs SLIP77
-- **Lightning Payments** - Payer des factures Bolt 11 et Bolt 12, ou des adresses Lightning
-- **Lightning Invoices** - Générer des factures Bolt 11
-- **Chain Swaps** - Échanger facilement entre L1 et L2
-- **Coin Control** - Sélectionner des UTXO précis pour les swaps et les paiements
-- **BIP329 Labels** - Étiquettes pour les transactions Ark, Spark et Liquid
+- **Ark** - Ark L2 avec gestion des VTXO, envoi et réception Lightning, boarding en une seule transaction et sorties unilatérales (Basé sur [Bark](https://github.com/ark-bitcoin/bark))
+- **Spark** - Spark L2 avec envoi et réception Lightning et on-chain, et sorties unilatérales (Basé sur [Breez-SDK](https://github.com/breez/spark-sdk))
+- **Liquid** - Portefeuille Liquid complet avec transactions confidentielles et prise en charge USDt (Basé sur [LWK](https://github.com/Blockstream/lwk))
+- **Portefeuilles Liquid en lecture seule** - Importer des portefeuilles Liquid en lecture seule avec des descripteurs SLIP77
+- **Paiements Lightning** - Payer des factures Bolt 11 et Bolt 12, ou des adresses Lightning
+- **Factures Lightning** - Générer des factures Bolt 11
+- **Swaps on-chain** - Échanger facilement entre L1 et L2
+- **Contrôle des pièces** - Sélectionner des UTXO précis pour les swaps et les paiements
+- **Étiquettes BIP329** - Étiquettes pour les transactions Ark, Spark et Liquid
 
 ### Confidentialité et sécurité
-- **Offline by Default** - L'app démarre sans aucune connexion externe
-- **Built-in Tor** - Tor natif, sans Orbot ni proxy externe
-- **PIN & Biometrics** - Avec délai de verrouillage configurable
-- **Duress PIN** - PIN de contrainte qui ouvre un portefeuille leurre
-- **Wipe PIN** - Configurer un PIN secondaire qui efface en silence toutes les données du portefeuille sur l'appareil
-- **Auto-Wipe** - Seuil d'échecs de déverrouillage qui efface automatiquement et irréversiblement toutes les données de l'app
-- **Clear Clipboard** - Option pour vider automatiquement le presse-papiers au verrouillage ou à la fermeture de l'app
-- **Cloak Mode** - Déguiser Ibis en app de calculatrice
-- **Privacy Toggle** - Masquer tous les montants et soldes
-- **Wipe History** - Effacer localement des transactions précises ou tout l'historique
-- **Wallet Locks** - Verrouiller des portefeuilles précis de façon indépendante
-- **Hardened Metadata** - Logs et erreurs d'UI assainis pour réduire les métadonnées visibles par l'OS
+- **Hors ligne par défaut** - L'app démarre sans aucune connexion externe
+- **Tor intégré** - Tor natif, sans Orbot ni proxy externe
+- **PIN et biométrie** - Avec délai de verrouillage configurable
+- **PIN de contrainte** - PIN de contrainte qui ouvre un portefeuille leurre
+- **PIN d'effacement** - Configurer un PIN secondaire qui efface en silence toutes les données du portefeuille sur l'appareil
+- **Effacement automatique** - Seuil d'échecs de déverrouillage qui efface automatiquement et irréversiblement toutes les données de l'app
+- **Vider le presse-papiers** - Option pour vider automatiquement le presse-papiers au verrouillage ou à la fermeture de l'app
+- **Mode camouflage** - Déguiser Ibis en app de calculatrice
+- **Basculer la confidentialité** - Masquer tous les montants et soldes
+- **Effacer l'historique** - Effacer localement des transactions précises ou tout l'historique
+- **Verrouillage de portefeuilles** - Verrouiller des portefeuilles précis de façon indépendante
+- **Métadonnées renforcées** - Logs et erreurs d'UI assainis pour réduire les métadonnées visibles par l'OS
 
 ### Connectivité et serveurs
-- **Custom Servers** - Te connecter à tes propres serveurs Electrum, explorateur de blocs et estimation des frais
-- **NFC Support** - Émettre et recevoir des demandes de paiement par NFC
-- **Update Notifications** - Activer ou désactiver les avis de nouvelles versions
-- **Bitcoin URI Handling** - S'enregistrer comme gestionnaire des liens `bitcoin:`
+- **Serveurs personnalisés** - Te connecter à tes propres serveurs Electrum, explorateur de blocs et estimation des frais
+- **Prise en charge NFC** - Émettre et recevoir des demandes de paiement par NFC
+- **Notifications de mise à jour** - Activer ou désactiver les avis de nouvelles versions
+- **Gestion des URI Bitcoin** - S'enregistrer comme gestionnaire des liens `bitcoin:`
 
 ### Localisation
-- **Languages** - Anglais, espagnol, russe, portugais (Brésil), français, allemand, japonais et chinois simplifié
-- **Typeface** - Plusieurs polices de caractères
+- **Langues** - Anglais, espagnol, russe, portugais (Brésil), français, allemand, japonais et chinois simplifié
+- **Police de caractères** - Plusieurs polices de caractères
 
 ### Sauvegarde et restauration
-- **Full Encrypted Backups** - Sauvegarder et restaurer tout l'état de l'app, y compris portefeuilles, réglages et étiquettes
+- **Sauvegardes chiffrées complètes** - Sauvegarder et restaurer tout l'état de l'app, y compris portefeuilles, réglages et étiquettes
 
 ## Compilation
 
@@ -109,7 +109,7 @@ Récompenses du bug bounty : [15 août 2026](https://github.com/aeonBTC/IbisWall
 
 Ibis est codé et audité par les modèles d'IA de pointe les plus récents.
 
-Audit le plus récent : [15 août 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Audits : [29 octobre 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta) · [15 août 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Dons
 
