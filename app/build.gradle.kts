@@ -17,8 +17,8 @@ android {
         applicationId = "github.aeonbtc.ibiswallet"
         minSdk = 26
         targetSdk = 36
-        versionCode = 23
-        versionName = "5.0.1-beta"
+        versionCode = 24
+        versionName = "5.1.0-beta"
 
         vectorDrawables {
             useSupportLibrary = true
@@ -54,6 +54,12 @@ android {
         compose = true
         buildConfig = true
     }
+    bundle {
+        // In-app locale switching (AppLocale) needs every language in the base split.
+        language {
+            enableSplit = false
+        }
+    }
     packaging {
         // Extract native libs so Bark/JNA UniFFI can load libbark_ffi_kotlin.so
         jniLibs {
@@ -62,6 +68,9 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
             excludes += "/fr/acinq/secp256k1/jni/native/**"
+            // BouncyCastle PQC (Picnic) tables are unused by the app and R8 only
+            // keeps two BC classes; the resource shrinker does not touch jar resources.
+            excludes += "/org/bouncycastle/pqc/**"
         }
     }
     testOptions {
@@ -115,7 +124,6 @@ dependencies {
     // Core Android
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.core.splashscreen)
-    implementation(libs.com.google.android.material)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.process)

@@ -44,9 +44,8 @@
 
 # ==================== LWK (Liquid Wallet Kit) ====================
 # LWK's generated Android bindings live in the `lwk` package, not
-# `com.blockstream.lwk`. Keep the full binding package intact.
--keep class lwk.** { *; }
--keep interface lwk.** { *; }
+# `com.blockstream.lwk`. Its AAR already ships the keep rules; adding them
+# here again only duplicated the retained surface.
 
 # ==================== Spark SDK ====================
 # Breez Spark's generated Android bindings live in the `breez_sdk_spark`
@@ -98,8 +97,8 @@
 # Compose ships its own consumer rules — no blanket keep needed.
 
 # ==================== Crypto ====================
--keep class javax.crypto.** { *; }
--keep class java.security.** { *; }
+# javax.crypto/java.security are platform classes and are not packaged; keeping
+# them only added noise. security-crypto's consumer rules cover its reflection.
 -keep class androidx.security.crypto.** { *; }
 
 # ==================== CameraX ====================
