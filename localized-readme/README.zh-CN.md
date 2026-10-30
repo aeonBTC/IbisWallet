@@ -109,7 +109,7 @@ Ibis 是测试版软件，面向经验丰富的比特币用户。离线助记词
 
 Ibis 由最新前沿 AI 模型编写和审计。
 
-审计：[2026 年 10 月 29 日](https://github.com/aeonBTC/IbisWallet/releases/tag/v5.1-beta) · [2026 年 8 月 15 日](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+审计：[2026 年 10 月 29 日](https://github.com/aeonBTC/IbisWallet/releases/tag/v5.1.0-beta) · [2026 年 8 月 15 日](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## 捐赠
 
