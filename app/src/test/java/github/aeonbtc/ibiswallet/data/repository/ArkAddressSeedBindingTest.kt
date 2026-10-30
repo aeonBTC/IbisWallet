@@ -48,4 +48,40 @@ class ArkAddressSeedBindingTest : FunSpec({
             liveFp = null,
         ) shouldBe ArkAddressSeedBinding.UNVERIFIED
     }
+
+    test("offline address paint requires prior live verification") {
+        ArkRepository.offlineAddressTrusted(
+            verifiedThisProcess = false,
+            boundFp = "a1b2c3d4",
+            cachedBarkFp = "a1b2c3d4",
+        ) shouldBe false
+        ArkRepository.offlineAddressTrusted(
+            verifiedThisProcess = true,
+            boundFp = "a1b2c3d4",
+            cachedBarkFp = "a1b2c3d4",
+        ) shouldBe true
+    }
+
+    test("offline address paint rejects a fingerprint mismatch") {
+        ArkRepository.offlineAddressTrusted(
+            verifiedThisProcess = true,
+            boundFp = "a1b2c3d4",
+            cachedBarkFp = "e5f60718",
+        ) shouldBe false
+    }
+
+    test("on-chain scan runs until the success marker exists and data is present") {
+        ArkRepository.shouldRunOnchainInitialScan(
+            scanMarkerExists = false,
+            onchainDirHasFiles = true,
+        ) shouldBe true
+        ArkRepository.shouldRunOnchainInitialScan(
+            scanMarkerExists = true,
+            onchainDirHasFiles = false,
+        ) shouldBe true
+        ArkRepository.shouldRunOnchainInitialScan(
+            scanMarkerExists = true,
+            onchainDirHasFiles = true,
+        ) shouldBe false
+    }
 })

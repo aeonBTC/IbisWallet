@@ -4,6 +4,7 @@ import github.aeonbtc.ibiswallet.util.AppVersion
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import org.json.JSONArray
 
 class AppUpdateServiceTest : FunSpec({
     test("allows beta releases when not marked prerelease") {
@@ -256,5 +257,111 @@ class AppUpdateServiceTest : FunSpec({
             ).shouldNotBeNull()
 
         latest.htmlUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases"
+    }
+    test("picks the apk asset from release attachments") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                """
+                [
+                  {
+                    "tag_name": "v4.2.0",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/420",
+                    "draft": false,
+                    "prerelease": false,
+                    "body": "Notes",
+                    "assets": [
+                      {
+                        "name": "checksums.txt",
+                        "browser_download_url": "https://github.com/aeonBTC/IbisWallet/releases/download/v4.2.0/checksums.txt",
+                        "size": 128
+                      },
+                      {
+                        "name": "ibis-wallet-v4.2.0.apk",
+                        "browser_download_url": "https://github.com/aeonBTC/IbisWallet/releases/download/v4.2.0/ibis-wallet-v4.2.0.apk",
+                        "size": 123456
+                      }
+                    ]
+                  }
+                ]
+                """.trimIndent(),
+            ).shouldNotBeNull()
+
+        latest.apkUrl shouldBe "https://github.com/aeonBTC/IbisWallet/releases/download/v4.2.0/ibis-wallet-v4.2.0.apk"
+        latest.apkSizeBytes shouldBe 123456L
+    }
+
+    test("apk url is null when release has no apk asset") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                """
+                [
+                  {
+                    "tag_name": "v4.2.0",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/420",
+                    "draft": false,
+                    "prerelease": false,
+                    "assets": [
+                      {
+                        "name": "notes.txt",
+                        "browser_download_url": "https://github.com/aeonBTC/IbisWallet/releases/download/v4.2.0/notes.txt",
+                        "size": 64
+                      }
+                    ]
+                  }
+                ]
+                """.trimIndent(),
+            ).shouldNotBeNull()
+
+        latest.apkUrl shouldBe null
+        latest.apkSizeBytes shouldBe 0L
+    }
+
+    test("ignores apk assets hosted off github") {
+        val latest =
+            AppUpdateService.parseLatestRelease(
+                """
+                [
+                  {
+                    "tag_name": "v4.2.0",
+                    "html_url": "https://github.com/aeonBTC/IbisWallet/releases/tag/420",
+                    "draft": false,
+                    "prerelease": false,
+                    "assets": [
+                      {
+                        "name": "app.apk",
+                        "browser_download_url": "https://files.example.com/app.apk",
+                        "size": 999
+                      }
+                    ]
+                  }
+                ]
+                """.trimIndent(),
+            ).shouldNotBeNull()
+
+        latest.apkUrl shouldBe null
+    }
+
+    test("prefers ibis-named apk when several apks are attached") {
+        val picked =
+            AppUpdateService.pickApkAsset(
+                JSONArray(
+                    """
+                    [
+                      {
+                        "name": "app-arm64.apk",
+                        "browser_download_url": "https://github.com/aeonBTC/IbisWallet/releases/download/v4.2.0/app-arm64.apk",
+                        "size": 999999
+                      },
+                      {
+                        "name": "ibis-wallet.apk",
+                        "browser_download_url": "https://github.com/aeonBTC/IbisWallet/releases/download/v4.2.0/ibis-wallet.apk",
+                        "size": 111
+                      }
+                    ]
+                    """.trimIndent(),
+                ),
+            ).shouldNotBeNull()
+
+        picked.first shouldBe "https://github.com/aeonBTC/IbisWallet/releases/download/v4.2.0/ibis-wallet.apk"
     }
 })

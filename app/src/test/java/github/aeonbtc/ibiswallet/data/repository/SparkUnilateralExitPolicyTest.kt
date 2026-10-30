@@ -1,6 +1,12 @@
 package github.aeonbtc.ibiswallet.data.repository
 
+import breez_sdk_spark.ConfirmedExitNode
+import breez_sdk_spark.ExitChainState
+import breez_sdk_spark.ExitNodeConfirmation
+import breez_sdk_spark.ExitRefund
+import breez_sdk_spark.ExitRefundState
 import github.aeonbtc.ibiswallet.data.model.SparkExitBranchFunding
+import github.aeonbtc.ibiswallet.data.model.SparkExitChainProgress
 import github.aeonbtc.ibiswallet.data.model.SparkExitFundingUtxo
 import github.aeonbtc.ibiswallet.data.model.SparkExitLiveUtxo
 import github.aeonbtc.ibiswallet.data.model.SparkExitQuote
@@ -765,6 +771,51 @@ class SparkUnilateralExitPolicyTest : FunSpec({
 
         test("fee rate change mismatches") {
             SparkUnilateralExitPolicy.quotesMatch(quote(), quote(feeRate = 3L)) shouldBe false
+        }
+    }
+
+    context("chainProgressOf") {
+        fun emptyState() =
+            ExitChainState(
+                confirmedNodes = emptyList(),
+                refunds = emptyList(),
+                stoppedLeafIds = emptyList(),
+                unverifiedNodeIds = emptyList(),
+                unverifiableConfirmedNodeIds = emptyList(),
+            )
+
+        test("empty chain state hides the progress line") {
+            SparkUnilateralExitPolicy.chainProgressOf(emptyState()).shouldBeNull()
+        }
+
+        test("confirmed nodes and refunds count as on-chain steps") {
+            SparkUnilateralExitPolicy.chainProgressOf(
+                emptyState().copy(
+                    confirmedNodes =
+                        listOf(
+                            ConfirmedExitNode("node-a", ExitNodeConfirmation.DIRECT, 800_000u),
+                        ),
+                    refunds =
+                        listOf(
+                            ExitRefund("leaf-a", ExitRefundState.Swept),
+                            ExitRefund(
+                                "leaf-b",
+                                ExitRefundState.OnChain(txHex = "aa", vout = 0u, valueSat = 1_000u, blockHeight = null),
+                            ),
+                        ),
+                ),
+            ) shouldBe
+                SparkExitChainProgress(
+                    confirmedNodes = 1,
+                    refundsOnChain = 1,
+                    refundsSwept = 1,
+                )
+        }
+
+        test("unreadable steps flag without inflating the count") {
+            SparkUnilateralExitPolicy.chainProgressOf(
+                emptyState().copy(unverifiedNodeIds = listOf("node-x")),
+            ) shouldBe SparkExitChainProgress(hasUnverified = true)
         }
     }
 })

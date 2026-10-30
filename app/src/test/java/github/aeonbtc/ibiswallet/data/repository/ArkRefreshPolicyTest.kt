@@ -1,5 +1,6 @@
 package github.aeonbtc.ibiswallet.data.repository
 
+import github.aeonbtc.ibiswallet.data.model.ArkRefreshParticipation
 import github.aeonbtc.ibiswallet.data.model.ArkVtxo
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
@@ -56,13 +57,13 @@ class ArkRefreshPolicyTest : FunSpec({
         ) shouldBe listOf(earliest)
     }
 
-    test("null fee skip is waived when refresh is already due") {
+    test("unknown fee cannot bypass the automatic fee cap even when due") {
         ArkRefreshPolicy.shouldSkipAutoRefreshForFee(
             feeSats = null,
             needsRefresh = true,
             maxFeeSats = 5_000L,
             dailyRemainingSats = 25_000L,
-        ) shouldBe false
+        ) shouldBe true
     }
 
     test("null fee skip stays in the soon window") {
@@ -80,6 +81,92 @@ class ArkRefreshPolicyTest : FunSpec({
             needsRefresh = true,
             maxFeeSats = 5_000L,
             dailyRemainingSats = 25_000L,
+        ) shouldBe true
+    }
+
+    fun participation(createdAtMs: Long, roundId: UInt? = null) =
+        ArkRefreshParticipation(
+            operationId = "op",
+            vtxoIds = listOf("a"),
+            roundId = roundId,
+            createdAtMs = createdAtMs,
+        )
+
+    test("stale refresh is abandoned only when no round owns it and inputs stay spendable") {
+        val now = 10_000_000L
+        val old = now - ArkRefreshPolicy.STALE_PARTICIPATION_AGE_MS - 1
+        ArkRefreshPolicy.shouldAbandonParticipation(
+            participation = participation(old),
+            liveRoundIds = emptySet(),
+            pendingRoundInputIds = emptySet(),
+            nowMs = now,
+        ) shouldBe true
+    }
+
+    test("stale refresh is kept while a live round owns its inputs") {
+        val now = 10_000_000L
+        val old = now - ArkRefreshPolicy.STALE_PARTICIPATION_AGE_MS - 1
+        ArkRefreshPolicy.shouldAbandonParticipation(
+            participation = participation(old, roundId = 7u),
+            liveRoundIds = setOf(7u),
+            pendingRoundInputIds = emptySet(),
+            nowMs = now,
+        ) shouldBe false
+        ArkRefreshPolicy.shouldAbandonParticipation(
+            participation = participation(old),
+            liveRoundIds = emptySet(),
+            pendingRoundInputIds = setOf("a"),
+            nowMs = now,
+        ) shouldBe false
+    }
+
+    test("restored scheduled round without input ids clears once its round is gone") {
+        val now = 10_000_000L
+        val empty =
+            ArkRefreshParticipation(
+                operationId = "scheduled",
+                vtxoIds = emptyList(),
+                roundId = 9u,
+                createdAtMs = now - ArkRefreshPolicy.STALE_PARTICIPATION_AGE_MS - 1,
+            )
+        ArkRefreshPolicy.shouldAbandonParticipation(
+            participation = empty,
+            liveRoundIds = setOf(9u),
+            pendingRoundInputIds = emptySet(),
+            nowMs = now,
+        ) shouldBe false
+        ArkRefreshPolicy.shouldAbandonParticipation(
+            participation = empty,
+            liveRoundIds = emptySet(),
+            pendingRoundInputIds = emptySet(),
+            nowMs = now,
+        ) shouldBe true
+    }
+
+    test("stale refresh is abandoned after its inputs were spent elsewhere") {
+        val now = 10_000_000L
+        ArkRefreshPolicy.shouldAbandonParticipation(
+            participation = participation(now - ArkRefreshPolicy.STALE_PARTICIPATION_AGE_MS - 1),
+            liveRoundIds = emptySet(),
+            pendingRoundInputIds = emptySet(),
+            nowMs = now,
+        ) shouldBe true
+    }
+
+    test("automatic cleanup waits out the registration grace period") {
+        val now = 10_000_000L
+        ArkRefreshPolicy.shouldAbandonParticipation(
+            participation = participation(now - 1_000L),
+            liveRoundIds = emptySet(),
+            pendingRoundInputIds = emptySet(),
+            nowMs = now,
+        ) shouldBe false
+        ArkRefreshPolicy.shouldAbandonParticipation(
+            participation = participation(now - 1_000L),
+            liveRoundIds = emptySet(),
+            pendingRoundInputIds = emptySet(),
+            nowMs = now,
+            requireAge = false,
         ) shouldBe true
     }
 

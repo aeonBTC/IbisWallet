@@ -2,6 +2,8 @@ package github.aeonbtc.ibiswallet.data.repository
 
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
+import uniffi.bark.RecoveryBucket
+import uniffi.bark.RecoveryReport
 
 class ArkMailboxRecoveryPolicyTest : FunSpec({
 
@@ -344,4 +346,198 @@ class ArkMailboxRecoveryPolicyTest : FunSpec({
             importedHistoryHasFunds = false,
         ) shouldBe false
     }
+
+    test("unfunded secure import still forces recovery after install") {
+        ArkMailboxRecoveryPolicy.shouldForceImportMailboxScanAfterInstall(
+            manifestBound = true,
+            wasEncrypted = true,
+            secureScanMark = false,
+        ) shouldBe true
+        ArkMailboxRecoveryPolicy.shouldForceImportMailboxScanAfterInstall(
+            manifestBound = true,
+            wasEncrypted = true,
+            secureScanMark = true,
+        ) shouldBe false
+    }
+
+    test("retry merge moves failed ids into recovered and preserves exited") {
+        val original = recoveryReport(failed = listOf("a"), exited = listOf("x"))
+        val retry = recoveryReport(recovered = listOf("a"))
+
+        val merged = ArkMailboxRecoveryPolicy.mergeRecoveryReports(original, retry, listOf("a"))
+
+        merged.recovered.vtxoIds shouldBe listOf("a")
+        merged.failed.vtxoIds shouldBe emptyList()
+        merged.exited.vtxoIds shouldBe listOf("x")
+        merged.isComplete shouldBe true
+    }
+
+    test("retry merge keeps a foreign result incomplete") {
+        val original = recoveryReport(failed = listOf("a"))
+        val retry = recoveryReport(foreign = listOf("a"))
+
+        val merged = ArkMailboxRecoveryPolicy.mergeRecoveryReports(original, retry, listOf("a"))
+
+        merged.failed.vtxoIds shouldBe emptyList()
+        merged.foreign.vtxoIds shouldBe listOf("a")
+        merged.isComplete shouldBe false
+    }
+
+    test("retry merge keeps buckets for ids that were not retried") {
+        val original =
+            recoveryReport(
+                failed = listOf("a", "b"),
+                skipped = listOf("s"),
+                exited = listOf("x"),
+            )
+        val retry = recoveryReport(recovered = listOf("a"))
+
+        val merged = ArkMailboxRecoveryPolicy.mergeRecoveryReports(original, retry, listOf("a"))
+
+        merged.recovered.vtxoIds shouldBe listOf("a")
+        merged.failed.vtxoIds shouldBe listOf("b")
+        merged.skipped.vtxoIds shouldBe listOf("s")
+        merged.exited.vtxoIds shouldBe listOf("x")
+        merged.isComplete shouldBe false
+    }
+
+    test("recovery gap limit covers recorded keys and caps at 1024") {
+        ArkMailboxRecoveryPolicy.recoveryKeyGapLimit(-1) shouldBe 1024u
+        ArkMailboxRecoveryPolicy.recoveryKeyGapLimit(0) shouldBe 250u
+        ArkMailboxRecoveryPolicy.recoveryKeyGapLimit(300) shouldBe 308u
+        ArkMailboxRecoveryPolicy.recoveryKeyGapLimit(10_000) shouldBe 1024u
+    }
+
+    test("sidecar never marks scanned after a failed scan or import") {
+        ArkMailboxRecoveryPolicy.shouldMarkSidecarScanned(
+            reportPresent = true,
+            isComplete = true,
+            scanFailed = true,
+            importFailed = false,
+            recoveredCount = 0,
+            liveSpendableSats = 0L,
+            liveVtxoCount = 0,
+        ) shouldBe false
+        ArkMailboxRecoveryPolicy.shouldMarkSidecarScanned(
+            reportPresent = true,
+            isComplete = true,
+            scanFailed = false,
+            importFailed = true,
+            recoveredCount = 0,
+            liveSpendableSats = 0L,
+            liveVtxoCount = 0,
+        ) shouldBe false
+        ArkMailboxRecoveryPolicy.shouldMarkSidecarScanned(
+            reportPresent = true,
+            isComplete = false,
+            scanFailed = false,
+            importFailed = false,
+            recoveredCount = 0,
+            liveSpendableSats = 0L,
+            liveVtxoCount = 0,
+        ) shouldBe false
+        ArkMailboxRecoveryPolicy.shouldMarkSidecarScanned(
+            reportPresent = false,
+            isComplete = true,
+            scanFailed = false,
+            importFailed = false,
+            recoveredCount = 0,
+            liveSpendableSats = 0L,
+            liveVtxoCount = 0,
+        ) shouldBe false
+    }
+
+    test("sidecar does not mark scanned when recovered funds did not appear") {
+        ArkMailboxRecoveryPolicy.shouldMarkSidecarScanned(
+            reportPresent = true,
+            isComplete = true,
+            scanFailed = false,
+            importFailed = false,
+            recoveredCount = 2,
+            liveSpendableSats = 0L,
+            liveVtxoCount = 0,
+        ) shouldBe false
+        ArkMailboxRecoveryPolicy.shouldMarkSidecarScanned(
+            reportPresent = true,
+            isComplete = true,
+            scanFailed = false,
+            importFailed = false,
+            recoveredCount = 2,
+            liveSpendableSats = 500L,
+            liveVtxoCount = 1,
+        ) shouldBe true
+    }
+
+    test("a complete sidecar scan with no recoveries marks the DB scanned") {
+        ArkMailboxRecoveryPolicy.shouldMarkSidecarScanned(
+            reportPresent = true,
+            isComplete = true,
+            scanFailed = false,
+            importFailed = false,
+            recoveredCount = 0,
+            liveSpendableSats = 0L,
+            liveVtxoCount = 0,
+        ) shouldBe true
+    }
+
+    test("unmarked reusable DB with cached funds runs the sidecar once") {
+        ArkMailboxRecoveryPolicy.shouldSidecarRescanUnmarkedDb(
+            hasReusableDb = true,
+            hasMarker = false,
+            cachedHasFunds = true,
+            hasBlockingActivity = false,
+            alreadyAttempted = false,
+        ) shouldBe true
+        ArkMailboxRecoveryPolicy.shouldSidecarRescanUnmarkedDb(
+            hasReusableDb = true,
+            hasMarker = true,
+            cachedHasFunds = true,
+            hasBlockingActivity = false,
+            alreadyAttempted = false,
+        ) shouldBe false
+        ArkMailboxRecoveryPolicy.shouldSidecarRescanUnmarkedDb(
+            hasReusableDb = false,
+            hasMarker = false,
+            cachedHasFunds = true,
+            hasBlockingActivity = false,
+            alreadyAttempted = false,
+        ) shouldBe false
+        ArkMailboxRecoveryPolicy.shouldSidecarRescanUnmarkedDb(
+            hasReusableDb = true,
+            hasMarker = false,
+            cachedHasFunds = true,
+            hasBlockingActivity = true,
+            alreadyAttempted = false,
+        ) shouldBe false
+        ArkMailboxRecoveryPolicy.shouldSidecarRescanUnmarkedDb(
+            hasReusableDb = true,
+            hasMarker = false,
+            cachedHasFunds = true,
+            hasBlockingActivity = false,
+            alreadyAttempted = true,
+        ) shouldBe false
+        ArkMailboxRecoveryPolicy.shouldSidecarRescanUnmarkedDb(
+            hasReusableDb = true,
+            hasMarker = false,
+            cachedHasFunds = false,
+            hasBlockingActivity = false,
+            alreadyAttempted = false,
+        ) shouldBe false
+    }
 })
+
+private fun recoveryReport(
+    recovered: List<String> = emptyList(),
+    skipped: List<String> = emptyList(),
+    foreign: List<String> = emptyList(),
+    failed: List<String> = emptyList(),
+    exited: List<String> = emptyList(),
+): RecoveryReport =
+    RecoveryReport(
+        recovered = RecoveryBucket(recovered, 0u),
+        skipped = RecoveryBucket(skipped, 0u),
+        foreign = RecoveryBucket(foreign, 0u),
+        failed = RecoveryBucket(failed, 0u),
+        exited = RecoveryBucket(exited, 0u),
+        isComplete = failed.isEmpty() && foreign.isEmpty(),
+    )

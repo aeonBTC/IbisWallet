@@ -535,6 +535,43 @@ class ArkDepositPolicyTest : FunSpec({
                 previous = emptyList(),
             ).map { it.id } shouldContainExactly listOf(2, 1, 3)
         }
+
+        test("bare live re-emission keeps the journaled send evidence") {
+            val txid = "a".repeat(64)
+            val destination = "bc1qexternal0000000000000000000000000000000"
+            val rich =
+                ArkMovement(
+                    id = 7,
+                    status = "pending",
+                    subsystemName = "bark",
+                    subsystemKind = "offboard",
+                    intendedBalanceSats = -39_037L,
+                    effectiveBalanceSats = -39_037L,
+                    offchainFeeSats = 247L,
+                    sentToAddresses = listOf(destination),
+                    onchainTxids = listOf(txid),
+                    createdAt = "2026-10-26T22:26:00Z",
+                    updatedAt = "2026-10-26T22:26:00Z",
+                )
+            val bare =
+                rich.copy(
+                    status = "completed",
+                    effectiveBalanceSats = 0L,
+                    offchainFeeSats = 0L,
+                    sentToAddresses = emptyList(),
+                    onchainTxids = emptyList(),
+                    completedAt = "2026-10-26T23:10:00Z",
+                )
+            val merged =
+                ArkDepositPolicy.mergePreservedMovements(
+                    live = listOf(bare),
+                    previous = listOf(rich),
+                )
+            merged.size shouldBe 1
+            merged.single().status shouldBe "completed"
+            merged.single().sentToAddresses shouldBe listOf(destination)
+            merged.single().onchainTxids shouldBe listOf(txid)
+        }
     }
 
     context("causal ordering") {
@@ -679,6 +716,118 @@ class ArkDepositPolicyTest : FunSpec({
                     subsystemKind = "receive",
                 ),
             ) shouldBe true
+        }
+
+        test("never hides a settled offboard with zeroed fields") {
+            ArkDepositPolicy.isNoiseArkMovement(
+                movement(
+                    intended = 0L,
+                    effective = 0L,
+                    status = "completed",
+                    subsystemName = "bark",
+                    subsystemKind = "offboard",
+                ),
+            ) shouldBe false
+        }
+    }
+
+    context("counterpartyOnchainAddresses") {
+        fun payment(
+            id: Int = 1,
+            sent: List<String> = emptyList(),
+            received: List<String> = emptyList(),
+        ) = ArkMovement(
+            id = id,
+            status = "completed",
+            subsystemName = "bark",
+            subsystemKind = "offboard",
+            intendedBalanceSats = -1_000L,
+            effectiveBalanceSats = -1_000L,
+            offchainFeeSats = 0L,
+            sentToAddresses = sent,
+            receivedOnAddresses = received,
+            createdAt = "2026-01-01T00:00:00Z",
+            updatedAt = "2026-01-01T00:00:00Z",
+        )
+
+        test("external on-chain destination is a counterparty") {
+            val external = "bc1qexternaldestination000000000000000000000"
+            ArkDepositPolicy.counterpartyOnchainAddresses(
+                listOf(payment(sent = listOf(external))),
+            ) shouldBe setOf(external.lowercase())
+        }
+
+        test("self-transfer destination that we received on is not a counterparty") {
+            val own = "bc1qowndepositaddress0000000000000000000000000"
+            ArkDepositPolicy.counterpartyOnchainAddresses(
+                listOf(
+                    payment(id = 1, sent = listOf(own)),
+                    payment(id = 2, received = listOf(own)),
+                ),
+            ) shouldBe emptySet()
+        }
+
+        test("ark address destinations are ignored") {
+            ArkDepositPolicy.counterpartyOnchainAddresses(
+                listOf(payment(sent = listOf("ark1qexternalarkaddress"))),
+            ) shouldBe emptySet()
+        }
+
+        test("empty history has no counterparties") {
+            ArkDepositPolicy.counterpartyOnchainAddresses(emptyList()) shouldBe emptySet()
+        }
+    }
+
+    context("selectedOnchainTargetSats") {
+        fun utxo(
+            txid: String,
+            vout: Int = 0,
+            amount: Long = 5_000L,
+            confirmed: Boolean = true,
+        ) = github.aeonbtc.ibiswallet.data.model.ArkOnchainUtxo(
+            txid = txid,
+            vout = vout,
+            amountSats = amount,
+            confirmations = if (confirmed) 3 else 0,
+            address = "bc1ptest",
+            isConfirmed = confirmed,
+        )
+
+        test("sums only the selected confirmed outpoints") {
+            val a = "a".repeat(64)
+            val b = "b".repeat(64)
+            ArkDepositPolicy.selectedOnchainTargetSats(
+                utxos = listOf(utxo(a), utxo(b, amount = 7_000L)),
+                selectedOutpoints = listOf("$a:0"),
+            ) shouldBe 5_000L
+        }
+
+        test("matches outpoint keys case-insensitively and with vout") {
+            val a = "AB".repeat(32)
+            ArkDepositPolicy.selectedOnchainTargetSats(
+                utxos = listOf(utxo(a.lowercase(), vout = 2, amount = 9_000L)),
+                selectedOutpoints = listOf("$a:2"),
+            ) shouldBe 9_000L
+        }
+
+        test("ignores unconfirmed selected rows") {
+            val a = "a".repeat(64)
+            ArkDepositPolicy.selectedOnchainTargetSats(
+                utxos = listOf(utxo(a, confirmed = false)),
+                selectedOutpoints = listOf("$a:0"),
+            ) shouldBe 0L
+        }
+
+        test("empty selection or no match is zero") {
+            val a = "a".repeat(64)
+            ArkDepositPolicy.selectedOnchainTargetSats(
+                utxos = listOf(utxo(a)),
+                selectedOutpoints = emptyList(),
+            ) shouldBe 0L
+            ArkDepositPolicy.selectedOnchainTargetSats(
+                utxos = listOf(utxo(a)),
+                selectedOutpoints = listOf("${"b".repeat(64)}:0"),
+            ) shouldBe 0L
         }
     }
 })

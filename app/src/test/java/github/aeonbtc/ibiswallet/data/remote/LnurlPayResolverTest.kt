@@ -1,9 +1,14 @@
 package github.aeonbtc.ibiswallet.data.remote
 
+import fr.acinq.bitcoin.ByteVector
+import fr.acinq.bitcoin.ByteVector32
+import fr.acinq.bitcoin.PrivateKey
+import fr.acinq.lightning.payment.Bolt11Invoice
 import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
+import java.security.MessageDigest
 
 class LnurlPayResolverTest : FunSpec({
 
@@ -90,4 +95,76 @@ class LnurlPayResolverTest : FunSpec({
             error.message shouldContain "500,000 sats"
         }
     }
+
+    context("LNURL-pay description hash binding (LUD-06)") {
+        val resolver = LnurlPayResolver(
+            baseHttpClient = okhttp3.OkHttpClient(),
+            useTor = { false },
+        )
+        val metadataJson = """[["text/plain","lnurl-coffee"],["image/png","c2F0b3NoaQ=="]]"""
+
+        test("accepts an invoice whose description hash matches sha256 of the metadata") {
+            val bolt11 = buildSignedBolt11(descriptionHashOf(metadataJson))
+
+            resolver.verifyBolt11MetadataHash(bolt11, metadataJson)
+        }
+
+        test("rejects an invoice whose description hash binds different metadata") {
+            val bolt11 = buildSignedBolt11(descriptionHashOf("""[["text/plain","lnurl-rerouted"]]"""))
+
+            val error = shouldThrow<Exception> {
+                resolver.verifyBolt11MetadataHash(bolt11, metadataJson)
+            }
+
+            error.message shouldContain "does not match"
+        }
+
+        test("rejects an invoice without a description hash tag") {
+            val bolt11 = buildSignedBolt11(descriptionHash = null, descriptionText = "plain description only")
+
+            val error = shouldThrow<Exception> {
+                resolver.verifyBolt11MetadataHash(bolt11, metadataJson)
+            }
+
+            error.message shouldContain "missing a description hash"
+        }
+
+        test("rejects a malformed invoice string") {
+            val error = shouldThrow<Exception> {
+                resolver.verifyBolt11MetadataHash("lnbcrupted", metadataJson)
+            }
+
+            error.message shouldContain "invalid Lightning invoice"
+        }
+    }
 })
+
+private fun descriptionHashOf(metadata: String): ByteVector32 {
+    val digest = MessageDigest.getInstance("SHA-256").digest(metadata.toByteArray(Charsets.UTF_8))
+    return ByteVector32(digest)
+}
+
+private fun buildSignedBolt11(
+    descriptionHash: ByteVector32?,
+    descriptionText: String? = null,
+): String {
+    val priv = PrivateKey.fromHex("01".repeat(32))
+    val paymentHash = ByteVector32.fromValidHex("11".repeat(32))
+    val paymentSecret = ByteVector32.fromValidHex("22".repeat(32))
+    val tags = buildList {
+        descriptionText?.let { add(Bolt11Invoice.TaggedField.Description(it)) }
+        descriptionHash?.let { add(Bolt11Invoice.TaggedField.DescriptionHash(it)) }
+        add(Bolt11Invoice.TaggedField.PaymentHash(paymentHash))
+        add(Bolt11Invoice.TaggedField.Features(ByteVector.fromHex("c300")))
+        add(Bolt11Invoice.TaggedField.PaymentSecret(paymentSecret))
+    }
+    val unsigned = Bolt11Invoice(
+        prefix = "lntb",
+        encodedAmount = "100m",
+        timestampSeconds = 1700000000L,
+        nodeId = priv.publicKey(),
+        tags = tags,
+        signature = ByteVector.empty,
+    )
+    return unsigned.sign(priv).write()
+}

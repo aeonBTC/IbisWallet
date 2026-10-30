@@ -1,4 +1,4 @@
-﻿package github.aeonbtc.ibiswallet.data.model
+package github.aeonbtc.ibiswallet.data.model
 
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
@@ -104,6 +104,48 @@ class ArkWalletStateTest : FunSpec({
 
         test("zero intended and effective stays zero") {
             movement(intended = 0L, effective = 0L).displayBalanceSats() shouldBe 0L
+        }
+    }
+
+    context("bark 0.8.0 balance buckets") {
+        test("needs-refresh sats stay in the total even though spendable excludes them") {
+            val state =
+                ArkWalletState(
+                    spendableSats = 10_000L,
+                    needsRefreshSats = 25_000L,
+                    vtxos =
+                        listOf(
+                            ArkVtxo(
+                                id = "spendable",
+                                amountSats = 10_000L,
+                                expiryHeight = 1,
+                                kind = "board",
+                                state = "Spendable",
+                                exitDepth = 0,
+                                exitTxWeightWu = 0L,
+                            ),
+                            ArkVtxo(
+                                id = "expired",
+                                amountSats = 25_000L,
+                                expiryHeight = 1,
+                                kind = "board",
+                                state = "Spendable",
+                                exitDepth = 0,
+                                exitTxWeightWu = 0L,
+                            ),
+                        ),
+                )
+            state.totalSats shouldBe 35_000L
+        }
+
+        test("in-progress arkoor send and offboard sats are part of the total") {
+            val state =
+                ArkWalletState(
+                    spendableSats = 5_000L,
+                    pendingArkoorSendSats = 2_000L,
+                    pendingOffboardSats = 3_000L,
+                )
+            state.totalSats shouldBe 10_000L
         }
     }
 })

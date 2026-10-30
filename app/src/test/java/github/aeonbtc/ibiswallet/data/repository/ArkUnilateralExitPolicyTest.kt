@@ -1,5 +1,6 @@
 package github.aeonbtc.ibiswallet.data.repository
 
+import github.aeonbtc.ibiswallet.data.model.ArkVtxo
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -181,7 +182,7 @@ class ArkUnilateralExitPolicyTest : FunSpec({
                 ArkUnilateralExitPolicy.StartExitError.PENDING_REFRESH
         }
 
-        test("entire wallet proceeds when pending ids are already gone") {
+        test("entire wallet refuses unresolved participation even when inputs disappeared") {
             val plan =
                 ArkUnilateralExitPolicy.planStartExit(
                     walletLoaded = true,
@@ -190,7 +191,8 @@ class ArkUnilateralExitPolicyTest : FunSpec({
                     spendableVtxoIds = listOf("ok"),
                     excludedVtxoIds = listOf("gone"),
                 )
-            plan.shouldBeInstanceOf<ArkUnilateralExitPolicy.StartExitPlan.EntireWallet>()
+            (plan as ArkUnilateralExitPolicy.StartExitPlan.Error).reason shouldBe
+                ArkUnilateralExitPolicy.StartExitError.PENDING_REFRESH
         }
 
         test("empty-selection fallback refuses when a spendable vtxo is pending refresh") {
@@ -760,7 +762,149 @@ class ArkUnilateralExitPolicyTest : FunSpec({
         }
     }
 
+    context("isExpired") {
+        test("expiry at or below tip is expired") {
+            ArkUnilateralExitPolicy.isExpired(expiryHeight = 900_000, chainTipHeight = 900_000) shouldBe true
+            ArkUnilateralExitPolicy.isExpired(expiryHeight = 899_999, chainTipHeight = 900_000) shouldBe true
+            ArkUnilateralExitPolicy.isExpired(expiryHeight = 900_001, chainTipHeight = 900_000) shouldBe false
+        }
+
+        test("unknown tip never counts as expired") {
+            ArkUnilateralExitPolicy.isExpired(expiryHeight = 100, chainTipHeight = null) shouldBe false
+        }
+    }
+
+    context("exitEligibleIds") {
+        fun vtxo(id: String, expiry: Int) =
+            ArkVtxo(
+                id = id,
+                amountSats = 1_000L,
+                expiryHeight = expiry,
+                kind = "refresh",
+                state = "Spendable",
+                exitDepth = 1,
+                exitTxWeightWu = 500L,
+            )
+
+        test("expired-but-unswept live VTXOs join spendable") {
+            val eligible =
+                ArkUnilateralExitPolicy.exitEligibleIds(
+                    spendableVtxoIds = listOf("fresh"),
+                    liveVtxos =
+                        listOf(
+                            vtxo("fresh", expiry = 900_100),
+                            vtxo("old", expiry = 899_900),
+                        ),
+                    chainTipHeight = 900_000,
+                )
+            eligible shouldBe listOf("fresh", "old")
+        }
+
+        test("expired VTXO already in spendable is not duplicated") {
+            val eligible =
+                ArkUnilateralExitPolicy.exitEligibleIds(
+                    spendableVtxoIds = listOf("old"),
+                    liveVtxos = listOf(vtxo("old", expiry = 899_900)),
+                    chainTipHeight = 900_000,
+                )
+            eligible shouldBe listOf("old")
+        }
+
+        test("unexpired live VTXOs outside spendable stay out") {
+            val eligible =
+                ArkUnilateralExitPolicy.exitEligibleIds(
+                    spendableVtxoIds = listOf("fresh"),
+                    liveVtxos = listOf(vtxo("locked-round", expiry = 900_100)),
+                    chainTipHeight = 900_000,
+                )
+            eligible shouldBe listOf("fresh")
+        }
+
+        test("excluded ids are removed from both sets") {
+            val eligible =
+                ArkUnilateralExitPolicy.exitEligibleIds(
+                    spendableVtxoIds = listOf("fresh", "round-locked"),
+                    liveVtxos = listOf(vtxo("old", expiry = 899_900)),
+                    chainTipHeight = 900_000,
+                    excludedVtxoIds = listOf("round-locked", "old"),
+                )
+            eligible shouldBe listOf("fresh")
+        }
+
+        test("null tip yields spendable only") {
+            val eligible =
+                ArkUnilateralExitPolicy.exitEligibleIds(
+                    spendableVtxoIds = listOf("fresh"),
+                    liveVtxos = listOf(vtxo("old", expiry = 899_900)),
+                    chainTipHeight = null,
+                )
+            eligible shouldBe listOf("fresh")
+        }
+
+        test("expired eligible VTXO can start a selected exit") {
+            val eligible =
+                ArkUnilateralExitPolicy.exitEligibleIds(
+                    spendableVtxoIds = emptyList(),
+                    liveVtxos = listOf(vtxo("old", expiry = 899_900)),
+                    chainTipHeight = 900_000,
+                )
+            val plan =
+                ArkUnilateralExitPolicy.planStartExit(
+                    walletLoaded = true,
+                    entireWallet = false,
+                    requestedVtxoIds = listOf("old"),
+                    spendableVtxoIds = eligible,
+                    onchainWalletPresent = true,
+                )
+            plan.shouldBeInstanceOf<ArkUnilateralExitPolicy.StartExitPlan.Selected>()
+            (plan as ArkUnilateralExitPolicy.StartExitPlan.Selected).vtxoIds shouldBe listOf("old")
+        }
+    }
+
+    context("newExitIdsForCheckpoint") {
+        test("new live exit is returned even when other exits are known") {
+            ArkUnilateralExitPolicy.newExitIdsForCheckpoint(
+                liveExitIds = listOf("old", "forced"),
+                previouslyKnownExitIds = listOf("old"),
+                checkpointedExitIds = emptyList(),
+            ) shouldBe listOf("forced")
+        }
+
+        test("checkpointed and previously known exits are skipped") {
+            ArkUnilateralExitPolicy.newExitIdsForCheckpoint(
+                liveExitIds = listOf("old", "forced"),
+                previouslyKnownExitIds = listOf("old"),
+                checkpointedExitIds = listOf("forced"),
+            ) shouldBe emptyList()
+        }
+    }
+
+    context("terminalOrphanExitLockIds") {
+        test("returns locks for terminal exits only") {
+            ArkUnilateralExitPolicy.terminalOrphanExitLockIds(
+                lockedExitIds = listOf("canceled", "claimed", "processing"),
+                exitStates = mapOf(
+                    "canceled" to "Canceled",
+                    "claimed" to "Claimed",
+                    "processing" to "Processing",
+                ),
+                activeExitIds = listOf("processing"),
+            ) shouldBe listOf("canceled", "claimed")
+        }
+
+        test("does not unlock active or unknown exits") {
+            ArkUnilateralExitPolicy.terminalOrphanExitLockIds(
+                lockedExitIds = listOf("active", "unknown"),
+                exitStates = mapOf("active" to "WaitForConfirmation"),
+                activeExitIds = listOf("active"),
+            ) shouldBe emptyList()
+        }
+    }
+
     context("txidFromSignedHex") {
+        test("checksum-valid address with an invalid witness program is refused") {
+            ArkUnilateralExitPolicy.isUsableBitcoinClaimAddress("bc1qqqglchaj") shouldBe false
+        }
         test("genesis coinbase bytes hash to the known txid") {
             val genesisHex =
                 "01000000010000000000000000000000000000000000000000000000000000000000000000" +
@@ -773,12 +917,31 @@ class ArkUnilateralExitPolicyTest : FunSpec({
                 "4a5e1e4baab89f3a32518a88c31bc87f618f76673e2cc77ab2127b7afdeda33b"
         }
 
-        test("result is 64 lowercase hex chars and deterministic") {
-            val first = ArkUnilateralExitPolicy.txidFromSignedHex("abcd")
-            val second = ArkUnilateralExitPolicy.txidFromSignedHex("ABCD")
+        test("truncated transaction bytes are rejected") {
+            ArkUnilateralExitPolicy.txidFromSignedHex("abcd") shouldBe null
+        }
+
+        test("trailing bytes after a witness transaction are refused") {
+            val witness = "02000000000101" + "11".repeat(32) + "0000000000ffffffff" +
+                "01e80300000000000001510101aa0000000000"
+            ArkUnilateralExitPolicy.txidFromSignedHex(witness) shouldBe null
+        }
+
+        test("witness changes do not change the claim txid") {
+            val prefix = "02000000000101" + "11".repeat(32) + "0000000000ffffffff" +
+                "01e8030000000000000151"
+            val first = ArkUnilateralExitPolicy.txidFromSignedHex(prefix + "0101aa00000000")
+            val second = ArkUnilateralExitPolicy.txidFromSignedHex(prefix + "0101bb00000000")
             first shouldBe second
-            first?.length shouldBe 64
-            first?.all { it in '0'..'9' || it in 'a'..'f' } shouldBe true
+        }
+
+        test("claim txid excludes the witness serialization") {
+            val stripped = "0200000001" + "11".repeat(32) + "0000000000ffffffff" +
+                "01e803000000000000015100000000"
+            val witness = "02000000000101" + "11".repeat(32) + "0000000000ffffffff" +
+                "01e80300000000000001510101aa00000000"
+            ArkUnilateralExitPolicy.txidFromSignedHex(witness) shouldBe
+                ArkUnilateralExitPolicy.txidFromSignedHex(stripped)
         }
 
         test("malformed input yields null") {

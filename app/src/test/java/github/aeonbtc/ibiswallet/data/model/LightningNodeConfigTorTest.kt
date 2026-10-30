@@ -87,7 +87,7 @@ class LightningNodeConfigTorTest : StringSpec({
         ).isCredentialTransportAuthorized() shouldBe false
     }
 
-    "pinned cert or explicit acknowledgment authorizes clearnet credentials" {
+    "pinned cert or insecure acknowledgment authorizes clearnet credentials" {
         LightningNodeConfig(
             type = LightningNodeConnectionType.LND_REST,
             host = "node.example.com",
@@ -100,7 +100,7 @@ class LightningNodeConfigTorTest : StringSpec({
             type = LightningNodeConnectionType.LND_REST,
             host = "node.example.com",
             port = 8080,
-            useTls = false,
+            useTls = true,
             acknowledgedInsecure = true,
             macaroonHex = "aa",
         ).isCredentialTransportAuthorized() shouldBe true
