@@ -82,6 +82,52 @@ class BitcoinSendPreparationTest : FunSpec({
         first shouldNotBe second
     }
 
+    test("cache key invalidates when RBF setting changes") {
+        val first =
+            buildSingleBitcoinSendPreparationKey(
+                state = baseState.copy(rbfEnabled = true),
+                recipientAddress = "bc1qexampleaddress0001",
+                amountSats = 10_000UL,
+                feeRateSatPerVb = 2.5,
+                selectedOutpoints = emptyList(),
+                isMaxSend = false,
+            )
+        val second =
+            buildSingleBitcoinSendPreparationKey(
+                state = baseState.copy(rbfEnabled = false),
+                recipientAddress = "bc1qexampleaddress0001",
+                amountSats = 10_000UL,
+                feeRateSatPerVb = 2.5,
+                selectedOutpoints = emptyList(),
+                isMaxSend = false,
+            )
+
+        first shouldNotBe second
+    }
+
+    test("cache key invalidates when consolidate-change setting changes") {
+        val first =
+            buildSingleBitcoinSendPreparationKey(
+                state = baseState.copy(consolidateChange = false),
+                recipientAddress = "bc1qexampleaddress0001",
+                amountSats = 10_000UL,
+                feeRateSatPerVb = 2.5,
+                selectedOutpoints = emptyList(),
+                isMaxSend = false,
+            )
+        val second =
+            buildSingleBitcoinSendPreparationKey(
+                state = baseState.copy(consolidateChange = true),
+                recipientAddress = "bc1qexampleaddress0001",
+                amountSats = 10_000UL,
+                feeRateSatPerVb = 2.5,
+                selectedOutpoints = emptyList(),
+                isMaxSend = false,
+            )
+
+        first shouldNotBe second
+    }
+
     test("watch-only review can open while preview is still loading") {
         canOpenBitcoinSendReview(
             walletInitialized = true,

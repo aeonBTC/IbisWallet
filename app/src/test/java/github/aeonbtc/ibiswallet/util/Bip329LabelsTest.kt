@@ -248,6 +248,15 @@ class Bip329LabelsTest : FunSpec({
             result.arkTransactionLabels shouldContainExactly mapOf("12" to "Ark movement")
             result.bitcoinTransactionLabels.size shouldBe 0
         }
+
+        test("mixed scope rejects non-txid tx refs without a network tag") {
+            val content = """{"type":"tx","ref":"12","label":"Unroutable movement"}"""
+            val result = Bip329Labels.import(content, Bip329LabelScope.BOTH)
+
+            result.bitcoinTransactionLabels.size shouldBe 0
+            result.arkTransactionLabels.size shouldBe 0
+            result.errorLines shouldBe 1
+        }
     }
 
     // ── import (Electrum CSV) ──

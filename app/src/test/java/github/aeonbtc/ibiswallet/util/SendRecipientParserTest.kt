@@ -43,6 +43,22 @@ class SendRecipientParserTest : FunSpec({
         }
     }
 
+    context("URI amount parsing") {
+        test("positive amount parses to sats") {
+            val parsed = parseSendRecipient("ark1qqqqq?amount=0.001")
+
+            parsed.shouldBeInstanceOf<ParsedSendRecipient.Ark>()
+            (parsed as ParsedSendRecipient.Ark).amountSats shouldBe 100_000L
+        }
+
+        test("negative amount is rejected") {
+            val parsed = parseSendRecipient("ark1qqqqq?amount=-0.001")
+
+            parsed.shouldBeInstanceOf<ParsedSendRecipient.Ark>()
+            (parsed as ParsedSendRecipient.Ark).amountSats shouldBe null
+        }
+    }
+
     context("nested SegWit recipients remain sendable") {
         test("mainnet 3-address parses as Bitcoin recipient") {
             val parsed = parseSendRecipient("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")
@@ -254,6 +270,45 @@ class SendRecipientParserTest : FunSpec({
 
             draft.recipientAddress shouldBe "spark1qqexamplepaymentrequest"
             draft.amountInput shouldBe ""
+        }
+
+        test("spark receive URI keeps the static address with readable amount") {
+            val uri = buildSparkAddressRequest(
+                address = "spark1qqexamplepaymentrequest",
+                amountSats = 10_000L,
+                label = "Coffee",
+            )
+
+            uri shouldBe "spark:spark1qqexamplepaymentrequest?amount=0.0001&label=Coffee"
+        }
+
+        test("spark receive URI without amount or label is the bare address") {
+            buildSparkAddressRequest(
+                address = "spark1qqexamplepaymentrequest",
+                amountSats = null,
+                label = null,
+            ) shouldBe "spark1qqexamplepaymentrequest"
+        }
+
+        test("spark receive URI round-trips through the send parser") {
+            val uri = buildSparkAddressRequest(
+                address = "spark1qqexamplepaymentrequest",
+                amountSats = 10_000L,
+                label = "Coffee",
+            )!!
+
+            val parsed = parseSendRecipient(uri)
+
+            parsed.shouldBeInstanceOf<ParsedSendRecipient.Spark>()
+            parsed.amountSats shouldBe 10_000L
+            parsed.label shouldBe "Coffee"
+            stripSparkPaymentRequest(uri) shouldBe "spark1qqexamplepaymentrequest"
+        }
+
+        test("stripSparkPaymentRequest leaves bare addresses and invoices alone") {
+            stripSparkPaymentRequest("spark1qqexamplepaymentrequest") shouldBe "spark1qqexamplepaymentrequest"
+            stripSparkPaymentRequest("sparkinvoice1qqexample") shouldBe "sparkinvoice1qqexample"
+            stripSparkPaymentRequest("spark1qqexamplepaymentrequest?amount=0.0001") shouldBe "spark1qqexamplepaymentrequest"
         }
     }
 

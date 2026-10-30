@@ -76,4 +76,26 @@ class CoinControlSelectionTest : FunSpec({
         val txid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         formatCoinControlOutpoint(utxo(outpoint = "$txid:3")) shouldBe "0123456789abcdef...89abcdef:3"
     }
+
+    test("filter returns all utxos on blank query") {
+        val first = utxo(outpoint = "txa:0")
+        val second = utxo(outpoint = "txb:1")
+        filterCoinControlUtxos(listOf(first, second), "   ").shouldContainExactly(first, second)
+    }
+
+    test("filter matches address, label, txid and outpoint") {
+        val labeled = utxo(outpoint = "abc123:0", label = "Savings")
+        val other = utxo(outpoint = "def456:1")
+        filterCoinControlUtxos(listOf(labeled, other), "savings").shouldContainExactly(labeled)
+        filterCoinControlUtxos(listOf(labeled, other), "abc123").shouldContainExactly(labeled)
+        filterCoinControlUtxos(listOf(labeled, other), "def456:1").shouldContainExactly(other)
+    }
+
+    test("filter matches amount and confirmation status") {
+        val confirmed = utxo(outpoint = "txc:0", amountSats = 50_000UL, isConfirmed = true)
+        val pending = utxo(outpoint = "txd:0", amountSats = 21_000UL, isConfirmed = false)
+        filterCoinControlUtxos(listOf(confirmed, pending), "50000").shouldContainExactly(confirmed)
+        filterCoinControlUtxos(listOf(confirmed, pending), "pending").shouldContainExactly(pending)
+        filterCoinControlUtxos(listOf(confirmed, pending), "zzz-no-match").shouldContainExactly(emptyList())
+    }
 })

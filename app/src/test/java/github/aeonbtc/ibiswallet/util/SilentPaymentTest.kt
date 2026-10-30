@@ -394,6 +394,74 @@ class SilentPaymentTest : FunSpec({
         }
     }
 
+    context("mnemonic to address goldens") {
+        // Pins the full mnemonic -> seed -> m/352' -> sp1 pipeline for both
+        // wallet styles. A salt swap (mnemonic vs electrum) or a path change
+        // silently derives a *valid-looking* sp1 that no sender-paid output
+        // can ever match, burning receives — these must fail loudly.
+        test("BIP39 abandon mnemonic derives the pinned sp1") {
+            val mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+            val seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, null)
+            val keys = SilentPayment.deriveReceiverKeys(seed)
+            keys.address shouldBe
+                "sp1qqfqnnv8czppwysafq3uwgwvsc638hc8rx3hscuddh0xa2yd746s7xqh6yy9ncjnqhqxazct0fzh98w7lpkm5fvlepqec2yy0sxlq4j6ccc3h6t0g"
+            SilentPayment.isSilentPaymentAddress(keys.address) shouldBe true
+        }
+
+        test("BIP39 passphrase changes the sp1") {
+            val mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+            val seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, "TREZOR")
+            val keys = SilentPayment.deriveReceiverKeys(seed)
+            keys.address shouldBe
+                "sp1qq2flh08mcjgpv267a4vr7qr3afcss5f2rklqaytj3rc5ts45aa62qqj6qv2w56t5lqved5kncd2cq8fmt08v4flf45y72rvkg3w3wyr2jswppp4f"
+        }
+
+        test("Electrum seed uses a different salt and derives the pinned sp1") {
+            val mnemonic = "candy maple cake sugar pudding cream honey rich smooth crumble sweet treat"
+            val electrumSeed = ElectrumSeedUtil.mnemonicToSeed(mnemonic, null)
+            val bip39Seed = ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, null)
+            electrumSeed.contentEquals(bip39Seed) shouldBe false
+            val keys = SilentPayment.deriveReceiverKeys(electrumSeed)
+            keys.address shouldBe
+                "sp1qqguw5dfh0zxzghxpxa65lh2cw08nequuhy3jsgwnv4enrzxu44t6zqedjqw9qhagpx6l6u36eqt58cekqyp0rre06v7hfsxvm8f7llf5jumuz9up"
+        }
+
+        test("round-trip scan finds self-paid output for golden keys") {
+            val mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+            val keys = SilentPayment.deriveReceiverKeys(ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, null))
+            val inputKeys =
+                listOf(
+                    SilentPayment.InputKey(
+                        outpoint = "f4184fc596403b9d638783cf57adfe4c75c605f6356fbc91338530e9831e9e16:0",
+                        privateKey = "eadc78165ff1f8ea94ad7cfdc54990738a4c53f6e0507b42154201b8e5dff3b1".hexToBytes(),
+                    ),
+                )
+            val created =
+                SilentPayment.createOutputKeys(
+                    inputKeys = inputKeys,
+                    recipients = listOf(keys.address),
+                    allVinOutpoints = inputKeys.map { it.outpoint },
+                )
+            val tweak = SilentPayment.computeTweakKey(inputKeys, inputKeys.map { it.outpoint })
+            val found =
+                SilentPayment.scanOutputs(
+                    tweakKey = tweak,
+                    scanPrivateKey = keys.scanPrivateKey,
+                    spendPrivateKey = keys.spendPrivateKey,
+                    spendPublicKey = keys.spendPublicKey,
+                    outputs =
+                        listOf(
+                            SilentPayment.TxOutput(
+                                scriptPubKey = SilentPayment.taprootScriptPubKey(created.first().xOnlyPublicKey),
+                                valueSats = 1000UL,
+                            ),
+                        ),
+                )
+            found.size shouldBe 1
+            found.first().isChange shouldBe false
+        }
+    }
+
     context("sender vectors") {
         test("matches BIP-352 simple send vector with two P2PKH inputs") {
             val outputs =

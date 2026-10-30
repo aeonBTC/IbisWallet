@@ -11,6 +11,19 @@ import io.kotest.matchers.string.shouldStartWith
 
 class BitcoinUtilsTest : FunSpec({
 
+    context("hex utilities") {
+        test("hexToByteArray and bytesToHex round-trip") {
+            val hex = "00ff10abcdef"
+            BitcoinUtils.bytesToHex(BitcoinUtils.hexToByteArray(hex)) shouldBe hex
+        }
+
+        test("hexToByteArray rejects odd-length input") {
+            shouldThrow<IllegalArgumentException> {
+                BitcoinUtils.hexToByteArray("abc")
+            }
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════
     // detectAddressType — determines how the app interprets addresses.
     // A bug here could send funds to the wrong address type.
@@ -1682,6 +1695,34 @@ class BitcoinUtilsTest : FunSpec({
     // ══════════════════════════════════════════════════════════════════
     // Helper functions
     // ══════════════════════════════════════════════════════════════════
+
+    context("packageFeeCapSats") {
+        test("caps a normal package at 10x the intended fee") {
+            BitcoinUtils.packageFeeCapSats(
+                intendedFeeSats = 1_500L,
+                feeOffsetSats = 0L,
+                vsize = 150.0,
+            ) shouldBe 15_000L
+        }
+
+        test("negative CPFP offset still leaves room for the child relay fee") {
+            // Parent already overpays the package target, so the offset is very
+            // negative. The cap must use max(target + offset, child relay floor).
+            BitcoinUtils.packageFeeCapSats(
+                intendedFeeSats = 1_500L,
+                feeOffsetSats = -100_000L,
+                vsize = 150.0,
+            ) shouldBe 1_500L
+        }
+
+        test("positive CPFP offset is included before the 10x multiplier") {
+            BitcoinUtils.packageFeeCapSats(
+                intendedFeeSats = 1_500L,
+                feeOffsetSats = 500L,
+                vsize = 150.0,
+            ) shouldBe 20_000L
+        }
+    }
 
 }) {
     companion object {
