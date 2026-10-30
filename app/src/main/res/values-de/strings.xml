@@ -1,4 +1,4 @@
-﻿<resources>
+<resources>
     <string name="app_name">Ibis Wallet</string>
     <string name="wallet_added">Wallet hinzugefügt</string>
     <string name="cloak_calculator_label">Rechner</string>
@@ -12,15 +12,23 @@
     <string name="update_popup_message">Ibis Wallet %1$s ist verfügbar.</string>
     <string name="update_popup_view">Ansehen</string>
     <string name="update_popup_close">Schließen</string>
+    <string name="update_popup_github">GitHub</string>
+    <string name="update_popup_download">Herunterladen</string>
+    <string name="update_popup_install">Installieren</string>
+    <string name="update_popup_downloading_format">Wird heruntergeladen… %1$d%%</string>
+    <string name="update_popup_download_failed">Download fehlgeschlagen.</string>
+    <string name="update_popup_invalid_download">Heruntergeladene Datei hat die Prüfung nicht bestanden.</string>
     <string name="update_popup_changelog">Changelog</string>
     <string name="update_popup_changelog_expand">Changelog erweitern</string>
     <string name="update_popup_changelog_collapse">Changelog einklappen</string>
     <string name="app_update_opt_in_title">Auf GitHub nach Updates suchen?</string>
-    <string name="app_update_opt_in_message">Auf dem Über-Bildschirm umschaltbar.</string>
+    <string name="app_update_opt_in_message">Du kannst das später in den Einstellungen ändern.</string>
     <string name="app_update_opt_in_enable">Aktivieren</string>
     <string name="app_update_opt_in_not_now">Später</string>
     <string name="storage_unavailable">Sicherer Speicher vorübergehend nicht verfügbar. Nichts wurde gelöscht — bitte App neu öffnen.</string>
     <string name="common_selected">Ausgewählt</string>
+    <string name="paste_cd">Aus Zwischenablage einfügen</string>
+    <string name="paste_clipboard_empty">Zwischenablage ist leer</string>
     <string name="settings_language_title">Sprache</string>
     <string name="settings_language_english">English</string>
     <string name="settings_language_english_description">Englisch verwenden</string>
@@ -34,6 +42,10 @@
     <string name="settings_language_french_description">Französisch verwenden</string>
     <string name="settings_language_german">Deutsch</string>
     <string name="settings_language_german_description">Deutsch verwenden</string>
+    <string name="settings_language_japanese">Japanisch</string>
+    <string name="settings_language_japanese_description">Japanisch verwenden</string>
+    <string name="settings_language_simplified_chinese">Vereinfachtes Chinesisch</string>
+    <string name="settings_language_simplified_chinese_description">Vereinfachtes Chinesisch verwenden</string>
     <string name="wallet_delete_watch_only_message">„%1$s“ entfernen? Reimport mit demselben xpub möglich.</string>
     <string name="wallet_delete_irreversible_message">„%1$s“ wirklich löschen? Kann nicht rückgängig gemacht werden. Recovery-Phrase gesichert?</string>
     <string name="wallet_delete_confirm_removal_label">Entfernen bestätigen</string>
@@ -73,12 +85,95 @@
     <string name="nfc_status_received">NFC empfangen</string>
     <string name="nfc_status_share_ready">NFC teilen</string>
     <string name="nfc_status_sharing">NFC teilt</string>
+    <string name="dust_badge">Dust</string>
+    <string name="dust_alert_review">Prüfen</string>
+    <string name="dust_banner_single">1 UTXO sieht nach Dust aus</string>
+    <string name="dust_banner_format">%1$d UTXOs sehen nach Dust aus</string>
+    <string name="dust_send_warning_single">Dieser Input sieht nach Dust aus. Mit anderen Coins ausgeben verknüpft sie on-chain.</string>
+    <string name="dust_send_warning_format">%1$d gewählte Inputs sehen nach Dust aus. Mit anderen Coins ausgeben verknüpft sie on-chain.</string>
+    <string name="settings_dust_exclude_title">Dust von Ausgaben ausschließen</string>
+    <string name="settings_dust_exclude_subtitle">Verdächtigen Dust aus automatischer Auswahl heraushalten</string>
+    <string name="settings_dust_threshold_title">Dust-Schwelle</string>
+    <string name="dust_threshold_option_format">%1$d sats</string>
+    <string name="dust_threshold_custom_hint">1-%1$d sats</string>
+    <string name="dust_threshold_custom_error">1-%1$d sats eingeben</string>
+    <string name="psbt_nfc_send">Per NFC senden</string>
+    <string name="psbt_nfc_receive">Per NFC empfangen</string>
+    <string name="psbt_nfc_tap_to_send">Hardware-Wallet zum Senden des PSBT antippen</string>
+    <string name="psbt_nfc_tap_to_receive">Hardware-Wallet zum Empfangen der Signatur antippen</string>
+    <string name="psbt_nfc_receive_confirm_title">PSBT über NFC empfangen</string>
+    <string name="psbt_nfc_receive_confirm_message">Ein PSBT wurde über NFC empfangen. Das Akzeptieren ersetzt die aktuelle Transaktionseingabe - nur akzeptieren, wenn es von Ihrem eigenen Signaturgerät stammt.</string>
+    <string name="psbt_nfc_receive_confirm_accept">Akzeptieren</string>
+    <string name="psbt_nfc_timed_out">NFC-Empfang abgelaufen. Zum erneuten Empfangen tippen.</string>
+    <string name="psbt_nfc_cancel">Abbrechen</string>
+    <string name="psbt_nfc_too_large">PSBT zu groß für NFC — QR oder Datei verwenden</string>
+    <string name="psbt_nfc_write_failed">NFC-Senden fehlgeschlagen — erneut versuchen</string>
+    <string name="psbt_nfc_read_failed">NFC-Lesen fehlgeschlagen — erneut versuchen</string>
+    <string name="psbt_nfc_empty">Kein PSBT auf dem Tag gefunden</string>
+    <string name="psbt_nfc_checksum_mismatch">NFC-Daten Prüfsumme fehlerhaft — erneut versuchen</string>
+    <string name="psbt_nfc_sent">PSBT per NFC gesendet</string>
+    <string name="psbt_nfc_unavailable">NFC nicht verfügbar — NFC in Einstellungen aktivieren</string>
+    <string name="psbt_nfc_share">Per NFC teilen</string>
+    <string name="psbt_nfc_tap_to_share">Empfangendes Telefon an dieses halten</string>
+    <string name="psbt_nfc_sharing_note">Jeder, der dieses Telefon antippt, kann das PSBT lesen. Die Freigabe stoppt automatisch.</string>
+    <string name="sign_transaction_title">PSBT signieren</string>
+    <string name="sign_step1_title">Schritt 1: Unsigniertes PSBT importieren</string>
+    <string name="sign_step1_subtitle">Scannen, laden, einfügen oder antippen zum Importieren.</string>
+    <string name="sign_scan_qr">QR scannen</string>
+    <string name="sign_step2_title">Schritt 2: Prüfen &amp; signieren</string>
+    <string name="sign_review_hint">Prüfe jede Ausgabe vor dem Signieren. Dieses Gerät sendet nicht.</string>
+    <string name="sign_reviewed_check">Ich habe die entschlüsselten Ausgaben geprüft</string>
+    <string name="sign_button">PSBT signieren</string>
+    <string name="sign_signing">Signieren…</string>
+    <string name="sign_decoding">PSBT wird entschlüsselt…</string>
+    <string name="sign_step3_title">Schritt 3: Signiertes PSBT exportieren</string>
+    <string name="sign_status_ready">Vollständig signiert — zum Senden auf dem Online-Telefon importieren.</string>
+    <string name="sign_status_partial">Teilsignatur — an den nächsten Signierer weitergeben.</string>
+    <string name="sign_export_hint">Auf dem Online-Telefon dies bei PSBT-Schritt 2 importieren.</string>
+    <string name="sign_start_over">Von vorn beginnen</string>
+    <string name="sign_inputs_format">Eingaben dieser Wallet: %1$d von %2$d</string>
+    <string name="sign_outputs_unowned_warning">Mindestens eine Ausgabe gehört nicht zur geladenen Wallet — vor dem Signieren prüfen.</string>
+    <string name="sign_inputs_foreign_warning">Einige Eingaben sind der geladenen Wallet unbekannt — nur PSBT der eigenen Watch-only-Wallet signieren.</string>
+    <string name="sign_txid_format">Txid: %1$s</string>
+    <string name="sign_output_own">[eigen]</string>
+    <string name="sign_output_external">[extern]</string>
+    <string name="sign_output_unparseable">nicht lesbarer scriptPubKey</string>
+    <string name="sign_fee_label">Gebühr</string>
+    <string name="sign_fee_rate_label">Gebührenrate</string>
+    <string name="sign_unknown">unbekannt</string>
+    <string name="sign_fee_rate_format">%1$s sat/vB</string>
+    <string name="sign_fee_rate_with_vbytes_format">%1$s sat/vB • %2$s vB</string>
+    <string name="sign_qr_format_label">QR-Format</string>
+    <string name="sign_saved_toast">PSBT gespeichert</string>
+    <string name="sign_save_failed_toast">PSBT konnte nicht gespeichert werden</string>
+    <string name="sign_copied_toast">PSBT kopiert</string>
+    <string name="sign_back">Zurück</string>
+    <string name="sign_error_empty">Leere PSBT-Daten</string>
+    <string name="sign_error_ambiguous">Mehrdeutige Transaktionsdaten: gültig sowohl als Hex als auch als Base64. Exportieren Sie erneut in einem einzigen Format.</string>
+    <string name="sign_error_raw_hex">Erwartet wurde ein unsignierter oder teilweise signierter PSBT, keine Roh-Transaktion. Nichts zu signieren.</string>
+    <string name="sign_error_liquid_pset">Liquid-PSETs können hier nicht signiert werden</string>
+    <string name="sign_error_unrecognized">PSBT konnte nicht analysiert werden. Exportieren Sie erneut aus der Watch-only-Wallet und versuchen Sie es noch einmal.</string>
+    <string name="sign_error_wallet_changed">Aktive Wallet hat sich seit dem Import geändert. Importieren Sie den PSBT vor dem Signieren erneut.</string>
+    <string name="sign_error_no_active_wallet">Keine aktive Wallet</string>
+    <string name="sign_error_wallet_not_found">Wallet nicht gefunden</string>
+    <string name="sign_error_watch_only">Diese Wallet ist auf diesem Gerät nur lesend und hat keine Signaturschlüssel</string>
+    <string name="sign_error_wallet_not_loaded">Wallet ist nicht geladen. Entsperren Sie die Wallet und versuchen Sie es erneut.</string>
+    <string name="sign_error_signing_failed_format">Signieren fehlgeschlagen: %1$s</string>
+    <string name="sign_error_unknown">unbekannter Fehler</string>
+    <string name="sign_error_invalid_output">Signieren erzeugte eine ungültige Ausgabe</string>
+    <string name="sign_error_no_signatures">Diese Wallet hat keine Signaturen hinzugefügt. Die Eingaben sind möglicherweise bereits signiert oder gehören zu einer anderen Wallet.</string>
+    <string name="sign_error_unsafe_sighash">Signieren abgelehnt: Diese PSBT fordert einen unsicheren Sighash an. Nur SIGHASH_ALL oder SIGHASH_DEFAULT ist erlaubt.</string>
+    <string name="sign_error_prevout_mismatch">Signieren abgelehnt: Die Vortransaktionsdaten der PSBT passen nicht zum ausgegebenen Eingang.</string>
+    <string name="sign_error_fee_too_high">Signieren abgelehnt: Die PSBT-Gebühr ist ungewöhnlich hoch. Überprüfen Sie die Transaktion vor dem Signieren.</string>
     <string name="welcome_logo_content_description">Ibis Wallet Logo</string>
     <string name="welcome_title">Willkommen bei Ibis Wallet</string>
     <string name="welcome_intro">Ibis ist eine Self-Custody-Wallet für Power-User mit Fokus auf Privatsphäre und Anpassung. Alle Netzwerkdienste und externen Verbindungen sind standardmäßig deaktiviert.</string>
     <string name="welcome_menu_prompt">Öffnen Sie das Optionsmenü, um Ibis nach Ihren Wünschen zu konfigurieren.</string>
     <string name="welcome_continue">Weiter</string>
     <string name="app_update_check_title">Auf GitHub nach Updates suchen</string>
+    <string name="settings_update_status_checking">Prüfe…</string>
+    <string name="settings_update_status_uptodate">Aktuell</string>
+    <string name="settings_update_status_error">Prüfung fehlgeschlagen</string>
     <string name="liquid_enable_info_title">Layer 2 ist modular</string>
     <string name="liquid_enable_info_message">Öffnen Sie die Wallet-Verwaltung, um Liquid für gewünschte Wallets zu aktivieren.\n\n*Liquid nur für BIP39-Wallets.</string>
     <string name="liquid_enable_info_confirm">Verstanden</string>
@@ -124,6 +219,7 @@
     <string name="spark_exit_save_copy">Kopie speichern</string>
     <string name="spark_exit_import_ok_format">Exit-Daten importiert: %1$d Leaves (%2$d fremde, %3$d Chains, %4$d konflikte übersprungen)</string>
     <string name="spark_exit_done">Exit abgeschlossen. Sweep on-chain prüfen.</string>
+    <string name="spark_exit_chain_progress_format">Bereits on-chain: %1$d</string>
     <string name="spark_exit_fee_bump">Gebühr erhöhen</string>
     <string name="spark_exit_discard">Exit verwerfen</string>
     <string name="spark_exit_backup">Exit-Daten sichern</string>
@@ -158,6 +254,48 @@
     <string name="ln_node_channels_scid">SCID</string>
     <string name="ln_node_channels_nwc_unavailable">Kanalliste braucht LND oder CLN (via NWC nicht verfügbar)</string>
     <string name="ln_node_channels_count_format">%1$d Kanal/Kanäle</string>
+    <string name="ln_node_channels_open">Öffnen</string>
+    <string name="ln_node_channels_peers">Peers</string>
+    <string name="ln_node_channels_close">Schließen</string>
+    <string name="ln_node_channels_fees">Gebühren</string>
+    <string name="ln_node_channels_detail">Detail</string>
+    <string name="ln_node_channels_dismiss">Verwerfen</string>
+    <string name="ln_node_channels_cancel">Abbrechen</string>
+    <string name="ln_node_channels_save">Speichern</string>
+    <string name="ln_node_channels_refresh">Aktualisieren</string>
+    <string name="ln_node_channels_close_btn">Schließen</string>
+    <string name="ln_node_channels_open_title">Kanal öffnen</string>
+    <string name="ln_node_channels_peer_pubkey">Peer-Pubkey</string>
+    <string name="ln_node_channels_peer_host_hint">Host (Host:Port, zum Verbinden)</string>
+    <string name="ln_node_channels_known_peers">%1$d Peers</string>
+    <string name="ln_node_channels_amount_sats">Kapazität (Sats)</string>
+    <string name="ln_node_channels_fee_optional">Gebühr (sat/vB, optional)</string>
+    <string name="ln_node_channels_peers_title">Peers</string>
+    <string name="ln_node_channels_peer_connect">Verbinden</string>
+    <string name="ln_node_channels_peer_disconnect">Trennen</string>
+    <string name="ln_node_channels_peer_force">Erzwingen</string>
+    <string name="ln_node_channels_close_title">Kanal schließen</string>
+    <string name="ln_node_channels_close_body">Kooperatives Schließen rechnet mit dem Peer ab. Force-Close sendet unilateral und sperrt Guthaben.</string>
+    <string name="ln_node_channels_coop_close">Koop</string>
+    <string name="ln_node_channels_force_close">Force</string>
+    <string name="ln_node_channels_force_title">Force-Close?</string>
+    <string name="ln_node_channels_force_body">Force-Close sperrt lokale Mittel bis zum Timelock. Fortfahren?</string>
+    <string name="ln_node_channels_force_confirm">Force-Close</string>
+    <string name="ln_node_channels_close_addr_optional">Schließadresse (optional)</string>
+    <string name="ln_node_channels_fee_title">Routing-Gebühren</string>
+    <string name="ln_node_channels_fee_body">Angekündigte Policy für Forwards über diesen Kanal.</string>
+    <string name="ln_node_channels_fee_base">Basisgebühr (msat)</string>
+    <string name="ln_node_channels_fee_ppm">Gebührenrate (ppm)</string>
+    <string name="ln_node_channels_fee_cltv">CLTV-Delta</string>
+    <string name="ln_node_channels_balance_hint">Lokaler Anteil: %1$s%%</string>
+    <string name="ln_node_channels_error_pubkey">Ungültige Peer-Pubkey</string>
+    <string name="ln_node_channels_error_capacity">Kapazität in Sats eingeben</string>
+    <string name="ln_node_channels_error_fee">Gültige Gebühren eingeben</string>
+    <string name="ln_node_channels_detail_peer">Peer</string>
+    <string name="ln_node_channels_detail_pubkey">Pubkey</string>
+    <string name="ln_node_channels_detail_outpoint">Outpoint</string>
+    <string name="ln_node_channels_detail_funding">Funding</string>
+    <string name="ln_node_channels_detail_state">Status</string>
     <string name="ln_node_pubkey_label">Pubkey:</string>
     <string name="ln_node_wallet_name">Wallet</string>
     <string name="ln_node_add_wallet">Lightning-Node-Wallet hinzufügen</string>
@@ -317,6 +455,17 @@
     <string name="spark_deposit_claim_fee_note">Die Gebühr wird dem Deposit von der Claim-Transaktion abgezogen.</string>
     <string name="spark_deposit_claim_estimated">Geschätzte Gebühr</string>
     <string name="spark_deposit_claim_done">Deposit geclaimt</string>
+    <string name="spark_deposit_claim_submitted">Claim eingereicht, wird abgewickelt</string>
+    <string name="spark_deposit_claim_deferred">Claim zurückgestellt, automatischer Neuversuch</string>
+    <string name="spark_deposit_claim_early">Vorzeitiger Claim</string>
+    <string name="spark_deposit_claim_standard">Standard-Claim</string>
+    <string name="spark_deposit_claim_available_now">Jetzt verfügbar</string>
+    <string name="spark_token_add">Token hinzufügen</string>
+    <string name="spark_token_id_hint">Token-ID (btkn1…)</string>
+    <string name="spark_token_invalid">Ungültige Token-ID</string>
+    <string name="spark_token_unknown">Unbekannter Token — prüfe die ID</string>
+    <string name="spark_token_lookup">Nachschlagen</string>
+    <string name="spark_token_use">Token verwenden</string>
     <string name="spark_payment_id_title">Zahlungs-ID</string>
     <string name="spark_payment_id_copy_label">Spark-Zahlungs-ID</string>
     <string name="spark_deposit_txid_copy_label">Spark-Deposit-Transaktions-ID</string>
@@ -721,7 +870,7 @@
     <string name="loc_fceb7ead" formatted="false">Seed-Phrase kopieren</string>
     <string name="loc_7c63b77c" formatted="false">Seed-Phrase neu erzeugen</string>
     <string name="loc_77aacbaf" formatted="false">Ich habe meine Seed-Phrase gesichert</string>
-    <string name="loc_20a1d916" formatted="false">Erweiterte Optionen</string>
+    <string name="loc_20a1d916" formatted="false">Erweitert</string>
     <string name="loc_729b34d2" formatted="false">Einklappen</string>
     <string name="loc_b47e7391" formatted="false">Erweitern</string>
     <string name="loc_75923525" formatted="false">BIP39 Passphrase</string>
@@ -737,8 +886,8 @@
     <string name="loc_6dfe3462" formatted="false">Multisig</string>
     <string name="loc_c821b501" formatted="false">Liquid_WatchOnly</string>
     <string name="loc_aeabc606" formatted="false">Wallet importieren</string>
-    <string name="loc_7c2117d5" formatted="false">Manueller Import</string>
     <string name="loc_9ae2cb2b" formatted="false">Importieren</string>
+    <string name="import_field_title">Seed-Phrase, Schlüssel oder Adresse</string>
     <string name="loc_f986ec47" formatted="false">BIP39-Seed, Electrum-Seed, WIF-Privatschlüssel, xpub/zpub, Deskriptor oder Adresse</string>
     <string name="loc_d5fabbff" formatted="false">JSON-Wallet-Export erkannt</string>
     <string name="loc_c43dbb42" formatted="false">Liquid-CT-Deskriptor erkannt</string>
@@ -851,6 +1000,7 @@
     <string name="send_multi_partial_format">%1$d von %2$d gesendet (%3$d fehlgeschlagen)</string>
     <string name="send_multi_ark_only">Mehrfachmodus nur für Ark-Adressen</string>
     <string name="send_multi_spark_only">Mehrfachmodus nur für Spark-Adressen</string>
+    <string name="spark_send_token_spark_only">Token-Sendungen nur an Spark-Adressen</string>
     <string name="send_multi_need_two">Mindestens zwei Empfänger hinzufügen</string>
     <string name="send_multi_ark_address_hint">Ark-Adresse</string>
     <string name="send_multi_spark_address_hint">Spark-Adresse</string>
@@ -916,7 +1066,6 @@
     <string name="loc_aeb83a33" formatted="false">Liquid-Gap-Limit</string>
     <string name="loc_80575606" formatted="false">Sicherheitswarnung</string>
     <string name="loc_f9a99af0" formatted="false">Ihre Seed-Phrase ist der EINZIGE Weg, Ihr Wallet wiederherzustellen. Wer sie kennt, kann Ihre Gelder stehlen.</string>
-    <string name="loc_79618ad9" formatted="false">Achten Sie auf unbeobachteten Bildschirm und teilen Sie diese Daten mit niemandem.</string>
     <string name="loc_f2415d81" formatted="false">Ich verstehe</string>
     <string name="loc_b5f801e0" formatted="false">Durchsucht alle Adressen erneut. Nutzen bei fehlenden Transaktionen oder nach Backup-Restore.</string>
     <string name="loc_027001ed" formatted="false">Erzeugen</string>
@@ -937,7 +1086,7 @@
     <string name="key_material_extended_private_key_label" formatted="false">erweiterter Privatschlüssel</string>
     <string name="loc_c4a5346c" formatted="false">Privatschlüssel</string>
     <string name="loc_0d4e6f81" formatted="false">Adresse</string>
-    <string name="loc_ad04894c" formatted="false">Zurück zur Auswahl</string>
+    <string name="loc_ad04894c" formatted="false">Zurück</string>
     <string name="loc_795ed2a1" formatted="false">Zwischenablage löscht sich in 30 Sekunden.</string>
     <string name="loc_2282451b" formatted="false">Labels (BIP 329)</string>
     <string name="loc_1959e119" formatted="false">PSBT erstellen</string>
@@ -1025,7 +1174,7 @@
     <string name="loc_a274c658" formatted="false">Bitcoin senden</string>
     <string name="loc_2e7d2d6a" formatted="false">Tippen, um Empfänger hinzuzufügen</string>
     <string name="loc_905c0d07" formatted="false">Erst Wallet hinzufügen, um Bitcoin zu senden</string>
-    <string name="loc_35504dec" formatted="false">PSBT prüfen</string>
+    <string name="loc_35504dec" formatted="false">PSBT erstellen</string>
     <string name="loc_b85ab17d" formatted="false">Ziel</string>
     <string name="loc_8ffa41a4" formatted="false">Gebühr, Inputs und Wechsel werden berechnet...</string>
     <string name="loc_a870ad41" formatted="false">Bitcoin-Minergebühr:</string>
@@ -1123,8 +1272,8 @@
     <string name="loc_dde5d7d1" formatted="false">z. B. Wallet-Rebalance</string>
     <string name="loc_0094f526" formatted="false">Swap-Anbieter</string>
     <string name="loc_ef217ee7" formatted="false">Erneut versuchen</string>
-    <string name="loc_2d4a03c5" formatted="false">Erweiterte Optionen einklappen</string>
-    <string name="loc_f5276b4c" formatted="false">Erweiterte Optionen erweitern</string>
+    <string name="loc_2d4a03c5" formatted="false">Erweitert einklappen</string>
+    <string name="loc_f5276b4c" formatted="false">Erweitert ausklappen</string>
     <string name="loc_52f64443" formatted="false">Swap wird gesendet...</string>
     <string name="loc_9a0b9f8e" formatted="false">Swap prüfen</string>
     <string name="loc_9ff7bb31" formatted="false">Swap wird vorbereitet...</string>
@@ -1229,7 +1378,7 @@
     <string name="balance_fee_rate_higher_than_current_format">Gebühr muss über aktueller liegen (%1$s sat/vB)</string>
     <string name="balance_target_fee_rate_format">Zielgebühr: %1$s sat/vB</string>
     <string name="balance_cost_amount_format">%1$s: %2$s %3$s</string>
-    <string name="balance_cpfp_estimate_format">(%1$s vB × %2$s sat/vB)</string>
+    <string name="balance_cpfp_estimate_format">%1$s sat/vB • %2$s vB</string>
     <string name="balance_need_fee_dust_format">Nötig: %1$s %2$s (Gebühr + Dust)</string>
     <string name="balance_have_output_wallet_format">Vorhanden: %1$s %2$s (Output + Wallet)</string>
     <string name="balance_insufficient_funds_available_format">Unzureichendes Guthaben (verfügbar: %1$s %2$s)</string>
@@ -1265,6 +1414,9 @@
     <string name="biometric_prompt_unlock_ibis_wallet">Ibis Wallet entsperren</string>
     <string name="biometric_prompt_verify_identity">Identität verifizieren</string>
     <string name="biometric_prompt_access_wallet">Authentifizieren für Wallet-Zugriff</string>
+    <string name="send_external_origin_nfc_title">Über NFC empfangen</string>
+    <string name="send_external_origin_link_title">Über einen Link geöffnet</string>
+    <string name="send_external_origin_message">Überprüfen Sie den Empfänger vor dem Senden.</string>
     <string name="send_utxos_selected_prefix">UTXOs</string>
     <string name="security_pin_unlock_code_format">%1$d–%2$d-stelliger Entsperrcode</string>
     <string name="security_randomize_pin_subtitle">Ziffernblock beim Entsperren mischen</string>
@@ -1316,6 +1468,7 @@
     <string name="speed_up_error_rbf_build_failed">Ersatztransaktion nicht erstellbar. Wallet syncen und erneut versuchen.</string>
     <string name="speed_up_error_rbf_sign_failed">Ersatztransaktion nicht signierbar.</string>
     <string name="speed_up_error_rbf_broadcast_rejected">Netzwerk hat Ersatz abgelehnt. Höhere Gebühr versuchen oder syncen, falls Original bereits bestätigt.</string>
+    <string name="send_error_stale_inputs">Inputs bereits ausgegeben. Synchronisiere — versuch es erneut.</string>
     <string name="speed_up_error_rbf_generic">RBF fehlgeschlagen: %1$s</string>
     <string name="speed_up_error_cpfp_no_outputs">Keine spendbaren Outputs dieser Transaktion. Evtl. bereits spent (z. B. anderes CPFP) oder bestätigt.</string>
     <string name="speed_up_error_cpfp_parent_not_found">Parent-Transaktion nicht im Wallet. Syncen und erneut versuchen.</string>
@@ -1327,6 +1480,7 @@
     <string name="speed_up_error_cpfp_broadcast_rejected">Netzwerk hat CPFP abgelehnt. Höhere Gebühr versuchen oder syncen.</string>
     <string name="speed_up_error_cpfp_generic">CPFP fehlgeschlagen: %1$s</string>
     <string name="security_spend_pin_title">Spend-PIN</string>
+    <string name="pin_recovery_prompt">Eine frühere PIN-Änderung wurde nicht abgeschlossen. Geben Sie die vorherige PIN ein, um diese Wallet wiederherzustellen.</string>
     <string name="security_spend_pin_subtitle">Entsperr-PIN vor Senden verlangen</string>
     <string name="security_spend_pin_prompt">PIN zum Sendebestätigen eingeben</string>
     <string name="security_view_key_material_pin_prompt">PIN zum Ansehen des Schlüsselmaterials eingeben</string>
@@ -1357,6 +1511,11 @@
     <string name="ark_title">Ark</string>
     <string name="ark_quick_receive_title">Ark-Adresse</string>
     <string name="ark_balance_pending_refresh_format">Refresh ausstehend: %1$s</string>
+    <string name="ark_balance_pending_boarding_format">Boarding ausstehend: %1$s</string>
+    <string name="ark_balance_pending_exit_format">Exit ausstehend: %1$s</string>
+    <string name="ark_balance_pending_format">Ausstehend: %1$s</string>
+    <string name="ark_balance_pending_send_format">Senden ausstehend: %1$s</string>
+    <string name="ark_balance_pending_offboard_format">Auszahlung ausstehend: %1$s</string>
     <string name="ark_history_empty">Noch keine Ark-Historie</string>
     <string name="ark_send_destination_hint">Bitcoin, Ark, BOLT 11, BOLT 12 oder LNURL</string>
     <string name="ark_available_format">Verfügbar %1$s</string>
@@ -1498,7 +1657,7 @@
     <string name="ark_exit_review_available">Verfügbare Gelder</string>
     <string name="ark_exit_emergency_fee_unfundable">Exit-Broadcast-Gebühren brauchen mehr bestätigte On-chain-Gelder als verfügbar.</string>
     <string name="ark_exit_fee_requirement_note">Gebühren aus bestätigtem On-chain-Guthaben, nicht aus exitenden VTXOs. Bei Lücke Ark-BTC-Adresse aufladen und Bestätigung abwarten.</string>
-    <string name="ark_exit_backup_ack_warning">Kein Datenbank-Backup konfiguriert. Verliert das Gerät Wallet-Daten mitten im Exit, sind Gelder ggf. aus Seed allein nicht recoverbar.</string>
+    <string name="ark_exit_backup_ack_warning">Halte während des Exits ein aktuelles Datenbank-Backup bereit. Die Seed-Phrase allein kann einen laufenden Exit nicht wiederherstellen.</string>
     <string name="ark_exit_backup_ack_check">Ich akzeptiere das Risiko</string>
     <string name="ark_exit_recovery_required_format">%1$d geexitete VTXO(s) nicht recovered. Datenbank-Backup wiederherstellen, um sie zu verwalten.</string>
     <string name="ark_exit_review_eta">Dauert</string>
@@ -1507,6 +1666,10 @@
     <string name="ark_exit_fee_unavailable">Nicht verfügbar</string>
     <string name="ark_exit_claim_review_title">Claim prüfen</string>
     <string name="ark_exit_no_outputs">Keine spendbaren Outputs</string>
+    <string name="ark_exit_expired_format">%1$d abgelaufene VTXO(s) (%2$s) — Refresh kann noch funktionieren; Exit ist garantiert, führe ihn vor dem Server-Sweep aus.</string>
+    <string name="ark_expired_required_status">Abgelaufene VTXOs — Refresh oder Exit</string>
+    <string name="ark_expired_required_message">%1$d abgelaufene VTXO(s) (%2$s). Kooperativer Refresh kann noch gelingen, solange sie nicht gesweept wurden — andernfalls öffne VTXOs / Exit und starte einen unilateralen Exit vor dem Server-Sweep.</string>
+    <string name="ark_refresh_expired_note">Abgelaufene VTXOs können weiterhin für einen kooperativen Refresh eingereicht werden, solange sie nicht gesweept wurden. Lehnt die Round sie ab, nutze Exit.</string>
     <string name="ark_open_lifecycle">VTXOs / Exit</string>
     <string name="ark_refresh_exit_button">VTXOs</string>
     <string name="ark_refresh_required_title">VTXO-Refresh</string>
@@ -1611,6 +1774,11 @@
     <string name="ark_connection_network_value">Bitcoin</string>
     <string name="ark_esplora_picker_title">Esplora</string>
     <string name="ark_esplora_picker_subtitle">Bitcoin-Chain-Index für Deposits und Withdraws.</string>
+    <string name="ark_custom_esplora_placeholder">https://... oder http://...onion</string>
+    <string name="ark_custom_esplora_invalid">Ungültige Esplora-URL</string>
+    <string name="ark_custom_esplora_https_required">Clearnet-Esplora muss https:// verwenden</string>
+    <string name="ark_custom_esplora_onion_scheme">Onion-Esplora muss http:// oder https:// verwenden</string>
+    <string name="ark_custom_esplora_network_mismatch">Esplora und Ark-Server scheinen in unterschiedlichen Netzwerken zu sein</string>
     <string name="ark_esplora_tor_hint">Tor</string>
     <string name="ark_esplora_apply">Anwenden</string>
     <string name="spark_connection_server_name">Breez Spark SDK</string>
@@ -1630,11 +1798,13 @@
     <string name="ark_transfer_withdrawal_fee_note">Kooperative Withdraw-Gebühr, gesetzt vom ASP</string>
     <string name="ark_transfer_board_fee">Ark-Boarding-Gebühr</string>
     <string name="ark_transfer_board_fee_note">ASP-Sweep- + Servicegebühr fürs Boarding</string>
-    <string name="ark_boarding_recover_to_l1">Alles nach L1 recoveren</string>
+    <string name="ark_boarding_recover_to_l1">Alles recoveren</string>
+    <string name="ark_boarding_recover_selected_action">Auswahl recoveren</string>
+    <string name="ark_boarding_recover_all_dialog_body">Alle bestätigten On-chain-Gelder in Ark werden an Ihre Layer-1-Empfangsadresse gesendet.</string>
     <string name="ark_boarding_recover_dialog_title">Nach L1 recoveren</string>
-    <string name="ark_boarding_recover_dialog_body">Alle bestätigten On-chain-Gelder in Ark werden an Ihre Layer-1-Empfangsadresse gesendet.</string>
+    <string name="ark_boarding_recover_dialog_body">Ausgewählte bestätigte On-chain-Gelder in Ark werden an Ihre Layer-1-Empfangsadresse gesendet.</string>
     <string name="ark_boarding_recover_dialog_address_label">Ziel</string>
-    <string name="ark_boarding_recover_dialog_confirm">Recover bestätigen</string>
+    <string name="ark_boarding_recover_dialog_confirm">Bestätigen</string>
     <string name="ark_boarding_recover_dialog_no_address">Erst Layer-1-Adresse erzeugen</string>
     <string name="ark_boarding_recover_note">Alle bestätigten On-chain-Gelder zurück ins Layer-1-Wallet sweepen.</string>
     <string name="ark_manage_tab_boarding">Boarding</string>
@@ -1652,7 +1822,7 @@
     <string name="ark_boarding_board_all">Alle boarden</string>
     <string name="ark_boarding_board_selected">Auswahl boarden</string>
     <string name="ark_boarding_min_format">ASP-Boarding-Minimum: %1$s</string>
-    <string name="ark_boarding_below_min_actions_note">Zahle mehr BTC auf deine Ark-On-chain-Adresse ein, bis das Minimum erreicht ist, oder sende alle bestätigten Gelder zurück aufs Layer-1-Wallet.</string>
+    <string name="ark_boarding_below_min_actions_note">Zahle mehr BTC auf deine Ark-On-chain-Adresse ein, bis das Minimum erreicht ist, oder recovere bestätigte Gelder zurück aufs Layer-1-Wallet.</string>
     <string name="ark_boarding_confirmations_format">%1$d Bestätigungen</string>
     <string name="ark_boarding_confirmations_one">1 Bestätigung</string>
     <string name="ark_boarding_unconfirmed">Unbestätigt</string>
@@ -1665,6 +1835,7 @@
     <string name="ark_history_title_recovered">Recovered</string>
     <string name="ark_history_recovered_to">Recovered nach</string>
     <string name="ark_recover_onchain_nothing">Kein bestätigtes On-chain-Deposit zum Recoveren</string>
+    <string name="ark_recover_onchain_not_indexed">Die On-chain-Wallet von Ark hat diesen Deposit noch nicht indexiert - erneut versuchen</string>
     <string name="ark_recover_onchain_fee_too_high">Gebühr lässt nichts zum Recoveren — Rate senken</string>
     <string name="ark_recover_onchain_success_format">Nach Layer 1 recovered · %1$s</string>
     <string name="ark_recover_onchain_cleared">Unter-Min-Deposit bereinigt</string>
@@ -1704,6 +1875,7 @@
     <string name="ark_receive_tab_onchain">On-chain</string>
     <string name="ark_receive_lightning_qr_cd">Lightning-Rechnungs-QR</string>
     <string name="ark_enter_amount">Betrag eingeben</string>
+    <string name="ark_error_bolt12_fixed_amount">Dieses BOLT12-Angebot hat einen festen Betrag und kann nicht geändert werden.</string>
     <string name="ark_deposit_address_missing">Ark-Deposit-Adresse fehlt</string>
     <string name="ark_error_wallet_not_loaded">Ark-Wallet nicht geladen</string>
     <string name="ark_error_requires_bip39_wallet">Ark braucht Mainnet-BIP39-Single-Sig-Spend-Wallet</string>
@@ -1738,7 +1910,6 @@
     <string name="ark_error_chain_source">On-chain-Quelle nicht verfügbar — Esplora-URL / Netzwerk prüfen</string>
     <string name="ark_error_asp_unreachable">Ark-Server nicht erreichbar</string>
     <string name="ark_error_fee_unavailable">Gebührenangebot nicht verfügbar - erneut versuchen</string>
-    <string name="ark_error_tor_clearnet_blocked">Tor an: Clearnet-Esplora blockiert. Onion-Esplora nutzen oder Tor ausschalten.</string>
     <string name="ark_error_tor_bootstrap_timeout">Tor-Verbindung für Onion-Esplora abgelaufen</string>
     <string name="ark_tor_asp_direct_note">Ark-Server verbindet immer direkt, auch mit Tor. Nur Onion-Esplora läuft über Tor.</string>
     <string name="ark_error_datadir_locked">Ark-Wallet schließt noch vorige Session — gleich erneut versuchen</string>
@@ -1779,7 +1950,7 @@
     <string name="send_add_recipient">Empfänger hinzufügen</string>
     <string name="ark_exit_cancel_action">Exit abbrechen</string>
     <string name="ark_exit_cancel_title">Exit abbrechen?</string>
-    <string name="ark_exit_cancel_body">Stoppt Exit vor Broadcast der ersten On-chain-Tx. Danach zu spät.</string>
+    <string name="ark_exit_cancel_body">Bricht den Exit ab, wenn seine letzte Transaktion noch nicht gesendet wurde. Bark prüft dies auf der Blockchain.</string>
     <string name="ark_exit_cancel_none">Nichts abzubrechen</string>
     <string name="ark_exit_cancel_done_format">%1$d Exit(s) abgebrochen</string>
     <string name="ark_exit_cancel_not_exiting">Exitet nicht</string>
@@ -1798,15 +1969,24 @@
     <string name="ark_send_multi_retry">Rest erneut versuchen</string>
     <string name="ark_error_passphrase_exit_unavailable">Exit-Start/Push braucht On-chain-Wallet — mit BIP39-Passphrase nicht verfügbar. Claim bestehender Exits geht weiter.</string>
     <string name="receive_silent">Silent Payments</string>
-    <string name="receive_silent_server_unavailable">Aktueller Electrum-Server unterstützt kein SP-Scanning</string>
-    <string name="receive_silent_disclosure_message">Um Ihre Zahlungen zu finden, teilt diese Wallet ihren Scan-Key mit dem Electrum-Server. Er kann Ihre Eingänge sehen und verknüpfen, aber niemals ausgeben. Für volle Privatsphäre nutzen Sie einen eigenen Electrum-Server mit Frigate und fügen Sie ihn in den Servereinstellungen hinzu.</string>
+    <string name="receive_silent_server_unavailable">Der aktuelle Electrum-Server unterstützt kein SP-Scanning, empfangene Gelder werden nicht erkannt.</string>
+    <string name="sp_scan_start_open_servers">Servereinstellungen öffnen</string>
+    <string name="receive_silent_disclosure_message">Das Aktivieren von Silent Payments braucht einen SP-fähigen Electrum-Server (Frigate), um Ihre Zahlungen zu finden, und teilt ihm den Scan-Key dieser Wallet mit. Er kann Ihre Eingänge sehen und verknüpfen, aber niemals ausgeben. Nutzen Sie einen eigenen Frigate-Electrum-Server für volle Privatsphäre. Ausschalten stoppt neue Scans; gefundene Gelder bleiben ausgebbar.</string>
     <string name="receive_silent_disclosure_ok">Verstanden</string>
+    <string name="sp_scan_start_title">Nach SP-Zahlungen ab Block suchen</string>
+    <string name="sp_scan_start_tip_option">Aktueller Block</string>
+    <string name="sp_scan_start_tip_format">Aktueller Block (%1$d)</string>
+    <string name="sp_scan_start_custom_option">Eigene Höhe</string>
+    <string name="sp_scan_start_custom_hint">Blockhöhe</string>
+    <string name="sp_scan_start_invalid">Höhe 709632 oder später eingeben</string>
+    <string name="sp_scan_start_beyond_tip_format">Aktueller Block: %1$d</string>
+    <string name="sp_scan_start_manage_hint">Sie können dies später unter „Wallets verwalten“ > „Wallet-Einstellungen“ ändern.</string>
+    <string name="sp_scan_start_current_format">Derzeitiger Scan ab Block %1$d</string>
     <string name="loc_7f2c91aa" formatted="false">12/24-Prüfsummen-Generator</string>
     <string name="loc_3d8b44f1" formatted="false">11 oder 23 Wörter eingeben, um das gültige 12. bzw. 24. Prüfsummenwort zu finden.</string>
     <string name="loc_9a1e70c4" formatted="false">Prüfsummenwort finden</string>
     <string name="loc_51f0b823" formatted="false">12-Wort-Seed</string>
     <string name="loc_62d4e917" formatted="false">24-Wort-Seed</string>
-    <string name="loc_08c3f5a2" formatted="false">Ihre 11 oder 23 Wörter eingeben</string>
     <string name="loc_c42d17b5" formatted="false">Seed-Wörter</string>
     <string name="loc_40e6c1b9">%1$d gültige Prüfsummenwörter</string>
     <string name="loc_2b7d93e0" formatted="false">Zum Wählen Wort tippen</string>
@@ -1819,10 +1999,9 @@
     <string name="loc_f04c98ab" formatted="false">Mind. 5 Ziffern eingeben, nur 1-6</string>
     <string name="loc_5a83d2c6" formatted="false">Gewählte Seed-Phrase</string>
     <string name="loc_b9e614f0" formatted="false">In Import nutzen</string>
-    <string name="loc_e1c7405d" formatted="false">Oben 11 oder 23 gültige BIP39-Wörter eingeben, um Kandidaten zu listen</string>
     <string name="loc_93d6a8b2">Unbekanntes Wort: %1$s</string>
     <string name="loc_4b7e2c19" formatted="false">Würfelwürfe (optional)</string>
-    <string name="loc_8f1d6a33">6-seitigen Würfel mind. %1$d-mal werfen und jedes Ergebnis tippen. Der Seed wird nur aus deinen Würfen abgeleitet — kein Phone-Zufall wird beigemischt. Nutze faire Würfel.</string>
+    <string name="loc_8f1d6a33">6-seitigen Würfel mind. %1$d-mal werfen und jedes Ergebnis tippen. Der Seed wird nur aus deinen Würfen abgeleitet.</string>
     <string name="loc_2e9c5f07">Mind. %1$d Ziffern eingeben, nur 1-6</string>
     <string name="loc_71aa30d4" formatted="false">Würfelergebnisse tippen (z. B. 63214)</string>
     <string name="ark_balance_jargon_deposit" formatted="false">Einzahlung</string>
@@ -1837,5 +2016,86 @@
     <string name="ark_transfer_sent_txid_format">Gesendet %1$s</string>
     <string name="ark_transfer_funded_txid_format">Finanziert %1$s — Boarding ausstehend</string>
     <string name="ark_transfer_fee_rate_approx_format">≈ %1$s sat/vB</string>
-    <string name="ark_error_load_failed" formatted="false">Ark-Wallet konnte nicht geladen werden</string>
+    <string name="tools_title">Werkzeuge</string>
+    <string name="tools_broadcast_desc">Roh-Transaktion-Hex oder signiertes PSBT senden.</string>
+    <string name="tools_verify_message_title">Nachricht überprüfen</string>
+    <string name="tools_verify_message_desc">Eine BIP-137-signierte Nachricht gegen eine Adresse prüfen.</string>
+    <string name="tools_decoder_title">Dekodierer</string>
+    <string name="tools_decoder_desc">Bitcoin-Adresse, URI, BOLT11-Rechnung, BOLT12-Angebot oder LNURL dekodieren.</string>
+    <string name="tools_sweep_desc">WIF-Privatschlüssel an eine Adresse oder in eine deiner Wallets übertragen.</string>
+    <string name="sweep_private_key_input">Eingabe des privaten Schlüssels</string>
+    <string name="sweep_wif_valid">Gültiger WIF-Schlüssel</string>
+    <string name="sweep_wif_invalid">Ungültiger WIF-Schlüssel</string>
+    <string name="sweep_scanning">Scannen…</string>
+    <string name="sweep_progress_scanning">Scanne %1$s…</string>
+    <string name="sweep_progress_checking">Prüfe %1$s…</string>
+    <string name="sweep_progress_building">Transaktionen werden erstellt…</string>
+    <string name="tools_field_address">Adresse</string>
+    <string name="tools_field_message">Nachricht</string>
+    <string name="tools_field_signature">Signatur</string>
+    <string name="tools_field_address_placeholder">Bitcoin-Adresse, die die Nachricht signiert hat</string>
+    <string name="tools_field_message_placeholder">Signierter Nachrichtentext</string>
+    <string name="tools_field_signature_placeholder">Signatur (Base64)</string>
+    <string name="tools_broadcast_field_title">Roh-Transaktion</string>
+    <string name="tools_decoder_input_label">Adresse, BIP-21-URI, Rechnung oder LNURL</string>
+    <string name="tools_verify_button">Prüfen</string>
+    <string name="tools_result_valid">Signatur gültig</string>
+    <string name="tools_result_invalid">Signatur ungültig</string>
+    <string name="tools_decoder_input_hint">Bitcoin-Adressen, BIP-21-URIs, BOLT11/BOLT12-Rechnungen, LNURL und Liquid-URIs.</string>
+    <string name="tools_decode_button">Dekodieren</string>
+    <string name="tools_error_unrecognized">Eingabe nicht erkannt</string>
+    <string name="tools_result_network">Netzwerk</string>
+    <string name="tools_result_type">Typ</string>
+    <string name="tools_result_unknown">Unbekannt</string>
+    <string name="tools_result_address">Adresse</string>
+    <string name="tools_result_amount">Betrag</string>
+    <string name="tools_result_amount_sats">%1$s sats</string>
+    <string name="tools_result_label">Label</string>
+    <string name="tools_result_message">Nachricht</string>
+    <string name="tools_result_asset">Asset-ID</string>
+    <string name="tools_result_invoice">Rechnung</string>
+    <string name="tools_result_offer">Angebot</string>
+    <string name="tools_result_url">URL</string>
+    <string name="tools_result_description">Beschreibung</string>
+    <string name="tools_result_payment_hash">Zahlungs-Hash</string>
+    <string name="tools_result_expiry">Läuft ab</string>
+    <string name="tools_type_bip21">BIP-21-URI</string>
+    <string name="tools_type_bitcoin_address">Bitcoin-Adresse</string>
+    <string name="tools_type_liquid_address">Liquid-Adresse</string>
+    <string name="tools_type_ark_address">Ark-Adresse</string>
+    <string name="tools_type_lightning">Lightning</string>
+    <string name="tools_type_spark_request">Spark-Zahlungsanfrage</string>
+    <string name="tools_type_bolt11">BOLT11-Rechnung</string>
+    <string name="tools_type_bolt12">BOLT12-Angebot</string>
+    <string name="tools_type_lnurl">LNURL</string>
+    <string name="tools_addr_legacy" formatted="false">Legacy</string>
+    <string name="tools_addr_segwit" formatted="false">SegWit</string>
+    <string name="tools_addr_taproot" formatted="false">Taproot</string>
+    <string name="broadcast_use_original_psbt_note">Verwenden Sie nach Möglichkeit den ursprünglichen PSBT-Ablauf.</string>
+    <string name="broadcast_format_raw_hex">Roh-Transaktions-Hex erkannt</string>
+    <string name="broadcast_format_psbt">Signiertes PSBT erkannt</string>
+    <string name="broadcast_format_invalid">Format nicht erkannt</string>
+    <string name="broadcast_review_title">Dekodierte Ausgaben prüfen</string>
+    <string name="broadcast_txid_format">Txid: %1$s</string>
+    <string name="broadcast_inputs_not_wallet">Eingaben stammen nicht aus der geladenen Wallet.</string>
+    <string name="broadcast_output_tag_own" formatted="false">[eigen]</string>
+    <string name="broadcast_output_tag_external" formatted="false">[extern]</string>
+    <string name="broadcast_output_unparseable" formatted="false">&lt;scriptPubKey nicht lesbar&gt;</string>
+    <string name="broadcast_external_outputs_warning">Mindestens eine Ausgabe gehört nicht zur geladenen Wallet — vor dem Senden die Zieladressen prüfen.</string>
+    <string name="broadcast_reviewed_checkbox">Ich habe die dekodierten Ausgaben geprüft</string>
+    <string name="broadcast_decode_failed">Diese Daten konnten nicht dekodiert werden. Senden deaktiviert.</string>
+    <string name="ark_error_load_failed">Ark-Wallet konnte nicht geladen werden</string>
+    <string name="ark_refresh_stale_cleared">Veralteter Refresh gelöscht</string>
+    <string name="ark_refresh_none_stale">Kein veralteter Refresh zum Löschen</string>
+    <string name="ark_refresh_clear_stale">Veralteten Refresh löschen</string>
+    <string name="ark_claim_none_saved">Kein gespeicherter Claim</string>
+    <string name="ark_claim_discarded">Gespeicherter Claim gelöscht</string>
+    <string name="ark_claim_discard_blocked">Löschen nicht möglich: Der Claim wurde möglicherweise bereits gesendet oder seine Ausgaben sind nicht mehr claimbar.</string>
+    <string name="ark_claim_discard_verify_failed">Der gespeicherte Claim kann gerade nicht geprüft werden. Versuche es erneut, wenn du verbunden bist.</string>
+    <string name="ark_claim_discard_saved">Gespeicherten Claim löschen</string>
+    <string name="ark_claim_discard_title">Gespeicherten Claim löschen?</string>
+    <string name="ark_claim_discard_body">Der gespeicherte Claim wurde nicht angenommen und ist nicht on-chain. Löschen und einen neuen Claim erstellen? Dies kann nicht rückgängig gemacht werden.</string>
+    <string name="ark_exit_checkpoint_required">Verknüpfe vor dem Start eines Exits einen Backup-Ordner. Die Seed-Phrase kann einen laufenden Exit nicht wiederherstellen.</string>
+    <string name="ark_send_result_unknown">Zahlungsergebnis unbekannt. Vor dem erneuten Versuch synchronisieren.</string>
+    <string name="ark_error_claim_sign_failed">Der signierte Claim konnte nicht finalisiert werden.</string>
 </resources>
