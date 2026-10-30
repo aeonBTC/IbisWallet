@@ -109,7 +109,7 @@ Bug bounty awards: [August 15th, 2026](https://github.com/aeonBTC/IbisWallet/rel
 
 Ibis is coded and audited by the most current frontier AI models.
 
-Most recent audit: [August 15th, 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Audits: [October 29th, 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta) · [August 15th, 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Donations
 
