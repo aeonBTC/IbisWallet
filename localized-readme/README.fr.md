@@ -8,7 +8,7 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Obtenir l'APK sur GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Langues :** [English](../README.md) · [Español](README.es.md) · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md) · Français · [Deutsch](README.de.md)
+**Langues :** [English](../README.md) · [Español](README.es.md) · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md) · Français · [Deutsch](README.de.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 ## Fonctionnalités principales
 
@@ -21,6 +21,9 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 - **Import Private Key** - Balayer ou importer des clés privées (format WIF)
 - **Silent Payments** - Prise en charge complète BIP-352 : envoi et réception, avec serveur Frigate par défaut
 - **Hardware Wallet Signing** - Utiliser des QR codes animés ou des fichiers .psbt pour signer en air-gap
+- **NFC PSBT Signing** - Envoyez des PSBT vers un portefeuille matériel par toucher NFC et recevez la signature de la même façon
+- **Offline Signer** - Utilisez Ibis sur un téléphone hors ligne comme signataire à froid pour les PSBT en lecture seule.
+- **Dust Protection** - Signale le dust suspect et l'exclut de la sélection auto
 - **Coin Control** - Sélectionner des UTXO précis, geler/dégeler, dépenser depuis des sorties individuelles
 - **Require Coin Control** - Option pour forcer la sélection des UTXO avant les envois on-chain
 - **RBF & CPFP** - Augmenter les frais des transactions non confirmées, y compris des flux PSBT sûrs en multisig
@@ -37,7 +40,7 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 ### Layer 2 — Lightning natif, Ark, Spark et Liquid
 - **Modular Integration** - Choisir quel Layer 2 activer pour chaque portefeuille
 - **Lightning** - Connecter un nœud distant via LND (LND REST), CLN (clnrest) ou NWC (NIP-47)
-- **Ark** - Ark L2 avec gestion des VTXO, envoi et réception Lightning, boarding payjoin et sorties unilatérales (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Ark** - Ark L2 avec gestion des VTXO, envoi et réception Lightning, boarding en une seule transaction et sorties unilatérales (Built on [Bark](https://github.com/ark-bitcoin/bark))
 - **Spark** - Spark L2 avec envoi et réception Lightning et on-chain, et sorties unilatérales (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Portefeuille Liquid complet avec transactions confidentielles et prise en charge USDt (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Watch-only Liquid Wallets** - Importer des portefeuilles Liquid en lecture seule avec des descripteurs SLIP77
@@ -68,7 +71,7 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 - **Bitcoin URI Handling** - S'enregistrer comme gestionnaire des liens `bitcoin:`
 
 ### Localisation
-- **Languages** - Anglais, russe, espagnol, portugais (Brésil), français et allemand
+- **Languages** - Anglais, espagnol, russe, portugais (Brésil), français, allemand, japonais et chinois simplifié
 - **Typeface** - Plusieurs polices de caractères
 
 ### Sauvegarde et restauration
@@ -100,6 +103,8 @@ Ibis est un logiciel en bêta conçu pour les utilisateurs Bitcoin expérimenté
 
 Les problèmes de moindre gravité, les vulnérabilités théoriques sans exploit pratique, ou les constats ne menant pas à une perte de fonds seront reconnus, mais restent en général hors du champ des récompenses monétaires.
 
+Récompenses du bug bounty : [15 août 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+
 ## Avertissement
 
 Ibis est codé et audité par les modèles d'IA de pointe les plus récents.
@@ -110,11 +115,12 @@ Audit le plus récent : [15 août 2026](https://github.com/aeonBTC/IbisWallet/re
 
 Comme j'ai d'abord fait ce portefeuille pour moi, je ne m'attends pas à des dons. Mais les tokens ne sont pas bon marché. Si tu veux montrer ta gratitude, vas-y.
 
-<img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
+<img width="217" height="200" alt="image" src="https://github.com/user-attachments/assets/ea7993d0-ce33-4578-b534-5ea86cd74038" />
 
 ```bash
 bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8
 ```
+
 
 ## Licence
 

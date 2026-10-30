@@ -8,7 +8,7 @@ Ibis — модульный Bitcoin-кошелёк с самохранением
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Скачать APK с GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Языки:** [English](../README.md) · [Español](README.es.md) · Русский · [Português (Brasil)](README.pt-BR.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+**Языки:** [English](../README.md) · [Español](README.es.md) · Русский · [Português (Brasil)](README.pt-BR.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 ## Ключевые возможности
 
@@ -21,6 +21,9 @@ Ibis — модульный Bitcoin-кошелёк с самохранением
 - **Import Private Key** - Свип или импорт приватных ключей (формат WIF)
 - **Silent Payments** - Полная поддержка BIP-352: отправка и получение, с сервером Frigate по умолчанию
 - **Hardware Wallet Signing** - Анимированные QR-коды или файлы .psbt для air-gapped подписи
+- **NFC PSBT Signing** - Отправка PSBT на аппаратный кошелёк касанием NFC и получение подписи тем же способом
+- **Offline Signer** - Ibis на устройстве без интернета как холодный подписант PSBT наблюдаемого кошелька.
+- **Dust Protection** - Помечает подозрительный dust и исключает его из автовыбора монет
 - **Coin Control** - Выбор конкретных UTXO, заморозка/разморозка, отправка с отдельных выходов
 - **Require Coin Control** - Опция принудительного выбора UTXO перед on-chain отправкой
 - **RBF & CPFP** - Повышение комиссии неподтверждённых транзакций, включая безопасные для multisig PSBT-потоки
@@ -37,7 +40,7 @@ Ibis — модульный Bitcoin-кошелёк с самохранением
 ### Layer 2 — нативный Lightning, Ark, Spark и Liquid
 - **Modular Integration** - Выбор Layer 2 для каждого кошелька
 - **Lightning** - Подключение удалённой ноды через LND (LND REST), CLN (clnrest) или NWC (NIP-47)
-- **Ark** - Ark L2 с управлением VTXO, отправкой и получением Lightning, payjoin-boarding и односторонними выходами (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Ark** - Ark L2 с управлением VTXO, отправкой и получением Lightning, boarding одной транзакцией и односторонними выходами (Built on [Bark](https://github.com/ark-bitcoin/bark))
 - **Spark** - Spark L2 с отправкой и получением Lightning и on-chain, и односторонними выходами (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Полноценный Liquid-кошелёк с конфиденциальными транзакциями и поддержкой USDt (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Watch-only Liquid Wallets** - Импорт watch-only Liquid-кошельков через дескрипторы SLIP77
@@ -68,7 +71,7 @@ Ibis — модульный Bitcoin-кошелёк с самохранением
 - **Bitcoin URI Handling** - Обработка ссылок `bitcoin:`
 
 ### Локализация
-- **Languages** - Английский, русский, испанский, португальский (Бразилия), французский и немецкий
+- **Languages** - Английский, испанский, русский, португальский (Бразилия), французский, немецкий, японский и упрощённый китайский
 - **Typeface** - Несколько вариантов шрифта
 
 ### Резервное копирование и восстановление
@@ -100,6 +103,8 @@ Ibis — бета-версия для опытных пользователей 
 
 Менее серьёзные проблемы, теоретические уязвимости без практического exploit-пути или находки без потери средств будут приняты к сведению, но обычно не оплачиваются.
 
+Выплаты по bug bounty: [15 августа 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+
 ## Отказ от ответственности
 
 Ibis написан и аудирован самыми актуальными frontier AI-моделями.
@@ -110,11 +115,12 @@ Ibis написан и аудирован самыми актуальными fr
 
 Изначально я сделал этот кошелёк для себя и не рассчитываю на донаты. Но токены недешёвые. Если хотите выразить благодарность — пожалуйста.
 
-<img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
+<img width="217" height="200" alt="image" src="https://github.com/user-attachments/assets/ea7993d0-ce33-4578-b534-5ea86cd74038" />
 
 ```bash
 bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8
 ```
+
 
 ## Лицензия
 

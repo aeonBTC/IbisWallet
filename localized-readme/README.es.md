@@ -8,7 +8,7 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Obtener APK desde GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Idiomas:** [English](../README.md) · Español · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+**Idiomas:** [English](../README.md) · Español · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 ## Características principales
 
@@ -21,6 +21,9 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 - **Import Private Key** - Barrer o importar claves privadas (formato WIF)
 - **Silent Payments** - Soporte completo BIP-352: envío y recepción, con servidor Frigate por defecto
 - **Hardware Wallet Signing** - Usar códigos QR animados o archivos .psbt para firmas air-gapped
+- **NFC PSBT Signing** - Envía PSBTs a un monedero físico con un toque NFC y recibe la firma de la misma forma
+- **Offline Signer** - Usa Ibis en un teléfono sin conexión como firmante en frío para PSBT de solo observación.
+- **Dust Protection** - Marca el dust sospechoso y lo excluye de la selección automática
 - **Coin Control** - Seleccionar UTXOs concretos, congelar/descongelar, enviar desde salidas individuales
 - **Require Coin Control** - Opción para forzar la selección de UTXOs antes de envíos on-chain
 - **RBF & CPFP** - Aumentar comisiones en transacciones no confirmadas, incluidos flujos PSBT seguros para multisig
@@ -37,7 +40,7 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 ### Layer 2 — Lightning nativo, Ark, Spark y Liquid
 - **Modular Integration** - Elegir qué Layer 2 activar en cada billetera
 - **Lightning** - Conectar un nodo remoto vía LND (LND REST), CLN (clnrest) o NWC (NIP-47)
-- **Ark** - Ark L2 con gestión de VTXO, envío y recepción Lightning, payjoin boarding y salidas unilaterales (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Ark** - Ark L2 con gestión de VTXO, envío y recepción Lightning, boarding en una sola transacción y salidas unilaterales (Built on [Bark](https://github.com/ark-bitcoin/bark))
 - **Spark** - Spark L2 con envío y recepción Lightning y on-chain, y salidas unilaterales (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Billetera Liquid completa con transacciones confidenciales y soporte USDt (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Watch-only Liquid Wallets** - Importar billeteras Liquid de solo lectura con descriptores SLIP77
@@ -68,7 +71,7 @@ Diseñada para usuarios experimentados: sin tutoriales ni ruedas de entrenamient
 - **Bitcoin URI Handling** - Registrarse como manejador de enlaces `bitcoin:`
 
 ### Localización
-- **Languages** - Inglés, ruso, español, portugués (Brasil), francés y alemán
+- **Languages** - Inglés, español, ruso, portugués (Brasil), francés, alemán, japonés y chino simplificado
 - **Typeface** - Varias tipografías
 
 ### Copia de seguridad y restauración
@@ -100,6 +103,8 @@ Ibis es software en beta y está diseñado para usuarios de Bitcoin con experien
 
 Problemas de menor gravedad, vulnerabilidades teóricas sin exploit práctico, o hallazgos que no conduzcan a pérdida de fondos se reconocerán, pero en general quedan fuera del alcance de recompensas monetarias.
 
+Recompensas del bug bounty: [15 de agosto de 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+
 ## Aviso
 
 Ibis está codificado y auditado por los modelos de IA de frontera más actuales.
@@ -110,11 +115,12 @@ Auditoría más reciente: [15 de agosto de 2026](https://github.com/aeonBTC/Ibis
 
 Como originalmente hice esta billetera para mí, no espero donaciones. Sin embargo, los tokens no son baratos. Si quieres mostrar agradecimiento, adelante.
 
-<img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
+<img width="217" height="200" alt="image" src="https://github.com/user-attachments/assets/ea7993d0-ce33-4578-b534-5ea86cd74038" />
 
 ```bash
 bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8
 ```
+
 
 ## Licencia
 

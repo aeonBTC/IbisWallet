@@ -1,0 +1,127 @@
+# Ibis Wallet
+
+Ibisは、直感的なデザイン、プライバシー、カスタマイズ性を重視した、セルフカストディ型のモジュラーBitcoinウォレットです。
+
+経験豊富なユーザー向けに設計されています — 手取り足取りの説明も、補助輪もありません。
+
+<img width="1000" height="417" alt="5" src="https://github.com/user-attachments/assets/45dcfdaa-71c4-4698-a284-5eef054f1e25" />
+
+[<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="GitHubからAPKを取得" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
+
+**言語:** [English](../README.md) · [Español](README.es.md) · [Русский](README.ru.md) · [Português (Brasil)](README.pt-BR.md) · [Français](README.fr.md) · [Deutsch](README.de.md) · 日本語 · [简体中文](README.zh-CN.md)
+
+## 主な機能
+
+### Layer 1 — Bitcoin
+- **Multi-Wallet** - 複数のウォレットの作成、インポート、エクスポート、切り替え
+- **Multi-Seed** - ウォレットのインポートにBIP39またはElectrumシードフレーズをサポート
+- **Dice Entropy** - サイコロの出目からシードを生成
+- **Multisig Wallets** - マルチシグディスクリプタのインポート、PSBT署名の調整、共同署名者としてのローカル署名
+- **Watch-only Wallets** - xpub/zpub、出力ディスクリプタ、または単一アドレスのインポート
+- **Import Private Key** - 秘密鍵のスイープまたはインポート（WIF形式）
+- **Silent Payments** - BIP-352完全対応：送受信、デフォルトサーバーはFrigate
+- **Hardware Wallet Signing** - エアギャップ鍵署名にアニメーションQRコードまたは.psbtファイルを使用
+- **NFC PSBT Signing** - NFCタップでハードウェアウォレットにPSBTを送信し、同じ方法で署名を受け取る
+- **Offline Signer** - オフライン端末のIbisをウォッチオンリーPSBT用コールドストレージ署名機として使用。
+- **Dust Protection** - 疑わしいダストを検出し、自動コイン選択から除外
+- **Coin Control** - 特定のUTXOを選択、フリーズ/アンフリーズ、個別のアウトプットから送金
+- **Require Coin Control** - オンチェーン送金前にUTXO選択を必須にするオプション
+- **RBF & CPFP** - 未確認トランザクションの手数料引き上げ（マルチシグ対応のPSBT手数料引き上げフロー含む）
+- **RBF by Default** - オンチェーン送金はデフォルトでreplace-by-feeを通知；無効化可能
+- **Cancel Transactions** - RBFで未確認の送金トランザクションをキャンセル
+- **Manual Broadcast** - 署名済みrawトランザクションをBitcoinネットワークに直接ブロードキャスト
+- **Batch Sending** - 複数の宛先への送金を単一トランザクションで実行
+- **Message Signing** - BIP137によるメッセージの署名と検証
+- **Checksum Helper** - 11/23単語のプレフィックスから不足チェックサム単語を算出
+- **BIP329 Labels** - トランザクション・アドレス用の業界標準ウォレットラベル
+- **Transaction Search** - 日付、アドレス、ラベルでトランザクション履歴を検索
+- **Built on** [BDK](https://bitcoindevkit.org/)
+
+### Layer 2 — ネイティブLightning、Ark、Spark、Liquid
+- **Modular Integration** - ウォレットごとに有効化するLayer 2を選択
+- **Lightning** - LND（LND REST）、CLN（clnrest）、NWC（NIP-47）経由でリモートノードに接続
+- **Ark** - VTXO管理、Lightning送受信、単一トランザクションのボーディング、一方的エグジットを備えたArk L2（[Bark](https://github.com/ark-bitcoin/bark)ベース）
+- **Spark** - Lightning・オンチェーン送受信と一方的エグジットを備えたSpark L2（[Breez-SDK](https://github.com/breez/spark-sdk)ベース）
+- **Liquid** - コンフィデンシャルトランザクションとUSDt対応のフルLiquidウォレット（[LWK](https://github.com/Blockstream/lwk)ベース）
+- **Watch-only Liquid Wallets** - SLIP77ディスクリプタを使ったLiquidウォッチオンリーウォレットのインポート
+- **Lightning Payments** - Bolt 11・Bolt 12インボイス、Lightningアドレスへの支払い
+- **Lightning Invoices** - Bolt 11インボイスの生成
+- **Chain Swaps** - L1とL2間のスワップを簡単に実行
+- **Coin Control** - スワップ・支払い用のUTXO選択
+- **BIP329 Labels** - Ark・Spark・Liquidトランザクションのラベル対応
+
+### プライバシーとセキュリティ
+- **Offline by Default** - アプリ起動時は外部接続ゼロ
+- **Built-in Tor** - Torをネイティブ統合、Orbotや外部プロキシ不要
+- **PIN & Biometrics** - ロックタイミングを設定可能なPIN・生体認証
+- **Duress PIN** - おとりウォレットを開くダレスPINを設定
+- **Wipe PIN** - デバイス上の全ウォレットデータを密かに消去するセカンダリPINを設定
+- **Auto-Wipe** - ロック解除失敗回数のしきい値を設定し、到達時に全アプリデータを自動的かつ不可逆的に消去
+- **Clear Clipboard** - アプリのロック時・終了時にクリップボードを自動消去するオプション
+- **Cloak Mode** - Ibisを電卓アプリに偽装
+- **Privacy Toggle** - 全てのウォレット金額・残高を非表示
+- **Wipe History** - 特定ウォレットのトランザクションまたは履歴全体をローカルで消去
+- **Wallet Locks** - 特定ウォレットを個別にロック
+- **Hardened Metadata** - OS可視メタデータ削減のためのログ・UIエラー無害化
+
+### 接続とサーバー
+- **Custom Servers** - 独自のElectrum、ブロックエクスプローラー、手数料推定サーバーに接続
+- **NFC Support** - NFCタップによる支払いリクエストの配信・受信
+- **Update Notifications** - 新バージョン通知の切り替え
+- **Bitcoin URI Handling** - `bitcoin:`リンクのハンドラーとして登録
+
+### ローカリゼーション
+- **Languages** - 英語、スペイン語、ロシア語、ポルトガル語（ブラジル）、フランス語、ドイツ語、日本語、簡体字中国語
+- **Typeface** - 複数の書体設定
+
+### バックアップと復元
+- **Full Encrypted Backups** - ウォレット、設定、ラベルを含むアプリ全体の状態をバックアップ・復元
+
+## ビルド
+
+Android StudioとJDK 17が必要です。
+
+```bash
+./gradlew :app:assembleDebug      # Debug
+./gradlew :app:assembleRelease    # Release
+./gradlew testDebugUnitTest       # テスト
+./gradlew jacocoUnitTestReport    # カバレッジレポート生成
+```
+
+**最小SDK:** 26 (Android 8.0) | **ターゲットSDK:** 36 | **ARM** (armeabi-v7a, arm64-v8a)
+
+## バグバウンティ
+
+> [!IMPORTANT]
+> **バグバウンティプログラムは資金不足のため現在停止中です。** 報告は歓迎し謝意を示しますが、プログラム再開まで金銭的報酬は支払われません。
+
+Ibis Walletのユーザー資金の不正な損失につながる重大な脆弱性に対し、BTCで1,000ドルを支払います。
+
+バウンティ対象は、ユーザーの資金の盗難または永久的な損失につながる実用的で現実的な攻撃経路を与える脆弱性です（例：ウォレットのリモート侵害、シード抽出、トランザクション改ざんなど）。
+
+Ibisはベータ版ソフトウェアであり、経験豊富なBitcoinユーザー向けに作られています。オフデバイスのシードバックアップは標準的な運用として想定されています：シードからの復元で完全に回復可能で、第三者による盗難を伴わない問題は認知されますが、報酬対象外です。
+
+重大度が低い問題、実用的な悪用経路のない理論的な脆弱性、資金損失につながらない発見は認知されますが、原則として金銭的報酬の対象外です。
+
+バグバウンティの受賞：[2026年8月15日](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+
+## 免責事項
+
+Ibisは最新のフロンティアAIモデルによってコーディング・監査されています。
+
+最新の監査：[2026年8月15日](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+
+## 寄付
+
+元々自分用に作ったウォレットなので、寄付は期待していません。ただ、トークンは安くありません。感謝を示したい方はぜひどうぞ。
+
+<img width="217" height="200" alt="image" src="https://github.com/user-attachments/assets/ea7993d0-ce33-4578-b534-5ea86cd74038" />
+
+```bash
+bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8
+```
+
+
+## ライセンス
+
+オープンソース。詳細は[LICENSE](../LICENSE)をご覧ください。

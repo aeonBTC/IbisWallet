@@ -69,6 +69,23 @@ When the program is active, lower-severity issues that do not lead to fund loss 
 
 Ibis targets **experienced Bitcoin users**. Features such as cleartext Electrum, custom servers, and remote Lightning credentials assume the user understands the tradeoffs.
 
+### Recent critical and high-severity hardening
+
+| Severity | Area | Fix |
+|---|---|---|
+| Critical | PSBT signing | Rejects unsafe sighashes (`NONE`/`SINGLE`/`ANYONECANPAY`), fake legacy prevouts, and absurd fees |
+| Critical | Silent Payments | RBF no longer reuses a stale BIP-352 output key or burns the payment |
+| Critical | Spark backup restore | No longer imports an attacker-controlled on-chain deposit address |
+| Critical | Liquid backup restore | Seed wallets re-derive the descriptor instead of trusting the backup |
+| High | BOLT12 | Verifies invoice/request signatures and binds the invoice to the reviewed offer and amount |
+| High | Electrum | Rejects raw transactions that do not match the requested txid; fixes SegWit txid checks |
+| High | Spark exit | CPFP signing validates sighash, outputs, and fee |
+| High | Spark multi-send | Resumes safely and blocks retries after an uncertain send |
+| High | Liquid swaps | Funding/refund failures can no longer trigger a second payment |
+| High | PIN/biometric | PIN rotation is crash-safe, and biometric keys are not deleted on unlock |
+
+Residual risks are documented in [Threat model](#threat-model).
+
 ---
 
 ## Secret storage
@@ -83,7 +100,7 @@ Sensitive configuration and secrets live primarily in **AndroidX `EncryptedShare
 
 Non-secret settings may use ordinary `SharedPreferences` (`ibis_prefs`). Legacy values found only in regular prefs are migrated into encrypted prefs when read.
 
-If the Keystore master key is missing/invalid while the encrypted prefs file remains (e.g. partial wipe residue), Ibis deletes the stale prefs file and recreates empty encrypted storage.
+If EncryptedSharedPreferences creation fails, startup is fail-closed: only a positively identified permanent key invalidation (`KeyPermanentlyInvalidatedException` chain) deletes the stale prefs file and recreates empty encrypted storage. Any other failure throws `SecureStorage.UnavailableException`, the app exits, and **no** prefs or Keystore data is deleted.
 
 ### Spend secrets (session-wrapped)
 
@@ -99,11 +116,13 @@ While **app lock is enabled** (PIN or biometric), high-value secrets are stored 
 
 **Not session-wrapped (still in EncryptedSharedPreferences when stored there):** watch-only xpubs / descriptors / single addresses, multisig public configs, PSBT signing sessions, labels, Electrum cert fingerprints, wallet metadata, and similar non-seed material.
 
+The BDK SQLite wallet database stores the public `Descriptor<DescriptorPublicKey>` only (bdk_wallet 3.x `ChangeSet`); it does not persist the xprv/WIF. Spend-capable descriptors are supplied to BDK in memory at load/create time and remain in `SecureStorage`.
+
 When the app locks, the in-memory master key is zeroed (`lockSpendSecretSession`). Without a successful unlock, spend secrets cannot be decrypted even if encrypted prefs are readable on a compromised filesystem snapshot that still requires the Keystore path—defense is layered, not absolute (see Threat model).
 
 **Disabling app lock** (`SecurityMethod.NONE`) deliberately migrates spend secrets back to EncryptedSharedPreferences values **without** the session wrap (so the wallet remains usable with no unlock), then zeros the in-memory master key. Encrypted prefs still protect at rest via the Keystore master key. Disabling requires an explicit funds-at-risk confirmation in the Security screen; programmatic callers must pass `acknowledgedDowngradeRisk = true`.
 
-Biometric Keystore keys use `setInvalidatedByBiometricEnrollment(false)` so adding/removing fingerprints does **not** permanently orphan the spend-secret master key. Legacy invalidated keys are deleted and recreated so biometric can be re-enrolled. Biometric is **BIOMETRIC_STRONG** only (no device-credential fallback on the crypto-bound path).
+Biometric Keystore keys use `setInvalidatedByBiometricEnrollment(false)` so adding/removing fingerprints does **not** permanently orphan the spend-secret master key. On the unlock/prewarm path, an existing key is never created or deleted; a missing or invalidated key fails with a PIN fallback message and leaves the biometric wrap in place. Only the explicit enrollment path (reached after a successful app unlock) may replace a legacy invalidated key and re-wrap the live master. Biometric is **BIOMETRIC_STRONG** only (no device-credential fallback on the crypto-bound path).
 
 Enrollment-change handling is fail-closed: the tripwire canary (`ibis_biometric_tripwire`) reports `OK` / `CHANGED` / `UNKNOWN`. `CHANGED` blocks the first biometric unlock and sets a one-shot warning (a second attempt after the user has seen the warning may proceed and re-baselines). `UNKNOWN` (unreadable Keystore) blocks with a retryable error instead of silently proceeding.
 
@@ -133,6 +152,8 @@ Mnemonics, private keys, passphrases, PINs, macaroons, runes, NWC URIs, and simi
 
 Legacy plaintext PINs (if any) are migrated to hashed form on successful verify and still count toward rate limiting.
 
+PIN rotation writes the new hash, salt, and spend-master wrap in a single synchronous commit. The previous wrap is retained until the first successful unlock after rotation, then deleted. If the current hash matches but its wrap does not (a crash from an older build), the lock screen can request the previous PIN, decrypt the preserved wrap, and atomically re-wrap the live master under the current PIN.
+
 ### Lock timing
 
 Configurable:
@@ -145,7 +166,7 @@ Configurable:
 
 On lock: spend-secret session zeroed; L1 wallet unloaded from memory and Electrum disconnected; L2 wallets unloaded; NFC HCE payload cleared and reader/HCE preference released; optional clipboard clear (see Clipboard).
 
-Timed locks use wall-clock background timestamps. System pickers can skip one background lock for up to 30s so in-flight SAF/camera results are not interrupted.
+Timed locks use wall-clock background timestamps. A system picker may skip the immediate background lock so in-flight SAF/camera results are not interrupted, but the background instant is recorded and the app locks on resume once the picker grace expires. Screen-off always locks when screen-off locking is enabled. If the picker remains open past the grace period, the app locks; the picker result may be dropped rather than leaving the wallet unlocked.
 
 ### Spend PIN
 
@@ -161,7 +182,19 @@ Individual wallets can be flagged locked in metadata. Opening or unlocking a loc
 
 ### Session unlock flag
 
-`isAppSessionUnlocked` is process-memory only. Configuration-change recreation can keep the session if the ViewModel survives; process death re-locks. Cloak bypass within a process is likewise session-only so rotation does not bounce back to the calculator after unlock.
+`isAppSessionUnlocked` is process-memory only. Configuration-change recreation can keep the session if the ViewModel survives; process death re-locks. Cloak bypass is session-only and persists across a configuration change after unlock. When cloak is active and not bypassed, the calculator gate is checked before the unlocked-session branch, so a configuration-change recreation cannot skip it.
+
+---
+
+## Transaction signing and PSBT safety
+
+- Imported PSBTs are signed only when every input uses `SIGHASH_ALL` or `SIGHASH_DEFAULT`; `SIGHASH_NONE`, `SIGHASH_SINGLE`, and `ANYONECANPAY` are rejected.
+- Each `non_witness_utxo` must hash to the outpoint being spent. Legacy inputs that provide only `witness_utxo` are rejected because legacy signatures do not commit to the amount.
+- The signer enforces an absolute fee cap (50,000 sats floor, 10% of input value) and a maximum fee rate (1,000 sat/vB).
+- The Spark CPFP signer applies the same sighash rule, validates outputs against wallet/expected/input scripts, and caps the child fee.
+- Silent Payment RBF distinguishes missing, corrupt, and known non-SP records; a missing destination record fails closed instead of paying a stale BIP-352 output key.
+- BOLT12 fetched invoices are signature-checked, bound to the reviewed offer, checked for expiry, and required to match the requested amount.
+- Liquid PSETs are bound to the wallet and load generation that created the unsigned PSET; import/finalize/broadcast rejects a different wallet session.
 
 ---
 
@@ -170,7 +203,7 @@ Individual wallets can be flagged locked in metadata. Opening or unlocking a loc
 After **5 failed unlock PIN attempts**, exponential backoff lockout applies:
 
 - Base: **30 seconds**, doubles per additional failure, capped at **6 doublings**
-- Failed-attempt counter is **shared** between real unlock PIN and failed guesses (not correct duress/wipe)
+- Failed-attempt counter is **shared** between the real unlock PIN and wrong guesses; correct duress/wipe entries do not increment it
 - Lockout state is written with **synchronous `commit`** so a process kill cannot regress auto-wipe progress
 
 Lockout is enforced with **both**:
@@ -203,13 +236,15 @@ the real PIN is never bricked.
 1. User sets a **duress PIN** (must differ from unlock PIN and wipe PIN) and a **decoy wallet** seed (optional passphrase / derivation / address type).
 2. Decoy wallet is created with a generic name (`Wallet`), real wallet ID is recorded, then the real wallet remains active until coercion.
 3. Entering the duress PIN on the lock screen **silently** loads the decoy wallet (`enterDuressMode`).
-4. Real PIN or biometric exits duress and restores the real wallet (`exitDuressMode`).
+4. A real PIN (when accepted at the pad, i.e. PIN mode) or biometric (including the hidden control in duress+biometric mode) exits duress and restores the real wallet (`exitDuressMode`).
 5. Wallet list: duress mode shows only the decoy; normal mode **hides** the decoy wallet.
-6. `isDuressMode` is **not** a durable user preference across cold start, but if the process dies while the **active wallet ID** is the decoy, unlock reconciles duress UI filtering from that persisted active ID (so decoy-only listing is restored). Real PIN/biometric still exits to the recorded real wallet.
+6. `isDuressMode` is **not** a durable user preference across cold start, but if the process dies while the **active wallet ID** is the decoy, unlock reconciles duress UI filtering from that persisted active ID (so decoy-only listing is restored). An accepted real unlock still exits to the recorded real wallet.
 7. In duress UI, Security hides Duress PIN, Auto-Wipe, and Cloak Mode cards.
 8. With biometric + duress: PIN pad accepts **duress PIN only**; real wallet via biometric on a **hidden** control; biometric auto-cancels after ~2s in that mode.
 9. Disabling duress deletes decoy L2 data directories (Ark / Spark / Liquid / Lightning node state as applicable) before metadata wipe.
 10. Full-backup export/import filters the opposite persona’s wallets so dual-wallet setup is not leaked through backup UI.
+
+In a normal session with duress configured, real PIN rotation and biometric enrollment are allowed; they act only on the live real master and skip the isolated decoy. Inside an actual duress session, PIN/security changes remain blocked.
 
 Duress is not a substitute for full-disk encryption, a strong unlock, or operational security under a sophisticated adversary.
 
@@ -250,11 +285,11 @@ Typical destructive steps include:
 - Stop Tor and wipe Tor data (`app_torservice`)  
 - Clear encrypted + regular SharedPreferences with `commit = true`  
 - Delete SharedPreferences files from disk  
-- Delete Android Keystore entries: EncryptedSharedPreferences master key and biometric key (`ibis_biometric_key`)  
+- Delete Android Keystore entries: EncryptedSharedPreferences master key, biometric key (`ibis_biometric_key`), and biometric enrollment tripwire (`ibis_biometric_tripwire`)  
 - Reset in-memory wallet state  
 - Verify residue (prefs files, Keystore aliases, BDK/LWK/Spark/Ark dirs, wallet ids)
 
-**Not wiped by design:** user-chosen **external** Ark DB backups (SAF folder). Those are user-owned and may outlive wallet delete / auto-wipe—required for Ark recovery because seed alone does not restore VTXO state.
+**Not wiped by design:** user-chosen **external** Ark DB backups (SAF folder). Those are user-owned and may outlive wallet delete / auto-wipe. Seed + ASP mailbox recovery can rebuild VTXO state in a fresh session, but not local movement history and only while the ASP/mailbox is available; the external backup is the durable copy.
 
 ---
 
@@ -283,11 +318,11 @@ Cloak Mode is **UI/OS surface** deniability, not cryptographic hiding of the APK
 | Tapjacking | `window.decorView.filterTouchesWhenObscured = true` |
 | `android:allowBackup` | `false` |
 | `fullBackupContent` / `data_extraction_rules` | Exclude **all** domains (root, sharedpref, database, file) from auto-backup, cloud backup, and device transfer |
-| Privacy mode | Eye toggle; amounts shown as `****` across L1/L2 surfaces; persisted |
-| Clipboard | Optional clear on lock / background / app close (see Clipboard) |
-| Launch surface | `LaunchActivity` not exported; only launcher aliases reach it and forward to `MainActivity` |
-| Deep links | Exported `MainActivity` handles `bitcoin:`, `lightning:`, `liquidnetwork:`, `liquid:` VIEW intents only; payload becomes pending send input after unlock |
-| NFC | No global `NDEF_DISCOVERED` filter; reader mode only on explicit send/balance screens; HCE only while receive payloads are set |
+| Privacy mode | Eye toggle; amounts shown as `****` across L1/L2 surfaces, including PSBT/PSET/sign/broadcast review; persisted |
+| Clipboard | Defaults to clear when minimized; optional clear on lock / app close; 30s auto-clear for sensitive copies (see Clipboard) |
+| Launch surface | `LaunchActivity` not exported; applies `FLAG_SECURE` when screenshot prevention is enabled; only launcher aliases reach it and forward to `MainActivity` |
+| Deep links | Exported `MainActivity` handles `bitcoin:`, `lightning:`, `liquidnetwork:`, `liquid:` VIEW intents only; external requests require an explicit confirmation before replacing a send draft |
+| NFC | No global `NDEF_DISCOVERED` filter; reader mode only on explicit send/balance screens; receive HCE payload is suspended on pause; ISO-DEP send reads capped at 16 KB |
 | Notifications | Wallet activity notifications **opt-in** (default off) + runtime `POST_NOTIFICATIONS` where required |
 | Keep-alive FGS | Optional connectivity foreground service (`dataSync`); **default off** |
 | Permissions | `INTERNET`, network state, optional camera/NFC, notifications, FGS types as declared; camera/NFC hardware `required="false"` |
@@ -313,6 +348,7 @@ Cleartext is permitted at the Android network-security level because users may r
 
 - Sensitive copies go through `SecureClipboard`: generic clip label, `EXTRA_IS_SENSITIVE` on Android 13+, auto-clear after **30 seconds**
 - Optional modes: Disabled / On lock / On app close / On lock and close / When minimized
+- Default mode is **When minimized**; existing explicitly stored modes are preserved
 - Full wipe always clears the primary clip
 
 ---
@@ -345,7 +381,7 @@ Clearnet Electrum SSL uses `TofuTrustManager`:
 | Fingerprint match | Accept |
 | Fingerprint change | `CertificateMismatchException` → warn (possible MITM) |
 
-Approved fingerprints are stored for later sessions. Verbose tx cache entries are rejected if the server’s reported txid does not match the requested txid. First-use vs changed-certificate approval is surfaced via `CertificateDialog` (first-use approval vs MITM-change warning).
+Approved fingerprints are stored for later sessions. Raw transaction responses from the Electrum bridge and the transaction cache are parsed with BDK and rejected if their canonical txid does not match the requested txid (SegWit-aware). First-use vs changed-certificate approval is surfaced via `CertificateDialog` (first-use approval vs MITM-change warning).
 
 ### URL validation
 
@@ -361,7 +397,7 @@ Optional sources (mempool.space clearnet/onion, bitview.space, Electrum, custom 
 
 ### App update check
 
-Optional GitHub Releases API poll (`AppUpdateService`). Default **off** (welcome/opt-in). Release page URLs opened in a browser are restricted to `https://github.com` / `www.github.com`; anything else falls back to the official releases page. Notes length is capped. This is **not** APK signature verification—users must still verify downloads through their usual channel.
+Optional GitHub Releases API poll (`AppUpdateService`). Default **off** (welcome/opt-in). Release page URLs opened in a browser are restricted to `https://github.com` / `www.github.com`; anything else falls back to the official releases page. Notes length is capped. The downloaded APK is verified for package name, a signing certificate that also signs the installed app (Android enforces the full signer/rotation history at install time), and a strictly newer version before installation. The installer intent is addressed explicitly to the platform package installer (with manifest package queries), not a generic APK-MIME `ACTION_VIEW`. Users should still verify release artifacts out of band.
 
 ### Lightning Node TLS
 
@@ -383,7 +419,7 @@ When connecting to a remote LND/CLN node:
   authenticates and encrypts the endpoint end-to-end (clearnet-over-Tor stays
   rejected; empty setup form defaults TLS off and auto-enables it when a
   clearnet host is typed, until the user touches the toggle)
-- Hostname verification is disabled once the user-selected trust policy is applied (pin or acknowledged-insecure/trust-all)—pinning is the integrity control when a cert is supplied
+- Hostname verification stays on for all clearnet hosts (including IP literals and localhost) and is skipped only for `.onion`; pinning is the integrity control when a cert is supplied. Acknowledged insecure transport uses trust-all **and** skips hostname verification for that host
 - Tor: SOCKS + DNS-through-proxy; HTTP/1.1 preferred over Tor
 
 App-level `cleartextTrafficPermitted` stays enabled because LAN Electrum is an
@@ -397,7 +433,7 @@ LND macaroon, CLN rune, TLS PEM, and NWC URI are spend secrets. Host/port/type m
 
 ### NWC (NIP-47)
 
-NWC URI parsed strictly (`nostr+walletconnect://`, hex pubkey/secret, `ws://`/`wss://` relays). Payloads use **NIP-44 v2** (secp256k1 ECDH + HKDF + ChaCha20 + HMAC-SHA256); legacy **NIP-04** decrypt fallback is **disabled by default** (`allowLegacyNip04Fallback = false`). Responses are accepted within a 60s window with future-dated events rejected, and duplicate signed responses are ignored (replay guard).
+NWC URI parsed strictly (`nostr+walletconnect://`, hex pubkey/secret, `wss://` relays only). Payloads use **NIP-44 v2** (secp256k1 ECDH + HKDF + ChaCha20 + HMAC-SHA256); legacy **NIP-04** decrypt fallback is **disabled by default** (`allowLegacyNip04Fallback = false`). Responses are accepted within a 60s window with future-dated events rejected, and duplicate signed responses are ignored (replay guard).
 
 ### Lightning Node backup restores
 
@@ -409,7 +445,7 @@ Clearnet Esplora may fall back across reachable hosts with a user-visible notice
 
 ### Deep links and external send input
 
-Incoming VIEW intents and NFC reads only accept recognized payment formats (`isRecognizedSendInput` / payment URI schemes). Unrecognized or oversized payloads are dropped at ingest; recognized payloads carry an origin tag (deep link / NFC / external) for review surfaces. Input is held as pending send state and consumed after unlock—not auto-broadcast.
+Incoming `ACTION_VIEW` intents and NFC reads only accept recognized payment formats (`isRecognizedSendInput` / payment URI schemes). Unrecognized or oversized payloads are dropped at ingest; recognized payloads carry an origin tag (deep link / NFC / external) for review surfaces. Input is held as pending send state, consumed after unlock, and shown in an explicit confirmation before it can replace a send draft—never auto-broadcast.
 
 ### Explorer / browser opens
 
@@ -421,7 +457,7 @@ Onion explorer links prefer Tor Browser package when available; otherwise standa
 
 ### Full app backup (export/import)
 
-User-initiated JSON backups can include wallets, settings, labels, optional servers, and optional embedded Ark DB blobs.
+User-initiated JSON backups can include wallets, settings, labels, and optional servers. The local Bark/Ark session database is intentionally **excluded**; external encrypted Ark DB backups are a separate, user-owned SAF copy.
 
 - Optional password: **AES-256-GCM** with **PBKDF2-HMAC-SHA256** at **600 000** iterations, random 16-byte salt, 12-byte IV (`CryptoUtils`)
 - Temporary password char arrays used for PBKDF2 are cleared after use (the caller still holds a Java `String` for the operation duration)
@@ -431,12 +467,16 @@ User-initiated JSON backups can include wallets, settings, labels, optional serv
 - **Security-screen settings are intentionally excluded** from full-backup app settings (PIN/duress/wipe/cloak/auto-wipe/screenshot/clipboard modes are not round-tripped as unlock material)
 - Duress persona filtering applies to which wallets appear in backup UI
 - Restore validates server hosts/ports and custom URLs; clamps gap limits; skips malformed wallet entries without aborting the whole restore
+- Backup-provided Spark on-chain deposit addresses and pending deposits are **not** restored; the Spark SDK derives a fresh address
+- Backup `liquidDescriptor` is accepted only for watch-only wallets; seed wallets re-derive and repair
+- Liquid PSET sessions are bound to the wallet and load generation that created them; import/broadcast reject a different wallet session
+- BOLT12 fetched invoices are signature-checked and bound to the reviewed offer and amount
 
 Backups that contain seeds are as sensitive as the wallet itself. Store encrypted backups offline; never commit them to git or cloud sync without encryption you control.
 
 ### Ark DB backups
 
-Ark (Bark) state is **not** recoverable from seed alone. Encrypted DB backups use:
+Ark (Bark) state is not fully recoverable from seed alone: mailbox recovery rebuilds VTXOs after a fresh session (while the ASP/mailbox is available) but not local movement history. Encrypted DB backups use:
 
 - Magic `IBARKENC`, version byte, 12-byte nonce, AES-GCM ciphertext  
 - Key: **HKDF-SHA256** from BIP39 seed (`ibis-ark-backup` / `ibis-ark-backup-v1`)  
@@ -455,9 +495,9 @@ Import sanitizes labels; BIP329 `spendable` flags only apply to valid Bitcoin ou
 
 | Rail | Secret / data handling |
 |------|-------------------------|
-| Liquid (LWK) | Seed-derived; Signer in memory; DB under `filesDir/lwk/`; CT descriptor as spend secret when stored |
-| Spark | Seed wallets; SDK data under `filesDir/spark/<walletId>` |
-| Ark | Bark session data under `cacheDir/ark-session/<walletId>` (pre-open safety copies under `cacheDir/ark-session-backups/`); legacy `filesDir/ark` trees are scrub-only, never opened; encrypted external DB backups; native handle open/close serialized |
+| Liquid (LWK) | Seed-derived; Signer in memory; DB under `filesDir/lwk/`; CT descriptor as spend secret when stored, re-derived for seed wallets and accepted from backup only for watch-only wallets; PSET sessions are wallet-bound; refund detection expects the net swap amount |
+| Spark | Seed wallets; SDK data under `filesDir/spark/<walletId>`; backup deposit address is never restored; CPFP signing validates sighash/outputs/fee; multi-send resumes and journals an uncertain state |
+| Ark | Bark session data under `cacheDir/ark-session/<walletId>` (pre-open safety copies under `cacheDir/ark-session-backups/`); legacy `filesDir/ark` trees are scrub-only, never opened; encrypted external DB backups; native handle open/close serialized; offboard/recovery are serialized against unilateral exits; mailbox imports re-check server status; new LN sends are blocked while a prior Ark LN send is pending |
 | Lightning Node | Remote auth secrets in SecureStorage; not a local hot LN keystore for NWC/LND/CLN credentials beyond what you paste |
 
 Swaps (Boltz, SideSwap, etc.) involve third-party coordinators—standard swap counterparty and privacy tradeoffs apply. Loopback Tor relays may be used for onion Boltz/Esplora where bindings lack SOCKS.
@@ -473,10 +513,10 @@ Swaps (Boltz, SideSwap, etc.) involve third-party coordinators—standard swap c
 | PIN hash / PIN wrap | PBKDF2-HMAC-SHA256, 150 000 iter, 16-byte salt |
 | Backup file password | PBKDF2-HMAC-SHA256, 600 000 iter → AES-256-GCM |
 | Ark backup | HKDF-SHA256 → AES-256-GCM |
-| Biometric | Keystore AES/CBC/PKCS7, user auth required per use |
+| Biometric | Keystore AES/CBC/PKCS7, user auth required per use; unlock/prewarm never creates or deletes keys |
 | BIP39 | Standard PBKDF2 with `"mnemonic"` salt (via wallet stack) |
 | Electrum seeds | PBKDF2 with `"electrum"` salt where applicable |
-| NWC | NIP-44 v2; legacy NIP-04 AES-CBC fallback |
+| NWC | NIP-44 v2; legacy NIP-04 AES-CBC fallback disabled by default |
 
 Randomness: `SecureRandom` for salts, IVs, and spend master keys.
 
@@ -484,7 +524,7 @@ Randomness: `SecureRandom` for salts, IVs, and spend master keys.
 
 ## NFC
 
-- **Receive:** HCE NDEF service broadcasts payment URIs only while a receive payload is set; cleared on dispose / lock. Prefer-service while receive screens request it.  
+- **Receive:** HCE NDEF service broadcasts payment URIs only while a receive payload is set; the payload is suspended when the app pauses, restored on resume, and cleared on dispose / lock. Prefer-service while receive screens request it.  
 - **Send:** Reader mode only on specific screens; no manifest-wide NFC intercept. Flags: `NFC_A|B|F|V` + `NO_PLATFORM_SOUNDS` (does **not** skip NDEF check).  
 - Read path: platform cached NDEF, then ISO-DEP Type 4 fallback for HCE peers.  
 - Payload schemes: `bitcoin:`, `lightning:`, `liquidnetwork:`, `liquid:` (text fallback).  
@@ -519,6 +559,9 @@ External files, QR payloads, and HTTP JSON bodies are size-limited (`InputLimits
 
 - Compromised or rooted Android OS, malicious accessibility services, or device admin malware  
 - Physical access with chip-off / unlocked bootloader / debug bridges when the device is unlocked or Keystore is extractable  
+- An already-broken install whose PIN wrap was lost before the atomic-rotation fix, or a biometric-only install whose Keystore key was already invalidated—these require a seed/backup
+- Cleartext LAN/HTTP server traffic (address/script-hash visibility and MITM), and Silent Payments scan-key exposure when an SP-capable server is reached over non-loopback/non-onion HTTP
+- TOFU first-use MITM and short-PIN offline brute force if secure prefs/Keystore are compromised
 - User who disables lock, shares seed, or stores unencrypted backups  
 - Malicious or compromised Electrum / explorer / ASP / swap / LN node the user chose  
 - Supply-chain compromise of the APK distribution channel if the user sideloads an unofficial build  
@@ -535,7 +578,7 @@ External files, QR payloads, and HTTP JSON bodies are size-limited (`InputLimits
 ## Building and verifying releases
 
 - Prefer official [GitHub Releases](https://github.com/aeonBTC/IbisWallet/releases).  
-- Build from source: JDK 17, `./gradlew :app:assembleRelease` (signing config required for release).  
+- Build from source: JDK 17 language target, `./gradlew :app:assembleRelease` (signing config required for release). The Gradle daemon JVM is auto-provisioned/pinned by `gradle/gradle-daemon-jvm.properties`; set `JAVA_HOME` to Android Studio's JBR for CLI builds.  
 - Min SDK 26; target/compile SDK per project (`app/build.gradle.kts`); ABI: `armeabi-v7a`, `arm64-v8a`.  
 - Release: `isMinifyEnabled` + `isShrinkResources` with `proguard-rules.pro` (keeps UniFFI/JNA bindings, TOFU types, crypto, Tor, biometric).  
 - Review dependency pins in `gradle/libs.versions.toml`.  

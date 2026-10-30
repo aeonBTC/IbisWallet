@@ -8,7 +8,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Get APK from GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Languages:** English · [Español](localized-readme/README.es.md) · [Русский](localized-readme/README.ru.md) · [Português (Brasil)](localized-readme/README.pt-BR.md) · [Français](localized-readme/README.fr.md) · [Deutsch](localized-readme/README.de.md)
+**Languages:** English · [Español](localized-readme/README.es.md) · [Русский](localized-readme/README.ru.md) · [Português (Brasil)](localized-readme/README.pt-BR.md) · [Français](localized-readme/README.fr.md) · [Deutsch](localized-readme/README.de.md) · [日本語](localized-readme/README.ja.md) · [简体中文](localized-readme/README.zh-CN.md)
 
 ## Key Features
 
@@ -21,6 +21,9 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Import Private Key** - Sweep or import private keys (WIF format)
 - **Silent Payments** - Full BIP-352 support: send and receive, with Frigate default server
 - **Hardware Wallet Signing** - Use animated QR codes or .psbt files for air-gapped key signing
+- **NFC PSBT Signing** - Send PSBTs to a hardware wallet via NFC tap and receive the signature back the same way
+- **Offline Signer** - Run Ibis on an offline phone as a cold-storage signer for watch-only PSBTs.
+- **Dust Protection** - Flags suspected dust and keeps it out of automatic coin selection
 - **Coin Control** - Select specific UTXOs, freeze/unfreeze, send from individual outputs
 - **Require Coin Control** - Option to force UTXO selection before on-chain sends
 - **RBF & CPFP** - Bump fees on unconfirmed transactions, including multisig-safe PSBT fee bump flows
@@ -37,7 +40,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 ### Layer 2 — Native Lightning, Ark, Spark, and Liquid
 - **Modular Integration** - Choose which Layer 2 to enable for each wallet
 - **Lightning** - Connect a remote node over LND (LND REST), CLN (clnrest), or NWC (NIP-47)
-- **Ark** - Ark L2 with VTXO management, Lightning send and receive, payjoin boarding, and unilateral exits (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Ark** - Ark L2 with VTXO management, Lightning send and receive, single-transaction boarding, and unilateral exits (Built on [Bark](https://github.com/ark-bitcoin/bark))
 - **Spark** - Spark L2 with Lightning and on-chain send and receive, and unilateral exits (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Full Liquid wallet with confidential transactions and USDt support (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Watch-only Liquid Wallets** - Import Liquid watch-only wallets using SLIP77 descriptors
@@ -68,7 +71,7 @@ Designed for experienced users - no hand-holding, no training wheels.
 - **Bitcoin URI Handling** - Register as a handler for `bitcoin:` links
 
 ### Localization
-- **Languages** - English, Russian, Spanish, Portuguese (Brazil), German, and French
+- **Languages** - English, Spanish, Russian, Portuguese (Brazil), French, German, Japanese, and Simplified Chinese
 - **Typeface** - Multiple typeface settings
 
 ### Backup & Restore
@@ -110,7 +113,7 @@ Most recent audit: [August 15th, 2026](https://github.com/aeonBTC/IbisWallet/rel
 
 ## Donations
 
-As I originally made this wallet for myself, I do not expect donations. However, tokens aren't cheap. So if you wish to show thanks, please do. 
+As I originally made this wallet for myself, I do not expect donations. However, tokens aren't cheap. So if you wish to show thanks, please do.
 
 <img width="217" height="200" alt="image" src="https://github.com/user-attachments/assets/ea7993d0-ce33-4578-b534-5ea86cd74038" />
 

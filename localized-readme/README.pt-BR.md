@@ -8,7 +8,7 @@ Feita para usuários experientes — sem tutoriais nem rodinhas.
 
 [<img src="https://user-images.githubusercontent.com/663460/26973090-f8fdc986-4d14-11e7-995a-e7c5e79ed925.png" alt="Obter APK no GitHub" height="80">](https://github.com/aeonBTC/ibiswallet/releases)
 
-**Idiomas:** [English](../README.md) · [Español](README.es.md) · [Русский](README.ru.md) · Português (Brasil) · [Français](README.fr.md) · [Deutsch](README.de.md)
+**Idiomas:** [English](../README.md) · [Español](README.es.md) · [Русский](README.ru.md) · Português (Brasil) · [Français](README.fr.md) · [Deutsch](README.de.md) · [日本語](README.ja.md) · [简体中文](README.zh-CN.md)
 
 ## Principais recursos
 
@@ -21,6 +21,9 @@ Feita para usuários experientes — sem tutoriais nem rodinhas.
 - **Import Private Key** - Varrer ou importar chaves privadas (formato WIF)
 - **Silent Payments** - Suporte total BIP-352: envio e recebimento, com servidor Frigate padrão
 - **Hardware Wallet Signing** - Usar QR codes animados ou arquivos .psbt para assinatura air-gapped
+- **NFC PSBT Signing** - Envie PSBTs para uma carteira física com um toque NFC e receba a assinatura da mesma forma
+- **Offline Signer** - Use o Ibis em um telefone sem internet como assinante a frio para PSBT de observação.
+- **Dust Protection** - Sinaliza dust suspeito e o exclui da seleção automática
 - **Coin Control** - Selecionar UTXOs específicos, congelar/descongelar, enviar a partir de saídas individuais
 - **Require Coin Control** - Opção para forçar a seleção de UTXOs antes de envios on-chain
 - **RBF & CPFP** - Aumentar taxas em transações não confirmadas, inclusive fluxos PSBT seguros para multisig
@@ -37,7 +40,7 @@ Feita para usuários experientes — sem tutoriais nem rodinhas.
 ### Layer 2 — Lightning nativo, Ark, Spark e Liquid
 - **Modular Integration** - Escolher qual Layer 2 ativar em cada carteira
 - **Lightning** - Conectar um nó remoto via LND (LND REST), CLN (clnrest) ou NWC (NIP-47)
-- **Ark** - Ark L2 com gerenciamento de VTXO, envio e recebimento Lightning, boarding payjoin e saídas unilaterais (Built on [Bark](https://github.com/ark-bitcoin/bark))
+- **Ark** - Ark L2 com gerenciamento de VTXO, envio e recebimento Lightning, boarding em transação única e saídas unilaterais (Built on [Bark](https://github.com/ark-bitcoin/bark))
 - **Spark** - Spark L2 com envio e recebimento Lightning e on-chain, e saídas unilaterais (Built on [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Carteira Liquid completa com transações confidenciais e suporte a USDt (Built on [LWK](https://github.com/Blockstream/lwk))
 - **Watch-only Liquid Wallets** - Importar carteiras Liquid somente leitura com descritores SLIP77
@@ -68,7 +71,7 @@ Feita para usuários experientes — sem tutoriais nem rodinhas.
 - **Bitcoin URI Handling** - Registrar-se como manipulador de links `bitcoin:`
 
 ### Localização
-- **Languages** - Inglês, russo, espanhol, português (Brasil), francês e alemão
+- **Languages** - Inglês, espanhol, russo, português (Brasil), francês, alemão, japonês e chinês simplificado
 - **Typeface** - Várias tipografias
 
 ### Backup e restauração
@@ -100,6 +103,8 @@ O Ibis é um software em beta feito para usuários experientes de Bitcoin. Backu
 
 Problemas de menor gravidade, vulnerabilidades teóricas sem caminho de exploit prático, ou achados que não levem à perda de fundos serão reconhecidos, mas em geral ficam fora do escopo de recompensas monetárias.
 
+Premiações do bug bounty: [15 de agosto de 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+
 ## Aviso
 
 O Ibis é codificado e auditado pelos modelos de IA de fronteira mais atuais.
@@ -110,11 +115,12 @@ Auditoria mais recente: [15 de agosto de 2026](https://github.com/aeonBTC/IbisWa
 
 Como originalmente fiz esta carteira para mim, não espero doações. No entanto, tokens não são baratos. Se quiser demonstrar gratidão, fique à vontade.
 
-<img width="173" height="170" alt="image" src="https://github.com/user-attachments/assets/ade56e74-dcd4-4543-a908-b62ed343e883" />
+<img width="217" height="200" alt="image" src="https://github.com/user-attachments/assets/ea7993d0-ce33-4578-b534-5ea86cd74038" />
 
 ```bash
 bc1qwjvn8qf27g6fesna35828u4wjpeh325rlu05a8
 ```
+
 
 ## Licença
 
