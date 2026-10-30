@@ -1,5 +1,8 @@
 package github.aeonbtc.ibiswallet.data.repository
 
+import uniffi.bark.RecoveryBucket
+import uniffi.bark.RecoveryReport
+
 /**
  * Bark only runs the seed-mailbox scan on the [Wallet.open] that **creates** the local DB.
  * A cancelled first open can leave `db.sqlite` without imported VTXOs; reopening that file
@@ -24,6 +27,144 @@ object ArkMailboxRecoveryPolicy {
 
     /** Minimum gap between automatic mailbox rescans (monotonic ms). */
     const val FORCED_RESCAN_COOLDOWN_MS = 3_600_000L
+
+    /**
+     * Bark 0.7.1 default gap limit (250) and Ibis' own key-restore ceiling (1024).
+     * A `foreign` mailbox id is most likely our own VTXO whose key sits beyond the
+     * configured run of unused indices; retrying it needs a wider gap.
+     */
+    const val MIN_RECOVERY_KEY_GAP_LIMIT = 250
+    const val MAX_RECOVERY_KEY_GAP_LIMIT = 1024
+    const val RECOVERY_KEY_GAP_MARGIN = 8
+
+    /**
+     * Wider gap for retrying `foreign` ids. Covers every index this install has
+     * revealed (plus a margin) without making the default open scan wider. With
+     * no recorded history (a fresh restore) use the cap, since the ids may have
+     * been revealed by another device.
+     */
+    fun recoveryKeyGapLimit(recordedMaxRevealedIndex: Int): UInt {
+        if (recordedMaxRevealedIndex < 0) return MAX_RECOVERY_KEY_GAP_LIMIT.toUInt()
+        val target = recordedMaxRevealedIndex + RECOVERY_KEY_GAP_MARGIN
+        return target
+            .coerceIn(MIN_RECOVERY_KEY_GAP_LIMIT, MAX_RECOVERY_KEY_GAP_LIMIT)
+            .toUInt()
+    }
+
+    /**
+     * Merge a `Wallet.recoverVtxos` retry into the original open-time report.
+     *
+     * Bark returns a fresh report covering only the retried ids, so replacing the
+     * full report would lose the original skipped/exited/foreign buckets and
+     * could make an incomplete scan look complete. Retried ids are removed from
+     * every original bucket and re-bucketed from the retry result.
+     */
+    fun mergeRecoveryReports(
+        original: RecoveryReport,
+        retry: RecoveryReport,
+        retriedIds: Collection<String>,
+    ): RecoveryReport {
+        val retried =
+            retriedIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        if (retried.isEmpty()) return original
+
+        fun mergeBucket(
+            originalBucket: RecoveryBucket,
+            retryBucket: RecoveryBucket,
+        ): RecoveryBucket {
+            val kept =
+                originalBucket.vtxoIds
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() && it !in retried }
+            val added =
+                retryBucket.vtxoIds
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+            val ids = (kept + added).distinct()
+            // Per-id amounts are not exposed; totalSats is best-effort and unused
+            // by the UI (which reports bucket counts).
+            val total =
+                when {
+                    kept.isEmpty() -> retryBucket.totalSats
+                    added.isEmpty() -> originalBucket.totalSats
+                    else -> originalBucket.totalSats + retryBucket.totalSats
+                }
+            return RecoveryBucket(vtxoIds = ids, totalSats = total)
+        }
+
+        val recovered = mergeBucket(original.recovered, retry.recovered)
+        val skipped = mergeBucket(original.skipped, retry.skipped)
+        val foreign = mergeBucket(original.foreign, retry.foreign)
+        val failed = mergeBucket(original.failed, retry.failed)
+        val exited = mergeBucket(original.exited, retry.exited)
+        return RecoveryReport(
+            recovered = recovered,
+            skipped = skipped,
+            foreign = foreign,
+            failed = failed,
+            exited = exited,
+            isComplete = failed.vtxoIds.isEmpty() && foreign.vtxoIds.isEmpty(),
+        )
+    }
+
+    /**
+     * A non-destructive sidecar scan is safe to run whenever a reusable session
+     * DB has no completed-scan marker and cached funds say something may be
+     * hidden. Without cached funds the normal open already wipes and rescans an
+     * unmarked skeleton, so an extra automatic scan would only add latency.
+     */
+    fun shouldSidecarRescanUnmarkedDb(
+        hasReusableDb: Boolean,
+        hasMarker: Boolean,
+        cachedHasFunds: Boolean,
+        hasBlockingActivity: Boolean,
+        alreadyAttempted: Boolean,
+    ): Boolean =
+        hasReusableDb &&
+            !hasMarker &&
+            cachedHasFunds &&
+            !hasBlockingActivity &&
+            !alreadyAttempted
+
+    /**
+     * The sidecar may write the scanned marker only when the fresh mailbox scan
+     * completed and every recovered VTXO is visible in the live session. A
+     * failed scan, an import failure, or recovered-but-not-applied state must
+     * never mark the DB scanned.
+     */
+    fun shouldMarkSidecarScanned(
+        reportPresent: Boolean,
+        isComplete: Boolean,
+        scanFailed: Boolean,
+        importFailed: Boolean,
+        recoveredCount: Int,
+        liveSpendableSats: Long,
+        liveVtxoCount: Int,
+        livePendingSats: Long = 0L,
+        livePendingCount: Int = 0,
+        liveClaimableCount: Int = 0,
+    ): Boolean {
+        if (scanFailed || importFailed) return false
+        if (recoveredCount > 0 &&
+            recoveredButNotApplied(
+                recoveredCount = recoveredCount,
+                liveSpendableSats = liveSpendableSats,
+                liveVtxoCount = liveVtxoCount,
+                livePendingSats = livePendingSats,
+                livePendingCount = livePendingCount,
+                liveClaimableCount = liveClaimableCount,
+            )
+        ) {
+            return false
+        }
+        return shouldMarkMailboxScanned(
+            reportPresent = reportPresent,
+            recoveredCount = recoveredCount,
+            liveSpendableSats = liveSpendableSats,
+            liveVtxoCount = liveVtxoCount,
+            isComplete = isComplete,
+        )
+    }
 
     fun canSkipMailboxRecovery(
         hasReusableDb: Boolean,
@@ -86,6 +227,18 @@ object ArkMailboxRecoveryPolicy {
         manifestBound: Boolean,
         wasEncrypted: Boolean,
     ): Boolean = !manifestBound || !wasEncrypted
+
+    /**
+     * Installed import must never skip recovery unless it was actually marked
+     * scanned (encrypted + bound + funded). This closes the gap where an old
+     * encrypted-but-unfunded backup left the marker unset yet a funded paint
+     * cache could still suppress the next mailbox scan.
+     */
+    fun shouldForceImportMailboxScanAfterInstall(
+        manifestBound: Boolean,
+        wasEncrypted: Boolean,
+        secureScanMark: Boolean,
+    ): Boolean = shouldForceImportMailboxScan(manifestBound, wasEncrypted) || !secureScanMark
 
     fun shouldMarkImportedMailboxScannedSecure(
         manifestBound: Boolean,

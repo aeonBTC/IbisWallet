@@ -282,11 +282,25 @@ class NwcClient : LightningNodeBackend {
                     null
                 }
 
+            val localAmountSatsForFee = decodeBolt11Locally(requestStr).amountSats
+            val effectiveAmountMsats =
+                localAmountSatsForFee?.let { it * 1000L } ?: amountMsats
+            val maxFeeMsats =
+                if (maxFeePercent != null && maxFeePercent > 0.0 && effectiveAmountMsats != null) {
+                    (effectiveAmountMsats * maxFeePercent / 100.0).toLong().coerceAtLeast(1L)
+                } else {
+                    null
+                }
+
             fun buildParams(includeAmountMsats: Long?): JSONObject =
                 JSONObject().apply {
                     put("invoice", requestStr)
                     if (includeAmountMsats != null && includeAmountMsats > 0) {
                         put("amount", includeAmountMsats)
+                    }
+                    // NIP-47 services that support it must not exceed this fee.
+                    if (maxFeeMsats != null) {
+                        put("max_fee", maxFeeMsats)
                     }
                 }
 

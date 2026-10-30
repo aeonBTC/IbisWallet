@@ -4,6 +4,7 @@ import android.util.Log
 import github.aeonbtc.ibiswallet.BuildConfig
 import github.aeonbtc.ibiswallet.data.local.ElectrumCache
 import github.aeonbtc.ibiswallet.tor.CachingElectrumProxy.Companion.MAX_ELECTRUM_LINE_CHARS
+import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.TofuTrustManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -37,6 +38,7 @@ import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.security.cert.X509Certificate
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import javax.net.ssl.SSLContext
@@ -101,6 +103,41 @@ data class SilentPaymentHistoryItem(
  * This gives 3 upstream connections while preserving BDK's batched/pipelined
  * request pattern that is critical for sync performance.
  */
+internal class BoundedLineState {
+    val chunk = CharArray(8192)
+    var position = 0
+    var length = 0
+}
+
+/**
+ * Reads one newline-delimited line without discarding the unread tail of the
+ * last chunk. Electrum pipelines many JSON-RPC responses per socket read, so a
+ * chunk can contain several complete lines.
+ */
+internal fun readBoundedLine(
+    reader: BufferedReader,
+    state: BoundedLineState,
+    maxChars: Int,
+): String? {
+    val sb = StringBuilder()
+    while (true) {
+        if (state.position >= state.length) {
+            val read = reader.read(state.chunk, 0, state.chunk.size)
+            if (read == -1) return if (sb.isEmpty()) null else sb.toString()
+            state.position = 0
+            state.length = read
+            continue
+        }
+        val ch = state.chunk[state.position++]
+        if (ch == '\n') return sb.toString()
+        if (ch == '\r') continue
+        sb.append(ch)
+        if (sb.length > maxChars) {
+            throw IOException("Electrum line exceeds $maxChars chars")
+        }
+    }
+}
+
 class CachingElectrumProxy(
     private val targetHost: String,
     private val targetPort: Int,
@@ -139,7 +176,7 @@ class CachingElectrumProxy(
                 val height = item.optInt("height", 0)
                 digest.update("$txHash:$height:".toByteArray(Charsets.US_ASCII))
             }
-            return digest.digest().joinToString("") { "%02x".format(it) }
+            return BitcoinUtils.bytesToHex(digest.digest())
         }
         private const val BTC_PER_KB_TO_SAT_PER_VB = 100_000.0
         private const val PIPELINE_CHUNK_SIZE = 100
@@ -181,7 +218,16 @@ class CachingElectrumProxy(
     private var clientSocket: Socket? = null
     private var bridgeTargetSocket: Socket? = null
     private var preConnectedSocket: Socket? = null
-    @Volatile private var bridgeSoTimeoutOverride: Int? = null
+    @Volatile     private var bridgeSoTimeoutOverride: Int? = null
+
+    // Reader-keyed remainder buffer: a socket read can contain many
+    // newline-delimited JSON-RPC responses, and the tail must survive until the
+    // next call. Keyed by reader (not thread) because direct-socket calls may
+    // resume on a different IO thread between invocations.
+    private val lineReadStates =
+        java.util.Collections.synchronizedMap(
+            java.util.WeakHashMap<BufferedReader, BoundedLineState>(),
+        )
 
     // Tracks in-flight cacheable bridge requests for caching responses.
     // Populated by the BDK→Server reader, consumed by the Server→BDK reader.
@@ -213,6 +259,16 @@ class CachingElectrumProxy(
     // Push notifications received while the listener is paused for
     // subscribeAdditionalScriptHashes — dispatched after the pause ends.
     private val pausedPushNotifications = java.util.concurrent.ConcurrentLinkedQueue<JSONObject>()
+
+    // Acknowledgement state for additional script-hash subscriptions. The
+    // listener consumes the responses (it is the only reader of the socket);
+    // these fields let the writer wait until the server has actually answered
+    // instead of assuming a fire-and-forget write succeeded.
+    private val pendingAdditionalSubscriptionIds = ConcurrentHashMap<Int, String>()
+    private val pendingAdditionalSubscriptionResults = ConcurrentHashMap<String, String>()
+    @Volatile private var pendingAdditionalSubscriptionLatch: CountDownLatch? = null
+    private val ADDITIONAL_SUBSCRIBE_ACK_TIMEOUT_MS = 3_000L
+    private val NULL_STATUS_SENTINEL = "\u0000"
 
     private val _notifications = MutableSharedFlow<ElectrumNotification>(extraBufferCapacity = 64)
 
@@ -549,10 +605,16 @@ class CachingElectrumProxy(
             while (true) {
                 val line = serverReader.readLineBounded() ?: break
 
+                // Never forward a raw transaction whose hash does not match the
+                // txid BDK requested. A malicious server could otherwise supply
+                // a different prevout (legacy amounts are not signed) or poison
+                // the wallet graph.
+                val safeLine = sanitizeTransactionGetResponse(line)
+
                 // Opportunistically cache tx.get responses
                 tryCacheServerResponse(line)
 
-                val bytes = (line + "\n").toByteArray()
+                val bytes = (safeLine + "\n").toByteArray()
                 bdkWriteLock.withLock {
                     bdkOutput.write(bytes)
                     // Smart flush: only when no more server data is ready
@@ -587,6 +649,35 @@ class CachingElectrumProxy(
 
     // ==================== Cache Interception ====================
 
+    private fun sanitizeTransactionGetResponse(line: String): String {
+        if (pendingTxGetRequests.isEmpty()) return line
+        val json = runCatching { JSONObject(line) }.getOrNull() ?: return line
+        val id = json.optInt("id", -1)
+        val requestedTxid = pendingTxGetRequests[id] ?: return line
+        if (json.has("error") && !json.isNull("error")) return line
+        val hex = json.optString("result", "")
+        if (hex.isBlank()) return line
+        val actualTxid =
+            runCatching {
+                Transaction(BitcoinUtils.hexToByteArray(hex.trim())).use { parsed ->
+                    parsed.computeTxid().toString()
+                }
+            }.getOrNull()
+        if (actualTxid != null && actualTxid.equals(requestedTxid, ignoreCase = true)) {
+            return line
+        }
+        return JSONObject()
+            .put("jsonrpc", "2.0")
+            .put("id", id)
+            .put(
+                "error",
+                JSONObject()
+                    .put("code", -32603)
+                    .put("message", "Transaction data does not match the requested txid"),
+            )
+            .toString()
+    }
+
     /**
      * Try to serve a BDK request from cache.
      *
@@ -610,12 +701,9 @@ class CachingElectrumProxy(
                     val txid = params.optString(0, "")
                     if (txid.isBlank()) return null
 
+                    // getRawTx already verifies the stored hex against the txid
+                    // (and evicts mismatches), so do not hash it a second time.
                     val cachedHex = electrumCache.getRawTx(txid) ?: return null
-                    if (!rawTxHexMatchesTxid(txid, cachedHex)) {
-                        electrumCache.deleteRawTx(txid)
-                        if (BuildConfig.DEBUG) Log.w(TAG, "Cache DROP: tx $txid failed txid verification")
-                        return null
-                    }
                     if (BuildConfig.DEBUG) Log.d(TAG, "Cache HIT: tx $txid")
                     JSONObject().apply {
                         put("jsonrpc", "2.0")
@@ -701,10 +789,7 @@ class CachingElectrumProxy(
                 val hex = json.optString("result", "")
                 if (hex.isBlank() || hex.length < 20) return
 
-                if (!rawTxHexMatchesTxid(txid, hex)) {
-                    if (BuildConfig.DEBUG) Log.w(TAG, "Cache SKIP: tx $txid response failed txid verification")
-                    return
-                }
+                // putRawTx performs the poison check before inserting.
                 electrumCache.putRawTx(txid, hex)
                 if (BuildConfig.DEBUG) Log.d(TAG, "Cache STORE: tx $txid (${hex.length / 2} bytes)")
                 return
@@ -791,10 +876,29 @@ class CachingElectrumProxy(
         writer.println(req.toString())
         writer.flush()
 
-        // Read response, skipping push notifications
+        // Read response, skipping push notifications and replies to other
+        // requests. A late/timed-out response must never be parsed as this
+        // call's result (e.g. a stale history read could corrupt spent-state).
         while (true) {
             val line = reader.readLineBounded() ?: return null
             if (isServerPushNotification(line)) continue
+            val json =
+                try {
+                    JSONObject(line)
+                } catch (_: Exception) {
+                    null
+                }
+            // Servers that omit/null the id get the benefit of the doubt (the
+            // direct socket is serialized); a concrete wrong id is stale.
+            if (json != null && json.has("id") && !json.isNull("id")) {
+                val responseId = json.optInt("id", -1)
+                if (responseId != id) {
+                    if (BuildConfig.DEBUG) {
+                        Log.w(TAG, "Discarding direct response id=$responseId while waiting for $id")
+                    }
+                    continue
+                }
+            }
             return line
         }
     }
@@ -805,17 +909,11 @@ class CachingElectrumProxy(
      * so every Electrum socket read is capped at [MAX_ELECTRUM_LINE_CHARS].
      */
     private fun BufferedReader.readLineBounded(): String? {
-        val sb = StringBuilder()
-        while (true) {
-            val ch = read()
-            if (ch == -1) return if (sb.isEmpty()) null else sb.toString()
-            if (ch == '\n'.code) return sb.toString()
-            if (ch == '\r'.code) continue
-            sb.append(ch.toChar())
-            if (sb.length > MAX_ELECTRUM_LINE_CHARS) {
-                throw IOException("Electrum line exceeds $MAX_ELECTRUM_LINE_CHARS chars")
+        val state =
+            synchronized(lineReadStates) {
+                lineReadStates.getOrPut(this) { BoundedLineState() }
             }
-        }
+        return readBoundedLine(this, state, MAX_ELECTRUM_LINE_CHARS)
     }
 
     private fun isServerPushNotification(line: String): Boolean {
@@ -1171,59 +1269,81 @@ class CachingElectrumProxy(
      * here rather than dispatched as notifications. The listener continues
      * running but ignores lines while paused.
      *
-     * @return Non-empty initial statuses if known. Most callers should track
-     *         [scriptHashes] as subscribed because responses are intentionally
-     *         consumed by the listener while paused.
+     * @return Initial statuses for the hashes the server actually acknowledged.
+     *         Hashes absent from the result were NOT confirmed by the server and
+     *         must not be marked subscribed by the caller.
      */
     fun subscribeAdditionalScriptHashes(scriptHashes: List<String>): Map<String, String?> {
-        if (scriptHashes.isEmpty()) return emptyMap()
+        val unique = scriptHashes.distinct()
+        if (unique.isEmpty()) return emptyMap()
+        if (subListenerJob?.isActive != true) return emptyMap()
 
-        val writer = subWriter ?: return emptyMap()
-        val socket = subSocket ?: return emptyMap()
-        if (socket.isClosed || !socket.isConnected) return emptyMap()
+        // Serialize with start/stop and SP subscription writes: all of them share
+        // the single subscription socket and the pause flag.
+        return subLock.withLock {
+            if (subListenerJob?.isActive != true) return@withLock emptyMap()
+            val writer = subWriter ?: return@withLock emptyMap()
+            val socket = subSocket ?: return@withLock emptyMap()
+            if (socket.isClosed || !socket.isConnected) return@withLock emptyMap()
 
-        // Pause the listener — it consumes our subscription responses while this
-        // flag is set. Push notifications arriving during the pause are buffered
-        // (Electrum only notifies on change, so dropping one misses a payment).
-        subListenerPaused = true
-        try {
-            for (chunk in scriptHashes.chunked(SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE)) {
-                for (scriptHash in chunk) {
-                    val req =
-                        electrumRequest(
-                            subRequestId++,
-                            "blockchain.scripthash.subscribe",
-                            JSONArray().apply { put(scriptHash) },
-                        )
-                    writer.println(req.toString())
+            val latch = CountDownLatch(unique.size)
+            pendingAdditionalSubscriptionIds.clear()
+            pendingAdditionalSubscriptionResults.clear()
+            pendingAdditionalSubscriptionLatch = latch
+
+            // Pause the listener — it consumes our subscription responses while
+            // this flag is set. Push notifications arriving during the pause are
+            // buffered (Electrum only notifies on change, so dropping one misses
+            // a payment).
+            subListenerPaused = true
+            try {
+                for (chunk in unique.chunked(SCRIPT_HASH_SUBSCRIBE_CHUNK_SIZE)) {
+                    for (scriptHash in chunk) {
+                        val id = subRequestId++
+                        pendingAdditionalSubscriptionIds[id] = scriptHash
+                        val req =
+                            electrumRequest(
+                                id,
+                                "blockchain.scripthash.subscribe",
+                                JSONArray().apply { put(scriptHash) },
+                            )
+                        writer.println(req.toString())
+                    }
+                    writer.flush()
                 }
-                writer.flush()
-            }
 
-            // Note: responses will be read by the listener coroutine (which
-            // ignores them because subListenerPaused=true). We don't read
-            // responses here to avoid fighting the listener for socket reads.
-            // The initial status for these new addresses is unknown, but the
-            // next push notification or background sync will catch changes.
-            if (BuildConfig.DEBUG) {
-                Log.d(
-                    TAG,
-                    "${roleTag("subscription")} Sent ${scriptHashes.size} additional subscribe requests",
-                )
-            }
+                // The listener reads the responses and counts down. A dropped
+                // request leaves its latch count outstanding, so it is not
+                // reported as confirmed.
+                latch.await(ADDITIONAL_SUBSCRIBE_ACK_TIMEOUT_MS, TimeUnit.MILLISECONDS)
 
-            // The server will push notifications for future changes. Avoid
-            // allocating a huge scriptHash -> null map for large gap limits.
-            return emptyMap()
-        } catch (e: Exception) {
-            if (BuildConfig.DEBUG) Log.w(TAG, "Additional subscription failed: ${e.message}")
-            return emptyMap()
-        } finally {
-            subListenerPaused = false
-            // Dispatch push notifications buffered while the listener was paused
-            while (true) {
-                val buffered = pausedPushNotifications.poll() ?: break
-                runCatching { dispatchPushNotification(buffered) }
+                if (BuildConfig.DEBUG) {
+                    Log.d(
+                        TAG,
+                        "${roleTag("subscription")} Additional subscribe: " +
+                            "${unique.size - latch.count}/${unique.size} acknowledged",
+                    )
+                }
+
+                val confirmed = LinkedHashMap<String, String?>()
+                unique.forEach { scriptHash ->
+                    val status = pendingAdditionalSubscriptionResults[scriptHash] ?: return@forEach
+                    confirmed[scriptHash] = if (status == NULL_STATUS_SENTINEL) null else status
+                }
+                confirmed
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Additional subscription failed: ${e.message}")
+                emptyMap()
+            } finally {
+                subListenerPaused = false
+                pendingAdditionalSubscriptionLatch = null
+                pendingAdditionalSubscriptionIds.clear()
+                pendingAdditionalSubscriptionResults.clear()
+                // Dispatch push notifications buffered while the listener was paused
+                while (true) {
+                    val buffered = pausedPushNotifications.poll() ?: break
+                    runCatching { dispatchPushNotification(buffered) }
+                }
             }
         }
     }
@@ -1333,61 +1453,66 @@ class CachingElectrumProxy(
         scanPrivateKeyHex: String,
         spendPublicKeyHex: String,
         startHeight: Int,
-    ): Boolean {
-        val writer = subWriter ?: return false
-        val socket = subSocket ?: return false
-        if (socket.isClosed || !socket.isConnected) return false
-        // Fire-and-forget on purpose: the subscription socket has a single
-        // long-running reader (the notification listener). Reading a response
-        // here would race it for lines and corrupt both streams. Frigate
-        // confirms via push notifications, which the listener dispatches.
-        subListenerPaused = true
-        try {
-            val req =
-                electrumRequest(
-                    subRequestId++,
-                    "blockchain.silentpayments.subscribe",
-                    JSONArray().apply {
-                        put(scanPrivateKeyHex)
-                        put(spendPublicKeyHex)
-                        put(startHeight)
-                    },
-                )
-            writer.println(req.toString())
-            writer.flush()
-            return true
-        } catch (e: Exception) {
-            if (BuildConfig.DEBUG) Log.w(TAG, "Silent payments subscribe failed")
-            return false
-        } finally {
-            subListenerPaused = false
-            while (true) {
-                val buffered = pausedPushNotifications.poll() ?: break
-                runCatching { dispatchPushNotification(buffered) }
+    ): Boolean =
+        // Serialize with additional script-hash subscriptions: both write on the
+        // single subscription socket and toggle the same pause flag.
+        subLock.withLock {
+            val writer = subWriter ?: return@withLock false
+            val socket = subSocket ?: return@withLock false
+            if (socket.isClosed || !socket.isConnected) return@withLock false
+            // Fire-and-forget on purpose: the subscription socket has a single
+            // long-running reader (the notification listener). Reading a response
+            // here would race it for lines and corrupt both streams. Frigate
+            // confirms via push notifications, which the listener dispatches.
+            subListenerPaused = true
+            try {
+                val req =
+                    electrumRequest(
+                        subRequestId++,
+                        "blockchain.silentpayments.subscribe",
+                        JSONArray().apply {
+                            put(scanPrivateKeyHex)
+                            put(spendPublicKeyHex)
+                            put(startHeight)
+                        },
+                    )
+                writer.println(req.toString())
+                writer.flush()
+                true
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) Log.w(TAG, "Silent payments subscribe failed")
+                false
+            } finally {
+                subListenerPaused = false
+                while (true) {
+                    val buffered = pausedPushNotifications.poll() ?: break
+                    runCatching { dispatchPushNotification(buffered) }
+                }
             }
         }
-    }
 
     fun unsubscribeSilentPayments(
         scanPrivateKeyHex: String,
         spendPublicKeyHex: String,
     ) {
-        val writer = subWriter ?: return
-        val socket = subSocket ?: return
-        if (socket.isClosed || !socket.isConnected) return
-        try {
-            val req =
-                electrumRequest(
-                    subRequestId++,
-                    "blockchain.silentpayments.unsubscribe",
-                    JSONArray().apply {
-                        put(scanPrivateKeyHex)
-                        put(spendPublicKeyHex)
-                    },
-                )
-            writer.println(req.toString())
-            writer.flush()
-        } catch (_: Exception) {
+        subLock.withLock {
+            val writer = subWriter ?: return@withLock
+            val socket = subSocket ?: return@withLock
+            if (socket.isClosed || !socket.isConnected) return@withLock
+            try {
+                val req =
+                    electrumRequest(
+                        subRequestId++,
+                        "blockchain.silentpayments.unsubscribe",
+                        JSONArray().apply {
+                            put(scanPrivateKeyHex)
+                            put(spendPublicKeyHex)
+                        },
+                    )
+                writer.println(req.toString())
+                writer.flush()
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -1401,8 +1526,8 @@ class CachingElectrumProxy(
      * verifies liveness with [ping()]. Holding the lock during readLine() would
      * still deadlock stop(). Instead, coordination with
      * [subscribeAdditionalScriptHashes] uses [subListenerPaused]: the writer
-     * sets this flag to pause the listener, sends requests, reads responses
-     * itself, then unpauses.
+     * sets this flag, sends requests, and waits for this listener to consume
+     * and acknowledge each response before unpausing.
      */
     private fun startNotificationListener(reader: BufferedReader) {
         subListenerJob?.cancel()
@@ -1460,6 +1585,21 @@ class CachingElectrumProxy(
                                 val json = JSONObject(line)
                                 if (isServerPushNotification(line)) {
                                     pausedPushNotifications.add(json)
+                                } else {
+                                    val id = json.optInt("id", -1)
+                                    val scriptHash = pendingAdditionalSubscriptionIds.remove(id)
+                                    if (scriptHash != null) {
+                                        if (!json.has("error") || json.isNull("error")) {
+                                            val status =
+                                                if (json.isNull("result")) {
+                                                    NULL_STATUS_SENTINEL
+                                                } else {
+                                                    json.optString("result")
+                                                }
+                                            pendingAdditionalSubscriptionResults[scriptHash] = status
+                                        }
+                                        pendingAdditionalSubscriptionLatch?.countDown()
+                                    }
                                 }
                             }
                             continue
@@ -1517,6 +1657,11 @@ class CachingElectrumProxy(
                     }
                 }
                 if (scriptHash.isNotEmpty()) {
+                    if (status.isNullOrBlank()) {
+                        validScriptHashStatuses.remove(scriptHash)
+                    } else {
+                        validScriptHashStatuses[scriptHash] = status
+                    }
                     _notifications.tryEmit(ElectrumNotification.ScriptHashChanged(scriptHash, status))
                     if (BuildConfig.DEBUG) Log.d(TAG, "Push: script hash changed $scriptHash")
                 }
@@ -1717,10 +1862,7 @@ class CachingElectrumProxy(
             if (json.has("error") && !json.isNull("error")) return
             val hex = json.optString("result", "")
             if (hex.isBlank() || hex.length < 20) return
-            if (!rawTxHexMatchesTxid(txid, hex)) {
-                if (BuildConfig.DEBUG) Log.w(TAG, "Cache SKIP: tx $txid pipeline response failed txid verification")
-                return
-            }
+            // putRawTx validates before inserting; avoid hashing the hex twice.
             txCache.putRawTx(txid, hex)
         } catch (_: Exception) {
         }
@@ -1741,7 +1883,7 @@ class CachingElectrumProxy(
                     liquidTx.close()
                 }
             } else {
-                val txBytes = txHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                val txBytes = BitcoinUtils.hexToByteArray(txHex)
                 Transaction(txBytes).computeTxid().toString().equals(expectedTxid, ignoreCase = true)
             }
         } catch (_: Exception) {
@@ -2160,7 +2302,7 @@ class CachingElectrumProxy(
         if (hex.length < 160) return null
         val bytes =
             runCatching {
-                hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+                BitcoinUtils.hexToByteArray(hex)
             }.getOrNull() ?: return null
         if (bytes.size < 80) return null
         var ts = 0L

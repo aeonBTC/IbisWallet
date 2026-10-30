@@ -79,6 +79,7 @@ import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.Blech32Util
 import github.aeonbtc.ibiswallet.util.ElectrumSeedUtil
 import github.aeonbtc.ibiswallet.util.ElementsPsetSigner
+import github.aeonbtc.ibiswallet.util.LabelUtils
 import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.TofuTrustManager
 import github.aeonbtc.ibiswallet.util.bolt11InvoiceExpiresAtMs
@@ -337,6 +338,8 @@ class LiquidRepository(
     private var boltzSessionKeepAliveUntilMs = 0L
     private var boltzSessionKeepAliveExpiryJob: Job? = null
     private var currentWalletId: String? = null
+    private data class UnsignedPsetSession(val walletId: String, val generation: Long)
+    private var unsignedPsetSession: UnsignedPsetSession? = null
     private var notificationCollectorJob: Job? = null
     private var notificationDebounceJob: Job? = null
     private var notificationSyncJob: Job? = null
@@ -345,6 +348,11 @@ class LiquidRepository(
     private val subscribedScriptHashes = mutableSetOf<String>()
     private val scriptHashStatusCache = mutableMapOf<String, String?>()
     private val lightningResolutionCache = mutableMapOf<String, CachedLightningResolution>()
+    // Addresses handed out for internal use (e.g. a swap/Lightning refund) before
+    // the pending session that reserves them is persisted. Keeps concurrent
+    // address requests from reusing the same index/address.
+    private val transientReservedLiquidExternalAddresses =
+        java.util.Collections.synchronizedSet(mutableSetOf<String>())
 
     // Cached address strings keyed by derivation index, per keychain. LWK derives addresses
     // through a JNI call (external) or manual blech32/SLIP-77 derivation (internal) that adds
@@ -654,6 +662,29 @@ class LiquidRepository(
         }
     }
 
+    private fun deriveLiquidDescriptorFromMnemonic(
+        walletId: String,
+        mnemonic: String,
+    ): String? =
+        try {
+            val passphrase = secureStorage.getPassphrase(walletId)
+            if (passphrase.isNullOrEmpty()) {
+                val signer = Signer(Mnemonic(mnemonic), Network.mainnet())
+                try {
+                    signer.wpkhSlip77Descriptor().toString()
+                } finally {
+                    runCatching { signer.destroy() }
+                }
+            } else {
+                ElectrumSeedUtil.buildLiquidCtDescriptor(
+                    ElectrumSeedUtil.bip39MnemonicToSeed(mnemonic, passphrase),
+                )
+            }
+        } catch (e: Exception) {
+            SecureLog.w(TAG, "Could not derive Liquid descriptor for verification: ${e.message}")
+            null
+        }
+
     private fun loadWalletLocked(
         walletId: String,
         mnemonic: String? = null,
@@ -666,15 +697,22 @@ class LiquidRepository(
 
             var descriptorStr = secureStorage.getLiquidDescriptor(walletId)
 
-            val passphrase = secureStorage.getPassphrase(walletId)
-            if (!passphrase.isNullOrEmpty() && descriptorStr != null) {
+            // A stored descriptor is only authoritative for a watch-only
+            // wallet. For a seed/private-key wallet it must match the seed;
+            // otherwise a descriptor restored from a crafted backup could
+            // redirect L-BTC receive addresses. Re-derive and repair.
+            val liquidWalletIsWatchOnly =
+                secureStorage.getWalletMetadata(walletId)?.isWatchOnly == true
+            if (!liquidWalletIsWatchOnly && descriptorStr != null) {
                 val resolvedMnemonic = mnemonic ?: secureStorage.getMnemonic(walletId)
                 if (resolvedMnemonic != null) {
-                    val seed = ElectrumSeedUtil.bip39MnemonicToSeed(resolvedMnemonic, passphrase)
-                    val correctDescriptor = ElectrumSeedUtil.buildLiquidCtDescriptor(seed)
-                    val storedCore = descriptorStr.substringBefore("#")
-                    if (storedCore != correctDescriptor) {
-                        SecureLog.i(TAG, "Liquid descriptor mismatch (passphrase) - re-deriving")
+                    val correctDescriptor =
+                        deriveLiquidDescriptorFromMnemonic(walletId, resolvedMnemonic)
+                    if (correctDescriptor != null &&
+                        descriptorStr.substringBefore("#") !=
+                        correctDescriptor.substringBefore("#")
+                    ) {
+                        SecureLog.i(TAG, "Liquid descriptor mismatch - re-deriving from seed")
                         deleteWalletDatabaseFiles(walletId)
                         secureStorage.removeLiquidDescriptor(walletId)
                         descriptorStr = null
@@ -739,6 +777,9 @@ class LiquidRepository(
         scriptHashStatusCache.clear()
         liquidExternalAddressCache.clear()
         liquidInternalAddressCache.clear()
+        transientReservedLiquidExternalAddresses.clear()
+        unsignedPsetSession = null
+        lightningResolutionCache.clear()
         liquidUsedIndexSummaryCache = LiquidUsedIndexSummary()
         _loadedWalletId.value = null
         _liquidState.value = LiquidWalletState()
@@ -756,6 +797,9 @@ class LiquidRepository(
         scriptHashStatusCache.clear()
         liquidExternalAddressCache.clear()
         liquidInternalAddressCache.clear()
+        transientReservedLiquidExternalAddresses.clear()
+        unsignedPsetSession = null
+        lightningResolutionCache.clear()
         liquidUsedIndexSummaryCache = LiquidUsedIndexSummary()
         withBoltzOperationLock(operation = "unloadWallet") {
             resetBoltzSessionStateLocked()
@@ -1026,6 +1070,7 @@ class LiquidRepository(
             claimAddress = pendingReceive?.claimAddress.orEmpty(),
             amountSats = session.amountSats,
             expiresAtMs = expiresAtMs,
+            label = pendingReceive?.label?.takeIf { it.isNotBlank() },
         )
     }
 
@@ -2219,6 +2264,10 @@ class LiquidRepository(
             }
         }
 
+        synchronized(transientReservedLiquidExternalAddresses) {
+            reservedAddresses.addAll(transientReservedLiquidExternalAddresses)
+        }
+
         return reservedAddresses
     }
 
@@ -2954,6 +3003,30 @@ class LiquidRepository(
         }
     }
 
+    /**
+     * Derive a fresh external address for internal use (swap/Lightning refund)
+     * without exposing it as the current receive address. The address is
+     * immediately reserved so concurrent callers cannot reuse it before the
+     * pending session is persisted.
+     */
+    fun generateInternalLiquidAddress(): String? {
+        val wollet = lwkWollet ?: return null
+        return try {
+            val addressResult = resolveFreshLiquidExternalAddress(
+                wollet = wollet,
+                walletId = currentWalletId,
+            )
+            transientReservedLiquidExternalAddresses.add(addressResult.address)
+            addressResult.address
+        } catch (e: LwkException) {
+            logError("LWK error generating internal Liquid address", e)
+            null
+        } catch (e: Exception) {
+            logError("Failed to generate internal Liquid address", e)
+            null
+        }
+    }
+
     /** Explicit "New" requests should advance past the currently shown receive address. */
     fun generateFreshAddress(): String? {
         val wollet = lwkWollet ?: return null
@@ -3580,9 +3653,10 @@ class LiquidRepository(
 
             persistLiquidSendLabel(
                 txid = txidStr,
-                label = label.takeIf { saveRecipientLabel },
+                label = label,
                 recipientAddress = recipients.singleOrNull()?.address,
                 feeDetails = feeDetails,
+                saveRecipientLabel = saveRecipientLabel,
             )
 
             // Keep the send successful even if the post-broadcast sync fails.
@@ -3762,9 +3836,10 @@ class LiquidRepository(
 
             persistLiquidSendLabel(
                 txid = txidStr,
-                label = label.takeIf { saveRecipientLabel },
+                label = label,
                 recipientAddress = address,
                 feeDetails = feeDetails,
+                saveRecipientLabel = saveRecipientLabel,
             )
 
             runCatching { sync() }
@@ -3882,9 +3957,10 @@ class LiquidRepository(
 
             persistLiquidSendLabel(
                 txid = txidStr,
-                label = label.takeIf { saveRecipientLabel },
+                label = label,
                 recipientAddress = address,
                 feeDetails = feeDetails,
+                saveRecipientLabel = saveRecipientLabel,
             )
 
             runCatching { sync() }
@@ -3927,12 +4003,16 @@ class LiquidRepository(
             feeRateSatPerVb = feeRateSatPerVb,
             selectedUtxos = selectedUtxos,
         )
-        buildLiquidPsetDetails(
-            pset = pset,
-            recipients = recipients,
-            selectedUtxos = selectedUtxos,
-            assetId = assetId,
-        )
+        val walletId = currentWalletId ?: throw Exception("Wallet not loaded")
+        val details =
+            buildLiquidPsetDetails(
+                pset = pset,
+                recipients = recipients,
+                selectedUtxos = selectedUtxos,
+                assetId = assetId,
+            )
+        unsignedPsetSession = UnsignedPsetSession(walletId, walletSwitchGeneration)
+        details
     }
 
     // ════════════════════════════════════════════
@@ -4862,6 +4942,7 @@ class LiquidRepository(
                 claimAddress = claimAddress,
                 amountSats = amountSats,
                 expiresAtMs = expiresAtMs,
+                label = trimmedLocalLabel.takeIf { it.isNotEmpty() },
             )
         } catch (e: Exception) {
             logBoltzTrace(
@@ -5228,7 +5309,11 @@ class LiquidRepository(
                 ?: resolveBoltzLightningPaymentInput(executionPlan.paymentInput, executionPlan.requestedAmountSats)
         try {
             val lwkPaymentInput = resolvedPayment.fetchedInvoice ?: executionPlan.resolvedPaymentInput
-            val refundAddress = getNewAddress() ?: throw Exception("No Liquid refund address available")
+            // Keep the refund address off the receive screen and reserve it
+            // before the pending session is persisted.
+            val refundAddress =
+                generateInternalLiquidAddress()
+                    ?: throw Exception("No Liquid refund address available")
             val payment = createLightningPayment(lwkPaymentInput)
             logBoltzTrace(
                 "prepare_lwk",
@@ -5371,6 +5456,12 @@ class LiquidRepository(
         } catch (e: LwkException.MagicRoutingHint) {
             val direct = parseMagicRoutingHintPayment(e)
             val invoiceAmountSats = executionPlan.paymentAmountSats
+            if (direct.amountSats != invoiceAmountSats) {
+                throw Exception(
+                    "Boltz magic routing hint amount does not match the invoice amount",
+                    e,
+                )
+            }
             logBoltzTrace(
                 "direct_liquid_fallback",
                 trace.copy(source = "magic_routing_hint"),
@@ -5483,7 +5574,7 @@ class LiquidRepository(
                 availableSats = fundingPreview.availableSats,
                 remainingSats = fundingPreview.remainingSats,
                 label = label?.trim()?.takeIf { it.isNotBlank() },
-                note = "This invoice can be completed without a swap. Ibis will pay it by sending L-BTC directly to the recipient.",
+                note = "Direct Liquid payment to ${executionPlan.address}. Verify this address before sending; it was supplied by the Lightning provider.",
                 selectedUtxoCount = fundingPreview.selectedUtxoCount,
                 txVBytes = fundingPreview.txVBytes,
                 executionPlan = executionPlan,
@@ -6478,7 +6569,7 @@ class LiquidRepository(
                 SwapDirection.BTC_TO_LBTC -> {
                     val claimAddress =
                         liquidReceiveAddressOverride?.takeIf { it.isNotBlank() }
-                            ?: getNewAddress()
+                            ?: generateInternalLiquidAddress()
                             ?: throw Exception("No Liquid claim address available")
                     Triple(
                         session.btcToLbtc(
@@ -6492,7 +6583,9 @@ class LiquidRepository(
                     )
                 }
                 SwapDirection.LBTC_TO_BTC -> {
-                    val liquidRefundAddress = getNewAddress() ?: throw Exception("No Liquid refund address available")
+                    val liquidRefundAddress =
+                        generateInternalLiquidAddress()
+                            ?: throw Exception("No Liquid refund address available")
                     Triple(
                         session.lbtcToBtc(
                             amountSats.toULong(),
@@ -7212,13 +7305,17 @@ class LiquidRepository(
             )
         }
         val recipients = listOf(Recipient(address, amountSats.coerceAtLeast(0L).toULong()))
-        buildLiquidPsetDetails(
-            pset = pset,
-            recipients = recipients,
-            selectedUtxos = selectedUtxos,
-            assetId = null,
-            isMaxSend = isMaxSend,
-        )
+        val walletId = currentWalletId ?: throw Exception("Wallet not loaded")
+        val details =
+            buildLiquidPsetDetails(
+                pset = pset,
+                recipients = recipients,
+                selectedUtxos = selectedUtxos,
+                assetId = null,
+                isMaxSend = isMaxSend,
+            )
+        unsignedPsetSession = UnsignedPsetSession(walletId, walletSwitchGeneration)
+        details
     }
 
     /**
@@ -7230,6 +7327,14 @@ class LiquidRepository(
         unsignedPsetBase64: String,
     ): LiquidPsetImportResult = withContext(Dispatchers.IO) {
         val wollet = lwkWollet ?: throw Exception("Wallet not loaded")
+        val session =
+            unsignedPsetSession
+                ?: throw Exception("No unsigned PSET session; create the PSET again")
+        if (session.walletId != currentWalletId ||
+            session.generation != walletSwitchGeneration
+        ) {
+            throw Exception("PSET was created for a different wallet session; create it again")
+        }
         val trimmed = signedPsetBase64.trim()
         require(trimmed.isNotEmpty()) { "Empty PSET" }
 
@@ -7319,6 +7424,9 @@ class LiquidRepository(
         val txidStr = txid.toString()
 
         if (BuildConfig.DEBUG) Log.d(TAG, "Signed PSET broadcast: $txidStr")
+        // One unsigned session may be broadcast once; a replayed signed PSET
+        // must be re-created and reviewed for the current wallet.
+        unsignedPsetSession = null
 
         persistLiquidSendLabel(
             txid = txidStr,
@@ -7404,6 +7512,7 @@ class LiquidRepository(
         label: String?,
         recipientAddress: String? = null,
         feeDetails: SecureStorage.LiquidTxFeeDetails? = null,
+        saveRecipientLabel: Boolean = true,
     ) {
         val walletId = currentWalletId ?: return
         recipientAddress
@@ -7427,21 +7536,20 @@ class LiquidRepository(
                 vsize = feeDetails?.vsize ?: it.vsize,
             )
         }
-        val trimmedLabel = label?.trim().orEmpty()
-        if (trimmedLabel.isBlank()) {
-            return
-        }
-        secureStorage.saveLiquidTransactionLabel(walletId, txid, trimmedLabel)
+        val normalizedLabel = LabelUtils.normalize(label) ?: return
+        secureStorage.saveLiquidTransactionLabel(walletId, txid, normalizedLabel)
         electrumCache.updateTransactionSearchLabel(
             walletId = walletId,
             layer = TransactionSearchLayer.LIQUID,
             txid = txid,
-            label = trimmedLabel,
+            label = normalizedLabel,
         )
-        recipientAddress
-            ?.takeIf { it.isNotBlank() }
-            ?.let { secureStorage.saveLiquidAddressLabel(walletId, it, trimmedLabel) }
-        updateTransactionInPlace(txid) { it.copy(memo = trimmedLabel) }
+        if (saveRecipientLabel) {
+            recipientAddress
+                ?.takeIf { it.isNotBlank() }
+                ?.let { secureStorage.saveLiquidAddressLabel(walletId, it, normalizedLabel) }
+        }
+        updateTransactionInPlace(txid) { it.copy(memo = normalizedLabel) }
     }
 
     private fun extractLiquidTxFeeDetails(

@@ -1,6 +1,7 @@
 package github.aeonbtc.ibiswallet.data.repository
 
 import github.aeonbtc.ibiswallet.data.model.ArkEmergencyExitFeeQuote
+import github.aeonbtc.ibiswallet.data.model.ArkVtxo
 import github.aeonbtc.ibiswallet.data.repository.ArkUnilateralExitPolicy.planClaimPrepare
 
 
@@ -13,6 +14,7 @@ object ArkUnilateralExitPolicy {
     const val DEFAULT_EXIT_FEE_RATE_SAT_VB: Long = 2L
     const val PROGRESS_EXIT_FEE_RATE_SAT_VB: Long = 5L
     const val CPFP_CHANGE_DUST_SATS: Long = 330L
+    const val EXIT_LOCK_HOLDER_ID: String = "ibis-unilateral-exit"
     /** Confirmations for the final exit claim transaction to count the exit done. */
     const val EXIT_CLAIM_CONFIRMATIONS: Int = 1
     /** Hard ceiling so a typo (e.g. 500 vs 5) cannot burn the claim into fees. */
@@ -64,11 +66,54 @@ object ArkUnilateralExitPolicy {
     }
 
     /**
+     * True when a VTXO is at or past the chain tip: the server gained its sweep
+     * path. Per Bark docs the VTXO remains spendable/exitable until swept or
+     * forfeited — refresh no longer applies, unilateral exit is the way out.
+     */
+    fun isExpired(expiryHeight: Int, chainTipHeight: Int?): Boolean {
+        if (chainTipHeight == null) return false
+        return expiryHeight <= chainTipHeight
+    }
+
+    /**
+     * Exit-eligible ids: Bark [spendableVtxos] plus live expired-but-unswept
+     * VTXOs (which Bark may already exclude from spendable — cooperative
+     * refresh may still accept them, but exit is the guaranteed path).
+     * Minus [excluded] (e.g. refresh-round-locked) ids.
+     * Order: spendable first, then expired.
+     */
+    fun exitEligibleIds(
+        spendableVtxoIds: Collection<String>,
+        liveVtxos: Collection<ArkVtxo>,
+        chainTipHeight: Int?,
+        excludedVtxoIds: Collection<String> = emptyList(),
+    ): List<String> {
+        val excluded = excludedVtxoIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        val spendable =
+            spendableVtxoIds.map { it.trim() }.filter { it.isNotEmpty() && it !in excluded }.distinct()
+        val spendableSet = spendable.toSet()
+        val expired =
+            liveVtxos
+                .filter {
+                    isExpired(it.expiryHeight, chainTipHeight) && ArkBarkMappers.isSpendableLabel(it.state)
+                }
+                .map { it.id.trim() }
+                .filter { it.isNotEmpty() && it !in excluded && it !in spendableSet }
+                .distinct()
+        return spendable + expired
+    }
+
+    /**
      * Decide which Bark start-exit API and VTXO set the repository should use.
      *
-     * - [entireWallet]=true → start entire wallet when any spendable VTXO exists
-     * - non-empty [requestedVtxoIds] → start intersection with spendable
-     * - otherwise → start all currently spendable ids
+     * [spendableVtxoIds] is the exit-eligible set (see [exitEligibleIds]):
+     * spendable plus expired-but-unswept VTXOs, which remain exitable per Bark
+     * docs (cooperative refresh of expired VTXOs may still succeed, but exit
+     * needs no ASP permission).
+     *
+     * - [entireWallet]=true → start entire wallet when any eligible VTXO exists
+     * - non-empty [requestedVtxoIds] → start intersection with eligible
+     * - otherwise → start all currently eligible ids
      */
     fun planStartExit(
         walletLoaded: Boolean,
@@ -96,7 +141,7 @@ object ArkUnilateralExitPolicy {
             if (requested.any { it in excluded }) {
                 return StartExitPlan.Error(StartExitError.PENDING_REFRESH)
             }
-            if ((entireWallet || requested.isEmpty()) && spendable.any { it in excluded }) {
+            if ((entireWallet || requested.isEmpty()) && excluded.isNotEmpty()) {
                 return StartExitPlan.Error(StartExitError.PENDING_REFRESH)
             }
         }
@@ -185,7 +230,11 @@ object ArkUnilateralExitPolicy {
     fun isUsableBitcoinClaimAddress(value: String): Boolean {
         val address = value.trim()
         if (address.isEmpty()) return false
-        return validateMainnetClaimAddressChecksum(address)
+        return runCatching {
+            org.bitcoinj.base.AddressParser.getDefault(org.bitcoinj.base.BitcoinNetwork.MAINNET)
+                .parseAddress(address)
+            true
+        }.getOrDefault(false)
     }
 
     /**
@@ -393,6 +442,38 @@ object ArkUnilateralExitPolicy {
     fun isActiveExitState(state: String): Boolean =
         state.trim().isNotEmpty() && !ArkBarkMappers.isTerminalExitLabel(state)
 
+    fun newExitIdsForCheckpoint(
+        liveExitIds: Collection<String>,
+        previouslyKnownExitIds: Collection<String>,
+        checkpointedExitIds: Collection<String>,
+    ): List<String> {
+        val tracked =
+            (previouslyKnownExitIds + checkpointedExitIds)
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        return liveExitIds
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .filter { it !in tracked }
+            .distinct()
+    }
+
+    fun terminalOrphanExitLockIds(
+        lockedExitIds: Collection<String>,
+        exitStates: Map<String, String>,
+        activeExitIds: Collection<String>,
+    ): List<String> {
+        val active = activeExitIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+        return lockedExitIds
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .filter { id ->
+                id !in active && exitStates[id]?.let(ArkBarkMappers::isTerminalExitLabel) == true
+            }
+            .distinct()
+    }
+
     fun computeHasPendingExits(
         barkHasPending: Boolean,
         exitStates: Collection<String>,
@@ -472,9 +553,27 @@ object ArkUnilateralExitPolicy {
             isQuoting = false,
         )
 
-    /** Whether the authoritative quote blocks exit start (known-unfundable). */
-    fun isEmergencyExitBlockedByQuote(quote: ArkEmergencyExitFeeQuote?): Boolean =
-        quote != null && !quote.isQuoting && quote.fundable == false
+    /**
+     * Whether the authoritative quote blocks exit start (known-unfundable).
+     *
+     * bark 0.8.0 dropped `fundable` from the estimate: it is now a deterministic
+     * funding target (broadcast leg incl. fee margin) that the caller compares
+     * against its on-chain balance. Prefer that comparison whenever
+     * [confirmedOnchainSats] is known (always for our gates); fall back to the
+     * deprecated FFI `fundable` flag only when the balance is unknown, and
+     * fail-open when neither is available.
+     */
+    fun isEmergencyExitBlockedByQuote(
+        quote: ArkEmergencyExitFeeQuote?,
+        confirmedOnchainSats: Long? = null,
+    ): Boolean {
+        if (quote == null || quote.isQuoting) return false
+        val broadcast = quote.broadcastFeeSats
+        if (confirmedOnchainSats != null && broadcast != null) {
+            return broadcast > confirmedOnchainSats.coerceAtLeast(0L)
+        }
+        return quote.fundable == false
+    }
 
     /**
      * Shortfall of the authoritative broadcast leg against confirmed on-chain
@@ -520,11 +619,11 @@ object ArkUnilateralExitPolicy {
                 ByteArray(clean.length / 2) { index ->
                     clean.substring(index * 2, index * 2 + 2).toInt(16).toByte()
                 }
-            val digest = java.security.MessageDigest.getInstance("SHA-256")
-            val once = digest.digest(raw)
-            digest.reset()
-            val twice = digest.digest(once)
-            twice.reversedArray().joinToString("") { "%02x".format(it) }
+            val buffer = java.nio.ByteBuffer.wrap(raw)
+            val transaction = org.bitcoinj.core.Transaction.read(buffer)
+            require(!buffer.hasRemaining())
+            require(transaction.inputs.isNotEmpty() && transaction.outputs.isNotEmpty())
+            transaction.txId.toString()
         }.getOrNull()
     }
 }

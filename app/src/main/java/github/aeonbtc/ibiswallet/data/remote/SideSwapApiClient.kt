@@ -172,6 +172,10 @@ class SideSwapApiClient(
                 Log.e(TAG, "Failed to parse SideSwap message: ${e.message}\nRaw: ${text.take(300)}")
             }
             failAllPending(Exception(SIDESWAP_RESPONSE_FAILED_MESSAGE, e))
+        } catch (e: StackOverflowError) {
+            // Deeply nested JSON is recursive in org.json and throws an Error,
+            // which used to escape the listener and kill the process.
+            failAllPending(Exception(SIDESWAP_RESPONSE_FAILED_MESSAGE))
         }
     }
 

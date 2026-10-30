@@ -43,6 +43,11 @@ class TorManager private constructor(context: Context) {
         private const val TOR_STOP_SETTLE_MS = 2_000L
         private const val STUCK_START_RESET_MS = 90_000L
 
+        // How long to wait for a live circuit before distrusting a stale
+        // CONNECTED (SOCKS listener up, no circuits after a network change).
+        private const val READY_VERIFY_TIMEOUT_MS = 10_000L
+        private const val READY_VERIFY_POLL_MS = 500L
+
         @Volatile
         private var instance: TorManager? = null
 
@@ -245,6 +250,9 @@ class TorManager private constructor(context: Context) {
     fun stop() {
         val appContext = appContextRef.get()
         if (_torState.value.status == TorStatus.STOPPING) {
+            // Newest intent is "Tor off": drop any restart queued by an older
+            // Tor-server switch so Tor doesn't start after landing on non-Tor.
+            restartAfterStopRequested = false
             if (BuildConfig.DEBUG) Log.d(TAG, "Tor is already stopping")
             return
         }
@@ -252,6 +260,7 @@ class TorManager private constructor(context: Context) {
 
         cancelStuckStartWatchdog()
         startGeneration += 1
+        restartAfterStopRequested = false
 
         _torState.value =
             _torState.value.copy(
@@ -309,21 +318,28 @@ class TorManager private constructor(context: Context) {
     /**
      * Suspend until Tor reaches CONNECTED state, or return false on
      * timeout / ERROR. Uses StateFlow.first() so it reacts immediately
-     * to state changes (no polling). After Tor reports CONNECTED, probes
-     * the SOCKS proxy port to confirm it is accepting connections — this
-     * closes the race window where the control port signals "ready" but
-     * the SOCKS listener hasn't started yet.
+     * to state changes (no polling). After Tor reports CONNECTED, verifies
+     * the SOCKS proxy is accepting connections AND a circuit is live — this
+     * closes the race where the control port signals "ready" but the listener
+     * hasn't started, and rejects a stale CONNECTED left behind after a
+     * network change (VPN toggle) where all circuits are dead.
      *
-     * @param timeoutMs Maximum time to wait for bootstrap + proxy readiness.
-     * @return true if Tor is ready and the SOCKS proxy is accepting connections.
+     * @param timeoutMs Maximum time to wait for bootstrap + transport readiness.
+     * @return true if Tor is ready and the SOCKS proxy is accepting connections
+     *   with a live circuit / finished bootstrap.
      */
     suspend fun awaitReady(timeoutMs: Long = 60_000): Boolean {
-        // Already bootstrapped — just verify the SOCKS proxy.
+        // Trust-but-verify: a CONNECTED status can be stale. The daemon keeps
+        // the SOCKS listener up after a VPN/network change while every circuit
+        // is dead, so require a live circuit / finished bootstrap before
+        // returning ready. Otherwise each proxy connection hangs until timeout.
         if (isReady()) {
-            val ok = probeSocksProxy()
-            if (ok) return true
-            // Reported ready but proxy gone (killed process); force a restart path.
-            if (BuildConfig.DEBUG) Log.w(TAG, "Tor marked connected but SOCKS unreachable; restarting")
+            val healthy = probeTransportReady(READY_VERIFY_TIMEOUT_MS)
+            if (healthy) return true
+            if (BuildConfig.DEBUG) {
+                Log.w(TAG, "Tor marked connected but SOCKS/circuit unhealthy; rebootstrap required")
+            }
+            // Reported ready but the transport is dead; force a re-bootstrap.
             stop()
             start()
         }
@@ -418,6 +434,22 @@ class TorManager private constructor(context: Context) {
         }
     }
 
+    /**
+     * Poll until the transport is genuinely usable (SOCKS reachable AND a live
+     * circuit / finished bootstrap), or the timeout elapses. Rejects a stale
+     * CONNECTED where the listener is up but all circuits are dead.
+     */
+    private suspend fun probeTransportReady(timeoutMs: Long): Boolean =
+        withContext(Dispatchers.IO) {
+            val deadline = System.nanoTime() + timeoutMs * 1_000_000L
+            var ready = isNetworkReadyBlocking(torService)
+            while (!ready && System.nanoTime() < deadline) {
+                delay(READY_VERIFY_POLL_MS)
+                ready = isNetworkReadyBlocking(torService)
+            }
+            ready
+        }
+
     private suspend fun isNetworkReady(): Boolean =
         withContext(Dispatchers.IO) {
             isNetworkReadyBlocking(torService)
@@ -425,7 +457,8 @@ class TorManager private constructor(context: Context) {
 
     /**
      * True when SOCKS accepts connections AND Tor reports a finished bootstrap
-     * (or an established circuit). SOCKS alone is not enough — it listens early.
+     * (or an established circuit). SOCKS alone is not enough — it listens early
+     * and keeps listening after a network change while circuits are dead.
      *
      * Needed because tor-android 0.4.9.6 can leave [TorService.STATUS_ON] forever
      * unbroadcast when control-event wiring mismatches the daemon event stream.
@@ -440,11 +473,13 @@ class TorManager private constructor(context: Context) {
 
         val control = runCatching { service.torControlConnection }.getOrNull() ?: return false
         return try {
-            val circuit = control.getInfo("status/circuit-established")?.trim()
-            if (circuit == "1") return true
-
-            val bootstrap = control.getInfo("status/bootstrap-phase").orEmpty()
-            bootstrapContainsDone(bootstrap)
+            val circuit = control.getInfo("status/circuit-established")?.trim() == "1"
+            val bootstrap = bootstrapContainsDone(control.getInfo("status/bootstrap-phase").orEmpty())
+            TorReadinessPolicy.isTransportReady(
+                socksReachable = true,
+                circuitEstablished = circuit,
+                bootstrapDone = bootstrap,
+            )
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.d(TAG, "Control readiness probe failed: ${e.message}")
             false

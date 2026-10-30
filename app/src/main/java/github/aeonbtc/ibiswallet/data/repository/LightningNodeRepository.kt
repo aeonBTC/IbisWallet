@@ -106,6 +106,19 @@ class LightningNodeRepository(
     private val _channelsError = MutableStateFlow<String?>(null)
     val channelsError: StateFlow<String?> = _channelsError.asStateFlow()
 
+    private val _peers = MutableStateFlow<List<github.aeonbtc.ibiswallet.data.model.LightningNodePeer>>(emptyList())
+    val peers: StateFlow<List<github.aeonbtc.ibiswallet.data.model.LightningNodePeer>> = _peers.asStateFlow()
+
+    private val _peersLoading = MutableStateFlow(false)
+    val peersLoading: StateFlow<Boolean> = _peersLoading.asStateFlow()
+
+    private val _channelOpState =
+        MutableStateFlow<github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState>(
+            github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Idle,
+        )
+    val channelOpState: StateFlow<github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState> =
+        _channelOpState.asStateFlow()
+
     private val _loadedWalletId = MutableStateFlow<String?>(null)
     val loadedWalletId: StateFlow<String?> = _loadedWalletId.asStateFlow()
 
@@ -127,6 +140,10 @@ class LightningNodeRepository(
         _channels.value = emptyList()
         _channelsLoading.value = false
         _channelsError.value = null
+        _peers.value = emptyList()
+        _peersLoading.value = false
+        _channelOpState.value =
+            github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Idle
         _onchainMinFeeRate.value = null
         _walletState.value =
             LightningNodeWalletState(
@@ -397,6 +414,10 @@ class LightningNodeRepository(
                 _channels.value = emptyList()
                 _channelsLoading.value = false
                 _channelsError.value = null
+                _peers.value = emptyList()
+                _peersLoading.value = false
+                _channelOpState.value =
+                    github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Idle
                 _isConnected.value = false
                 _isConnecting.value = false
                 resetSendState()
@@ -423,6 +444,10 @@ class LightningNodeRepository(
                 _channels.value = emptyList()
                 _channelsLoading.value = false
                 _channelsError.value = null
+                _peers.value = emptyList()
+                _peersLoading.value = false
+                _channelOpState.value =
+                    github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Idle
                 if (targetId.isNullOrBlank()) {
                     _loadedWalletId.value = null
                     _walletState.value = LightningNodeWalletState(isInitialized = true)
@@ -446,6 +471,10 @@ class LightningNodeRepository(
         _channels.value = emptyList()
         _channelsLoading.value = false
         _channelsError.value = null
+        _peers.value = emptyList()
+        _peersLoading.value = false
+        _channelOpState.value =
+            github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Idle
         _walletState.value =
             LightningNodeWalletState(
                 walletId = walletId,
@@ -540,7 +569,7 @@ class LightningNodeRepository(
                     isConnected = true,
                     balanceSats = balance.totalSats,
                     remoteBalanceSats = balance.remoteBalanceSats,
-                    payments = payments,
+                    payments = applyPaymentLabels(walletId, payments),
                     lastSyncTimestamp = System.currentTimeMillis(),
                     error = null,
                 )
@@ -657,6 +686,193 @@ class LightningNodeRepository(
         }
     }
 
+    suspend fun refreshPeers() {
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val client = backend ?: return@withContext
+                _peersLoading.value = true
+                try {
+                    _peers.value = client.listPeers()
+                } catch (_: Exception) {
+                    // Peers are best-effort enrichment for the open dialog; keep stale list.
+                } finally {
+                    _peersLoading.value = false
+                }
+            }
+        }
+    }
+
+    fun resetChannelOpState() {
+        _channelOpState.value =
+            github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Idle
+    }
+
+    private fun channelOpWorking(message: String) {
+        _channelOpState.value =
+            github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Working(message)
+    }
+
+    private fun channelOpSuccess(message: String) {
+        _channelOpState.value =
+            github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Success(message)
+    }
+
+    private fun channelOpError(message: String) {
+        _channelOpState.value =
+            github.aeonbtc.ibiswallet.data.model.LightningNodeChannelOperationState.Error(message)
+    }
+
+    suspend fun connectPeer(
+        pubkey: String,
+        host: String?,
+        workingMessage: String = "Connecting peer…",
+    ) {
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val client = backend
+                if (client == null) {
+                    channelOpError("Not connected")
+                    return@withContext
+                }
+                channelOpWorking(workingMessage)
+                try {
+                    client.connectPeer(pubkey, host)
+                    runCatching { _peers.value = client.listPeers() }
+                    channelOpSuccess("Peer connected")
+                } catch (e: Exception) {
+                    channelOpError(e.message?.takeIf { it.isNotBlank() } ?: "Peer connect failed")
+                }
+            }
+        }
+    }
+
+    suspend fun disconnectPeer(
+        pubkey: String,
+        force: Boolean = false,
+        workingMessage: String = "Disconnecting peer…",
+    ) {
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val client = backend
+                if (client == null) {
+                    channelOpError("Not connected")
+                    return@withContext
+                }
+                channelOpWorking(workingMessage)
+                try {
+                    client.disconnectPeer(pubkey, force)
+                    runCatching { _peers.value = client.listPeers() }
+                    channelOpSuccess("Peer disconnected")
+                } catch (e: Exception) {
+                    channelOpError(e.message?.takeIf { it.isNotBlank() } ?: "Peer disconnect failed")
+                }
+            }
+        }
+    }
+
+    suspend fun openChannel(
+        pubkey: String,
+        amountSats: Long,
+        satPerVbyte: Double?,
+        isPrivate: Boolean,
+        pushSats: Long = 0L,
+        closeAddress: String? = null,
+        peerHost: String? = null,
+        workingMessage: String = "Opening channel…",
+    ) {
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val client = backend
+                if (client == null) {
+                    channelOpError("Not connected")
+                    return@withContext
+                }
+                channelOpWorking(workingMessage)
+                try {
+                    val result =
+                        client.openChannel(
+                            pubkey = pubkey,
+                            amountSats = amountSats,
+                            satPerVbyte = satPerVbyte,
+                            isPrivate = isPrivate,
+                            pushSats = pushSats,
+                            closeAddress = closeAddress?.trim()?.takeIf { it.isNotBlank() },
+                            peerHost = peerHost?.trim()?.takeIf { it.isNotBlank() },
+                        )
+                    runCatching { _channels.value = client.listChannels() }
+                    runCatching { _peers.value = client.listPeers() }
+                    runCatching { refreshOnchainStateUnlocked(client) }
+                    channelOpSuccess(result.takeIf { it.isNotBlank() } ?: "Channel open initiated")
+                } catch (e: Exception) {
+                    channelOpError(e.message?.takeIf { it.isNotBlank() } ?: "Channel open failed")
+                }
+            }
+        }
+    }
+
+    suspend fun closeChannel(
+        channel: LightningNodeChannel,
+        force: Boolean,
+        satPerVbyte: Double? = null,
+        closeAddress: String? = null,
+        workingMessage: String = "Closing channel…",
+    ) {
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val client = backend
+                if (client == null) {
+                    channelOpError("Not connected")
+                    return@withContext
+                }
+                channelOpWorking(workingMessage)
+                try {
+                    val result =
+                        client.closeChannel(
+                            channel = channel,
+                            force = force,
+                            satPerVbyte = satPerVbyte,
+                            closeAddress = closeAddress?.trim()?.takeIf { it.isNotBlank() },
+                        )
+                    runCatching { _channels.value = client.listChannels() }
+                    runCatching { refreshOnchainStateUnlocked(client) }
+                    channelOpSuccess(result.takeIf { it.isNotBlank() } ?: "Close initiated")
+                } catch (e: Exception) {
+                    channelOpError(e.message?.takeIf { it.isNotBlank() } ?: "Channel close failed")
+                }
+            }
+        }
+    }
+
+    suspend fun updateChannelFeePolicy(
+        channel: LightningNodeChannel,
+        baseFeeMsat: Long,
+        feeRatePpm: Long,
+        cltvDelta: Int? = null,
+        workingMessage: String = "Updating fee policy…",
+    ) {
+        mutex.withLock {
+            withContext(Dispatchers.IO) {
+                val client = backend
+                if (client == null) {
+                    channelOpError("Not connected")
+                    return@withContext
+                }
+                channelOpWorking(workingMessage)
+                try {
+                    client.updateChannelFeePolicy(
+                        channel = channel,
+                        baseFeeMsat = baseFeeMsat,
+                        feeRatePpm = feeRatePpm,
+                        cltvDelta = cltvDelta,
+                    )
+                    channelOpSuccess("Fee policy updated")
+                } catch (e: Exception) {
+                    channelOpError(e.message?.takeIf { it.isNotBlank() } ?: "Fee update failed")
+                }
+            }
+        }
+    }
+
     suspend fun testConnection(
         config: LightningNodeConfig,
         onPhase: (LightningNodeConnectionTestPhase) -> Unit = {},
@@ -733,6 +949,80 @@ class LightningNodeRepository(
         secureStorage.setLightningNodeRestoreNeedsConfirm(walletId, false)
     }
 
+    fun paymentLabelRef(payment: LightningNodePayment): String =
+        payment.paymentHash?.takeIf { it.isNotBlank() } ?: payment.id
+
+    private fun applyPaymentLabels(
+        walletId: String,
+        payments: List<LightningNodePayment>,
+    ): List<LightningNodePayment> {
+        val labels = secureStorage.getAllLnNodeLabels(walletId)
+        return payments.map { payment ->
+            val paymentHash =
+                payment.paymentHash?.takeIf { it.isNotBlank() }
+                    ?: payment.paymentRequest?.let {
+                        runCatching { NwcClient.bolt11PaymentHash(it) }.getOrNull()
+                    }
+            val label =
+                labels[paymentHash.orEmpty()]
+                    ?: labels[payment.id]
+            if (label == payment.label) payment else payment.copy(label = label)
+        }
+    }
+
+    private fun applyOnchainLabels(
+        walletId: String,
+        transactions: List<LightningNodeOnchainTransaction>,
+    ): List<LightningNodeOnchainTransaction> {
+        val labels = secureStorage.getAllLnNodeOnchainLabels(walletId)
+        return transactions.map { tx ->
+            val label = labels[tx.txid]
+            if (label == tx.label) tx else tx.copy(label = label)
+        }
+    }
+
+    fun savePaymentLabel(
+        ref: String,
+        label: String,
+    ) {
+        val walletId = _loadedWalletId.value ?: return
+        secureStorage.saveLnNodeLabel(walletId, ref, label)
+        _walletState.value =
+            _walletState.value.copy(
+                payments = applyPaymentLabels(walletId, _walletState.value.payments),
+            )
+    }
+
+    fun deletePaymentLabel(ref: String) {
+        val walletId = _loadedWalletId.value ?: return
+        secureStorage.deleteLnNodeLabel(walletId, ref)
+        _walletState.value =
+            _walletState.value.copy(
+                payments = applyPaymentLabels(walletId, _walletState.value.payments),
+            )
+    }
+
+    fun saveOnchainLabel(
+        txid: String,
+        label: String,
+    ) {
+        val walletId = _loadedWalletId.value ?: return
+        secureStorage.saveLnNodeOnchainLabel(walletId, txid, label)
+        _onchainState.value =
+            _onchainState.value.copy(
+                transactions = applyOnchainLabels(walletId, _onchainState.value.transactions),
+            )
+    }
+
+    fun deleteOnchainLabel(txid: String) {
+        val walletId = _loadedWalletId.value ?: return
+        secureStorage.deleteLnNodeOnchainLabel(walletId, txid)
+        _onchainState.value =
+            _onchainState.value.copy(
+                transactions = applyOnchainLabels(walletId, _onchainState.value.transactions),
+            )
+    }
+
     suspend fun createInvoice(
         amountSats: Long?,
         description: String?,
@@ -747,6 +1037,13 @@ class LightningNodeRepository(
             // Memo only when user explicitly provided one (blank → null for all backends).
             val memo = description?.trim()?.takeIf { it.isNotBlank() }
             val invoice = client.createInvoice(amountSats, memo)
+            val walletId = _loadedWalletId.value
+            val labelRef =
+                invoice.paymentHash?.takeIf { it.isNotBlank() }
+                    ?: runCatching { NwcClient.bolt11PaymentHash(invoice.paymentRequest) }.getOrNull()
+            if (memo != null && walletId != null && labelRef != null) {
+                secureStorage.saveLnNodeLabel(walletId, labelRef, memo)
+            }
             _receiveState.value =
                 LightningNodeReceiveState.Ready(
                     paymentRequest = invoice.paymentRequest,
@@ -766,6 +1063,7 @@ class LightningNodeRepository(
         paymentRequest: String,
         amountSats: Long?,
         maxFeePercent: Double? = null,
+        label: String? = null,
     ) {
         val client = backend
         if (client == null) {
@@ -786,7 +1084,16 @@ class LightningNodeRepository(
                     maxFeePercent = maxFeePercent ?: DEFAULT_MAX_FEE_PERCENT,
                     expirySeconds = decoded.expirySeconds,
                     preparedAtMs = System.currentTimeMillis(),
+                    label = label?.trim()?.takeIf { it.isNotBlank() },
                 )
+            val preparedLabel = label?.trim()?.takeIf { it.isNotBlank() }
+            if (preparedLabel != null) {
+                val labelRef =
+                    runCatching { NwcClient.bolt11PaymentHash(decoded.paymentRequest) }.getOrNull()
+                if (labelRef != null) {
+                    savePaymentLabel(labelRef, preparedLabel)
+                }
+            }
         } catch (e: Exception) {
             _sendState.value =
                 LightningNodeSendState.Error(
@@ -938,6 +1245,16 @@ class LightningNodeRepository(
                     amountSats = preview.amountSats ?: 0L,
                     feeSats = result.feeSats,
                 )
+            val sendLabel = preview.label?.trim()?.takeIf { it.isNotBlank() }
+            if (sendLabel != null) {
+                val labelRef =
+                    result.paymentHash?.takeIf { it.isNotBlank() }
+                        ?: invoiceHash
+                        ?: result.paymentId?.takeIf { it.isNotBlank() }
+                if (labelRef != null) {
+                    savePaymentLabel(labelRef, sendLabel)
+                }
+            }
             runCatching { refreshStateUnlocked() }
         } catch (e: Exception) {
             _sendState.value =
@@ -1033,10 +1350,13 @@ class LightningNodeRepository(
                             spendUnconfirmed = spendUnconfirmed,
                             selectedOutpoints = selectedOutpoints,
                         )
+                    val walletId = _loadedWalletId.value
+                    if (walletId != null && !label.isNullOrBlank()) {
+                        secureStorage.saveLnNodeOnchainLabel(walletId, txid, label)
+                    }
                     runCatching { refreshOnchainStateUnlocked(client) }
                     _onchainSendState.value = LightningNodeOnchainSendState.Success(txid)
-                    txid
-                } catch (e: Exception) {
+                    txid                } catch (e: Exception) {
                     _onchainSendState.value =
                         LightningNodeOnchainSendState.Error(
                             e.message?.takeIf { it.isNotBlank() } ?: "On-chain send failed",
@@ -1066,10 +1386,13 @@ class LightningNodeRepository(
                             spendUnconfirmed = spendUnconfirmed,
                             selectedOutpoints = selectedOutpoints,
                         )
+                    val walletId = _loadedWalletId.value
+                    if (walletId != null && !label.isNullOrBlank()) {
+                        secureStorage.saveLnNodeOnchainLabel(walletId, txid, label)
+                    }
                     runCatching { refreshOnchainStateUnlocked(client) }
                     _onchainSendState.value = LightningNodeOnchainSendState.Success(txid)
-                    txid
-                } catch (e: Exception) {
+                    txid                } catch (e: Exception) {
                     _onchainSendState.value =
                         LightningNodeOnchainSendState.Error(
                             e.message?.takeIf { it.isNotBlank() } ?: "On-chain multi-send failed",
@@ -1206,13 +1529,15 @@ class LightningNodeRepository(
                         .getOrNull()
                         ?.let { mergeStableOnchainTimestamps(previous.transactions, it) }
                         ?: previous.transactions
+                val labeledTransactions =
+                    _loadedWalletId.value?.let { applyOnchainLabels(it, transactions) } ?: transactions
                 val utxos = utxosResult.getOrDefault(previous.utxos)
                 val revealed = previous.revealedReceiveAddresses
                 val catalogs =
                     buildOnchainAddressCatalogs(
                         revealedReceive = revealed,
                         currentAddress = previous.currentAddress,
-                        transactions = transactions,
+                        transactions = labeledTransactions,
                         utxos = utxos,
                     )
                 val secondaryError =
@@ -1226,7 +1551,7 @@ class LightningNodeRepository(
                         balanceSats = details.spendableSats,
                         reservedSats = details.reservedSats,
                         immatureSats = details.immatureSats,
-                        transactions = transactions,
+                        transactions = labeledTransactions,
                         utxos = utxos,
                         receiveAddresses = catalogs.first,
                         changeAddresses = catalogs.second,

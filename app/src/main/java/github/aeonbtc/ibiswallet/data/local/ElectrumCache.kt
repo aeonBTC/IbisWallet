@@ -14,8 +14,10 @@ import github.aeonbtc.ibiswallet.data.model.TransactionSearchDocument
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchFilters
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchLayer
 import github.aeonbtc.ibiswallet.data.model.TransactionSearchResult
+import github.aeonbtc.ibiswallet.util.BitcoinUtils
 import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.buildTransactionSearchMatchQuery
+import org.bitcoindevkit.Transaction
 import github.aeonbtc.ibiswallet.util.buildTransactionSearchableText
 import java.io.File
 
@@ -415,15 +417,14 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
         hex: String,
     ): Boolean {
         return try {
-            val clean = hex.trim().lowercase()
+            val clean = hex.trim()
             if (clean.length < 20 || clean.length % 2 != 0) return false
-            if (!clean.all { it in '0'..'9' || it in 'a'..'f' }) return false
-            val raw = ByteArray(clean.length / 2) { i -> clean.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
-            val digest = java.security.MessageDigest.getInstance("SHA-256")
-            val once = digest.digest(raw)
-            val twice = digest.digest(once)
-            val computed = twice.reversedArray().joinToString("") { "%02x".format(it) }
-            computed.equals(txid.lowercase(), ignoreCase = true)
+            val raw = BitcoinUtils.hexToByteArray(clean)
+            // BDK parses the real transaction and computes the canonical txid
+            // (stripped serialization), including SegWit.
+            Transaction(raw).use { parsed ->
+                parsed.computeTxid().toString().equals(txid, ignoreCase = true)
+            }
         } catch (_: Exception) {
             false
         }
@@ -783,7 +784,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             result
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to load cached transaction details for $walletId: ${e.message}")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to load cached transaction details for $walletId: ${e.message}")
             }
             emptyMap()
         }
@@ -829,7 +830,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to cache confirmed transaction details for $walletId: ${e.message}")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to cache confirmed transaction details for $walletId: ${e.message}")
             }
         }
     }
@@ -848,11 +849,11 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                     layer = layer,
                     txids = null,
                 )
-                upsertTransactionSearchDocumentsInternal(documents)
+                upsertTransactionSearchDocumentsInternal(documents, deleteExistingFtsRows = false)
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to replace transaction search docs for $walletId/${layer.dbValue}: ${e.message}")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to replace transaction search docs for $walletId/${layer.dbValue}: ${e.message}")
             }
         }
     }
@@ -866,7 +867,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to upsert transaction search docs: ${e.message}")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to upsert transaction search docs: ${e.message}")
             }
         }
     }
@@ -888,7 +889,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to delete transaction search docs for $walletId/${layer.dbValue}: ${e.message}")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to delete transaction search docs for $walletId/${layer.dbValue}: ${e.message}")
             }
         }
     }
@@ -906,7 +907,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to clear transaction search docs for $walletId: ${e.message}")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to clear transaction search docs for $walletId: ${e.message}")
             }
         }
     }
@@ -1017,9 +1018,11 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             ) ?: return TransactionSearchResult(emptyList(), 0)
 
         val cappedLimit = limit.coerceAtLeast(1)
+        // Plain DESC keeps NULLs last, matching COALESCE(..., -1), and lets the
+        // wallet/layer/sort index supply the ordering instead of a full sort.
         val orderByClause =
-            "ORDER BY COALESCE($TABLE_TX_SEARCH_DOCS.$COL_SORT_TIMESTAMP, -1) DESC, " +
-                "COALESCE($TABLE_TX_SEARCH_DOCS.$COL_SORT_HEIGHT, -1) DESC"
+            "ORDER BY $TABLE_TX_SEARCH_DOCS.$COL_SORT_TIMESTAMP DESC, " +
+                "$TABLE_TX_SEARCH_DOCS.$COL_SORT_HEIGHT DESC"
 
         return try {
             val totalCount =
@@ -1045,7 +1048,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             TransactionSearchResult(txids = txids, totalCount = totalCount)
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to search transaction docs for $walletId/${layer.dbValue}: ${e.message}")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to search transaction docs for $walletId/${layer.dbValue}: ${e.message}")
             }
             TransactionSearchResult(emptyList(), 0)
         }
@@ -1174,14 +1177,37 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) {
-                Log.w(TAG, "Failed to read transaction search docs: ${e.message}")
+                if (BuildConfig.DEBUG) Log.w(TAG, "Failed to read transaction search docs: ${e.message}")
             }
             emptyList()
         }
     }
 
-    private fun SQLiteDatabase.upsertTransactionSearchDocumentsInternal(documents: Collection<TransactionSearchDocument>) {
+    private fun SQLiteDatabase.upsertTransactionSearchDocumentsInternal(
+        documents: Collection<TransactionSearchDocument>,
+        deleteExistingFtsRows: Boolean = true,
+    ) {
         if (documents.isEmpty()) return
+
+        // FTS4 cannot index the wallet/layer/txid columns, so a per-document
+        // DELETE becomes O(rows) for every document. Replace paths have already
+        // cleared the table; incremental paths delete once per batch instead.
+        if (deleteExistingFtsRows) {
+            documents.groupBy { it.walletId to it.layer.dbValue }.forEach { (key, walletDocuments) ->
+                walletDocuments.map { it.txid }.chunked(SQLITE_DELETE_CHUNK_SIZE).forEach { chunk ->
+                    val placeholders = List(chunk.size) { "?" }.joinToString(",")
+                    delete(
+                        TABLE_TX_SEARCH_FTS,
+                        "$COL_WALLET_ID = ? AND $COL_LAYER = ? AND $COL_TXID IN ($placeholders)",
+                        buildList {
+                            add(key.first)
+                            add(key.second)
+                            addAll(chunk)
+                        }.toTypedArray(),
+                    )
+                }
+            }
+        }
 
         val now = System.currentTimeMillis()
         documents.forEach { document ->
@@ -1211,11 +1237,6 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                 SQLiteDatabase.CONFLICT_REPLACE,
             )
 
-            delete(
-                TABLE_TX_SEARCH_FTS,
-                "$COL_WALLET_ID = ? AND $COL_LAYER = ? AND $COL_TXID = ?",
-                arrayOf(document.walletId, document.layer.dbValue, document.txid),
-            )
             insert(
                 TABLE_TX_SEARCH_FTS,
                 null,
@@ -1290,7 +1311,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                     arrayOf(cutoff.toString()),
                 )
             if (deleted > 0 && BuildConfig.DEBUG) {
-                Log.d(TAG, "Pruned $deleted stale unconfirmed verbose tx entries")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Pruned $deleted stale unconfirmed verbose tx entries")
             }
         } catch (e: Exception) {
             if (BuildConfig.DEBUG) Log.w(TAG, "Prune failed: ${e.message}")
@@ -1322,7 +1343,7 @@ class ElectrumCache(context: Context) : SQLiteOpenHelper(
                     releaseMessage = "Electrum cache cleanup failed",
                 )
             } else if (BuildConfig.DEBUG) {
-                Log.d(TAG, "Deleted Electrum cache database file")
+                if (BuildConfig.DEBUG) Log.d(TAG, "Deleted Electrum cache database file")
             }
 
             success

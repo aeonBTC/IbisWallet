@@ -374,6 +374,8 @@ data class LightningInvoiceCreation(
     val amountSats: Long,
     /** Absolute epoch ms when the BOLT11 hold invoice expires (server timeout). */
     val expiresAtMs: Long? = null,
+    /** Locally persisted invoice label (restored across navigation/process death). */
+    val label: String? = null,
 )
 
 data class PendingLightningReceive(
@@ -804,6 +806,8 @@ sealed class LightningInvoiceState {
         val amountSats: Long,
         /** Absolute epoch ms when the BOLT11 hold invoice expires (server timeout). */
         val expiresAtMs: Long? = null,
+        /** Locally persisted invoice label (restored across navigation/process death). */
+        val label: String? = null,
     ) : LightningInvoiceState()
     data class Claimed(val txid: String) : LightningInvoiceState()
     data class Failed(val error: String) : LightningInvoiceState()

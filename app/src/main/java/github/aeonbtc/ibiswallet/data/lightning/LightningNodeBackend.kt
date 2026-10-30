@@ -32,6 +32,52 @@ interface LightningNodeBackend {
     /** Open channels for the connected node. Default: empty (e.g. NWC has no channels API). */
     suspend fun listChannels(): List<LightningNodeChannel> = emptyList()
 
+    /**
+     * Full channel control — default unsupported (NWC has no channel management).
+     * LND + CLN override these.
+     */
+    suspend fun listPeers(): List<github.aeonbtc.ibiswallet.data.model.LightningNodePeer> =
+        emptyList()
+
+    suspend fun connectPeer(
+        pubkey: String,
+        host: String?,
+    ): Unit = throw UnsupportedOperationException("Peer connect is not supported on this node type")
+
+    suspend fun disconnectPeer(
+        pubkey: String,
+        force: Boolean = false,
+    ): Unit = throw UnsupportedOperationException("Peer disconnect is not supported on this node type")
+
+    suspend fun openChannel(
+        pubkey: String,
+        amountSats: Long,
+        satPerVbyte: Double? = null,
+        isPrivate: Boolean = false,
+        pushSats: Long = 0L,
+        closeAddress: String? = null,
+        /**
+         * Optional `host:port` (or `pubkey@host:port`) — when provided the
+         * backend connects to the peer first (best-effort) so opens work
+         * against not-yet-connected peers.
+         */
+        peerHost: String? = null,
+    ): String = throw UnsupportedOperationException("Channel open is not supported on this node type")
+
+    suspend fun closeChannel(
+        channel: LightningNodeChannel,
+        force: Boolean = false,
+        satPerVbyte: Double? = null,
+        closeAddress: String? = null,
+    ): String = throw UnsupportedOperationException("Channel close is not supported on this node type")
+
+    suspend fun updateChannelFeePolicy(
+        channel: LightningNodeChannel,
+        baseFeeMsat: Long,
+        feeRatePpm: Long,
+        cltvDelta: Int? = null,
+    ): Unit = throw UnsupportedOperationException("Fee policy is not supported on this node type")
+
     suspend fun getOnchainBalance(): Long
 
     /**

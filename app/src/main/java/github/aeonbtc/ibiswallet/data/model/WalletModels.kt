@@ -365,6 +365,8 @@ data class WalletAddress(
     val balanceSats: ULong = 0UL,
     val transactionCount: Int = 0,
     val isUsed: Boolean = false,
+    /** True for silent-payment outputs tracked outside the BDK wallet graph. */
+    val isSilentPayment: Boolean = false,
 )
 
 /**
@@ -387,6 +389,14 @@ data class UtxoInfo(
     val label: String? = null,
     val isConfirmed: Boolean,
     val isFrozen: Boolean = false,
+    /**
+     * True when this UTXO matches the dusting-attack heuristic
+     * (see `DustPolicy`): small, externally-funded, uneconomical to spend
+     * alone. Computed at mapping time, never persisted. Flagged dust is
+     * excluded from automatic coin selection (unless the user opts in)
+     * and warns on manual selection — it is NOT auto-frozen.
+     */
+    val isSuspectedDust: Boolean = false,
     val assetId: String? = null,
     /** Unix seconds when the parent tx was confirmed (or first seen if unconfirmed). */
     val timestamp: Long? = null,

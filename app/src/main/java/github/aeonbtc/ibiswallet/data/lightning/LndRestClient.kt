@@ -63,21 +63,14 @@ class LndRestClient : LightningNodeBackend {
             require(config.macaroonHex.isNotBlank()) { "Macaroon is required" }
 
             macaroonHex = normalizeMacaroon(config.macaroonHex)
-            val host =
-                config.host
-                    .trim()
-                    .removePrefix("https://")
-                    .removePrefix("http://")
-                    .substringBefore('/')
-                    .substringBefore(':') // strip accidental :port in host field
-                    .trimEnd('/')
+            val host = github.aeonbtc.ibiswallet.util.ServerUrlValidator.canonicalHost(config.host)
             require(host.isNotBlank()) { "Host is required" }
             val hostIsOnion = host.endsWith(".onion", ignoreCase = true)
             val normalized = config.copy(useTor = hostIsOnion, host = host)
 
             // Fail closed before any socket or credential use on clearnet.
             require(normalized.isCredentialTransportAuthorized()) {
-                "Enable TLS with a pinned certificate or explicitly allow insecure transport"
+                "Clearnet nodes require a pinned certificate or an acknowledged insecure transport"
             }
 
             connectWithRetries(normalized)
@@ -153,7 +146,10 @@ class LndRestClient : LightningNodeBackend {
     ) {
         closeClientQuietly()
         val scheme = if (config.tlsEnabled) "https" else "http"
-        baseUrl = "$scheme://${config.host}:${config.port}"
+        baseUrl =
+            "$scheme://" +
+                "${github.aeonbtc.ibiswallet.util.ServerUrlValidator.formatHostForUrl(config.host)}:" +
+                config.port
         client = buildHttpClient(config, probeTimeouts = probeTimeouts)
         activeConfig = config
     }
@@ -232,9 +228,10 @@ class LndRestClient : LightningNodeBackend {
             val openArr = open.optJSONArray("channels") ?: JSONArray()
             for (i in 0 until openArr.length()) {
                 val ch = openArr.optJSONObject(i) ?: continue
+                val channelPointRaw = ch.optString("channel_point").trim()
                 val channelId =
                     ch.optString("chan_id").ifBlank {
-                        ch.optString("channel_point")
+                        channelPointRaw
                     }
                 if (channelId.isBlank()) continue
                 val (capacity, local, remote) = readLndChannelBalances(ch)
@@ -249,9 +246,10 @@ class LndRestClient : LightningNodeBackend {
                         remoteAlias = ch.optString("peer_alias").ifBlank { null },
                         shortChannelId = ch.optString("chan_id").ifBlank { null },
                         fundingTxid =
-                            ch.optString("channel_point")
+                            channelPointRaw
                                 .substringBefore(':')
                                 .ifBlank { null },
+                        channelPoint = channelPointRaw.ifBlank { null },
                         capacitySats = capacity,
                         localBalanceSats = local,
                         remoteBalanceSats = remote,
@@ -329,6 +327,7 @@ class LndRestClient : LightningNodeBackend {
                             remoteAlias = null,
                             shortChannelId = null,
                             fundingTxid = channelPoint.substringBefore(':').ifBlank { null },
+                            channelPoint = channelPoint.ifBlank { null },
                             capacitySats = capacity,
                             localBalanceSats = local,
                             remoteBalanceSats = remote,
@@ -355,6 +354,185 @@ class LndRestClient : LightningNodeBackend {
                 }.thenByDescending { it.isActive }
                     .thenByDescending { it.capacitySats },
             )
+        }
+
+    override suspend fun listPeers(): List<github.aeonbtc.ibiswallet.data.model.LightningNodePeer> =
+        withContext(Dispatchers.IO) {
+            val json = runCatching { getJson("/v1/peers") }.getOrElse { JSONObject() }
+            val arr = json.optJSONArray("peers") ?: JSONArray()
+            val channelPeerCounts =
+                runCatching { listChannels() }
+                    .getOrDefault(emptyList())
+                    .groupingBy { it.remotePubkey }
+                    .eachCount()
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val p = arr.optJSONObject(i) ?: continue
+                    val pubkey = p.optString("pub_key").ifBlank { continue }
+                    add(
+                        github.aeonbtc.ibiswallet.data.model.LightningNodePeer(
+                            pubkey = pubkey,
+                            alias = p.optString("alias").ifBlank { null },
+                            address = p.optString("address").ifBlank { null },
+                            isConnected = true,
+                            numChannels = channelPeerCounts[pubkey] ?: 0,
+                        ),
+                    )
+                }
+            }
+        }
+
+    override suspend fun connectPeer(
+        pubkey: String,
+        host: String?,
+    ): Unit =
+        withContext(Dispatchers.IO) {
+            val cleanPubkey = pubkey.trim()
+            require(cleanPubkey.matches(Regex("(?i)[0-9a-f]{66}"))) { "Invalid peer pubkey" }
+            val cleanHost = host?.trim().orEmpty()
+            require(cleanHost.isNotBlank()) { "Peer host is required (pubkey@host:port)" }
+            val body =
+                JSONObject().apply {
+                    put(
+                        "addr",
+                        JSONObject()
+                            .put("pubkey", cleanPubkey)
+                            .put("host", cleanHost),
+                    )
+                    put("perm", false)
+                    put("timeout", "15")
+                }
+            postJson("/v1/peers", body)
+            Unit
+        }
+
+    override suspend fun disconnectPeer(
+        pubkey: String,
+        force: Boolean,
+    ): Unit =
+        withContext(Dispatchers.IO) {
+            val cleanPubkey = pubkey.trim()
+            require(cleanPubkey.isNotBlank()) { "Peer pubkey is required" }
+            // LND has no force-disconnect: peers with open channels cannot be
+            // disconnected (close the channels first). [force] is accepted for
+            // API parity and intentionally ignored.
+            deleteJson("/v1/peers/$cleanPubkey")
+            Unit
+        }
+
+    override suspend fun openChannel(
+        pubkey: String,
+        amountSats: Long,
+        satPerVbyte: Double?,
+        isPrivate: Boolean,
+        pushSats: Long,
+        closeAddress: String?,
+        peerHost: String?,
+    ): String =
+        withContext(Dispatchers.IO) {
+            val cleanPubkey = pubkey.trim()
+            require(cleanPubkey.matches(Regex("(?i)[0-9a-f]{66}"))) { "Invalid peer pubkey" }
+            require(amountSats > 0) { "Channel capacity must be positive" }
+            require(pushSats in 0..amountSats) { "Push amount must be within capacity" }
+            // Peer-connect step: lets opens target peers we are not connected to yet.
+            // Best-effort — an already-connected peer is not an error, and a failed
+            // dial still falls through to open so the node returns the verdict.
+            peerHost?.trim()?.substringAfter("@")?.trim()?.takeIf { it.isNotBlank() }?.let { host ->
+                runCatching { connectPeer(cleanPubkey, host) }
+                    .recoverCatching { e ->
+                        if (!isAlreadyConnectedError(e)) throw e
+                    }
+            }
+            val body =
+                JSONObject().apply {
+                    put("node_pubkey_string", cleanPubkey)
+                    put("local_funding_amount", amountSats.toString())
+                    if (pushSats > 0) put("push_sat", pushSats.toString())
+                    put("private", isPrivate)
+                    put("spend_unconfirmed", false)
+                    put("min_confs", 1)
+                    if (!closeAddress.isNullOrBlank()) put("close_address", closeAddress.trim())
+                    val rate = satPerVbyte?.takeIf { it > 0 }
+                    if (rate != null) {
+                        put("sat_per_vbyte", rate.roundToLong().coerceAtLeast(1L).toString())
+                    }
+                }
+            val response = postJson("/v1/channels", body, retry = false)
+            val fundingTxid =
+                response.optJSONObject("chan_open")
+                    ?.optJSONObject("channel_point")
+                    ?.optString("funding_txid_str")
+                    ?.ifBlank { null }
+                    ?: response.optString("funding_txid_str").ifBlank { null }
+            val outpoint =
+                fundingTxid?.let { txid ->
+                    val index =
+                        response.optJSONObject("chan_open")
+                            ?.optJSONObject("channel_point")
+                            ?.optInt("output_index", 0)
+                            ?: response.optInt("output_index", 0)
+                    "$txid:$index"
+                }
+            outpoint ?: fundingTxid ?: "Channel open initiated"
+        }
+
+    override suspend fun closeChannel(
+        channel: LightningNodeChannel,
+        force: Boolean,
+        satPerVbyte: Double?,
+        closeAddress: String?,
+    ): String =
+        withContext(Dispatchers.IO) {
+            val outpoint = channel.closeOutpoint()
+                ?: throw IllegalStateException("Channel outpoint is unknown — cannot close")
+            val parts = outpoint.split(":")
+            require(parts.size == 2) { "Invalid channel outpoint" }
+            val txid = parts[0]
+            val vout = parts[1].toIntOrNull() ?: 0
+            val query =
+                buildString {
+                    append("?force=$force&no_wait=true")
+                    satPerVbyte?.takeIf { it > 0 }?.let {
+                        append("&sat_per_vbyte=${it.roundToLong().coerceAtLeast(1L)}")
+                    }
+                    if (!closeAddress.isNullOrBlank()) {
+                        append("&delivery_address=${java.net.URLEncoder.encode(closeAddress.trim(), "UTF-8")}")
+                    }
+                }
+            // CloseChannel streams newline-delimited updates; deleteJson keeps the
+            // last JSON object of the stream.
+            val response = deleteJson("/v1/channels/$txid/$vout$query")
+            val closingTxid =
+                response.optJSONObject("chan_close")
+                    ?.optJSONObject("closing_txid")
+                    ?.optString("txid_str")
+                    ?.ifBlank { null }
+                    ?: response.optString("closing_txid").ifBlank { null }
+            closingTxid ?: "Close initiated"
+        }
+
+    override suspend fun updateChannelFeePolicy(
+        channel: LightningNodeChannel,
+        baseFeeMsat: Long,
+        feeRatePpm: Long,
+        cltvDelta: Int?,
+    ): Unit =
+        withContext(Dispatchers.IO) {
+            require(baseFeeMsat >= 0) { "Base fee must be >= 0" }
+            require(feeRatePpm in 0..10_000_000) { "Fee rate out of range" }
+            // Never fall back to a global update: without an outpoint this call
+            // would rewrite the policy of EVERY channel on the node.
+            val outpoint = channel.closeOutpoint()
+                ?: throw IllegalStateException("Channel outpoint is unknown — cannot update fees")
+            val body =
+                JSONObject().apply {
+                    put("chan_point", outpoint)
+                    put("base_fee_msat", baseFeeMsat.toString())
+                    put("fee_rate", (feeRatePpm.toDouble() / 1_000_000.0).toString())
+                    put("time_lock_delta", (cltvDelta ?: 40).coerceIn(1, 1000))
+                }
+            postJson("/v1/chanpolicy", body)
+            Unit
         }
 
     override suspend fun listPayments(limit: Int): List<LightningNodePayment> =
@@ -1346,6 +1524,13 @@ class LndRestClient : LightningNodeBackend {
             )
         }
 
+    private fun isAlreadyConnectedError(error: Throwable): Boolean {
+        val message = error.message.orEmpty().lowercase()
+        return message.contains("already connected") ||
+            message.contains("already exists") ||
+            message.contains("peer already")
+    }
+
     private fun isNotFoundError(error: Throwable): Boolean {
         val message = error.message.orEmpty().lowercase()
         return message.contains("http 404") ||
@@ -1404,11 +1589,15 @@ class LndRestClient : LightningNodeBackend {
         path: String,
         body: JSONObject,
         retry: Boolean = true,
-    ): JSONObject = executeJson(path, methodGet = false, body = body, retry = retry)
+    ): JSONObject = executeJson(path, method = "POST", body = body, retry = retry)
+
+    private fun deleteJson(path: String): JSONObject =
+        executeJson(path, method = "DELETE", body = null, retry = false)
 
     private fun executeJson(
         path: String,
-        methodGet: Boolean,
+        method: String = "GET",
+        methodGet: Boolean = method == "GET",
         body: JSONObject?,
         retry: Boolean = true,
     ): JSONObject {
@@ -1422,20 +1611,28 @@ class LndRestClient : LightningNodeBackend {
                         .url("$baseUrl$path")
                         .header("Grpc-Metadata-macaroon", macaroonHex)
                 val request =
-                    if (methodGet) {
-                        builder.get().build()
-                    } else {
-                        builder
-                            .post((body ?: JSONObject()).toString().toRequestBody(JSON_MEDIA))
-                            .header("Content-Type", "application/json")
-                            .build()
+                    when {
+                        methodGet || method == "GET" -> builder.get().build()
+                        method == "DELETE" -> builder.delete().build()
+                        else ->
+                            builder
+                                .post((body ?: JSONObject()).toString().toRequestBody(JSON_MEDIA))
+                                .header("Content-Type", "application/json")
+                                .build()
                     }
                 http.newCall(request).execute().use { response ->
                     val responseBody = response.body?.stringWithLimit(InputLimits.LARGE_JSON_BYTES).orEmpty()
                     if (!response.isSuccessful) {
                         throw IllegalStateException(extractError(responseBody, response.code, path))
                     }
-                    return JSONObject(responseBody.ifBlank { "{}" })
+                    val trimmed = responseBody.trim()
+                    if (trimmed.isBlank()) return JSONObject("{}")
+                    // CloseChannel streams newline-delimited updates — take the last JSON object.
+                    return runCatching { JSONObject(trimmed) }.getOrElse {
+                        val lines = trimmed.lines().map { it.trim() }.filter { it.startsWith("{") }
+                        lines.lastOrNull()?.let { runCatching { JSONObject(it) }.getOrNull() }
+                            ?: JSONObject("{}")
+                    }
                 }
             } catch (e: Exception) {
                 lastError = e

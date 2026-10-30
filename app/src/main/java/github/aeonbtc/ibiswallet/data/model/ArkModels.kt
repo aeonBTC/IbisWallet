@@ -83,6 +83,17 @@ data class ArkWalletState(
     val pendingExitSats: Long = 0,
     val pendingLightningSendSats: Long = 0,
     val claimableLightningReceiveSats: Long = 0,
+    /**
+     * Sats in VTXOs that cannot be sent out-of-round until refreshed (expired or
+     * at the server's exit-depth limit). bark 0.8.0+ excludes these from
+     * [spendableSats], so they are tracked separately to keep them in
+     * [totalSats] — they are owned and still refreshable/exit-able.
+     */
+    val needsRefreshSats: Long = 0,
+    /** Sats locked in an outgoing arkoor payment that has not completed yet. */
+    val pendingArkoorSendSats: Long = 0,
+    /** Sats locked in an offboard whose transaction has not been broadcast yet. */
+    val pendingOffboardSats: Long = 0,
     /** Confirmed BTC sitting in Bark's on-chain wallet waiting to board into VTXOs. */
     val onchainConfirmedSats: Long = 0,
     /** Unconfirmed BTC on Bark's deposit address (L1 funding not yet confirmed/visible). */
@@ -94,6 +105,12 @@ data class ArkWalletState(
     val vtxosToRefresh: List<ArkVtxo> = emptyList(),
     /** Near-expiry VTXOs (soft warning before required refresh). */
     val expiringSoonVtxos: List<ArkVtxo> = emptyList(),
+    /**
+     * Live VTXOs at or past expiry height that the server can sweep.
+     * Per Bark docs they remain spendable/exitable until swept or forfeited —
+     * cooperative refresh may still succeed, unilateral exit is guaranteed.
+     */
+    val expiredVtxos: List<ArkVtxo> = emptyList(),
     val exitVtxos: List<ArkExitVtxo> = emptyList(),
     val claimableExitVtxos: List<ArkExitVtxo> = emptyList(),
     val hasPendingExits: Boolean = false,
@@ -149,6 +166,12 @@ data class ArkWalletState(
      * Transient: recomputed every refresh, never cached.
      */
     val unrecoveredExitIds: List<String> = emptyList(),
+    /**
+     * True when SecureStorage holds a pre-broadcast/signed claim journal.
+     * Transient: recomputed from sealed storage on every refresh, never cached.
+     * Drives the explicit "discard saved claim" recovery action.
+     */
+    val pendingClaimPresent: Boolean = false,
 ) {
     val onchainTotalSats: Long
         get() = onchainConfirmedSats + onchainPendingSats
@@ -160,8 +183,9 @@ data class ArkWalletState(
     val totalSats: Long
         get() {
             val spendable = spendableSats.coerceAtLeast(0L)
+            val needsRefresh = needsRefreshSats.coerceAtLeast(0L)
             val inRound = pendingInRoundSats.coerceAtLeast(0L)
-            val lockedAndSpendable = spendable + inRound
+            val lockedAndSpendable = spendable + needsRefresh + inRound
             val vtxoSum = vtxos.sumOf { it.amountSats.coerceAtLeast(0L) }
             val offchainCore =
                 if (vtxoSum > 0L && lockedAndSpendable > vtxoSum) {
@@ -172,6 +196,8 @@ data class ArkWalletState(
             return offchainCore +
                 pendingBoardSats.coerceAtLeast(0L) +
                 pendingExitSats.coerceAtLeast(0L) +
+                pendingArkoorSendSats.coerceAtLeast(0L) +
+                pendingOffboardSats.coerceAtLeast(0L) +
                 pendingLightningSendSats.coerceAtLeast(0L) +
                 claimableLightningReceiveSats.coerceAtLeast(0L) +
                 onchainTotalSats
@@ -199,6 +225,13 @@ data class ArkWalletState(
 
     val hasClaimableExits: Boolean
         get() = claimableExitVtxos.isNotEmpty()
+
+    /** Expired-but-unswept VTXOs still held live — refresh may still work, exit is guaranteed. */
+    val hasExpiredVtxos: Boolean
+        get() = expiredVtxos.isNotEmpty()
+
+    val expiredSats: Long
+        get() = expiredVtxos.sumOf { it.amountSats.coerceAtLeast(0L) }
 
     val hasInboundDeposit: Boolean
         get() = onchainTotalSats > 0L || pendingBoardSats > 0L
@@ -287,6 +320,7 @@ data class ArkPendingClaim(
     val signedHex: String? = null,
     val txid: String? = null,
     val createdAt: String,
+    val broadcastAccepted: Boolean = false,
 )
 
 /** Unspent output on a Bark on-chain deposit address (Esplora-sourced). */
@@ -363,6 +397,7 @@ data class ArkEmergencyExitFeeQuote(
     val txsToBroadcast: Long?,
     val fundable: Boolean?,
     val isQuoting: Boolean,
+    val quotedAtMs: Long = System.currentTimeMillis(),
 )
 
 sealed interface ArkSendState {
@@ -378,6 +413,8 @@ sealed interface ArkSendState {
         val netAmountSats: Long? = null,
         val useAllFunds: Boolean = false,
         val label: String? = null,
+        val walletId: String? = null,
+        val sessionGeneration: Long = 0L,
     ) : ArkSendState
 
     /** Sequential multi-payment preview (Arkoor addresses only). */
@@ -473,6 +510,8 @@ sealed interface ArkTransferState {
         val boardFunding: BoardFundingInfo? = null,
         /** Bark board fee component (ASP sweep + server fee) for fee breakdown. */
         val boardFeeSats: Long? = null,
+        val walletId: String? = null,
+        val sessionGeneration: Long = 0L,
     ) : ArkTransferState
 
     data class OffboardPreview(
@@ -483,6 +522,8 @@ sealed interface ArkTransferState {
         val offboardAll: Boolean,
         val feeRateSatPerVb: Double? = null,
         val grossAmountSats: Long? = null,
+        val walletId: String? = null,
+        val sessionGeneration: Long = 0L,
     ) : ArkTransferState
 
     data object InProgress : ArkTransferState
@@ -529,6 +570,8 @@ sealed interface ArkLifecycleState {
         val scheduledHeight: Int? = null,
         /** Server-schedule fee quote at [scheduledHeight]; null when no schedule or quote failed. */
         val scheduledFeeSats: Long? = null,
+        val walletId: String? = null,
+        val sessionGeneration: Long = 0L,
     ) : ArkLifecycleState
 
     data class ExitStarted(
@@ -548,6 +591,8 @@ sealed interface ArkLifecycleState {
         val psbtBase64: String,
         /** Claimable total at quote time; ledger fallback if the live query fails. */
         val claimAmountSats: Long? = null,
+        val walletId: String? = null,
+        val sessionGeneration: Long = 0L,
     ) : ArkLifecycleState
 
     data object InProgress : ArkLifecycleState
@@ -558,6 +603,11 @@ sealed interface ArkLifecycleState {
         val vtxoIds: List<String> = emptyList(),
         /** True while the native round wait is still in flight (submitted, not finished). */
         val inFlight: Boolean = true,
+        /**
+         * True until the native submission call returns. The round is not durable
+         * with the ASP during this window, so the UI must not claim it was submitted.
+         */
+        val submitting: Boolean = false,
     ) : ArkLifecycleState
 
     data class Completed(

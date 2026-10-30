@@ -1,5 +1,6 @@
 package github.aeonbtc.ibiswallet.data.lightning
 
+import android.annotation.SuppressLint
 import android.util.Base64
 import okhttp3.OkHttpClient
 import java.io.ByteArrayInputStream
@@ -283,6 +284,9 @@ object TlsCertMaterial {
         return kmf.keyManagers
     }
 
+    // Only reachable via applyInsecureTrust: .onion hosts (address is the authentication) or an
+    // explicit per-host insecure-transport acknowledgment.
+    @SuppressLint("CustomX509TrustManager", "TrustAllX509TrustManager")
     private fun trustAllManager(): X509TrustManager =
         object : X509TrustManager {
             override fun checkClientTrusted(

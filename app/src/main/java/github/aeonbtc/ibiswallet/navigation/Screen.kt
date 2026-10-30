@@ -39,6 +39,13 @@ sealed class Screen(val route: String) {
 
     data object BackupRestore : Screen("backup_restore")
 
+    // Tools hub
+    data object Tools : Screen("tools")
+
+    data object VerifyMessage : Screen("verify_message")
+
+    data object Decoder : Screen("decoder")
+
     // Address and UTXO screens
     data object AllAddresses : Screen("all_addresses")
 
@@ -46,6 +53,9 @@ sealed class Screen(val route: String) {
 
     // PSBT signing flow (watch-only wallets)
     data object PsbtExport : Screen("psbt_export")
+
+    // Offline PSBT signer (cold-storage: import, review, sign, export — never broadcasts)
+    data object SignTransaction : Screen("sign_transaction")
 
     // PSET signing flow (Liquid watch-only wallets)
     data object LiquidPsetExport : Screen("liquid_pset_export")

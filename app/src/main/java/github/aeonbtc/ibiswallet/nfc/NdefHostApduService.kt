@@ -26,18 +26,74 @@ class NdefHostApduService : HostApduService() {
         @Volatile
         private var currentNdefMessage: ByteArray? = null
 
+        // Receive payload kept only while the app is foregrounded. It is moved
+        // here on pause so a backgrounded phone does not keep advertising the
+        // address, and restored on resume unless the screen disposed/locked.
+        @Volatile
+        private var suspendedNdefMessage: ByteArray? = null
+
+        // PSBT share payload for phone-to-phone handoff, armed explicitly from
+        // a PSBT export screen. Takes precedence over the receive-URI payload
+        // while armed. Never armed implicitly: HCE is promiscuous (any nearby
+        // reader gets the payload), so a PSBT — which exposes the wallet's
+        // inputs and outputs — is only presented while the user holds the
+        // share screen, and disarmed on screen dispose, cancel, timeout, or
+        // app lock.
+        @Volatile
+        private var psbtShareMessage: ByteArray? = null
+
         /**
          * Set the NDEF message to broadcast. Pass null to stop broadcasting.
          * Typically called with a Bitcoin, Liquid, or Lightning payload from the Receive screen.
          */
         fun setNdefPayload(uri: String?) {
             currentNdefMessage = uri?.let { buildNdefBytes(it) }
+            if (uri == null) suspendedNdefMessage = null
             if (currentNdefMessage != null) {
                 NfcRuntimeStatus.setShareReady()
             } else {
-                NfcRuntimeStatus.setShareInactive()
+                NfcRuntimeStatus.restoreShareReadyIfPayloadPresent(psbtShareMessage != null)
             }
         }
+
+        /** Stop advertising the receive URI while the app is not visible. */
+        fun suspendNdefPayload() {
+            if (currentNdefMessage != null) {
+                suspendedNdefMessage = currentNdefMessage
+                currentNdefMessage = null
+            }
+            NfcRuntimeStatus.restoreShareReadyIfPayloadPresent(psbtShareMessage != null)
+        }
+
+        /** Re-present the receive URI when the app returns to the foreground. */
+        fun resumeNdefPayload() {
+            val suspended = suspendedNdefMessage ?: return
+            if (currentNdefMessage == null) {
+                currentNdefMessage = suspended
+                NfcRuntimeStatus.setShareReady()
+            }
+        }
+
+        /**
+         * Arm a PSBT NDEF message (built by [NfcPsbtCodec.buildShareMessage])
+         * for phone-to-phone sharing. While armed, taps receive the PSBT
+         * instead of any receive-URI payload. Callers must disarm via
+         * [disarmPsbtShare] when the share screen disposes, the user cancels,
+         * the share times out, or the app locks.
+         */
+        fun armPsbtShare(ndefMessageBytes: ByteArray) {
+            psbtShareMessage = ndefMessageBytes
+            NfcRuntimeStatus.setShareReady()
+        }
+
+        /** Stop presenting a shared PSBT. Restores receive-URI state. */
+        fun disarmPsbtShare() {
+            psbtShareMessage = null
+            NfcRuntimeStatus.restoreShareReadyIfPayloadPresent(currentNdefMessage != null)
+        }
+
+        /** True while a PSBT share payload is armed for tapping. */
+        fun isPsbtShareArmed(): Boolean = psbtShareMessage != null
 
         /**
          * Build raw NDEF message bytes from a supported send payload.
@@ -76,7 +132,7 @@ class NdefHostApduService : HostApduService() {
 
     }
 
-    private val emulator = Type4NdefApduEmulator { currentNdefMessage }
+    private val emulator = Type4NdefApduEmulator { psbtShareMessage ?: currentNdefMessage }
 
     override fun processCommandApdu(commandApdu: ByteArray, extras: Bundle?): ByteArray {
         NfcRuntimeStatus.markShareActivity()
@@ -85,6 +141,8 @@ class NdefHostApduService : HostApduService() {
 
     override fun onDeactivated(reason: Int) {
         emulator.onDeactivated()
-        NfcRuntimeStatus.restoreShareReadyIfPayloadPresent(currentNdefMessage != null)
+        NfcRuntimeStatus.restoreShareReadyIfPayloadPresent(
+            currentNdefMessage != null || psbtShareMessage != null,
+        )
     }
 }

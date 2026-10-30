@@ -22,6 +22,8 @@ internal object ArkBarkMappers {
     const val EXIT_CLAIM_IN_PROGRESS = "ClaimInProgress"
     const val EXIT_CLAIMED = "Claimed"
     const val EXIT_VTXO_ALREADY_SPENT = "VtxoAlreadySpent"
+    /** Terminal: an output the exit chain needed was swept on-chain (bark 0.8.0+). */
+    const val EXIT_VTXO_SWEPT = "VtxoSwept"
     const val EXIT_CANCELED = "Canceled"
     /** Nested under Processing when CPFP child cannot be funded. */
     const val EXIT_AWAITING_CPFP = "AwaitingCpfpBroadcast"
@@ -60,6 +62,7 @@ internal object ArkBarkMappers {
             is ExitState.ClaimInProgress -> EXIT_CLAIM_IN_PROGRESS
             is ExitState.Claimed -> EXIT_CLAIMED
             is ExitState.VtxoAlreadySpent -> EXIT_VTXO_ALREADY_SPENT
+            is ExitState.VtxoSwept -> EXIT_VTXO_SWEPT
             is ExitState.Canceled -> EXIT_CANCELED
         }
 
@@ -97,9 +100,20 @@ internal object ArkBarkMappers {
         state.equals(EXIT_VTXO_ALREADY_SPENT, ignoreCase = true) ||
             state.contains(EXIT_VTXO_ALREADY_SPENT, ignoreCase = true)
 
-    /** Claimed, canceled, or already spent — not an in-flight unilateral exit. */
+    fun isSweptLabel(state: String): Boolean =
+        state.equals(EXIT_VTXO_SWEPT, ignoreCase = true) ||
+            state.contains(EXIT_VTXO_SWEPT, ignoreCase = true)
+
+    /**
+     * Claimed, canceled, already spent, or swept by the server — not an
+     * in-flight unilateral exit. Swept is terminal here: the exit chain can no
+     * longer complete, though a refresh of the (expired) VTXO may still work.
+     */
     fun isTerminalExitLabel(state: String): Boolean =
-        isClaimedLabel(state) || isCanceledLabel(state) || isAlreadySpentLabel(state)
+        isClaimedLabel(state) ||
+            isCanceledLabel(state) ||
+            isAlreadySpentLabel(state) ||
+            isSweptLabel(state)
 
     fun canCancelLabel(state: String): Boolean =
         !isCanceledLabel(state) &&

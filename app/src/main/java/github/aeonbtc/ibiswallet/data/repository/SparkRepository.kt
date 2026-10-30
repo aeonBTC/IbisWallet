@@ -15,6 +15,7 @@ import breez_sdk_spark.ExitTransactionStatus
 import breez_sdk_spark.FeePolicy
 import breez_sdk_spark.FetchClaimDepositQuoteRequest
 import breez_sdk_spark.GetInfoRequest
+import breez_sdk_spark.GetTokensMetadataRequest
 import breez_sdk_spark.ImportUnilateralExitStateRequest
 import breez_sdk_spark.InputType
 import breez_sdk_spark.ListPaymentsRequest
@@ -38,6 +39,7 @@ import breez_sdk_spark.PrepareUnilateralExitResponse
 import breez_sdk_spark.ReceivePaymentMethod
 import breez_sdk_spark.ReceivePaymentRequest
 import breez_sdk_spark.SdkEvent
+import breez_sdk_spark.SdkException
 import breez_sdk_spark.Seed
 import breez_sdk_spark.SendOnchainSpeedFeeQuote
 import breez_sdk_spark.SendPaymentMethod
@@ -79,13 +81,19 @@ import github.aeonbtc.ibiswallet.data.model.SparkPendingLnInvoice
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveKind
 import github.aeonbtc.ibiswallet.data.model.SparkReceiveState
 import github.aeonbtc.ibiswallet.data.model.SparkSendState
+import github.aeonbtc.ibiswallet.data.model.SparkToken
+import github.aeonbtc.ibiswallet.data.model.SparkTokenBalance
+import github.aeonbtc.ibiswallet.data.model.SparkClaimDeferredReason
+import github.aeonbtc.ibiswallet.data.model.SparkClaimOutcome
 import github.aeonbtc.ibiswallet.data.model.SparkDepositClaimQuote
+import github.aeonbtc.ibiswallet.data.model.SparkExitAlreadyCompleteException
 import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
 import github.aeonbtc.ibiswallet.data.model.SparkWalletState
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.SparkServiceErrors
 import github.aeonbtc.ibiswallet.util.normalizeSparkAddressLabelRef
+import github.aeonbtc.ibiswallet.util.stripSparkPaymentRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -135,6 +143,20 @@ class SparkRepository(
     private val _sparkTransactionSources = MutableStateFlow<Map<String, String>>(emptyMap())
     val sparkTransactionSources: StateFlow<Map<String, String>> = _sparkTransactionSources.asStateFlow()
 
+    init {
+        // One-time cleanup for installs that restored a Spark on-chain deposit
+        // address from a backup before the restore path stopped trusting it.
+        // A fresh address is derived on the next receive request.
+        if (!secureStorage.hasClearedLegacySparkDepositAddressCache()) {
+            runCatching {
+                secureStorage.getWalletIds().forEach { walletId ->
+                    secureStorage.clearSparkOnchainDepositAddress(walletId)
+                }
+                secureStorage.markLegacySparkDepositAddressCacheCleared()
+            }
+        }
+    }
+
     private val _loadedWalletId = MutableStateFlow<String?>(null)
     val loadedWalletId: StateFlow<String?> = _loadedWalletId.asStateFlow()
 
@@ -165,6 +187,7 @@ class SparkRepository(
     private var sdk: BreezSdk? = null
     private var listenerId: String? = null
     private var preparedSend: PreparedSparkSend? = null
+    private var preparedSendWalletId: String? = null
     private var preparedExitQuote: PrepareUnilateralExitResponse? = null
     // UI copy of the quote the user reviewed. Captured before Building so the
     // built set keeps the reviewed fee rate, destination, and funding splits
@@ -421,13 +444,28 @@ class SparkRepository(
         amountSats: Long? = null,
         description: String = "",
         forceNew: Boolean = false,
+        tokenIdentifier: String? = null,
+        tokenAmount: BigInteger? = null,
     ) =
         withContext(Dispatchers.IO) {
-            // Negative amounts would wrap via toULong()/BigInteger into a huge
-            // invoice instead of failing — reject locally before touching SDK.
-            if (amountSats != null && amountSats <= 0L) {
-                _receiveState.value = SparkReceiveState.Error("Invalid amount")
-                return@withContext
+            val normalizedTokenId = tokenIdentifier?.trim()?.takeIf { it.isNotBlank() }
+            // Token invoices carry base-unit amounts (e.g. USDT cents), not sats.
+            if (normalizedTokenId != null) {
+                if (tokenAmount != null && tokenAmount.signum() <= 0) {
+                    _receiveState.value = SparkReceiveState.Error("Invalid amount")
+                    return@withContext
+                }
+                if (kind != SparkReceiveKind.SPARK_ADDRESS && kind != SparkReceiveKind.SPARK_INVOICE) {
+                    _receiveState.value = SparkReceiveState.Error("Tokens use Spark invoices")
+                    return@withContext
+                }
+            } else {
+                // Negative amounts would wrap via toULong()/BigInteger into a huge
+                // invoice instead of failing — reject locally before touching SDK.
+                if (amountSats != null && amountSats <= 0L) {
+                    _receiveState.value = SparkReceiveState.Error("Invalid amount")
+                    return@withContext
+                }
             }
             val walletId = _loadedWalletId.value
             if (kind == SparkReceiveKind.BITCOIN_ADDRESS && !forceNew && walletId != null) {
@@ -458,8 +496,8 @@ class SparkRepository(
                         paymentMethod = when (kind) {
                             SparkReceiveKind.SPARK_ADDRESS -> ReceivePaymentMethod.SparkAddress
                             SparkReceiveKind.SPARK_INVOICE -> ReceivePaymentMethod.SparkInvoice(
-                                amount = amountSats?.toSparkBigInteger(),
-                                tokenIdentifier = null,
+                                amount = tokenAmount ?: amountSats?.toSparkBigInteger(),
+                                tokenIdentifier = normalizedTokenId,
                                 expiryTime = null,
                                 description = description.takeIf { it.isNotBlank() },
                                 senderPublicKey = null,
@@ -503,6 +541,7 @@ class SparkRepository(
                     kind = kind,
                     paymentRequest = paymentRequest,
                     feeSats = response.fee.toLongSafe(),
+                    tokenIdentifier = normalizedTokenId,
                 )
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
@@ -516,13 +555,23 @@ class SparkRepository(
         onchainFeeSpeed: SparkOnchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
         useAllFunds: Boolean = false,
         label: String? = null,
+        tokenIdentifier: String? = null,
+        tokenAmount: BigInteger? = null,
     ) = withContext(Dispatchers.IO) {
         _sendState.value = SparkSendState.Preparing
         try {
             // Serialize with send paths: concurrent prepares must not overwrite
             // each other's prepared payment (A prepares, B overwrites, A sends B's).
             val preview = sendMutex.withLock {
-                prepareSendPreviewInternal(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds, label)
+                prepareSendPreviewInternal(
+                    paymentRequest,
+                    amountSats,
+                    onchainFeeSpeed,
+                    useAllFunds,
+                    label,
+                    tokenIdentifier?.trim()?.takeIf { it.isNotBlank() },
+                    tokenAmount,
+                )
             }
             _sendState.value = preview
         } catch (e: Exception) {
@@ -543,11 +592,21 @@ class SparkRepository(
         onchainFeeSpeed: SparkOnchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
         useAllFunds: Boolean = false,
         label: String? = null,
+        tokenIdentifier: String? = null,
+        tokenAmount: BigInteger? = null,
     ): SparkSendState.Preview =
         withContext(Dispatchers.IO) {
             try {
                 val preview = sendMutex.withLock {
-                    prepareSendPreviewInternal(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds, label)
+                    prepareSendPreviewInternal(
+                        paymentRequest,
+                        amountSats,
+                        onchainFeeSpeed,
+                        useAllFunds,
+                        label,
+                        tokenIdentifier?.trim()?.takeIf { it.isNotBlank() },
+                        tokenAmount,
+                    )
                 }
                 _sendState.value = preview
                 preview
@@ -563,9 +622,15 @@ class SparkRepository(
         paymentRequest: String,
         amountSats: Long,
         useAllFunds: Boolean = false,
+        tokenIdentifier: String? = null,
     ): List<SparkOnchainFeeQuote> =
         withContext(Dispatchers.IO) {
-            val normalizedRequest = paymentRequest.trim()
+            // Token sends settle off-chain on Spark; there are no on-chain fee
+            // speed quotes for them (fee is quoted in token base units).
+            if (!tokenIdentifier.isNullOrBlank()) return@withContext emptyList()
+            // `spark:` URIs carry amount/label outside the address — the SDK
+            // only parses the bare address/invoice.
+            val normalizedRequest = stripSparkPaymentRequest(paymentRequest.trim())
             if (normalizedRequest.isEmpty() || amountSats <= 0L) return@withContext emptyList()
             val cacheKey = OnchainFeeQuoteCacheKey(normalizedRequest, amountSats, useAllFunds)
 
@@ -669,11 +734,11 @@ class SparkRepository(
     // path via [signPsbt].
 
     /**
-     * Instant-claim quote for a pending deposit (Breez 0.25+): what the
-     * deposit would credit right now and the spread fee for skipping the
-     * maturity wait. Returns null when the provider offers no early claim
-     * (matured, unreachable, or uneconomical) — the deposit then matures
-     * normally and the UI simply offers nothing.
+     * Claim quote for a pending deposit: the early (instant / expedited) offer
+     * when the provider makes one, otherwise standard-claim terms so the
+     * dialog can still arm a ceiling instead of hiding. Null only when neither
+     * quote is internally consistent. Claiming under the mature terms on an
+     * immature deposit records the ceiling and settles at maturity.
      */
     suspend fun fetchDepositClaimQuote(
         txid: String,
@@ -682,47 +747,50 @@ class SparkRepository(
         withContext(Dispatchers.IO) {
             val response =
                 sdkOrThrow().fetchClaimDepositQuote(FetchClaimDepositQuoteRequest(txid, vout))
-            val instant = response.instant ?: return@withContext null
-            val amountSats = response.amountSats.toLongSafe()
-            val creditSats = instant.creditAmountSats.toLongSafe()
-            val feeSats = instant.feeSats.toLongSafe()
-            // A corrupt/overflowing SDK quote must never paint: coerce-and-hide
-            // beats displaying wrapped values (claim-time ceiling re-checks).
-            if (!SparkUnilateralExitPolicy.isPlausibleClaimQuote(amountSats, creditSats, feeSats)) {
-                return@withContext null
-            }
-            SparkDepositClaimQuote(
+            SparkClaimPolicy.buildQuote(
                 txid = txid,
                 vout = vout,
-                amountSats = amountSats,
+                amountSats = response.amountSats.toLongSafe(),
                 confirmations = response.confirmations.toLongSafe(),
-                creditSats = creditSats,
-                feeSats = feeSats,
-                feeRateSatPerVb = instant.feeRateSatPerVbyte.toLongSafe(),
-                isEstimate = instant.isEstimate,
+                instant = response.instant,
+                mature = response.mature,
             )
         }
 
     /**
-     * Claims a pending deposit immediately at the reviewed instant quote.
-     * [maxFeeSats] must be the accepted quote's fee: the claim fails rather
-     * than paying more, and anything at or above the deposit value is refused
-     * locally. Refreshes state so the claimed deposit leaves the pending list.
+     * Claims a pending deposit at the reviewed quote's fee ceiling and returns
+     * what the call did (Breez 0.26+: declined claims are ordinary Deferred
+     * outcomes, not errors). The ceiling is recorded on the deposit, so a
+     * Deferred claim keeps retrying automatically — callers must surface the
+     * outcome instead of assuming success. Anything at or above the deposit
+     * value is refused locally. Refreshes state in all cases.
      */
     suspend fun claimDepositNow(
         txid: String,
         vout: UInt,
         amountSats: Long,
         maxFeeSats: Long,
-    ) {
+    ): SparkClaimOutcome {
         require(amountSats > 0L) { "Invalid deposit amount" }
         require(maxFeeSats > 0L) { "Claim fee ceiling must be positive" }
         SparkUnilateralExitPolicy.validateClaimCeiling(amountSats, maxFeeSats)?.let {
             throw IllegalArgumentException(it)
         }
-        withContext(Dispatchers.IO) {
-            sdkOrThrow().claimDeposit(ClaimDepositRequest(txid, vout, MaxFee.Fixed(maxFeeSats.toULong())))
+        return withContext(Dispatchers.IO) {
+            val outcome =
+                try {
+                    sdkOrThrow()
+                        .claimDeposit(ClaimDepositRequest(txid, vout, MaxFee.Fixed(maxFeeSats.toULong())))
+                        .outcome
+                        .let(SparkClaimPolicy::outcomeOf)
+                } catch (e: SdkException.DepositClaimInProgress) {
+                    // Recovery-path signal, not a failure: a claim is already
+                    // running (background attempt or another call). The ceiling
+                    // stands and the deposit settles on its own.
+                    SparkClaimOutcome.Deferred(SparkClaimDeferredReason.IN_PROGRESS)
+                }
             refreshState()
+            outcome
         }
     }
 
@@ -1060,8 +1128,19 @@ class SparkRepository(
                             )
                         if (freshQuote.leafIds.isEmpty()) {
                             // Everything resolved on-chain since the last
-                            // build: there is nothing to sign. Refresh status
-                            // instead of invoking the signer.
+                            // build: there is nothing to sign. 0.26 quotes
+                            // skip already-swept leaves, so a re-quote after
+                            // a finished exit routinely lands here — resolve
+                            // via check instead of invoking the signer.
+                            val persisted = walletId?.let { secureStorage.getSparkExitTxSet(it) }
+                            if (persisted != null && SparkUnilateralExitPolicy.isExitComplete(persisted.second)) {
+                                val sweepTxid =
+                                    persisted.second.lastOrNull { it.kind == SparkExitTxKind.SWEEP }?.txid
+                                secureStorage.clearSparkExitTxSet(walletId)
+                                secureStorage.clearSparkExitFunding(walletId)
+                                setExitFlow(SparkExitFlowState.Completed(sweepTxid))
+                                throw SparkExitAlreadyCompleteException(sweepTxid)
+                            }
                             throw IllegalStateException("Nothing left to exit — check status instead")
                         }
                         val built = buildExitLocked(effectiveFunding, freshQuote, liveUtxos, signPsbt)
@@ -1479,6 +1558,7 @@ class SparkRepository(
                 },
             feeRateSatPerVb = feeRateSatPerVb,
             destination = destination,
+            chainProgress = SparkUnilateralExitPolicy.chainProgressOf(exitChainState),
             cpfpFeeSats = cpfpFeeSat.toLongExact(),
             sweepFeeSats = sweepFeeSat.toLongExact(),
         )
@@ -1503,6 +1583,7 @@ class SparkRepository(
             perBranchFunding = quoted.perBranchFunding,
             feeRateSatPerVb = quoted.feeRateSatPerVb,
             destination = quoted.destination,
+            chainProgress = quoted.chainProgress,
             cpfpFeeSats = cpfpFeeSat.toLongExact(),
             sweepFeeSats = sweepFeeSat.toLongExact(),
         )
@@ -1653,6 +1734,7 @@ class SparkRepository(
                     val current = preparedSend
                     val standard = current as? PreparedSparkSend.Standard
                     val matches =
+                        standard?.tokenIdentifier == null &&
                         SparkWithdrawalPreparePolicy.shouldReusePrepared(
                             existingRequest = standard?.paymentRequest,
                             existingSpeed = standard?.onchainFeeSpeed,
@@ -1719,6 +1801,20 @@ class SparkRepository(
 
     private var preparedMultiItems: List<SparkSendState.MultiPreview.MultiItem> = emptyList()
     private var preparedMultiLabel: String? = null
+    // Multi-send is one SDK payment per item. Track how far we got so a retry
+    // after a partial failure resumes instead of re-paying item 1. AwaitingSend
+    // keeps the prepared response/idempotency key for an ambiguous send failure.
+    private var preparedMultiNextIndex: Int = 0
+    private var preparedMultiSucceeded: Int = 0
+    private var preparedMultiAwaitingSend: Boolean = false
+
+    private fun clearPreparedMultiStateLocked() {
+        preparedMultiItems = emptyList()
+        preparedMultiLabel = null
+        preparedMultiNextIndex = 0
+        preparedMultiSucceeded = 0
+        preparedMultiAwaitingSend = false
+    }
 
     fun resetSendState() {
         // Best-effort under sendMutex: clearing mid-prepare must not orphan a
@@ -1728,15 +1824,18 @@ class SparkRepository(
         if (sendMutex.tryLock()) {
             try {
                 preparedSend = null
-                preparedMultiItems = emptyList()
-                preparedMultiLabel = null
+                preparedSendWalletId = null
+                clearPreparedMultiStateLocked()
             } finally {
                 sendMutex.unlock()
             }
         } else {
             preparedSend = null
-            preparedMultiItems = emptyList()
-            preparedMultiLabel = null
+            preparedSendWalletId = null
+            clearPreparedMultiStateLocked()
+        }
+        _loadedWalletId.value?.let { walletId ->
+            secureStorage.clearSparkUncertainMultiSend(walletId)
         }
         _sendState.value = SparkSendState.Idle
     }
@@ -1750,6 +1849,14 @@ class SparkRepository(
         label: String? = null,
     ) =
         withContext(Dispatchers.IO) {
+            val walletId = _loadedWalletId.value
+            if (walletId != null && secureStorage.getSparkUncertainMultiSend(walletId) != null) {
+                _sendState.value =
+                    SparkSendState.Error(
+                        "A previous multi-send may have partially settled. Check history, then reset the send flow.",
+                    )
+                return@withContext
+            }
             if (recipients.size < 2) {
                 _sendState.value = SparkSendState.Error(
                     // reuse shared string via app context when available — set from UI otherwise
@@ -1766,6 +1873,9 @@ class SparkRepository(
                 // overwrites preparedSend, so a concurrent single-send prepare
                 // would corrupt both flows.
                 sendMutex.withLock {
+                    preparedMultiNextIndex = 0
+                    preparedMultiSucceeded = 0
+                    preparedMultiAwaitingSend = false
                     for ((paymentRequest, amount) in recipients) {
                         if (amount <= 0L) {
                             throw IllegalArgumentException("Amount required")
@@ -1813,17 +1923,16 @@ class SparkRepository(
                 throw e
             } catch (e: Exception) {
                 preparedSend = null
-                preparedMultiItems = emptyList()
-                preparedMultiLabel = null
+                clearPreparedMultiStateLocked()
                 _sendState.value = SparkSendState.Error(e.safeMessage("Spark multi send preview failed"))
             }
         }
 
     suspend fun sendPreparedMany() =
         withContext(Dispatchers.IO) {
-            var succeeded = 0
             var failed = 0
             var lastError: String? = null
+            var totalSucceeded = 0
             try {
                 // Whole multi-send holds sendMutex from snapshot to clear:
                 // each iteration rewrites preparedSend, so a concurrent
@@ -1834,22 +1943,36 @@ class SparkRepository(
                     if (items.size < 2) {
                         throw IllegalStateException("No prepared multi payment")
                     }
-                    for ((index, item) in items.withIndex()) {
+                    _loadedWalletId.value?.let { walletId ->
+                        secureStorage.setSparkUncertainMultiSend(walletId, "in_progress")
+                    }
+                    var index = preparedMultiNextIndex.coerceIn(0, items.size)
+                    while (index < items.size) {
                         _sendState.value =
                             SparkSendState.MultiSending(
-                                completed = index,
+                                completed = preparedMultiSucceeded,
                                 total = items.size,
                             )
+                        val item = items[index]
                         try {
-                            prepareSendPreviewInternal(
-                                paymentRequest = item.paymentRequest,
-                                amountSats = item.amountSats,
-                                onchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
-                                useAllFunds = false,
-                                label = preparedMultiLabel,
-                            )
+                            if (!preparedMultiAwaitingSend || preparedSend == null) {
+                                prepareSendPreviewInternal(
+                                    paymentRequest = item.paymentRequest,
+                                    amountSats = item.amountSats,
+                                    onchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
+                                    useAllFunds = false,
+                                    label = preparedMultiLabel,
+                                )
+                                preparedMultiAwaitingSend = true
+                            }
+                            // Reuse the prepared response + idempotency key on a
+                            // retry after an ambiguous failure. Re-preparing here
+                            // would mint a new key and could double-pay this item.
                             sendPreparedInternal()
-                            succeeded++
+                            preparedMultiAwaitingSend = false
+                            preparedMultiSucceeded++
+                            index++
+                            preparedMultiNextIndex = index
                         } catch (e: CancellationException) {
                             throw e
                         } catch (e: Exception) {
@@ -1858,23 +1981,27 @@ class SparkRepository(
                             break
                         }
                     }
-                    preparedMultiItems = emptyList()
-                    preparedMultiLabel = null
-                    preparedSend = null
+                    totalSucceeded = preparedMultiSucceeded
+                    if (preparedMultiNextIndex >= items.size) {
+                        preparedSend = null
+                        clearPreparedMultiStateLocked()
+                        _loadedWalletId.value?.let { walletId ->
+                            secureStorage.clearSparkUncertainMultiSend(walletId)
+                        }
+                    }
                 }
                 refreshFromEvent()
                 _sendState.value =
                     SparkSendState.MultiSent(
-                        succeeded = succeeded,
+                        succeeded = totalSucceeded,
                         failed = failed,
                         detail = lastError,
                     )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                preparedMultiItems = emptyList()
-                preparedMultiLabel = null
-                preparedSend = null
+                // Keep the prepared list/index so the user can resume without
+                // re-paying the items that already settled.
                 _sendState.value = SparkSendState.Error(e.safeMessage("Spark multi send failed"))
             }
         }
@@ -2080,12 +2207,18 @@ class SparkRepository(
         mode: SparkRefreshMode,
         allowReconnectOnFailure: Boolean,
     ): Boolean {
-        val (activeSdk, walletId) =
+        val (activeSdk, walletId, previousPayments, previousLastSyncTimestamp) =
             mutex.withLock {
                 val activeSdk = sdk ?: return false
                 val walletId = _loadedWalletId.value
-                _sparkState.value = _sparkState.value.copy(isSyncing = true, error = null)
-                SparkRefreshTarget(activeSdk, walletId)
+                val previousState = _sparkState.value
+                _sparkState.value = previousState.copy(isSyncing = true, error = null)
+                SparkRefreshTarget(
+                    sdk = activeSdk,
+                    walletId = walletId,
+                    previousPayments = previousState.payments,
+                    previousLastSyncTimestamp = previousState.lastSyncTimestamp,
+                )
             }
         return try {
             if (mode.syncWallet) {
@@ -2103,9 +2236,36 @@ class SparkRepository(
             val storedDepositAddresses = walletId?.let { secureStorage.getAllSparkDepositAddresses(it) }.orEmpty()
             // Bound payment history: an SDK/Tor stall must fail the refresh
             // (heartbeat counts it) rather than hold refreshMutex forever.
-            val payments = withTimeout(SPARK_LIST_PAYMENTS_TIMEOUT_MS) {
-                activeSdk.listAllBitcoinPayments()
-            }.map { it.toSparkPayment(storedPaymentRecipients, storedDepositAddresses) }
+            // Null asset filter = BTC + all BTKN tokens.
+            // Heartbeats only need recent changes. Merge them into the existing
+            // history instead of re-paging the whole wallet (up to 20 SDK calls).
+            val hasPendingActivity =
+                previousPayments.any { payment ->
+                    !payment.status.equals("COMPLETED", ignoreCase = true) &&
+                        !payment.status.equals("FAILED", ignoreCase = true)
+                } || _sparkState.value.unclaimedDeposits.isNotEmpty()
+            val incrementalFromTimestamp =
+                if (mode.syncWallet ||
+                    hasPendingActivity ||
+                    previousPayments.isEmpty() ||
+                    previousLastSyncTimestamp <= 0L
+                ) {
+                    null
+                } else {
+                    ((previousLastSyncTimestamp / 1000L) - SPARK_INCREMENTAL_PAYMENT_OVERLAP_SECONDS)
+                        .coerceIn(0L, System.currentTimeMillis() / 1000L)
+                        .toULong()
+                }
+            val fetchedPayments =
+                withTimeout(SPARK_LIST_PAYMENTS_TIMEOUT_MS) {
+                    activeSdk.listAllSparkPayments(fromTimestamp = incrementalFromTimestamp)
+                }.map { it.toSparkPayment(storedPaymentRecipients, storedDepositAddresses) }
+            val payments =
+                if (incrementalFromTimestamp == null) {
+                    fetchedPayments
+                } else {
+                    mergeSparkPayments(previousPayments, fetchedPayments)
+                }
             if (walletId != null) {
                 val existingSources = secureStorage.getAllSparkTransactionSources(walletId)
                 val l1Sources = secureStorage.getAllTransactionSources(walletId)
@@ -2124,7 +2284,7 @@ class SparkRepository(
                                 }
                         payment.id to
                             when {
-                                BitcoinTxSource.isSwapHistory(existing) -> existing!!
+                                existing != null && BitcoinTxSource.isSwapHistory(existing) -> existing
                                 BitcoinTxSource.isSwapHistory(onchainSource) -> BitcoinTxSource.CENTER_SWAP
                                 else -> payment.method
                             }
@@ -2146,6 +2306,11 @@ class SparkRepository(
                             timestamp = localPendingDeposits.firstOrNull { it.txid == deposit.txid }?.timestamp,
                             address = storedDepositAddresses[deposit.txid],
                             claimError = deposit.claimError?.toString()?.takeIf { it.isNotBlank() },
+                            // 0.26: credited deposits linger until the provider
+                            // spends the output — CLAIMED is settled, not
+                            // awaiting action (the dialog branches on this).
+                            claimStatus = SparkClaimPolicy.claimStatusOf(deposit.instantClaimStatus),
+                            maxClaimFeeSats = SparkClaimPolicy.maxClaimFeeSatsOf(deposit.maxClaimFee),
                         )
                     }
                 }.getOrDefault(emptyList())
@@ -2178,11 +2343,33 @@ class SparkRepository(
                 secureStorage.clearSparkOnchainDepositAddress(walletId)
             }
             val lightningAddress = runCatching { activeSdk.getLightningAddress()?.lightningAddress }.getOrNull()
+            val tokenBalances =
+                info.tokenBalances.mapNotNull { (tokenId, tokenBalance) ->
+                    if (tokenBalance.balance.signum() <= 0) return@mapNotNull null
+                    val metadata = tokenBalance.tokenMetadata
+                    SparkTokenBalance(
+                        token =
+                            SparkToken.fromMetadata(
+                                tokenIdentifier = metadata.identifier.ifBlank { tokenId },
+                                ticker = metadata.ticker,
+                                name = metadata.name,
+                                decimals = metadata.decimals.toInt(),
+                            ),
+                        amount = tokenBalance.balance,
+                    )
+                }.sortedBy { it.token.ticker.lowercase(Locale.US) }
+            // Seed the known-token registry from held balances so receive
+            // keeps offering a token (e.g. USDT invoices) after its balance
+            // returns to zero. Cheap: one bulk write, ids only change on receipt.
+            if (walletId != null && tokenBalances.isNotEmpty()) {
+                tokenBalances.forEach { secureStorage.rememberSparkToken(walletId, it.token) }
+            }
             val refreshedState = SparkWalletState(
                 walletId = walletId,
                 isInitialized = true,
                 identityPubkey = info.identityPubkey,
                 balanceSats = info.balanceSats.toLongOrNullSafe()?.coerceAtLeast(0L) ?: 0L,
+                tokenBalances = tokenBalances,
                 payments = visiblePayments,
                 unclaimedDeposits = filteredUnclaimedDeposits,
                 lightningAddress = lightningAddress,
@@ -2386,6 +2573,7 @@ class SparkRepository(
         sdk = null
         listenerId = null
         preparedSend = null
+        preparedSendWalletId = null
         // Same-wallet reconnect swaps the SDK session: an unbuilt prepared
         // exit response belongs to the old session and must be re-quoted.
         // Built/persisted progress (_exitFlow InProgress + tx set) is kept.
@@ -2435,6 +2623,7 @@ class SparkRepository(
         sdk = null
         listenerId = null
         preparedSend = null
+        preparedSendWalletId = null
         // Wallet switch / unload: drop the in-memory exit flow so the next
         // wallet starts Idle. Per-wallet progress survives in SecureStorage
         // (keyed by wallet id) and restoreSparkExit() repaints it. Without
@@ -2537,7 +2726,26 @@ class SparkRepository(
                                     }
                                 }
                             }
-                            refreshFromEvent()
+                            // 0.26: mempool-detected and provider-fronted
+                            // deposits only materialize during a sync (the
+                            // chain-side watch runs in syncWallet), so a
+                            // cached read would miss exactly what these events
+                            // announce. Sync once, bounded, no reconnect
+                            // cascade — the heartbeat owns dead sockets.
+                            // Transition events only: UnclaimedDeposits is a
+                            // steady-state failure signal that re-fires every
+                            // sync while a deposit stays unclaimable, so
+                            // syncing on it would loop sync→event→sync
+                            // forever. Its claim errors are fully visible via
+                            // the cached listUnclaimedDeposits read below.
+                            if (
+                                event is SdkEvent.NewDeposits ||
+                                event is SdkEvent.ClaimedDeposits
+                            ) {
+                                refreshState(SparkRefreshMode.ExplicitSdkSync)
+                            } else {
+                                refreshFromEvent()
+                            }
                         }.onFailure { err ->
                             if (err is CancellationException) throw err
                             SecureLog.w(
@@ -2575,11 +2783,21 @@ class SparkRepository(
         val matchesOpenInvoice =
             openReady != null &&
                 openReady.kind.canMatchReceivePayment(paidKind) &&
-                (
-                    paidRequest.isNullOrBlank() ||
+                when (openReady.kind) {
+                    // An invoice is only paid by that exact invoice. A bare Spark
+                    // address payment has no invoice string and must never settle
+                    // an unrelated open invoice.
+                    SparkReceiveKind.SPARK_INVOICE,
+                    SparkReceiveKind.BOLT11_INVOICE,
+                    -> !paidRequest.isNullOrBlank() &&
                         openReady.paymentRequest.normalizeSparkPaymentRequest() ==
                         paidRequest.normalizeSparkPaymentRequest()
-                )
+                    SparkReceiveKind.SPARK_ADDRESS ->
+                        paidRequest.isNullOrBlank() ||
+                            openReady.paymentRequest.normalizeSparkPaymentRequest() ==
+                            paidRequest.normalizeSparkPaymentRequest()
+                    SparkReceiveKind.BITCOIN_ADDRESS -> false
+                }
 
         if (matchesOpenInvoice && openReady != null) {
             if (openReady.kind == SparkReceiveKind.SPARK_ADDRESS) {
@@ -2683,7 +2901,18 @@ class SparkRepository(
             }
     }
 
-    private suspend fun BreezSdk.listAllBitcoinPayments(): List<Payment> {
+    private suspend fun BreezSdk.listAllBitcoinPayments(): List<Payment> =
+        listAllSparkPayments(assetFilter = AssetFilter.Bitcoin)
+
+    /**
+     * Full payment history across BTC and all BTKN tokens. A null
+     * [assetFilter] returns every asset; pass [AssetFilter.Bitcoin] for
+     * BTC-only (deposit/exit matching).
+     */
+    private suspend fun BreezSdk.listAllSparkPayments(
+        assetFilter: AssetFilter? = null,
+        fromTimestamp: ULong? = null,
+    ): List<Payment> {
         val payments = mutableListOf<Payment>()
         var offset = 0u
         while (payments.size < SPARK_PAYMENT_HISTORY_MAX) {
@@ -2691,9 +2920,9 @@ class SparkRepository(
                 ListPaymentsRequest(
                     typeFilter = null,
                     statusFilter = null,
-                    assetFilter = AssetFilter.Bitcoin,
+                    assetFilter = assetFilter,
                     paymentDetailsFilter = null,
-                    fromTimestamp = null,
+                    fromTimestamp = fromTimestamp,
                     toTimestamp = null,
                     offset = offset,
                     limit = SPARK_PAYMENT_HISTORY_PAGE_SIZE,
@@ -2705,6 +2934,17 @@ class SparkRepository(
             offset = SparkPaymentHistoryPaging.nextOffset(offset)
         }
         return payments.take(SPARK_PAYMENT_HISTORY_MAX)
+    }
+
+    private fun mergeSparkPayments(
+        previous: List<SparkPayment>,
+        fresh: List<SparkPayment>,
+    ): List<SparkPayment> {
+        if (fresh.isEmpty()) return previous
+        val byId = LinkedHashMap<String, SparkPayment>(previous.size + fresh.size)
+        previous.forEach { byId[it.id] = it }
+        fresh.forEach { byId[it.id] = it }
+        return byId.values.sortedByDescending { it.timestamp }
     }
 
     private class SparkListener(
@@ -2731,6 +2971,8 @@ class SparkRepository(
             val amountSats: Long?,
             override val label: String? = null,
             override val idempotencyKey: String = UUID.randomUUID().toString(),
+            val tokenIdentifier: String? = null,
+            val tokenAmount: BigInteger? = null,
         ) : PreparedSparkSend
         data class Lnurl(
             override val paymentRequest: String,
@@ -2782,9 +3024,20 @@ class SparkRepository(
         onchainFeeSpeed: SparkOnchainFeeSpeed,
         useAllFunds: Boolean,
         label: String? = null,
+        tokenIdentifier: String? = null,
+        tokenAmount: BigInteger? = null,
     ): SparkSendState.Preview {
         val activeSdk = sdkOrThrow()
-        val parsed = runCatching { activeSdk.parse(paymentRequest) }.getOrNull()
+        // Token sends never touch the LNURL path: LNURL is a BTC Lightning
+        // flow and the SDK binds tokenIdentifier only on Spark address/invoice
+        // prepares. A token id paired with an LNURL input is a caller bug.
+        if (tokenIdentifier != null && tokenAmount == null && amountSats == null && !useAllFunds) {
+            throw IllegalArgumentException("Amount required for token send")
+        }
+        // `spark:` URIs carry amount/label outside the address — the SDK only
+        // parses the bare address/invoice. History/labels keep the original.
+        val sdkRequest = stripSparkPaymentRequest(paymentRequest)
+        val parsed = runCatching { activeSdk.parse(sdkRequest) }.getOrNull()
         val prepared =
             when (val lnurlDetails = parsed?.lnurlPayDetails()) {
                 null -> {
@@ -2794,27 +3047,59 @@ class SparkRepository(
                     // that. Amount-bearing invoices keep null (SDK uses the
                     // embedded amount). Without this the SDK rejects the
                     // prepare with "Amount is required".
-                    val resolvedAmountSats =
-                        amountSats ?: if (useAllFunds) {
-                            sdkBalanceSats(activeSdk.getInfo(GetInfoRequest(ensureSynced = false)).balanceSats)
-                        } else {
-                            null
+                    val resolvedAmount: BigInteger? =
+                        when {
+                            tokenIdentifier != null -> {
+                                tokenAmount
+                                    ?: if (useAllFunds) {
+                                        sdkTokenBalance(tokenIdentifier)
+                                    } else {
+                                        null
+                                    }
+                            }
+                            else -> {
+                                val resolvedAmountSats =
+                                    amountSats ?: if (useAllFunds) {
+                                        sdkBalanceSats(activeSdk.getInfo(GetInfoRequest(ensureSynced = false)).balanceSats)
+                                    } else {
+                                        null
+                                    }
+                                resolvedAmountSats?.toSparkBigInteger()
+                            }
                         }
-                    if (resolvedAmountSats != null) {
-                        require(resolvedAmountSats > 0L) { "Invalid amount" }
+                    if (resolvedAmount != null) {
+                        require(resolvedAmount.signum() > 0) { "Invalid amount" }
                     }
                     val response = activeSdk.prepareSendPayment(
                         PrepareSendPaymentRequest(
-                            paymentRequest = PaymentRequest.Input(paymentRequest),
-                            amount = resolvedAmountSats?.toSparkBigInteger(),
-                            tokenIdentifier = null,
+                            paymentRequest = PaymentRequest.Input(sdkRequest),
+                            amount = resolvedAmount,
+                            tokenIdentifier = tokenIdentifier,
                             conversionOptions = null,
                             feePolicy = if (useAllFunds) FeePolicy.FEES_INCLUDED else FeePolicy.FEES_EXCLUDED,
                         ),
                     )
-                    PreparedSparkSend.Standard(paymentRequest, response, onchainFeeSpeed, useAllFunds, resolvedAmountSats, label)
+                    val resolvedAmountSats =
+                        if (tokenIdentifier == null) {
+                            resolvedAmount?.toLongSafe()?.takeIf { it > 0L }
+                        } else {
+                            null
+                        }
+                    PreparedSparkSend.Standard(
+                        paymentRequest,
+                        response,
+                        onchainFeeSpeed,
+                        useAllFunds,
+                        resolvedAmountSats,
+                        label,
+                        tokenIdentifier = tokenIdentifier,
+                        tokenAmount = if (tokenIdentifier == null) null else resolvedAmount,
+                    )
                 }
                 else -> {
+                    if (tokenIdentifier != null) {
+                        throw IllegalArgumentException("Tokens use Spark addresses or invoices")
+                    }
                     val requiredAmountSats =
                         amountSats
                             ?: if (useAllFunds) {
@@ -2838,12 +3123,16 @@ class SparkRepository(
                 }
             }
         preparedSend = prepared
+        preparedSendWalletId = _loadedWalletId.value
         return prepared.toPreview(paymentRequest, amountSats)
     }
 
     private suspend fun sendPreparedInternal(): Payment {
         val activeSdk = sdkOrThrow()
         val prepared = preparedSend ?: throw NoPreparedSparkPaymentException()
+        if (preparedSendWalletId != null && _loadedWalletId.value != preparedSendWalletId) {
+            throw IllegalStateException("Prepared Spark payment belongs to a different wallet")
+        }
         // Reuse the prepare-time idempotency key: a retry after an ambiguous
         // timeout must not mint a fresh key (the SDK could not dedupe it and
         // the user could double-pay). A new prepare mints a new key.
@@ -2868,14 +3157,50 @@ class SparkRepository(
             secureStorage.saveSparkPaymentRecipient(walletId, payment.id, prepared.paymentRequest)
             prepared.label?.trim()?.takeIf { it.isNotBlank() }?.let { sendLabel ->
                 saveSparkAddressLabel(walletId, prepared.paymentRequest, sendLabel)
+                saveSparkTransactionLabel(walletId, payment.id, sendLabel)
             }
         }
         return payment
     }
 
-    private fun PreparedSparkSend.toPreview(paymentRequest: String, amountSats: Long?): SparkSendState.Preview =
-        when (this) {
+    private fun PreparedSparkSend.toPreview(paymentRequest: String, amountSats: Long?): SparkSendState.Preview {
+        return when (this) {
             is PreparedSparkSend.Standard -> {
+                if (tokenIdentifier != null) {
+                    val grossTokenAmount = response.amount
+                    require(grossTokenAmount.signum() > 0) { "Invalid SDK amount" }
+                    val tokenFee = response.paymentMethod.tokenFee()
+                    val methodTokenId =
+                        response.paymentMethod.tokenIdentifierOrNull() ?: tokenIdentifier
+                    // Prefer live balance metadata (real ticker/decimals) over the
+                    // prepare-response fallback (truncated id) for review copy.
+                    val cachedToken = methodTokenId?.let { _sparkState.value.tokenForId(it) }
+                    val fallbackMetadata = response.paymentMethod.tokenMetadataOrNull()
+                    val previewTicker = cachedToken?.ticker ?: fallbackMetadata?.ticker
+                    val previewDecimals = cachedToken?.decimals ?: fallbackMetadata?.decimals
+                    if (feesIncluded && tokenFee != null && tokenFee >= grossTokenAmount) {
+                        // Same drain guard as BTC, in token base units.
+                        throw IllegalArgumentException("Insufficient funds: fee exceeds amount")
+                    }
+                    return SparkSendState.Preview(
+                        paymentRequest = paymentRequest,
+                        amountSats = null,
+                        feeSats = tokenFee?.toLongSafe(),
+                        method = response.paymentMethod::class.java.simpleName.substringAfterLast("$"),
+                        onchainFeeSpeed = null,
+                        onchainFeeQuotes = emptyList(),
+                        tokenIdentifier = methodTokenId,
+                        tokenTicker = previewTicker,
+                        tokenDecimals = previewDecimals,
+                        tokenAmount =
+                            if (feesIncluded && tokenFee != null) {
+                                (grossTokenAmount - tokenFee).max(BigInteger.ZERO).toString()
+                            } else {
+                                grossTokenAmount.toString()
+                            },
+                        tokenFee = tokenFee?.toString(),
+                    )
+                }
                 val feeSats = response.paymentMethod.feeSats(onchainFeeSpeed)
                 val grossAmountSats = response.amount.toLongSafe()
                 require(grossAmountSats > 0L) { "Invalid SDK amount" }
@@ -2907,6 +3232,7 @@ class SparkRepository(
                 )
             }
         }
+    }
 
     private fun safeFeeSum(a: ULong, b: ULong): Long? {
         val aLong = a.toLongOrNullSafe() ?: return null
@@ -2940,6 +3266,28 @@ class SparkRepository(
                     SparkOnchainFeeQuote(SparkOnchainFeeSpeed.FAST, feeQuote.speedFast.totalFeeSats()),
                 )
             else -> emptyList()
+        }
+
+    private fun SendPaymentMethod.tokenFee(): BigInteger? =
+        when (this) {
+            is SendPaymentMethod.SparkAddress -> fee.takeIf { it.signum() >= 0 }
+            is SendPaymentMethod.SparkInvoice -> fee.takeIf { it.signum() >= 0 }
+            else -> null
+        }
+
+    private fun SendPaymentMethod.tokenIdentifierOrNull(): String? =
+        when (this) {
+            is SendPaymentMethod.SparkAddress -> tokenIdentifier
+            is SendPaymentMethod.SparkInvoice -> tokenIdentifier
+            else -> null
+        }
+
+    private fun SendPaymentMethod.tokenMetadataOrNull(): SparkToken? =
+        when (this) {
+            is SendPaymentMethod.SparkAddress -> tokenIdentifier?.let { SparkToken.unknown(it) }
+            is SendPaymentMethod.SparkInvoice ->
+                (tokenIdentifier ?: sparkInvoiceDetails.tokenIdentifier)?.let { SparkToken.unknown(it) }
+            else -> null
         }
 
     private fun SendOnchainSpeedFeeQuote.totalFeeSats(): Long =
@@ -3025,6 +3373,11 @@ class SparkRepository(
             methodDetails = methodDetails,
             onchainTxid = onchainTxid,
             onchainVout = mapped.onchainVout,
+            tokenIdentifier = mapped.tokenIdentifier,
+            tokenTicker = mapped.tokenTicker,
+            tokenDecimals = mapped.tokenDecimals,
+            tokenAmount = mapped.tokenIdentifier?.let { amount.toString() },
+            tokenFee = mapped.tokenIdentifier?.let { fees.toString() },
         )
     }
 
@@ -3097,6 +3450,47 @@ class SparkRepository(
         return balance
     }
 
+    private suspend fun sdkTokenBalance(tokenIdentifier: String): BigInteger {
+        val balance =
+            sdkOrThrow().getInfo(GetInfoRequest(ensureSynced = false))
+                .tokenBalances[tokenIdentifier]?.balance
+                ?: throw IllegalStateException("Token balance unavailable")
+        require(balance.signum() > 0) { "Insufficient funds" }
+        return balance
+    }
+
+    /**
+     * Token metadata for identifiers the wallet may not hold (e.g. resolving
+     * an invoice's token before first receipt). Empty input returns empty.
+     */
+    /**
+     * Resolves one token identifier to SDK metadata (authority for hand-typed
+     * ids). Null unless the local gate passes and the SDK knows the token —
+     * callers persist the result via [SecureStorage.rememberSparkToken].
+     */
+    suspend fun resolveSparkToken(rawIdentifier: String): SparkToken? =
+        withContext(Dispatchers.IO) {
+            val id = SparkTokenPolicy.normalizeTokenIdentifier(rawIdentifier)
+            if (!SparkTokenPolicy.isPlausibleTokenIdentifier(id)) return@withContext null
+            getTokensMetadata(listOf(id)).firstOrNull { it.tokenIdentifier.equals(id, ignoreCase = true) }
+        }
+
+    suspend fun getTokensMetadata(tokenIdentifiers: List<String>): List<SparkToken> =
+        withContext(Dispatchers.IO) {
+            val ids = tokenIdentifiers.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+            if (ids.isEmpty()) return@withContext emptyList()
+            runCatching {
+                sdkOrThrow().getTokensMetadata(GetTokensMetadataRequest(ids)).tokensMetadata.map { metadata ->
+                    SparkToken.fromMetadata(
+                        tokenIdentifier = metadata.identifier,
+                        ticker = metadata.ticker,
+                        name = metadata.name,
+                        decimals = metadata.decimals.toInt(),
+                    )
+                }
+            }.getOrDefault(emptyList())
+        }
+
     private fun Throwable.safeMessage(fallback: String): String =
         SparkServiceErrors.mapFailure(sparkErrorLocalizer, this, fallback)
 
@@ -3119,6 +3513,7 @@ class SparkRepository(
         private const val TAG = "SparkRepository"
         internal val SPARK_PAYMENT_HISTORY_PAGE_SIZE = 50u
         internal const val SPARK_PAYMENT_HISTORY_MAX = 1000
+        private const val SPARK_INCREMENTAL_PAYMENT_OVERLAP_SECONDS = 300L
         private const val SPARK_REFRESH_TIMEOUT_MS = 120_000L
         private const val SPARK_DISCONNECT_TIMEOUT_MS = 15_000L
         private const val SPARK_LIST_PAYMENTS_TIMEOUT_MS = 60_000L
@@ -3144,6 +3539,8 @@ private data class CachedOnchainFeeQuotes(
 private data class SparkRefreshTarget(
     val sdk: BreezSdk,
     val walletId: String?,
+    val previousPayments: List<SparkPayment>,
+    val previousLastSyncTimestamp: Long,
 )
 
 private data class SparkSdkHandle(
@@ -3232,6 +3629,9 @@ internal data class SparkMappedPaymentDetails(
     val recipient: String? = null,
     val onchainTxid: String? = null,
     val onchainVout: UInt? = null,
+    val tokenIdentifier: String? = null,
+    val tokenTicker: String? = null,
+    val tokenDecimals: Int? = null,
 )
 
 /**
@@ -3265,7 +3665,13 @@ internal object SparkPaymentDetailsMapper {
                     recipient = details.invoiceDetails?.invoice?.takeIf { it.isNotBlank() },
                 )
             is PaymentDetails.Token ->
-                SparkMappedPaymentDetails(methodDetails = details.toString())
+                SparkMappedPaymentDetails(
+                    methodDetails = details.toString(),
+                    recipient = details.invoiceDetails?.invoice?.takeIf { it.isNotBlank() },
+                    tokenIdentifier = details.metadata.identifier,
+                    tokenTicker = details.metadata.ticker,
+                    tokenDecimals = details.metadata.decimals.toInt(),
+                )
             null -> SparkMappedPaymentDetails()
         }
 }

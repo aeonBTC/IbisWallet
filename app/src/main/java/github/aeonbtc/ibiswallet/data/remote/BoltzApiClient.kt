@@ -630,6 +630,13 @@ class BoltzApiClient(
                         throwable = error,
                         "raw" to summarizeValue(text),
                     )
+                } catch (error: StackOverflowError) {
+                    // Do not let a deeply nested server frame kill the process.
+                    logBoltzTrace(
+                        "malformed_update_overflow",
+                        BoltzTraceContext(operation = "sharedWebSocketMessage", viaTor = useTor(), source = "websocket"),
+                        level = BoltzTraceLevel.WARN,
+                    )
                 }
             }
 

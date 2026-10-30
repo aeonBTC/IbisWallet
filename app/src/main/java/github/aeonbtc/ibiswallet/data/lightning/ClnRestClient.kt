@@ -63,20 +63,13 @@ class ClnRestClient : LightningNodeBackend {
             require(config.clnRune.isNotBlank()) { "Rune is required" }
 
             rune = config.clnRune.trim()
-            val host =
-                config.host
-                    .trim()
-                    .removePrefix("https://")
-                    .removePrefix("http://")
-                    .substringBefore('/')
-                    .substringBefore(':')
-                    .trimEnd('/')
+            val host = github.aeonbtc.ibiswallet.util.ServerUrlValidator.canonicalHost(config.host)
             require(host.isNotBlank()) { "Host is required" }
             val hostIsOnion = host.endsWith(".onion", ignoreCase = true)
             val normalized = config.copy(useTor = hostIsOnion, host = host)
             // Fail closed before any socket or credential use on clearnet.
             require(normalized.isCredentialTransportAuthorized()) {
-                "Enable TLS with a pinned certificate or explicitly allow insecure transport"
+                "Clearnet nodes require a pinned certificate or an acknowledged insecure transport"
             }
             connectWithRetries(normalized)
         }
@@ -151,7 +144,10 @@ class ClnRestClient : LightningNodeBackend {
     ) {
         closeClientQuietly()
         val scheme = if (config.tlsEnabled) "https" else "http"
-        baseUrl = "$scheme://${config.host}:${config.port}"
+        baseUrl =
+            "$scheme://" +
+                "${github.aeonbtc.ibiswallet.util.ServerUrlValidator.formatHostForUrl(config.host)}:" +
+                config.port
         client = buildHttpClient(config, probeTimeouts = probeTimeouts)
         activeConfig = config
         fundsCache = null
@@ -301,6 +297,12 @@ class ClnRestClient : LightningNodeBackend {
                                 .takeIf { it.length == 64 }
                                 .orEmpty()
                         }.ifBlank { null }
+                    val fundingOutnum =
+                        when {
+                            ch.has("funding_outnum") -> ch.optInt("funding_outnum", -1)
+                            ch.has("funding_output") -> ch.optInt("funding_output", -1)
+                            else -> -1
+                        }.takeIf { it >= 0 }
                     add(
                         LightningNodeChannel(
                             id = channelId,
@@ -308,6 +310,12 @@ class ClnRestClient : LightningNodeBackend {
                             remoteAlias = peerNames[peerId],
                             shortChannelId = shortId.takeIf { it.isNotBlank() && it != channelId },
                             fundingTxid = fundingTxid,
+                            channelPoint =
+                                if (fundingTxid != null && fundingOutnum != null) {
+                                    "$fundingTxid:$fundingOutnum"
+                                } else {
+                                    null
+                                },
                             capacitySats = total,
                             localBalanceSats = our,
                             remoteBalanceSats = their,
@@ -328,6 +336,177 @@ class ClnRestClient : LightningNodeBackend {
                 }.thenByDescending { it.isActive }
                     .thenByDescending { it.capacitySats },
             )
+        }
+
+    override suspend fun listPeers(): List<github.aeonbtc.ibiswallet.data.model.LightningNodePeer> =
+        withContext(Dispatchers.IO) {
+            val peersJson = runCatching { rpc("listpeers") }.getOrElse { JSONObject() }
+            val arr = peersJson.optJSONArray("peers") ?: JSONArray()
+            val channelCounts =
+                runCatching { listChannels() }
+                    .getOrDefault(emptyList())
+                    .groupingBy { it.remotePubkey }
+                    .eachCount()
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val p = arr.optJSONObject(i) ?: continue
+                    val pubkey = p.optString("id").ifBlank { continue }
+                    val connected = p.optBoolean("connected", true)
+                    add(
+                        github.aeonbtc.ibiswallet.data.model.LightningNodePeer(
+                            pubkey = pubkey,
+                            alias = p.optString("alias").ifBlank { null },
+                            address =
+                                p.optJSONArray("netaddr")
+                                    ?.optString(0)
+                                    ?.ifBlank { null },
+                            isConnected = connected,
+                            numChannels = channelCounts[pubkey] ?: 0,
+                        ),
+                    )
+                }
+            }
+        }
+
+    override suspend fun connectPeer(
+        pubkey: String,
+        host: String?,
+    ): Unit =
+        withContext(Dispatchers.IO) {
+            val cleanPubkey = pubkey.trim()
+            require(cleanPubkey.matches(Regex("(?i)[0-9a-f]{66}"))) { "Invalid peer pubkey" }
+            // Accept both bare "host:port" and full "pubkey@host:port" input.
+            val cleanHost = host?.trim()?.substringAfter("@")?.trim().orEmpty()
+            val id =
+                if (cleanHost.isNotBlank()) {
+                    "$cleanPubkey@$cleanHost"
+                } else {
+                    cleanPubkey
+                }
+            // clnrest connect: {id} where id may be "pubkey@host:port".
+            rpc("connect", JSONObject().put("id", id), retry = false)
+            Unit
+        }
+
+    override suspend fun disconnectPeer(
+        pubkey: String,
+        force: Boolean,
+    ): Unit =
+        withContext(Dispatchers.IO) {
+            val cleanPubkey = pubkey.trim()
+            require(cleanPubkey.isNotBlank()) { "Peer pubkey is required" }
+            val body =
+                JSONObject().apply {
+                    put("id", cleanPubkey)
+                    if (force) put("force", true)
+                }
+            runCatching { rpc("disconnect", body, retry = false) }
+                .recoverCatching { e ->
+                    // Older CLN disconnect takes positional force — retry bare id when
+                    // the node rejects the force flag but has no channels.
+                    if (force) rpc("disconnect", JSONObject().put("id", cleanPubkey), retry = false)
+                    else throw e
+                }
+            Unit
+        }
+
+    override suspend fun openChannel(
+        pubkey: String,
+        amountSats: Long,
+        satPerVbyte: Double?,
+        isPrivate: Boolean,
+        pushSats: Long,
+        closeAddress: String?,
+        peerHost: String?,
+    ): String =
+        withContext(Dispatchers.IO) {
+            val cleanPubkey = pubkey.trim()
+            require(cleanPubkey.matches(Regex("(?i)[0-9a-f]{66}"))) { "Invalid peer pubkey" }
+            require(amountSats > 0) { "Channel capacity must be positive" }
+            // Peer-connect step: lets opens target peers we are not connected to yet.
+            // Best-effort — CLN connect is idempotent for known peers, and a failed
+            // dial still falls through to fundchannel for the node's verdict.
+            peerHost?.trim()?.takeIf { it.isNotBlank() }?.let { host ->
+                runCatching { connectPeer(cleanPubkey, host) }
+            }
+            val body =
+                JSONObject().apply {
+                    put("id", cleanPubkey)
+                    put("amount", amountSats)
+                    put("announce", !isPrivate)
+                    if (pushSats > 0) put("push_msat", pushSats * 1000L)
+                    if (!closeAddress.isNullOrBlank()) put("close_to", closeAddress.trim())
+                    put("minconf", 1)
+                    val rate = satPerVbyte?.takeIf { it > 0 }
+                    if (rate != null) {
+                        val satPerKw =
+                            github.aeonbtc.ibiswallet.util.BitcoinUtils
+                                .feeRateToSatPerKwu(rate)
+                                .toLong()
+                                .coerceAtLeast(1L)
+                        put("feerate", "${satPerKw}perkw")
+                    }
+                }
+            val response = rpc("fundchannel", body, retry = false)
+            fundsCache = null
+            response.optString("txid").ifBlank {
+                response.optString("channel_id")
+            }.ifBlank { "Channel open initiated" }
+        }
+
+    override suspend fun closeChannel(
+        channel: LightningNodeChannel,
+        force: Boolean,
+        satPerVbyte: Double?,
+        closeAddress: String?,
+    ): String =
+        withContext(Dispatchers.IO) {
+            val target = clnChannelTarget(channel)
+                ?: throw IllegalStateException("Channel identifier is unknown")
+            val body =
+                JSONObject().apply {
+                    put("id", target)
+                    // Coop waits indefinitely (0); force closes after 1s unilateral timeout.
+                    put("unilateraltimeout", if (force) 1 else 0)
+                    if (!closeAddress.isNullOrBlank()) put("destination", closeAddress.trim())
+                    val rate = satPerVbyte?.takeIf { it > 0 && !force }
+                    if (rate != null) {
+                        val satPerKw =
+                            github.aeonbtc.ibiswallet.util.BitcoinUtils
+                                .feeRateToSatPerKwu(rate)
+                                .toLong()
+                                .coerceAtLeast(1L)
+                        put("feerange", org.json.JSONArray().put("${satPerKw}perkw").put("${satPerKw}perkw"))
+                    }
+                }
+            val response = rpc("close", body, retry = false)
+            response.optJSONArray("txs")?.optString(0)?.ifBlank { null }
+                ?: response.optString("txid").ifBlank { null }
+                ?: "Close initiated"
+        }
+
+    override suspend fun updateChannelFeePolicy(
+        channel: LightningNodeChannel,
+        baseFeeMsat: Long,
+        feeRatePpm: Long,
+        cltvDelta: Int?,
+    ): Unit =
+        withContext(Dispatchers.IO) {
+            require(baseFeeMsat >= 0) { "Base fee must be >= 0" }
+            require(feeRatePpm in 0..10_000_000) { "Fee rate out of range" }
+            val target = clnChannelTarget(channel)
+                ?: throw IllegalStateException("Channel identifier is unknown")
+            val body =
+                JSONObject().apply {
+                    put("id", target)
+                    put("feebase", baseFeeMsat)
+                    put("feeppm", feeRatePpm)
+                    // NOTE: cltvDelta is LND-only (time_lock_delta). CLN's
+                    // `enforcedelay` is seconds-to-delay-enforcement, not the
+                    // CLTV delta, so it must not be mapped — leave it default.
+                }
+            rpc("setchannel", body, retry = false)
+            Unit
         }
 
     override suspend fun listPayments(limit: Int): List<LightningNodePayment> =
@@ -1403,6 +1582,35 @@ class ClnRestClient : LightningNodeBackend {
     }
 
     companion object {
+        /**
+         * Resolve the `close`/`setchannel` target for a listed channel.
+         * Prefers short_channel_id (`BxTxO`) → 64-hex channel_id → 66-hex peer
+         * pubkey. Skips synthetic list fallbacks (`channel-$i`) and funding
+         * txids, which the node rejects — those fall through to the peer id.
+         */
+        internal fun clnChannelTarget(channel: LightningNodeChannel): String? {
+            // short_channel_id (BxTxO) is the most precise selector.
+            channel.shortChannelId?.trim()
+                ?.takeIf { it.matches(Regex("\\d+x\\d+x\\d+")) }
+                ?.let { return it }
+            // 64-hex channel_id — but not when it is really the funding txid
+            // used as a list fallback (the node rejects funding txids here).
+            val fundingTxid = channel.fundingTxid?.trim()
+            channel.shortChannelId?.trim()
+                ?.takeIf { it.matches(Regex("(?i)[0-9a-f]{64}")) && !it.equals(fundingTxid, ignoreCase = true) }
+                ?.let { return it }
+            val idCandidate = channel.id.trim()
+            if (idCandidate.matches(Regex("(?i)[0-9a-f]{64}")) &&
+                !idCandidate.equals(fundingTxid, ignoreCase = true)
+            ) {
+                return idCandidate
+            }
+            if (idCandidate.matches(Regex("\\d+x\\d+x\\d+"))) return idCandidate
+            // Never fall back to the peer pubkey: CLN treats it as "the channel
+            // with this peer", which may close/alter the wrong channel.
+            return null
+        }
+
         private const val STREAM_RETRY_ATTEMPTS = 3
         private const val CONNECT_CLEAR_STREAM_ATTEMPTS = 2
         private const val CLEARTEXT_PROBE_SECONDS = 3L

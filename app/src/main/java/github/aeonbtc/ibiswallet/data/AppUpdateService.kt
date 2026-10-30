@@ -68,6 +68,38 @@ class AppUpdateService(
             }
         }
 
+        /**
+         * Picks the in-app update APK from a release's `assets` array. Only `.apk`
+         * files hosted on github.com are accepted; anything else yields null and the
+         * UI falls back to opening the release page in a browser. Prefers assets
+         * named like the app, then larger files. Returns url + size in bytes.
+         */
+        fun pickApkAsset(assets: JSONArray?): Pair<String, Long>? {
+            if (assets == null) return null
+            data class Candidate(val url: String, val size: Long, val score: Int)
+            var best: Candidate? = null
+            for (index in 0 until assets.length()) {
+                val asset = assets.optJSONObject(index) ?: continue
+                val name = asset.optString("name").trim()
+                if (!name.endsWith(".apk", ignoreCase = true)) continue
+                val url = sanitizeReleaseUrl(asset.optString("browser_download_url"))
+                if (url == DEFAULT_RELEASES_PAGE_URL) continue
+                val lower = name.lowercase()
+                var score = 0
+                if ("ibis" in lower) score += 2
+                if ("universal" in lower || "release" in lower) score += 1
+                val size = asset.optLong("size", 0L).coerceAtLeast(0L)
+                val candidate = Candidate(url, size, score)
+                val current = best
+                if (current == null || score > current.score ||
+                    (score == current.score && size > current.size)
+                ) {
+                    best = candidate
+                }
+            }
+            return best?.let { it.url to it.size }
+        }
+
         private fun sanitizeReleaseNotes(raw: String): String {
             val normalized =
                 raw
@@ -101,12 +133,15 @@ class AppUpdateService(
 
                     val htmlUrl = sanitizeReleaseUrl(release.optString("html_url"))
                     val releaseNotes = sanitizeReleaseNotes(release.optString("body"))
+                    val apkAsset = pickApkAsset(release.optJSONArray("assets"))
                     add(
                         AppReleaseInfo(
                             versionName = tagName,
                             version = version,
                             htmlUrl = htmlUrl,
                             releaseNotes = releaseNotes,
+                            apkUrl = apkAsset?.first,
+                            apkSizeBytes = apkAsset?.second ?: 0L,
                         ),
                     )
                 }
@@ -140,4 +175,6 @@ data class AppReleaseInfo(
     val version: AppVersion,
     val htmlUrl: String,
     val releaseNotes: String = "",
+    val apkUrl: String? = null,
+    val apkSizeBytes: Long = 0L,
 )

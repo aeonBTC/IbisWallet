@@ -385,7 +385,7 @@ class BtcPriceService {
                         }.sortedBy(HistoricalPricePoint::time)
 
                     if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "Yadio historical price points loaded: ${series.size} $normalizedCurrency")
+                        if (BuildConfig.DEBUG) Log.d(TAG, "Yadio historical price points loaded: ${series.size} $normalizedCurrency")
                     }
                     series
                 }
@@ -501,7 +501,7 @@ class BtcPriceService {
                         }.sortedBy(HistoricalPricePoint::time)
 
                     if (BuildConfig.DEBUG) {
-                        Log.d(TAG, "$logLabel points loaded: ${series.size} $normalizedCurrency")
+                        if (BuildConfig.DEBUG) Log.d(TAG, "$logLabel points loaded: ${series.size} $normalizedCurrency")
                     }
                     series
                 }

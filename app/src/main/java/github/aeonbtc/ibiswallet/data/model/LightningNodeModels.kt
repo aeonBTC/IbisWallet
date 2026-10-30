@@ -42,10 +42,9 @@ data class LightningNodeConfig(
     val macaroonHex: String = "",
     val tlsCertPem: String = "",
      /**
-      * When true, connect over HTTPS and pin [tlsCertPem].
-      * When false, connect over explicit cleartext HTTP. Cleartext (and
-      * trust-all TLS) on clearnet hosts requires [acknowledgedInsecure];
-      * credentials are never auto-probed over unauthenticated transports.
+      * When true, connect over HTTPS (pinned [tlsCertPem], or trust-all HTTPS
+      * when [acknowledgedInsecure] is set). When false, connect over cleartext
+      * HTTP, which also requires [acknowledgedInsecure] on clearnet.
       * [allowInsecureTls] is a legacy alias kept for backup compat and mirrors
       * [acknowledgedInsecure] on save; auth decisions use [acknowledgedInsecure].
       */
@@ -53,12 +52,11 @@ data class LightningNodeConfig(
      /** Legacy: trust-all TLS when no cert is pasted. New UI never sets this. */
      val allowInsecureTls: Boolean = false,
      /**
-      * Explicit per-host acknowledgment that credentials may travel without
-      * certificate verification (clearnet HTTP or trust-all HTTPS). Set only
-      * via the setup-screen checkbox. Never inferred or auto-probed.
-      * Not required for `.onion` hosts where Tor authenticates the endpoint.
-      */
-     val acknowledgedInsecure: Boolean = false,
+     * Explicit per-host acknowledgment that credentials may travel over
+     * trust-all HTTPS or cleartext HTTP without certificate verification.
+     * Set only via the setup-screen checkbox. Never inferred or auto-probed.
+     */
+    val acknowledgedInsecure: Boolean = false,
     /**
      * Last transport that successfully opened getinfo for this host/port.
      * Legacy speed hint, retained for migration compat; no auto-upgrade.
@@ -104,10 +102,9 @@ data class LightningNodeConfig(
     }
 
     /**
-     * TLS on uses this config as-is. TLS off is explicit cleartext HTTP only —
-     * no trust-all HTTPS probe, no plaintext fallback. Callers fail closed
-     * (before any credential use) unless the transport is authenticated
-     * (pinned cert, Tor onion) or [acknowledgedInsecure] is set.
+     * Single explicit candidate — no trust-all/plaintext probing. Callers fail
+     * closed (before any credential use) unless the transport is authenticated:
+     * pinned cert, trust-all TLS ([acknowledgedInsecure]), or `.onion` over Tor.
      */
     fun connectCandidates(): List<LightningNodeConfig> = listOf(this)
 
@@ -116,7 +113,7 @@ data class LightningNodeConfig(
 
     /**
      * True when this config may carry credentials: Tor onion, pinned-cert TLS,
-     * or explicitly acknowledged insecure clearnet transport.
+     * or an explicitly acknowledged insecure transport on clearnet.
      */
     fun isCredentialTransportAuthorized(): Boolean {
         if (type != LightningNodeConnectionType.LND_REST &&
@@ -125,8 +122,7 @@ data class LightningNodeConfig(
             return true
         }
         if (isOnionHost()) return true
-        if (useTls) return tlsCertPem.isNotBlank() || acknowledgedInsecure
-        return acknowledgedInsecure
+        return tlsCertPem.isNotBlank() || acknowledgedInsecure
     }
 
     /** Short type label for wallet lists (no secrets). Protocol tokens stay English. */
@@ -326,13 +322,49 @@ data class LightningNodeChannel(
     val shortChannelId: String? = null,
     /** Funding outpoint txid when known (channel open / pending open). */
     val fundingTxid: String? = null,
+    /**
+     * Full funding outpoint `txid:vout` when known.
+     * LND close needs this exact form (`DELETE /v1/channels/{txid}/{vout}`).
+     */
+    val channelPoint: String? = null,
     val capacitySats: Long = 0,
     val localBalanceSats: Long = 0,
     val remoteBalanceSats: Long = 0,
     val isActive: Boolean = false,
     val isPrivate: Boolean = false,
     val state: String? = null,
+) {
+    /**
+     * Outpoint usable for LND close, derived from [channelPoint] or [id].
+     * Returns null when the output index is unknown — callers must refuse
+     * rather than guess `:0`, which could address a foreign outpoint.
+     */
+    fun closeOutpoint(): String? {
+        channelPoint?.trim()?.takeIf { it.matches(Regex("(?i)[0-9a-f]{64}:\\d+")) }?.let { return it }
+        id.trim().takeIf { it.matches(Regex("(?i)[0-9a-f]{64}:\\d+")) }?.let { return it }
+        return null
+    }
+}
+
+/** Connected / known peer on a remote Lightning node (LND or CLN). */
+data class LightningNodePeer(
+    val pubkey: String,
+    val alias: String? = null,
+    val address: String? = null,
+    val isConnected: Boolean = true,
+    val numChannels: Int = 0,
 )
+
+/** Progress for a single channel management operation (open / close / peer / policy). */
+sealed interface LightningNodeChannelOperationState {
+    data object Idle : LightningNodeChannelOperationState
+
+    data class Working(val message: String) : LightningNodeChannelOperationState
+
+    data class Success(val message: String) : LightningNodeChannelOperationState
+
+    data class Error(val message: String) : LightningNodeChannelOperationState
+}
 
 data class LightningNodeInvoice(
     val paymentRequest: String,
@@ -368,6 +400,8 @@ data class LightningNodePayment(
     val destinationAlias: String? = null,
     /** Human-readable failure detail when [status] is FAILED (send path / history). */
     val failureReason: String? = null,
+    /** Locally persisted label (overrides the node-provided memo when set). */
+    val label: String? = null,
 )
 
 data class LightningNodePaymentResult(
@@ -392,6 +426,8 @@ data class LightningNodeOnchainTransaction(
     val isChannelOpen: Boolean = false,
     /** True when this on-chain tx closes a channel (cooperative or force). */
     val isChannelClose: Boolean = false,
+    /** Locally persisted label for this on-chain transaction. */
+    val label: String? = null,
 )
 
 /**
@@ -496,6 +532,8 @@ sealed interface LightningNodeSendState {
         val feeSats: Long? = null,
         val expirySeconds: Long? = null,
         val preparedAtMs: Long = System.currentTimeMillis(),
+        /** User label to persist once the payment settles. */
+        val label: String? = null,
     ) : LightningNodeSendState
 
     data class Paying(

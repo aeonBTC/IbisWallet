@@ -15,6 +15,8 @@ enum class AppLocale(
     RUSSIAN("ru", "ru"),
     FRENCH("fr", "fr"),
     GERMAN("de", "de"),
+    JAPANESE("ja", "ja"),
+    SIMPLIFIED_CHINESE("zh-CN", "zh-CN"),
     ;
 
     companion object {

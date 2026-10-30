@@ -22,6 +22,27 @@ data class SparkExitQuotedLeaf(
     val valueSats: Long,
 )
 
+/**
+ * What the chain has already done to the quoted leaves, read while preparing
+ * (Breez 0.26 `exitChainState`). Steps already on-chain are not rebuilt, which
+ * is why a partially-exited tree quotes a lower fee than a fresh one.
+ */
+data class SparkExitChainProgress(
+    val confirmedNodes: Int = 0,
+    val refundsOnChain: Int = 0,
+    val refundsSwept: Int = 0,
+    val stoppedLeaves: Int = 0,
+    /** Some steps could not be read — statuses built over them are unverified. */
+    val hasUnverified: Boolean = false,
+) {
+    val hasProgress: Boolean
+        get() = confirmedNodes > 0 || refundsOnChain > 0 || refundsSwept > 0 || stoppedLeaves > 0
+
+    /** Steps the chain already covers, for the one-line quote-card summary. */
+    val onChainSteps: Int
+        get() = confirmedNodes + refundsOnChain + refundsSwept
+}
+
 data class SparkExitQuote(
     val leafIds: List<String>,
     val leaves: List<SparkExitQuotedLeaf>,
@@ -32,6 +53,8 @@ data class SparkExitQuote(
     val perBranchFunding: List<SparkExitBranchFunding>,
     val feeRateSatPerVb: Long,
     val destination: String,
+    /** Chain progress read at quote time; null when nothing is on-chain yet. */
+    val chainProgress: SparkExitChainProgress? = null,
     /**
      * Fee split (Breez 0.25+): the CPFP part is paid from funding UTXOs and
      * does not reduce recovery; the sweep part is taken from the recovered
@@ -154,3 +177,11 @@ enum class SparkExitRedoReason {
     /** Pre-0.25 snapshot: transactions cannot be checked, rebuild instead. */
     SCHEMA_UPGRADED,
 }
+
+/**
+ * A rebuild found nothing to sign because the exit already finished on-chain
+ * (0.26 quotes skip already-swept leaves). Not an error — the funds are at
+ * the destination. Carries the sweep txid when the stored set names it.
+ */
+class SparkExitAlreadyCompleteException(val sweepTxid: String? = null) :
+    IllegalStateException("Exit already complete — check status instead")

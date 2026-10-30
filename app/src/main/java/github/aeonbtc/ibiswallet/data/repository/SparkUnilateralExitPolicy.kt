@@ -1,5 +1,8 @@
 package github.aeonbtc.ibiswallet.data.repository
 
+import breez_sdk_spark.ExitChainState
+import breez_sdk_spark.ExitRefundState
+import github.aeonbtc.ibiswallet.data.model.SparkExitChainProgress
 import github.aeonbtc.ibiswallet.data.model.SparkExitLiveUtxo
 import github.aeonbtc.ibiswallet.data.model.SparkExitQuote
 import github.aeonbtc.ibiswallet.data.model.SparkExitTx
@@ -314,6 +317,27 @@ object SparkUnilateralExitPolicy {
      */
     fun isExitComplete(txs: List<SparkExitTx>): Boolean =
         txs.isNotEmpty() && txs.all { it.status == SparkExitTxStatus.CONFIRMED }
+
+    /**
+     * Summarizes the chain state read while preparing, for the quote card.
+     * Null when the chain has done nothing yet — callers omit the progress
+     * line instead of showing zeros. Unknown (unreadable) steps set the flag
+     * but never inflate the on-chain count.
+     */
+    fun chainProgressOf(state: ExitChainState): SparkExitChainProgress? {
+        val progress =
+            SparkExitChainProgress(
+                confirmedNodes = state.confirmedNodes.size,
+                refundsOnChain = state.refunds.count { it.state is ExitRefundState.OnChain },
+                refundsSwept = state.refunds.count { it.state is ExitRefundState.Swept },
+                stoppedLeaves = state.stoppedLeafIds.size,
+                hasUnverified =
+                    state.unverifiedNodeIds.isNotEmpty() ||
+                        state.unverifiableConfirmedNodeIds.isNotEmpty(),
+            )
+        if (!progress.hasProgress && !progress.hasUnverified) return null
+        return progress
+    }
 
     /**
      * Quote→build binding: the build must consume the exact quote the user

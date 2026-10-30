@@ -1,6 +1,8 @@
 package github.aeonbtc.ibiswallet.data.repository
 
 import github.aeonbtc.ibiswallet.data.model.ArkMovement
+import github.aeonbtc.ibiswallet.data.model.ArkOnchainUtxo
+import github.aeonbtc.ibiswallet.data.model.TransactionDetails
 import java.time.Instant
 import java.time.OffsetDateTime
 import java.util.Locale
@@ -58,6 +60,69 @@ object ArkDepositPolicy {
 
     fun isRecoveredOnchainMovement(movement: ArkMovement): Boolean =
         movement.status.equals(STATUS_RECOVERED_L1, ignoreCase = true)
+
+    /**
+     * On-chain addresses that are counterparties, never our own deposit
+     * addresses: addresses we sent to that we never received on.
+     *
+     * Pre-fix builds recorded every `sentToAddresses` entry as a used deposit
+     * address, so an external offboard/send destination was crawled by the
+     * deposit-UTXO listing and painted as an unboarded self-deposit (phantom
+     * "Received" row and balance). Returned lowercased for comparison; an
+     * address that also appears in some movement's `receivedOnAddresses` is
+     * kept, since a self-transfer to an own address is still ours.
+     */
+    fun counterpartyOnchainAddresses(movements: List<ArkMovement>): Set<String> {
+        if (movements.isEmpty()) return emptySet()
+        val received =
+            movements
+                .flatMap { it.receivedOnAddresses }
+                .map { it.trim().lowercase(Locale.US) }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        return movements
+            .flatMap { it.sentToAddresses }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .filter { it.lowercase(Locale.US) !in received }
+            .filter(::looksLikeBitcoinAddress)
+            .map { it.lowercase(Locale.US) }
+            .toSet()
+    }
+
+    /**
+     * Total confirmed sats among [utxos] whose "txid:vout" key is selected.
+     *
+     * Keys are matched case-insensitively; unconfirmed rows never count. Returns
+     * 0 when nothing matches (caller surfaces "nothing to recover").
+     */
+    fun selectedOnchainTargetSats(
+        utxos: List<ArkOnchainUtxo>,
+        selectedOutpoints: Collection<String>,
+    ): Long {
+        val wanted =
+            selectedOutpoints
+                .map { it.trim().lowercase(Locale.US) }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        if (wanted.isEmpty()) return 0L
+        return utxos
+            .filter { utxo ->
+                val key = "${utxo.txid.trim().lowercase(Locale.US)}:${utxo.vout}"
+                key in wanted && utxo.isConfirmed
+            }
+            .sumOf { it.amountSats.coerceAtLeast(0L) }
+    }
+
+    /** Prefix check for the address styles Bark's on-chain wallet can carry. */
+    fun looksLikeBitcoinAddress(value: String): Boolean {
+        val v = value.trim()
+        return v.startsWith("bc1q", ignoreCase = true) ||
+            v.startsWith("bc1p", ignoreCase = true) ||
+            v.startsWith("bc1", ignoreCase = true) ||
+            v.startsWith("1") ||
+            v.startsWith("3")
+    }
 
     /**
      * Whether [amountSats] is below the ASP board minimum.
@@ -295,7 +360,36 @@ object ArkDepositPolicy {
         // Mailbox recovery restores VTXOs, not history — keep prior rows until Bark has any.
         if (dedupedLive.isEmpty()) return sortMovementsChronologically(previous)
 
-        val liveKeys = dedupedLive.mapTo(HashSet(dedupedLive.size)) { movementUnionKey(it) }
+        // Bark re-emits the same movement with mutable fields zeroed (an offboard
+        // settles to effective 0, addresses/txids dropped). Such a bare copy must
+        // never replace the journaled row's evidence, or the send disappears from
+        // history — carry the prior enrichment onto the live row and keep live's
+        // status/timing.
+        val previousByKey = previous.associateBy(::movementUnionKey)
+        val enrichedLive =
+            dedupedLive.map { current ->
+                val prior = previousByKey[movementUnionKey(current)] ?: return@map current
+                current.copy(
+                    sentToAddresses =
+                        current.sentToAddresses.ifEmpty { prior.sentToAddresses },
+                    receivedOnAddresses =
+                        current.receivedOnAddresses.ifEmpty { prior.receivedOnAddresses },
+                    onchainTxids = current.onchainTxids.ifEmpty { prior.onchainTxids },
+                    paymentHash = current.paymentHash ?: prior.paymentHash,
+                    lightningInvoice = current.lightningInvoice ?: prior.lightningInvoice,
+                    lightningOffer = current.lightningOffer ?: prior.lightningOffer,
+                    intendedBalanceSats =
+                        if (current.intendedBalanceSats == 0L) {
+                            prior.intendedBalanceSats
+                        } else {
+                            current.intendedBalanceSats
+                        },
+                    label = current.label ?: prior.label,
+                    metadataJson = current.metadataJson ?: prior.metadataJson,
+                )
+            }
+
+        val liveKeys = enrichedLive.mapTo(HashSet(enrichedLive.size)) { movementUnionKey(it) }
         val liveRecoveredFunding =
             live
                 .filter { isRecoveredOnchainMovement(it) }
@@ -321,7 +415,7 @@ object ArkDepositPolicy {
                 true
             }
         return distinctPaintedMovements(
-            if (preserved.isEmpty()) dedupedLive else dedupedLive + preserved,
+            if (preserved.isEmpty()) enrichedLive else enrichedLive + preserved,
         )
     }
 
@@ -438,6 +532,16 @@ object ArkDepositPolicy {
                 kindBlob.contains("cosign")
         if (internalBookkeeping) return true
 
+        // A settled withdrawal is a real payment even when Bark zeroes every
+        // amount/address field on it. Never hide offboards/sends as stubs.
+        if (kindBlob.contains("offboard") ||
+            kindBlob.contains("withdraw") ||
+            kindBlob.contains("send-onchain") ||
+            kindBlob.contains("onchain-send")
+        ) {
+            return false
+        }
+
         val hasPaymentEvidence =
             !movement.paymentHash.isNullOrBlank() ||
                 !movement.lightningInvoice.isNullOrBlank() ||
@@ -454,6 +558,25 @@ object ArkDepositPolicy {
             "${movement.subsystemName} ${movement.subsystemKind}".lowercase(Locale.US)
         return kind.contains("board") && !kind.contains("offboard")
     }
+
+    /**
+     * L1 tx whose txid exactly equals one of the movement's funding/board txids.
+     * No amount/time heuristics — safe for labelling rows that may be external deposits.
+     */
+    fun explicitLayer1Match(
+        movement: ArkMovement,
+        layer1Transactions: List<TransactionDetails>,
+    ): TransactionDetails? {
+        val chainTxids = movementChainTxids(movement)
+        if (chainTxids.isEmpty()) return null
+        return layer1Transactions.firstOrNull { it.txid.trim().lowercase(Locale.US) in chainTxids }
+    }
+
+    /** True when the movement was funded by an L1 tx started from the center Swap control. */
+    fun isFundedByCenterSwap(
+        movement: ArkMovement,
+        layer1Transactions: List<TransactionDetails>,
+    ): Boolean = explicitLayer1Match(movement, layer1Transactions)?.isSwapHistory == true
 
     /** Funding / board chain ids on a movement (lowercase 64-char txids). */
     fun movementChainTxids(movement: ArkMovement): Set<String> =

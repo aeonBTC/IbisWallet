@@ -1,5 +1,6 @@
 package github.aeonbtc.ibiswallet.data.remote
 
+import fr.acinq.lightning.payment.Bolt11Invoice
 import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.stringWithLimit
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +14,7 @@ import org.json.JSONObject
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 data class LnurlPayMetadata(
@@ -99,6 +101,7 @@ class LnurlPayResolver(
             val bolt11 = json.optString("pr", "").takeIf { it.isNotBlank() }
                 ?: throw Exception("LNURL service did not return a Lightning invoice")
             verifyBolt11InvoiceAmount(bolt11, amountMsats)
+            verifyBolt11MetadataHash(bolt11, metadata.metadata)
             LnurlPayInvoice(bolt11 = bolt11)
         }
     }
@@ -136,6 +139,9 @@ class LnurlPayResolver(
                 throw Exception("LNURL response has invalid amount bounds")
             }
             val metadata = json.optString("metadata", "")
+            if (metadata.isBlank()) {
+                throw Exception("LNURL response is missing metadata")
+            }
             LnurlPayMetadata(
                 callback = callback,
                 minSendableMsats = minSendable,
@@ -244,6 +250,28 @@ class LnurlPayResolver(
                 ?: throw Exception("LNURL invoice is missing an amount")
         if (invoiceAmountMsats != expectedAmountMsats) {
             throw Exception("LNURL invoice amount does not match the requested amount")
+        }
+    }
+
+    internal fun verifyBolt11MetadataHash(
+        bolt11: String,
+        metadata: String,
+    ) {
+        val invoice =
+            runCatching { Bolt11Invoice.read(bolt11).get() }
+                .getOrNull()
+                ?: throw Exception("LNURL service returned an invalid Lightning invoice")
+        val descriptionHash =
+            invoice.tags.filterIsInstance<Bolt11Invoice.TaggedField.DescriptionHash>().firstOrNull()?.hash
+                ?: throw Exception("LNURL invoice is missing a description hash")
+        val expectedHash = MessageDigest.getInstance("SHA-256").digest(metadata.toByteArray(Charsets.UTF_8))
+        val expectedHex = expectedHash.joinToString(separator = "") { byte -> "%02x".format(byte) }
+        if (!MessageDigest.isEqual(
+                descriptionHash.toString().toByteArray(Charsets.US_ASCII),
+                expectedHex.toByteArray(Charsets.US_ASCII),
+            )
+        ) {
+            throw Exception("LNURL invoice description does not match the payment request")
         }
     }
 
