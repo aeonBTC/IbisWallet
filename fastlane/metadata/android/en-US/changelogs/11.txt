@@ -1,9 +1,0 @@
-- Added Spark as a new Layer 2 option with modular wallet integration, Lightning support, and on-chain send/receive.
-- Added multisig wallet import, local cosigner signing, PSBT coordination, and multisig-safe RBF/CPFP flows.
-- Added support for sending to Silent Payment addresses (BIP-352).
-- Added BIP137 message signing and verification tools.
-- Added historical BTC price data via the mempool.space API.
-- Added Russian, Spanish, and Portuguese (Brazil) localizations.
-- Improved privacy by sanitizing logs and UI errors, reducing OS-visible metadata, and encrypting sensitive wallet activity.
-
-See full changelogs on GitHub.
