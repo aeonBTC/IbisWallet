@@ -109,7 +109,7 @@ Bug-Bounty-Prämien: [15. August 2026](https://github.com/aeonBTC/IbisWallet/rel
 
 Ibis wird von den aktuellsten Frontier-KI-Modellen codiert und auditiert.
 
-Audits: [29. Oktober 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta) · [15. August 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Audits: [29. Oktober 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v5.1-beta) · [15. August 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Spenden
 

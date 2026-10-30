@@ -109,7 +109,7 @@ Ibis — бета-версия для опытных пользователей 
 
 Ibis написан и аудирован самыми актуальными frontier AI-моделями.
 
-Аудиты: [29 октября 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta) · [15 августа 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Аудиты: [29 октября 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v5.1-beta) · [15 августа 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Пожертвования
 

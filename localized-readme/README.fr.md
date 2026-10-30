@@ -109,7 +109,7 @@ Récompenses du bug bounty : [15 août 2026](https://github.com/aeonBTC/IbisWall
 
 Ibis est codé et audité par les modèles d'IA de pointe les plus récents.
 
-Audits : [29 octobre 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta) · [15 août 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Audits : [29 octobre 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v5.1-beta) · [15 août 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Dons
 

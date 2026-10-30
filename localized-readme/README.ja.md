@@ -109,7 +109,7 @@ Ibisはベータ版ソフトウェアであり、経験豊富なBitcoinユーザ
 
 Ibisは最新のフロンティアAIモデルによってコーディング・監査されています。
 
-監査：[2026年10月29日](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)・[2026年8月15日](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+監査：[2026年10月29日](https://github.com/aeonBTC/IbisWallet/releases/tag/v5.1-beta)・[2026年8月15日](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## 寄付
 
