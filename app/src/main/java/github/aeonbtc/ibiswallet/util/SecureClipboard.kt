@@ -53,6 +53,24 @@ object SecureClipboard {
             }
     }
 
+    /**
+     * Read the primary clip as trimmed text for the in-field paste buttons.
+     * Returns null when the clipboard is empty, non-text, or unavailable.
+     * Never log the returned value; it may be a seed, key, or invoice.
+     */
+    fun readText(context: Context): String? =
+        try {
+            val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = clipboardManager.primaryClip
+            if (clip == null || clip.itemCount == 0) {
+                null
+            } else {
+                clip.getItemAt(0).coerceToText(context)?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+            }
+        } catch (_: Exception) {
+            null
+        }
+
     /** Immediately clear the primary clipboard clip, if possible. */
     fun clearNow(context: Context) {
         clearJob?.cancel()

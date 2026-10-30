@@ -26,6 +26,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
@@ -39,6 +41,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.ViewModelProvider
@@ -48,13 +51,19 @@ import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.localization.LocalAppLocale
 import github.aeonbtc.ibiswallet.nfc.NdefHostApduService
+import github.aeonbtc.ibiswallet.nfc.NfcPsbtCodec
+import github.aeonbtc.ibiswallet.nfc.NfcPsbtExchange
 import github.aeonbtc.ibiswallet.nfc.NfcReaderModeRequestRegistry
 import github.aeonbtc.ibiswallet.nfc.NfcRuntimeStatus
+import github.aeonbtc.ibiswallet.nfc.PsbtNfcEvent
+import github.aeonbtc.ibiswallet.nfc.PsbtNfcReadError
+import github.aeonbtc.ibiswallet.nfc.PsbtNfcWriteError
 import github.aeonbtc.ibiswallet.ui.IbisWalletApp
 import github.aeonbtc.ibiswallet.ui.screens.CalculatorScreen
 import github.aeonbtc.ibiswallet.ui.screens.LockScreen
 import github.aeonbtc.ibiswallet.ui.theme.IbisWalletTheme
-import github.aeonbtc.ibiswallet.util.BiometricCrypto
+import github.aeonbtc.ibiswallet.util.BiometricKeyInvalidatedException
+import github.aeonbtc.ibiswallet.util.BiometricKeyUnavailableException
 import github.aeonbtc.ibiswallet.util.SecureClipboard
 import github.aeonbtc.ibiswallet.util.getNfcAvailability
 import github.aeonbtc.ibiswallet.util.isRecognizedSendInput
@@ -63,6 +72,9 @@ import github.aeonbtc.ibiswallet.viewmodel.LiquidViewModel
 import github.aeonbtc.ibiswallet.viewmodel.SparkViewModel
 import github.aeonbtc.ibiswallet.viewmodel.WalletViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -91,6 +103,7 @@ class MainActivity : FragmentActivity() {
             0x00, 0xB0.toByte(), 0x00, 0x00, 0x02,
         )
         private const val NFC_READ_CHUNK_SIZE = 59
+        private const val NFC_MAX_SEND_NDEF_BYTES = 16_384
         private const val ACTIVITY_RESULT_LOCK_SKIP_WINDOW_MS = 30_000L
     }
 
@@ -103,9 +116,24 @@ class MainActivity : FragmentActivity() {
     private var isUnlocked by mutableStateOf(false)
     private var appUnlockCounter by mutableIntStateOf(0)
     private var cloakBypassed by mutableStateOf(false)
+    // Non-null when a PIN hash matched but its spend-master wrap did not
+    // (the old non-atomic rotation crash). Holds the current PIN so the
+    // previous-PIN recovery screen can re-wrap the master correctly.
+    private var previousPinRecoveryCurrentPin by mutableStateOf<String?>(null)
     private var showBiometricEnrollmentWarning by mutableStateOf(false)
     private var biometricPrompt: BiometricPrompt? = null
+    // Guards against overlapping BiometricPrompt.authenticate() calls. The app lock
+    // screen has two auto-trigger paths that fire together on foreground return
+    // (LockScreen LaunchedEffect + onResume), and a second authenticate() while one
+    // is already showing cancels the first dialog — the in-flight fingerprint touch
+    // is then lost and the prompt appears dead. While true, new requests are ignored;
+    // the flag clears on success/error so the fingerprint button stays retryable.
+    @Volatile private var isBiometricAuthInProgress = false
     private var wasInBackground = false
+    // Set when the activity was stopped while a system picker was open. The
+    // picker result may arrive before the skip expires; if it does not, the
+    // normal lock timing is enforced on resume instead of being skipped forever.
+    private var backgroundedDuringActivityResultSkip = false
     private var skipBackgroundLockUntilElapsedMs = 0L
     private val biometricAutoCancelHandler = Handler(Looper.getMainLooper())
     private var isCloakActive = false
@@ -121,7 +149,8 @@ class MainActivity : FragmentActivity() {
                 val securityMethod = secureStorage.getSecurityMethod()
                 if (securityMethod == SecureStorage.SecurityMethod.NONE) return
                 if (secureStorage.getLockTiming() != SecureStorage.LockTiming.ON_SCREEN_OFF) return
-                if (isActivityResultLockSkipActive()) return
+                // Screen-off is a hard lock: do not let an in-flight system
+                // picker keep the wallet unlocked indefinitely.
                 if (!isUnlocked) return
                 lockApp()
             }
@@ -140,12 +169,95 @@ class MainActivity : FragmentActivity() {
         private set
 
     /**
+     * PSBT NFC signing session (PsbtScreen and SignTransactionScreen). While armed, taps are
+     * routed to the PSBT read/write path instead of the address handoff.
+     * Export holds the unsigned PSBT base64 to push; import reads a signed
+     * PSBT (or finalized txn) back. Both cleared on disarm.
+     */
+    private val _psbtNfcEvents = MutableSharedFlow<PsbtNfcEvent>(extraBufferCapacity = 8)
+    val psbtNfcEvents: SharedFlow<PsbtNfcEvent> = _psbtNfcEvents.asSharedFlow()
+    // Written on the UI thread (arm/disarm), read on the reader callback
+    // thread — volatile for cross-thread visibility.
+    @Volatile
+    private var psbtNfcExportBase64: String? = null
+    @Volatile
+    private var psbtNfcImportArmed: Boolean = false
+
+    private val psbtHceShareOwner = Any()
+
+    // Held while a PSBT share screen is visible. Kept across onPause (so
+    // onResume can re-present it) but the HCE payload is disarmed in the
+    // background; cleared entirely on explicit disarm.
+    @Volatile
+    private var psbtHceSharePayload: ByteArray? = null
+
+    fun armPsbtNfcExport(psbtBase64: String) {
+        psbtNfcExportBase64 = psbtBase64
+        psbtNfcImportArmed = false
+    }
+
+    fun armPsbtNfcImport() {
+        psbtNfcExportBase64 = null
+        psbtNfcImportArmed = true
+    }
+
+    fun disarmPsbtNfc() {
+        psbtNfcExportBase64 = null
+        psbtNfcImportArmed = false
+    }
+
+    /**
+     * Present a PSBT via HCE so another phone can pull it with an NFC tap
+     * (phone-to-phone handoff). The importing phone reads it through the
+     * normal PSBT import path — no separate protocol. Returns false when NFC
+     * cannot broadcast or the payload is missing/oversized.
+     *
+     * HCE is promiscuous: any nearby reader receives the payload while armed.
+     * Callers arm explicitly from a share screen and disarm on dispose,
+     * cancel, timeout, or app lock (see [lockApp]).
+     */
+    fun armPsbtHceShare(psbtBase64: String): Boolean {
+        val message = NfcPsbtCodec.buildShareMessage(psbtBase64) ?: return false
+        if (!getNfcAvailability(secureStorage.isNfcEnabled()).canBroadcast) return false
+        psbtHceSharePayload = message
+        NdefHostApduService.armPsbtShare(message)
+        requestPreferredHceService(psbtHceShareOwner)
+        return true
+    }
+
+    /** Stop presenting a shared PSBT via HCE. */
+    fun disarmPsbtHceShare() {
+        psbtHceSharePayload = null
+        NdefHostApduService.disarmPsbtShare()
+        releasePreferredHceService(psbtHceShareOwner)
+    }
+
+    // HCE can be bound by a nearby reader even while the app is backgrounded,
+    // so the PSBT payload is disarmed in onPause but remembered here; onResume
+    // re-presents it if the share screen is still visible.
+    private fun suspendPsbtHceShare() {
+        if (psbtHceSharePayload != null) {
+            NdefHostApduService.disarmPsbtShare()
+        }
+    }
+
+    private fun resumePsbtHceShare() {
+        psbtHceSharePayload?.let { NdefHostApduService.armPsbtShare(it) }
+    }
+
+    fun isPsbtNfcSessionActive(): Boolean = psbtNfcExportBase64 != null || psbtNfcImportArmed
+
+    /**
      * NFC ReaderCallback — invoked on a background thread when a tag is detected.
      * Reads NDEF message from the tag (or HCE peer), extracts a supported send payload,
      * and posts it to the ViewModel on the main thread.
      */
     private val nfcReaderCallback = NfcAdapter.ReaderCallback { tag: Tag ->
         NfcRuntimeStatus.markReaderTagDetected()
+        if (isPsbtNfcSessionActive()) {
+            lifecycleScope.launch(Dispatchers.IO) { handlePsbtNfcTag(tag) }
+            return@ReaderCallback
+        }
         val sendInput = readSendInputFromTag(tag) ?: return@ReaderCallback
         NfcRuntimeStatus.markReaderPayloadReceived()
         runOnUiThread {
@@ -153,6 +265,57 @@ class MainActivity : FragmentActivity() {
                 sendInput,
                 WalletViewModel.PendingSendOrigin.NFC,
             )
+        }
+    }
+
+    /**
+     * PSBT NFC tap: push the armed unsigned PSBT to the signer, or read a
+     * signed PSBT / finalized transaction back. Results go to
+     * [psbtNfcEvents]; payload bytes are never logged.
+     */
+    private suspend fun handlePsbtNfcTag(tag: Tag) {
+        val exportBase64 = psbtNfcExportBase64
+        if (exportBase64 != null) {
+            val psbtBytes =
+                runCatching {
+                    android.util.Base64.decode(exportBase64, android.util.Base64.DEFAULT)
+                }.getOrNull()
+            if (psbtBytes == null || psbtBytes.isEmpty()) {
+                _psbtNfcEvents.tryEmit(PsbtNfcEvent.WriteFailed(PsbtNfcWriteError.IO))
+                return
+            }
+            val error = NfcPsbtExchange.writePsbt(tag, psbtBytes)
+            if (error == null) {
+                NfcRuntimeStatus.markReaderPayloadReceived()
+                _psbtNfcEvents.tryEmit(PsbtNfcEvent.WriteSucceeded)
+            } else {
+                _psbtNfcEvents.tryEmit(PsbtNfcEvent.WriteFailed(error))
+            }
+            return
+        }
+        if (psbtNfcImportArmed) {
+            when (val result = NfcPsbtExchange.readPsbt(tag)) {
+                is NfcPsbtExchange.Result.Success -> {
+                    NfcRuntimeStatus.markReaderPayloadReceived()
+                    _psbtNfcEvents.tryEmit(
+                        PsbtNfcEvent.ReadSucceeded(
+                            data = result.value.data,
+                            isFinalTxn = result.value.isFinalTxn,
+                            checksumVerified = result.value.checksumVerified,
+                        ),
+                    )
+                }
+                is NfcPsbtExchange.Result.Failure -> {
+                    val error =
+                        when (result.error) {
+                            PsbtNfcReadError.TAG_NOT_SUPPORTED,
+                            PsbtNfcReadError.EMPTY,
+                            -> PsbtNfcReadError.EMPTY
+                            else -> result.error
+                        }
+                    _psbtNfcEvents.tryEmit(PsbtNfcEvent.ReadFailed(error))
+                }
+            }
         }
     }
 
@@ -229,7 +392,7 @@ class MainActivity : FragmentActivity() {
             }
 
             val messageLength = ((lengthBytes[0].toInt() and 0xFF) shl 8) or (lengthBytes[1].toInt() and 0xFF)
-            if (messageLength <= 0) return null
+            if (messageLength <= 0 || messageLength > NFC_MAX_SEND_NDEF_BYTES) return null
 
             val messageBytes = ByteArray(messageLength)
             var bytesRead = 0
@@ -587,11 +750,10 @@ class MainActivity : FragmentActivity() {
                 walletViewModel.onAppUnlocked()
             }
 
-            // Setup biometric prompt
+            // Setup biometric prompt. Never touch the Keystore key here: a
+            // startup prewarm used to delete/recreate an invalidated legacy
+            // key, destroying the only wrap that could still recover money.
             setupBiometricPrompt()
-            if (securityMethod == SecureStorage.SecurityMethod.BIOMETRIC) {
-                prewarmBiometricCipher()
-            }
 
             // Check for incoming send intent
             handleSendIntent(intent)
@@ -616,14 +778,40 @@ class MainActivity : FragmentActivity() {
                         modifier = Modifier.fillMaxSize(),
                         color = MaterialTheme.colorScheme.background,
                     ) {
-                        if (isUnlocked) {
-                            IbisWalletApp(
-                                onLockApp = { lockApp() },
-                                onAutoWipe = { performFullWipe() },
-                                appUnlockCounter = appUnlockCounter,
+                        val recoveryCurrentPin = previousPinRecoveryCurrentPin
+                        if (recoveryCurrentPin != null) {
+                            LockScreen(
+                                securityMethod = SecureStorage.SecurityMethod.PIN,
+                                promptMessage = stringResource(R.string.pin_recovery_prompt),
+                                randomizePinPad = secureStorage.getRandomizePinPad(),
+                                isBiometricAvailable = false,
+                                onBiometricRequest = {},
+                                onCancel = { previousPinRecoveryCurrentPin = null },
+                                onPinEntered = { previousPin ->
+                                    val recovered =
+                                        withContext(Dispatchers.Default) {
+                                            runCatching {
+                                                secureStorage.unlockSpendSecretsWithPreviousPin(
+                                                    currentPin = recoveryCurrentPin,
+                                                    previousPin = previousPin,
+                                                )
+                                            }.getOrDefault(false)
+                                        }
+                                    if (recovered) {
+                                        previousPinRecoveryCurrentPin = null
+                                        unlockApp(incrementCounter = true)
+                                        true
+                                    } else {
+                                        if (secureStorage.shouldAutoWipe()) performFullWipe()
+                                        false
+                                    }
+                                },
                             )
                         } else if (isCloakActive && !cloakBypassed) {
-                            // Show calculator disguise — secret code unlocks; wipe PIN erases all data
+                            // Cloak gate comes before the unlocked session check:
+                            // a configuration-change recreation must not skip the
+                            // calculator and open the wallet because the process
+                            // session is still unlocked.
                             CalculatorScreen(
                                 codeMatches = { code -> secureStorage.codeMatchesCloak(code) },
                                 onUnlock = {
@@ -648,6 +836,12 @@ class MainActivity : FragmentActivity() {
                                     } else {
                                         null
                                     },
+                            )
+                        } else if (isUnlocked) {
+                            IbisWalletApp(
+                                onLockApp = { lockApp() },
+                                onAutoWipe = { performFullWipe() },
+                                appUnlockCounter = appUnlockCounter,
                             )
                         } else {
                             val biometricManager = BiometricManager.from(this)
@@ -677,6 +871,7 @@ class MainActivity : FragmentActivity() {
                                             secMethod == SecureStorage.SecurityMethod.BIOMETRIC &&
                                                 !isDuressEnabled
                                         )
+                                var needsPreviousPinRecovery = false
                                 val (isRealPin, isDuressPin, isWipePin) =
                                     withContext(Dispatchers.Default) {
                                         // All three probes run unconditionally so entry
@@ -689,8 +884,19 @@ class MainActivity : FragmentActivity() {
                                         when {
                                             // Hash matched above; verify performs the unlock
                                             // side effects. No failure was recorded.
-                                            matchesReal ->
-                                                Triple(secureStorage.verifyPin(pin), false, false)
+                                            matchesReal -> {
+                                                val verified = secureStorage.verifyPin(pin)
+                                                if (!verified &&
+                                                    !secureStorage.isPinLockedOut() &&
+                                                    secureStorage.canRecoverSpendMasterWithPreviousPin()
+                                                ) {
+                                                    // New hash + old wrap from a crash during
+                                                    // the old non-atomic rotation. Offer the
+                                                    // previous PIN instead of silently failing.
+                                                    needsPreviousPinRecovery = true
+                                                }
+                                                Triple(verified, false, false)
+                                            }
                                             matchesDuress ->
                                                 Triple(
                                                     false,
@@ -721,6 +927,9 @@ class MainActivity : FragmentActivity() {
                                         }
                                     }
 
+                                if (needsPreviousPinRecovery) {
+                                    previousPinRecoveryCurrentPin = pin
+                                }
                                 when {
                                     isRealPin -> {
                                         // Await wallet switch so the main UI never flashes decoy state.
@@ -771,8 +980,14 @@ class MainActivity : FragmentActivity() {
                                     )
                                 },
                                 confirmButton = {
-                                    androidx.compose.material3.TextButton(
+                                    androidx.compose.material3.Button(
                                         onClick = { showBiometricEnrollmentWarning = false },
+                                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = 40.dp),
+                                        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+                                        colors =
+                                            androidx.compose.material3.ButtonDefaults.buttonColors(
+                                                containerColor = github.aeonbtc.ibiswallet.ui.theme.BitcoinOrange,
+                                            ),
                                     ) {
                                         androidx.compose.material3.Text(
                                             stringResource(R.string.biometric_enrollment_changed_dismiss),
@@ -797,7 +1012,9 @@ class MainActivity : FragmentActivity() {
         }
         if (nfcHceRequests.hasActiveRequests()) {
             activatePreferredHceService()
+            resumePsbtHceShare()
         }
+        NdefHostApduService.resumeNdefPayload()
 
         val securityMethod = secureStorage.getSecurityMethod()
         if (securityMethod == SecureStorage.SecurityMethod.NONE && !isCloakActive) {
@@ -812,6 +1029,8 @@ class MainActivity : FragmentActivity() {
         // Check if we need to lock based on timing settings
         if (wasInBackground) {
             wasInBackground = false
+            val backgroundedByPicker = backgroundedDuringActivityResultSkip
+            backgroundedDuringActivityResultSkip = false
             when (val lockTiming = secureStorage.getLockTiming()) {
                 SecureStorage.LockTiming.DISABLED -> {
                     // Never auto-lock after initial unlock
@@ -819,7 +1038,12 @@ class MainActivity : FragmentActivity() {
                 SecureStorage.LockTiming.WHEN_MINIMIZED,
                 SecureStorage.LockTiming.ON_SCREEN_OFF,
                 -> {
-                    // WHEN_MINIMIZED locks in onStop; ON_SCREEN_OFF locks via receiver
+                    // WHEN_MINIMIZED locks in onStop; ON_SCREEN_OFF locks via the
+                    // screen-off receiver. If the background happened while a
+                    // picker was open, lock now once the picker grace expired.
+                    if (backgroundedByPicker && isUnlocked && !isActivityResultLockSkipActive()) {
+                        lockApp()
+                    }
                 }
                 else -> {
                     if (secureStorage.shouldLockAfterBackground(lockTiming.timeoutMs)) {
@@ -832,20 +1056,29 @@ class MainActivity : FragmentActivity() {
         // Trigger biometric if locked and biometric is enabled.
         // Skip when cloak is active and not yet bypassed — calculator must be entered first.
         // Skip auto-trigger in duress+biometric mode (the C button is the hidden trigger).
+        // Posted to the main queue so it runs after the resume transition completes:
+        // showBiometricPrompt() requires RESUMED and would otherwise drop this call.
         if (!isUnlocked &&
             securityMethod == SecureStorage.SecurityMethod.BIOMETRIC &&
             !secureStorage.isDuressEnabled() &&
             !(isCloakActive && !cloakBypassed)
         ) {
-            prewarmBiometricCipher()
-            showBiometricPrompt()
+            biometricAutoCancelHandler.post { showBiometricPrompt() }
         }
     }
 
     override fun onPause() {
         super.onPause()
         deactivateNfcReaderMode()
+        suspendPsbtHceShare()
+        NdefHostApduService.suspendNdefPayload()
         deactivatePreferredHceService()
+        // Dismiss any in-flight biometric dialog when leaving foreground (screen
+        // off, minimize). Otherwise a stale dialog lingers across the lock and the
+        // next authenticate() either fails or immediately cancels itself.
+        runCatching { biometricPrompt?.cancelAuthentication() }
+        biometricAutoCancelHandler.removeCallbacksAndMessages(null)
+        isBiometricAuthInProgress = false
     }
 
     override fun onStop() {
@@ -869,11 +1102,17 @@ class MainActivity : FragmentActivity() {
             return
         }
         if (isActivityResultLockSkipActive()) {
-            // Keep the skip window alive until it expires naturally — zeroing it here
-            // would let the screen-off receiver lock mid-picker and drop the result.
+            // A system picker is open. Do not lock yet so its result can land,
+            // but record the background instant and a flag so onResume locks if
+            // the skip window has expired. Never leave wasInBackground false:
+            // that was the indefinite-bypass bug.
+            wasInBackground = true
+            backgroundedDuringActivityResultSkip = true
+            secureStorage.setLastBackgroundInstant()
             return
         }
         skipBackgroundLockUntilElapsedMs = 0L
+        backgroundedDuringActivityResultSkip = false
 
         wasInBackground = true
         val lockTiming = secureStorage.getLockTiming()
@@ -939,6 +1178,7 @@ class MainActivity : FragmentActivity() {
             SecureClipboard.clearNow(this)
         }
         NdefHostApduService.setNdefPayload(null)
+        disarmPsbtHceShare()
         deactivateNfcReaderMode()
         deactivatePreferredHceService()
         walletViewModel.onAppLocked()
@@ -982,6 +1222,10 @@ class MainActivity : FragmentActivity() {
      */
     private fun handleSendIntent(intent: Intent?) {
         if (intent == null) return
+        // Only browser-style VIEW intents are accepted. The manifest filter is
+        // VIEW-only, but an explicit intent from another app can carry any
+        // action with a data URI.
+        if (intent.action != Intent.ACTION_VIEW) return
 
         intent.data?.let { data ->
             when (data.scheme?.lowercase()) {
@@ -1038,6 +1282,7 @@ class MainActivity : FragmentActivity() {
                     override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                         super.onAuthenticationSucceeded(result)
                         biometricAutoCancelHandler.removeCallbacksAndMessages(null)
+                        isBiometricAuthInProgress = false
                         if (result.cryptoObject == null) {
                             Toast.makeText(
                                 this@MainActivity,
@@ -1078,6 +1323,7 @@ class MainActivity : FragmentActivity() {
                     ) {
                         super.onAuthenticationError(errorCode, errString)
                         biometricAutoCancelHandler.removeCallbacksAndMessages(null)
+                        isBiometricAuthInProgress = false
                         // User can still use PIN as fallback
                     }
 
@@ -1089,6 +1335,18 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun showBiometricPrompt(autoCancelAfter2s: Boolean = false) {
+        // Single-flight: LockScreen auto-trigger and onResume fire together on
+        // foreground return — a second authenticate() cancels the first dialog and
+        // the in-flight touch is dropped, leaving a prompt that ignores fingerprints.
+        if (isBiometricAuthInProgress) return
+        // Never start auth while not resumed. The LockScreen recompose triggered by
+        // lockApp() in onStop fires while STOPPED (screen off / minimized) — calling
+        // authenticate() there shows no dialog and invokes no callback, wedging the
+        // gate so the onResume prompt and the fingerprint button both go dead.
+        // Dropping the stopped trigger leaves onResume (cold start + foreground
+        // return) and the manual button (foreground lock) as the single prompt path.
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
+        isBiometricAuthInProgress = true
         val promptTitle =
             if (isCloakActive) {
                 getString(R.string.biometric_prompt_authenticate)
@@ -1112,19 +1370,43 @@ class MainActivity : FragmentActivity() {
         // Tie authentication to a KeyStore cryptographic operation so it cannot
         // be bypassed by injecting a success callback on rooted/instrumented devices.
         lifecycleScope.launch {
-            val cryptoObject =
+            val cryptoResult =
                 withContext(Dispatchers.Default) {
                     runCatching {
                         secureStorage.createSpendSecretBiometricCryptoObject()
-                    }.getOrNull()
+                    }
                 }
+            val cryptoObject = cryptoResult.getOrNull()
 
+            // Re-check after the background crypto work: the activity may have been
+            // backgrounded (screen off) while the cipher was being built. Calling
+            // authenticate() while stopped wedges BiometricPrompt with no callback.
+            if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                isBiometricAuthInProgress = false
+                return@launch
+            }
             if (cryptoObject != null) {
-                biometricPrompt?.authenticate(promptInfo, cryptoObject)
+                try {
+                    biometricPrompt?.authenticate(promptInfo, cryptoObject)
+                        ?: run { isBiometricAuthInProgress = false }
+                } catch (_: Exception) {
+                    // authenticate() throws when the activity is not resumed yet
+                    // (foreground return racing onResume). Clear the gate so the
+                    // fingerprint button retry works instead of staying blocked.
+                    isBiometricAuthInProgress = false
+                }
             } else {
+                isBiometricAuthInProgress = false
+                val messageRes =
+                    when (cryptoResult.exceptionOrNull()) {
+                        is BiometricKeyInvalidatedException,
+                        is BiometricKeyUnavailableException,
+                        -> R.string.biometric_enrollment_changed_use_pin
+                        else -> R.string.loc_0039435a
+                    }
                 Toast.makeText(
                     this@MainActivity,
-                    getString(R.string.loc_0039435a),
+                    getString(messageRes),
                     Toast.LENGTH_SHORT,
                 ).show()
                 return@launch
@@ -1141,9 +1423,4 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    private fun prewarmBiometricCipher() {
-        lifecycleScope.launch(Dispatchers.Default) {
-            runCatching { BiometricCrypto.getBiometricCipher() }
-        }
-    }
 }

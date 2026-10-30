@@ -531,6 +531,26 @@ object BitcoinUtils {
         return if (exactFee > 0) exactFee.toULong() else null
     }
 
+    /**
+     * Upper fee bound for the fail-closed broadcast guard.
+     *
+     * The intended child fee is `max(targetFee + feeOffset, relayFloor)`: a
+     * CPFP parent that already overpays makes the package offset negative, but
+     * the child must still pay at least 1 sat/vB for its own vsize. The cap is
+     * 10x that intended package fee. Clamping **after** applying a negative
+     * offset is essential — clamping the raw offset to 1 sat would cap CPFP at
+     * 10 sats and reject every valid child.
+     */
+    fun packageFeeCapSats(
+        intendedFeeSats: Long,
+        feeOffsetSats: Long,
+        vsize: Double,
+    ): Long {
+        val relayFloor = kotlin.math.ceil(vsize.coerceAtLeast(1.0)).toLong().coerceAtLeast(1L)
+        val intendedPackageFee = (intendedFeeSats + feeOffsetSats).coerceAtLeast(relayFloor)
+        return intendedPackageFee.coerceAtLeast(1L) * 10L
+    }
+
     // ── Script Hash ──────────────────────────────────────────────────
 
     /**
@@ -1164,6 +1184,38 @@ object BitcoinUtils {
         return AddressType.entries.firstOrNull {
             bip39AccountDerivationPath(it.defaultPath) == account
         }
+    }
+
+    /**
+     * Allocation-light hex decoder. Avoids the per-byte String/boxing churn of
+     * `chunked(2).map { it.toInt(16) }` on multi-hundred-KB transaction hex.
+     */
+    fun hexToByteArray(hex: String): ByteArray {
+        val length = hex.length
+        require(length % 2 == 0) { "Hex string must have even length" }
+        val out = ByteArray(length / 2)
+        var source = 0
+        var target = 0
+        while (source < length) {
+            val high = Character.digit(hex[source], 16)
+            val low = Character.digit(hex[source + 1], 16)
+            require(high >= 0 && low >= 0) { "Invalid hex character" }
+            out[target++] = ((high shl 4) or low).toByte()
+            source += 2
+        }
+        return out
+    }
+
+    fun bytesToHex(bytes: ByteArray): String {
+        val digits = "0123456789abcdef"
+        val chars = CharArray(bytes.size * 2)
+        var index = 0
+        for (byte in bytes) {
+            val value = byte.toInt() and 0xFF
+            chars[index++] = digits[value ushr 4]
+            chars[index++] = digits[value and 0x0F]
+        }
+        return String(chars)
     }
 
     const val MAX_FEE_RATE_SAT_VB = 2_000.0

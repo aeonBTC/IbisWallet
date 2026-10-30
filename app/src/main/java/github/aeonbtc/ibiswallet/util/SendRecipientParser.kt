@@ -11,6 +11,7 @@ import lwk.Payment
 import lwk.PaymentKind
 import java.math.BigDecimal
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.util.Locale
 
 internal sealed interface ParsedSendRecipient {
@@ -678,9 +679,11 @@ private fun formatSatsForDraft(amountSats: Long, useSats: Boolean): String {
     return if (useSats) {
         amountSats.toString()
     } else {
-        String.format(Locale.US, "%.8f", amountSats / 100_000_000.0)
-            .trimEnd('0')
-            .trimEnd('.')
+        // Exact decimals: a Double round-trip can print 0.30000000 for some
+        // amounts and drift the field by a sat when it is parsed again.
+        java.math.BigDecimal.valueOf(amountSats, 8)
+            .stripTrailingZeros()
+            .toPlainString()
     }
 }
 
@@ -852,6 +855,58 @@ private fun parseOpaqueLiquidRecipient(
     )
 }
 
+/**
+ * Builds a BIP21-style `spark:` payment URI over the static Spark address:
+ * `spark:<address>[?amount=<btc>[&label=<enc>]]`.
+ *
+ * A plain amount/label request stays on the reusable static address (readable
+ * amount, interoperable with wallets that only know Spark addresses). Only
+ * token receives need an SDK Spark invoice (the token id has no URI field).
+ * Returns the bare address when neither amount nor label is set, null on
+ * blank input. Never throws.
+ */
+fun buildSparkAddressRequest(
+    address: String?,
+    amountSats: Long?,
+    label: String?,
+): String? {
+    val bare =
+        address?.trim()?.takeIf { it.isNotBlank() }?.let(::stripSparkPaymentRequest)
+            ?.takeIf { it.isNotBlank() } ?: return null
+    if ((amountSats == null || amountSats <= 0L) && label == null) return bare
+
+    val params = mutableListOf<String>()
+    if (amountSats != null && amountSats > 0L) {
+        val btcAmount = amountSats.toDouble() / 100_000_000.0
+        // Trimmed (not %.8f-padded) to match pasted-address formatting.
+        val formatted = String.format(Locale.US, "%.8f", btcAmount).trimEnd('0').trimEnd('.')
+        params += "amount=$formatted"
+    }
+    label?.let {
+        params += "label=${URLEncoder.encode(it, "UTF-8")}"
+    }
+    if (params.isEmpty()) return bare
+    return "spark:$bare?${params.joinToString("&")}"
+}
+
+/**
+ * Strips a `spark:` scheme and any `?...` query params down to the bare
+ * payment string the Breez SDK parses (static `spark1…` address or
+ * `sparkinvoice…`). Bare inputs pass through unchanged. Never throws.
+ */
+fun stripSparkPaymentRequest(input: String): String {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return trimmed
+    val lower = trimmed.lowercase(Locale.US)
+    val afterScheme =
+        if (lower.startsWith("spark:")) {
+            trimmed.substringAfter(':')
+        } else {
+            trimmed
+        }
+    return afterScheme.substringBefore('?').trim().takeIf { it.isNotBlank() } ?: trimmed
+}
+
 private fun parseSparkRecipient(
     input: String,
     queryParams: Map<String, String>,
@@ -872,10 +927,12 @@ private fun parseSparkRecipient(
 }
 
 private fun parseLiquidAmountToSats(amountText: String): Long? {
+    if (amountText.length > 32) return null
     return runCatching {
         BigDecimal(amountText)
-            .movePointRight(8)
-            .longValueExact()
+            .takeIf { it.signum() >= 0 }
+            ?.movePointRight(8)
+            ?.longValueExact()
     }.getOrNull()
 }
 

@@ -22,7 +22,7 @@ import github.aeonbtc.ibiswallet.util.Bip329LabelNetwork
 import github.aeonbtc.ibiswallet.util.Bip329LabelScope
 import github.aeonbtc.ibiswallet.util.Bip329Labels
 import github.aeonbtc.ibiswallet.util.InputLimits
-import github.aeonbtc.ibiswallet.util.SparkNetworkMonitor
+import github.aeonbtc.ibiswallet.util.DefaultNetworkMonitor
 import github.aeonbtc.ibiswallet.util.readBytesWithLimit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -74,7 +74,7 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
     private var isAppInBackground = false
     private val reconnectDebouncer = SparkReconnectDebouncer()
     private val networkMonitor =
-        SparkNetworkMonitor(
+        DefaultNetworkMonitor(
             context = getApplication(),
             onNetworkChanged = {
                 if (!isAppInBackground || isBackgroundKeepAliveActive()) {
@@ -353,9 +353,11 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         amountSats: Long? = null,
         description: String = "",
         forceNew: Boolean = false,
+        tokenIdentifier: String? = null,
+        tokenAmount: java.math.BigInteger? = null,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.receive(kind, amountSats, description, forceNew)
+            repository.receive(kind, amountSats, description, forceNew, tokenIdentifier, tokenAmount)
         }
     }
 
@@ -365,9 +367,19 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         onchainFeeSpeed: SparkOnchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
         useAllFunds: Boolean = false,
         label: String? = null,
+        tokenIdentifier: String? = null,
+        tokenAmount: java.math.BigInteger? = null,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.prepareSend(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds, label)
+            repository.prepareSend(
+                paymentRequest,
+                amountSats,
+                onchainFeeSpeed,
+                useAllFunds,
+                label,
+                tokenIdentifier,
+                tokenAmount,
+            )
         }
     }
 
@@ -392,14 +404,38 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         onchainFeeSpeed: SparkOnchainFeeSpeed = SparkOnchainFeeSpeed.FAST,
         useAllFunds: Boolean = false,
         label: String? = null,
+        tokenIdentifier: String? = null,
+        tokenAmount: java.math.BigInteger? = null,
     ): SparkSendState.Preview =
-        repository.prepareSendPreview(paymentRequest, amountSats, onchainFeeSpeed, useAllFunds, label)
+        repository.prepareSendPreview(
+            paymentRequest,
+            amountSats,
+            onchainFeeSpeed,
+            useAllFunds,
+            label,
+            tokenIdentifier,
+            tokenAmount,
+        )
 
     suspend fun getOnchainFeeQuotes(
         paymentRequest: String,
         amountSats: Long,
         useAllFunds: Boolean = false,
-    ) = repository.getOnchainFeeQuotes(paymentRequest, amountSats, useAllFunds)
+        tokenIdentifier: String? = null,
+    ) = repository.getOnchainFeeQuotes(paymentRequest, amountSats, useAllFunds, tokenIdentifier)
+
+    suspend fun getTokensMetadata(tokenIdentifiers: List<String>) =
+        repository.getTokensMetadata(tokenIdentifiers)
+
+    /** Metadata-authoritative lookup for a hand-typed token id; null when unknown. */
+    suspend fun resolveSparkToken(rawIdentifier: String) = repository.resolveSparkToken(rawIdentifier)
+
+    fun getKnownSparkTokens(walletId: String) = secureStorage.getKnownSparkTokens(walletId)
+
+    fun rememberSparkToken(
+        walletId: String,
+        token: github.aeonbtc.ibiswallet.data.model.SparkToken,
+    ) = secureStorage.rememberSparkToken(walletId, token)
 
     suspend fun getRecommendedFeeEstimates() = repository.getRecommendedFeeEstimates()
 
@@ -487,15 +523,18 @@ class SparkViewModel(application: Application) : AndroidViewModel(application) {
         repository.fetchDepositClaimQuote(txid, vout)
 
     /**
-     * Claims a pending deposit immediately at the reviewed quote's fee
-     * ceiling. Call behind spend auth.
+     * Claims a pending deposit at the reviewed quote's fee ceiling and returns
+     * what the call did. A Deferred outcome is ordinary (the ceiling stands
+     * for automatic retries) — surface it, don't treat it as failure.
+     * Call behind spend auth.
      */
     suspend fun claimDepositNow(
         txid: String,
         vout: UInt,
         amountSats: Long,
         maxFeeSats: Long,
-    ) = repository.claimDepositNow(txid, vout, amountSats, maxFeeSats)
+    ): github.aeonbtc.ibiswallet.data.model.SparkClaimOutcome =
+        repository.claimDepositNow(txid, vout, amountSats, maxFeeSats)
 
     fun clearSparkExit() {
         repository.clearSparkExit()

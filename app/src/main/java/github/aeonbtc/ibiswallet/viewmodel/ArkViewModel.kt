@@ -157,12 +157,13 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
                     isInForeground = true,
                 )
                 if (
-                    wasConnectedBeforeBackground &&
                     loadedWalletId.value != null &&
                     isArkLayer2Enabled.value
                 ) {
+                    startMaintenanceLoop()
                     if (isArkConnected.value) {
                         startHeartbeat()
+                        startMaintenanceLoop()
                         // Full validate, not bare maintenance: hydrate exercises the
                         // transport and the failure streak flips a dead session so
                         // the auto-reconnect below can reload it.
@@ -176,8 +177,8 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         viewModelScope.launch {
-            combine(isArkConnected, _isArkLayer2Enabled) { connected, enabled ->
-                connected && enabled
+            combine(loadedWalletId, _isArkLayer2Enabled) { walletId, enabled ->
+                walletId != null && enabled
             }
                 .distinctUntilChanged()
                 .collect { keepAliveConnected ->
@@ -364,7 +365,7 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
             viewModelScope.launch {
                 while (true) {
                     delay(MAINTENANCE_INTERVAL_MS)
-                    if (!isArkConnected.value) break
+                    if (loadedWalletId.value == null) break
                     if (isAppInBackground && !isBackgroundKeepAliveActive()) break
                     runCatching { repository.maintenance() }
                         .onFailure { error ->
@@ -794,6 +795,47 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Sweep only the selected confirmed Bark on-chain deposits to a Layer 1 address.
+     * Bark has no on-chain coin control, so this sends the selected amount and lets
+     * Bark pick the outputs (change returns to the Ark on-chain balance).
+     */
+    fun recoverSelectedOnchainDeposits(
+        vtxoOutpoints: List<String>,
+        destinationAddress: String,
+        feeRateSatPerVb: Long = 2L,
+        onResult: (Result<String>) -> Unit = {},
+    ) {
+        if (_isRecoveringOnchain.value) return
+        _isRecoveringOnchain.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val result =
+                    try {
+                        repository.recoverSelectedOnchainDeposits(
+                            vtxoOutpoints = vtxoOutpoints,
+                            destinationAddress = destinationAddress,
+                            feeRateSatPerVb = feeRateSatPerVb,
+                        )
+                    } catch (err: CancellationException) {
+                        throw err
+                    } catch (err: Exception) {
+                        repository.emitArkEvent(
+                            ArkEvent.RecoverFailed(
+                                err.message ?: appContext.getString(R.string.ark_error_generic),
+                            ),
+                        )
+                        Result.failure(err)
+                    }
+                withContext(Dispatchers.Main) {
+                    onResult(result)
+                }
+            } finally {
+                _isRecoveringOnchain.value = false
+            }
+        }
+    }
+
     fun prepareOffboard(
         destinationAddress: String,
         amountSats: Long?,
@@ -813,6 +855,26 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
     fun prepareRefresh(vtxoIds: List<String> = emptyList()) {
         // Sync paint of RefreshPreview (selected ids) — do not hop to IO first.
         repository.prepareRefresh(vtxoIds)
+    }
+
+    /** User recovery: drop refresh reservations Bark proves idle. */
+    fun clearStaleRefreshParticipations() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.clearStaleRefreshParticipations() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                }
+        }
+    }
+
+    /** User recovery: discard a claim journal that was never accepted and is not on-chain. */
+    fun discardPendingClaimIfSafe() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.discardPendingClaimIfSafe() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                }
+        }
     }
 
     /** Exit review: debounced authoritative Bark exit-cost quote for the selection. */
@@ -854,8 +916,11 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         vtxoIds: List<String> = emptyList(),
         entireWallet: Boolean = false,
     ) {
+        val expectedWalletId = loadedWalletId.value
         viewModelScope.launch(Dispatchers.IO) {
-            repository.startUnilateralExit(vtxoIds = vtxoIds, entireWallet = entireWallet)
+            repository.startUnilateralExit(
+                vtxoIds = vtxoIds, entireWallet = entireWallet, expectedWalletId = expectedWalletId,
+            )
         }
     }
 
@@ -966,7 +1031,7 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
                 walletLifecycleJob = null
                 val bytes =
                     appContext.contentResolver.openInputStream(uri)?.use { input ->
-                        input.readBytes()
+                        github.aeonbtc.ibiswallet.util.ArkWalletDataPack.readBounded(input)
                     } ?: throw Exception(appContext.getString(R.string.ark_db_import_failed))
                 if (bytes.isEmpty()) {
                     throw Exception(appContext.getString(R.string.ark_db_import_empty))
@@ -1238,6 +1303,12 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getArkEsploraAddress(): String = _arkEsploraAddress.value
 
+    fun getArkCustomEsploraAddress(): String = secureStorage.getArkCustomEsploraAddress()
+
+    fun setArkCustomEsploraAddress(address: String) {
+        secureStorage.setArkCustomEsploraAddress(address)
+    }
+
     fun setArkEsploraAddress(address: String) {
         val normalized = github.aeonbtc.ibiswallet.util.ArkEndpointValidator.normalize(address)
         if (!github.aeonbtc.ibiswallet.util.ArkEndpointValidator.isValid(normalized)) return
@@ -1276,7 +1347,10 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
         }
         val walletId = loadedWalletId.value ?: pendingWalletLoadId
         if (walletId != null && isArkLayer2Enabled.value) {
-            loadArkWallet(walletId)
+            viewModelScope.launch(Dispatchers.IO) {
+                repository.unloadWallet()
+                loadArkWallet(walletId)
+            }
         }
     }
 
@@ -1350,14 +1424,12 @@ class ArkViewModel(application: Application) : AndroidViewModel(application) {
             connected = false,
             usesTor = false,
         )
-        viewModelScope.launch(Dispatchers.IO) {
-            runCatching { repository.unloadWallet() }
-        }
+        repository.requestShutdown()
     }
 
     companion object {
         private const val TAG = "ArkViewModel"
-        private const val MAINTENANCE_INTERVAL_MS = 5 * 60_000L
+        private const val MAINTENANCE_INTERVAL_MS = 30_000L
         private const val ARK_WALLET_SWITCH_CANCEL_TIMEOUT_MS = 2_000L
         private const val TOR_BOOTSTRAP_TIMEOUT_MS = 90_000L
         private const val TOR_POST_BOOTSTRAP_DELAY_MS = 1_500L

@@ -203,6 +203,7 @@ object Bip329Labels {
                                 Bip329LabelNetwork.LIQUID -> liquidTransactionLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.SPARK -> sparkTransactionLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.ARK -> arkTransactionLabels[parsed.ref] = parsed.label
+                                null -> errorLines++
                             }
                         }
                     }
@@ -214,6 +215,7 @@ object Bip329Labels {
                                 Bip329LabelNetwork.LIQUID -> liquidAddressLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.SPARK -> sparkAddressLabels[parsed.ref] = parsed.label
                                 Bip329LabelNetwork.ARK -> arkAddressLabels[parsed.ref] = parsed.label
+                                null -> errorLines++
                             }
                         }
                     }
@@ -309,13 +311,25 @@ object Bip329Labels {
     private fun resolveNetwork(
         parsed: ParsedLabel,
         defaultScope: Bip329LabelScope,
-    ): Bip329LabelNetwork {
+    ): Bip329LabelNetwork? {
         parsed.network?.let { return it }
         if (parsed.type == Type.ADDR) {
             inferAddressNetwork(parsed.ref)?.let { return it }
         }
+        // In a mixed import a tx record without a network tag can only be routed by its
+        // ref. Bitcoin/Liquid txids are 64-hex; Spark payment ids and Ark movement ids
+        // are not, so refuse to silently file a non-txid ref under Bitcoin.
+        if (parsed.type == Type.TX &&
+            defaultScope == Bip329LabelScope.BOTH &&
+            !isBitcoinStyleTxid(parsed.ref)
+        ) {
+            return null
+        }
         return defaultNetwork(defaultScope)
     }
+
+    private fun isBitcoinStyleTxid(ref: String): Boolean =
+        ref.length == 64 && ref.all { c -> c in '0'..'9' || c.lowercaseChar() in 'a'..'f' }
 
     private fun defaultNetwork(defaultScope: Bip329LabelScope): Bip329LabelNetwork =
         when (defaultScope) {

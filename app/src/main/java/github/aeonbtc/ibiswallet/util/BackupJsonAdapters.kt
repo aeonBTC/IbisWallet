@@ -3,6 +3,7 @@ package github.aeonbtc.ibiswallet.util
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapDetails
 import github.aeonbtc.ibiswallet.data.model.LiquidSwapTxRole
 import github.aeonbtc.ibiswallet.data.model.LiquidTxSource
+import github.aeonbtc.ibiswallet.data.model.SparkClaimStatus
 import github.aeonbtc.ibiswallet.data.model.SparkUnclaimedDeposit
 import github.aeonbtc.ibiswallet.data.model.SwapDirection
 import github.aeonbtc.ibiswallet.data.model.SwapService
@@ -203,6 +204,8 @@ object BackupJsonAdapters {
             .put("address", address ?: JSONObject.NULL)
             .put("claimError", claimError ?: JSONObject.NULL)
             .put("isSwapDeposit", isSwapDeposit)
+            .put("claimStatus", claimStatus.name)
+            .put("maxClaimFeeSats", maxClaimFeeSats ?: JSONObject.NULL)
 
     private fun JSONArray?.toPendingDeposits(): List<SparkUnclaimedDeposit> {
         if (this == null) return emptyList()
@@ -237,6 +240,16 @@ object BackupJsonAdapters {
                                     it.optString("claimError")
                                 },
                             isSwapDeposit = it.optBoolean("isSwapDeposit", false),
+                            claimStatus =
+                                runCatching {
+                                    SparkClaimStatus.valueOf(it.optString("claimStatus", "NONE"))
+                                }.getOrDefault(SparkClaimStatus.NONE),
+                            maxClaimFeeSats =
+                                if (it.isNull("maxClaimFeeSats")) {
+                                    null
+                                } else {
+                                    it.optLong("maxClaimFeeSats").takeIf { fee -> fee > 0L }
+                                },
                         )
                     }
                 }

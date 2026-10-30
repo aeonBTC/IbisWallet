@@ -7,6 +7,7 @@ import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import github.aeonbtc.ibiswallet.BuildConfig
+import github.aeonbtc.ibiswallet.data.AppUpdateDownloader
 import github.aeonbtc.ibiswallet.data.AppUpdateService
 import github.aeonbtc.ibiswallet.data.BtcPriceService
 import github.aeonbtc.ibiswallet.data.FeeEstimationService
@@ -33,11 +34,13 @@ import github.aeonbtc.ibiswallet.data.model.WalletPolicyType
 import github.aeonbtc.ibiswallet.data.model.WalletResult
 import github.aeonbtc.ibiswallet.data.model.WalletState
 import github.aeonbtc.ibiswallet.data.repository.WalletRepository
+import github.aeonbtc.ibiswallet.R
 import github.aeonbtc.ibiswallet.localization.AppLocale
 import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy
 import github.aeonbtc.ibiswallet.tor.TorManager
 import github.aeonbtc.ibiswallet.tor.TorState
 import github.aeonbtc.ibiswallet.tor.TorStatus
+import github.aeonbtc.ibiswallet.util.AppUpdateInstaller
 import github.aeonbtc.ibiswallet.util.AppVersion
 import github.aeonbtc.ibiswallet.util.BackupJsonAdapters
 import github.aeonbtc.ibiswallet.util.Bip329LabelNetwork
@@ -50,9 +53,12 @@ import github.aeonbtc.ibiswallet.util.CertificateFirstUseException
 import github.aeonbtc.ibiswallet.util.CertificateInfo
 import github.aeonbtc.ibiswallet.util.CertificateMismatchException
 import github.aeonbtc.ibiswallet.util.CryptoUtils
+import github.aeonbtc.ibiswallet.util.DustPolicy
 import github.aeonbtc.ibiswallet.util.InputLimits
 import github.aeonbtc.ibiswallet.util.SecureLog
 import github.aeonbtc.ibiswallet.util.ServerUrlValidator
+import github.aeonbtc.ibiswallet.util.SignerInputKind
+import github.aeonbtc.ibiswallet.util.SignerInputPolicy
 import github.aeonbtc.ibiswallet.util.SparkBackupMetadata
 import github.aeonbtc.ibiswallet.util.buildMultiBitcoinSendPreparationKey
 import github.aeonbtc.ibiswallet.util.buildSingleBitcoinSendPreparationKey
@@ -83,6 +89,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -124,6 +131,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     // Active connection job (cancellable)
     private var connectionJob: Job? = null
+
+    // Delayed Tor teardown after switching to a non-Tor server. Keeps the
+    // daemon warm across rapid Tor↔clearnet server switches (cold re-bootstrap
+    // is slow over VPN and sometimes wedges in STARTING). Cancelled as soon
+    // as any Tor-requiring consumer appears again. Always fires within
+    // TOR_STOP_GRACE_MS — Tor is never left running indefinitely.
+    private var torStopGraceJob: Job? = null
 
     /** Bumped on each connect request so stale jobs exit after a server switch. */
     @Volatile
@@ -228,6 +242,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private val _appUpdatePrompt = MutableStateFlow<AppUpdateStatus.UpdateAvailable?>(null)
     val appUpdatePrompt: StateFlow<AppUpdateStatus.UpdateAvailable?> = _appUpdatePrompt.asStateFlow()
 
+    private val appUpdateDownloader = AppUpdateDownloader()
+    private var appUpdateDownloadJob: Job? = null
+    private var lastAppUpdateVersionName: String? = null
+    private var lastAppUpdateApkUrl: String? = null
+    private val _appUpdateDownload = MutableStateFlow<AppUpdateDownloadState>(AppUpdateDownloadState.Idle)
+    val appUpdateDownload: StateFlow<AppUpdateDownloadState> = _appUpdateDownload.asStateFlow()
+
     // Minimum fee rate from connected Electrum server
     val minFeeRate: StateFlow<Double> = repository.minFeeRate
 
@@ -321,6 +342,19 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private val _pendingSendOrigin = MutableStateFlow(PendingSendOrigin.USER_TYPED)
     val pendingSendOrigin: StateFlow<PendingSendOrigin> = _pendingSendOrigin.asStateFlow()
 
+    /**
+     * Origin of the active send draft when it was applied from an external
+     * source (NFC tag, deep link, or unrecognized-source intent); null when
+     * the draft is user-typed or consumed. Send surfaces label the banner
+     * by this value until the user edits the fields or sends.
+     */
+    private val _sendExternalOriginNotice = MutableStateFlow<PendingSendOrigin?>(null)
+    val sendExternalOriginNotice: StateFlow<PendingSendOrigin?> = _sendExternalOriginNotice.asStateFlow()
+
+    fun setSendExternalOriginNotice(origin: PendingSendOrigin?) {
+        _sendExternalOriginNotice.value = origin
+    }
+
     // PSBT state for watch-only wallet signing flow
     private val _psbtState = MutableStateFlow(PsbtState())
     val psbtState: StateFlow<PsbtState> = _psbtState.asStateFlow()
@@ -346,6 +380,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     // Manual broadcast state (standalone tx broadcast, not tied to any wallet)
     private val _manualBroadcastState = MutableStateFlow(ManualBroadcastState())
     val manualBroadcastState: StateFlow<ManualBroadcastState> = _manualBroadcastState.asStateFlow()
+
+    // Offline PSBT signer state (cold-storage flow: import, review, sign, export — never broadcasts)
+    private val _signState = MutableStateFlow(SignPsbtState())
+    val signState: StateFlow<SignPsbtState> = _signState.asStateFlow()
 
     // Auto-switch server on disconnect
     private val _autoSwitchServer = MutableStateFlow(repository.isAutoSwitchServerEnabled())
@@ -504,6 +542,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         connectionJob = null
         appUpdateCheckJob?.cancel()
         appUpdateCheckJob = null
+        cancelAppUpdateDownload()
         btcPriceFetchJob?.cancel()
         btcPriceFetchJob = null
         feeFetchJob?.cancel()
@@ -727,7 +766,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
-            _allUtxos.value = repository.getAllUtxos()
+            refreshUtxoSnapshot()
         }
         refreshAddressBook()
     }
@@ -845,16 +884,28 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         stopHeartbeat()
         _uiState.value = _uiState.value.copy(isConnecting = true, isConnected = false)
 
-        val needsTor = config.isOnionAddress()
+        val needsTor = config.useTor || config.isOnionAddress()
 
-        if (needsTor && !torManager.isReady()) {
-            torManager.start()
-            if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
-                _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false)
-                _events.emit(WalletEvent.Error("Connection lost"))
-                return
+        if (needsTor) {
+            // Trust-but-verify like ensureTorReadyForBitcoin: a stale CONNECTED
+            // (SOCKS died while status stayed up) must re-bootstrap instead of
+            // failing the server connect below.
+            val warm = torManager.isReady() && torManager.awaitReady(TOR_READY_VERIFY_TIMEOUT_MS)
+            if (!warm) {
+                torManager.start()
+                if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
+                    val msg =
+                        if (torState.value.status == TorStatus.ERROR) {
+                            "Tor failed to start: ${torState.value.statusMessage}"
+                        } else {
+                            "Tor connection timed out"
+                        }
+                    _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false)
+                    _events.emit(WalletEvent.Error(msg))
+                    return
+                }
+                delay(TOR_POST_BOOTSTRAP_DELAY_MS)
             }
-            delay(TOR_POST_BOOTSTRAP_DELAY_MS)
         }
 
         val timeoutMs = if (needsTor) CONNECTION_TIMEOUT_TOR_MS else CONNECTION_TIMEOUT_CLEARNET_MS
@@ -873,6 +924,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 startHeartbeat()
                 launchSubscriptions(reason = "foreground_reconnect")
+            }
+            is WalletResult.Error -> {
+                _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false)
+                _events.emit(WalletEvent.Error(result.message))
+                startReconnectRetry()
             }
             else -> {
                 _uiState.value = _uiState.value.copy(isConnecting = false, isConnected = false)
@@ -1143,13 +1199,39 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private fun updateBitcoinTorStateForServer(serverRequiresTor: Boolean) {
         val otherNeedsTor = isFeeSourceOnion() || isPriceSourceOnion()
         if (serverRequiresTor) {
+            torStopGraceJob?.cancel()
+            torStopGraceJob = null
             repository.setTorEnabled(true)
         } else {
             repository.setTorEnabled(false)
             if (!shouldKeepTorRunningForBitcoin(otherNeedsTor)) {
-                torManager.stop()
+                scheduleTorStopAfterGrace()
+            } else {
+                torStopGraceJob?.cancel()
+                torStopGraceJob = null
             }
         }
+    }
+
+    /**
+     * Tear down the Tor daemon after a grace period instead of instantly.
+     * Rapid Tor↔clearnet server switches otherwise force a cold re-bootstrap
+     * on every return to Tor (slow over VPN, occasionally stuck in STARTING
+     * with the indicator on standby). Routing is per-connection, so an idling
+     * daemon carries no traffic while warm. The stop is only deferred, never
+     * skipped: the job fires once after TOR_STOP_GRACE_MS and stops Tor unless
+     * a Tor-requiring consumer appeared meanwhile.
+     */
+    private fun scheduleTorStopAfterGrace() {
+        torStopGraceJob?.cancel()
+        torStopGraceJob =
+            viewModelScope.launch {
+                delay(TOR_STOP_GRACE_MS)
+                if (!shouldKeepTorRunning()) {
+                    torManager.stop()
+                }
+                torStopGraceJob = null
+            }
     }
 
     private suspend fun prepareBitcoinServerSwitch(epoch: Int, previousJob: Job?): Boolean {
@@ -1168,7 +1250,16 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     private suspend fun ensureTorReadyForBitcoin(serverRequiresTor: Boolean, epoch: Int): Boolean {
         if (!serverRequiresTor) return epoch == bitcoinConnectionEpoch
-        if (torManager.isReady()) return true
+        if (torManager.isReady()) {
+            // Trust-but-verify: CONNECTED can be stale (SOCKS died while the
+            // status stayed CONNECTED). awaitReady probes the SOCKS port and
+            // kicks a restart when unreachable.
+            if (torManager.awaitReady(TOR_READY_VERIFY_TIMEOUT_MS)) {
+                return epoch == bitcoinConnectionEpoch
+            }
+            // Probe failed — fall through to a full bootstrap below.
+            // TorManager already stopped/restarted on unreachable SOCKS.
+        }
         torManager.start()
         if (!torManager.awaitReady(TOR_BOOTSTRAP_TIMEOUT_MS)) {
             val msg =
@@ -1649,6 +1740,44 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         repository.acknowledgeSilentPaymentScanDisclosure()
     }
 
+    /** Lowest height a Silent Payments scan may start from. */
+    fun getSpScanStartMinHeight(): Int = repository.spScanStartMinHeight()
+
+    /** Best-known chain tip for defaulting the scan-start picker. */
+    fun getSpScanTipHeight(): Int? = repository.currentTipHeightForScan()
+
+    /** Stored SP scan height for the active wallet (0 when never scanned). */
+    fun getSilentPaymentScanStartHeight(): Int {
+        val walletId = repository.getActiveWalletId() ?: return repository.spScanStartMinHeight()
+        return repository.getSilentPaymentScanHeightForWallet(walletId)
+    }
+
+    /**
+     * Apply a scan-start height for the active wallet (null = current tip)
+     * and restart SP scanning from it.
+     */
+    fun setSilentPaymentScanStartHeight(height: Int?) {
+        viewModelScope.launch {
+            val walletId = repository.getActiveWalletId() ?: return@launch
+            repository.rescanSilentPaymentsFromHeight(walletId, height)
+        }
+    }
+
+    fun canReceiveSilentPaymentsForWallet(walletId: String): Boolean =
+        repository.canReceiveSilentPayments(repository.getWalletMetadata(walletId))
+
+    fun getSilentPaymentScanStartHeightForWallet(walletId: String): Int =
+        repository.getSilentPaymentScanHeightForWallet(walletId)
+
+    fun setSilentPaymentScanStartHeightForWallet(
+        walletId: String,
+        height: Int?,
+    ) {
+        viewModelScope.launch {
+            repository.rescanSilentPaymentsFromHeight(walletId, height)
+        }
+    }
+
     fun saveAddressLabel(
         address: String,
         label: String,
@@ -1815,8 +1944,20 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun refreshUtxos() {
         viewModelScope.launch(Dispatchers.IO) {
-            _allUtxos.value = repository.getAllUtxos()
+            refreshUtxoSnapshot()
         }
+    }
+
+    /** Fee rate (economy) for dust flagging, or null when unknown. */
+    private fun dustFeeRateOrNull(): Double? =
+        (_feeEstimationState.value as? FeeEstimationResult.Success)?.estimates?.minimumFee
+
+    /**
+     * Refresh the UTXO snapshot with dust flagging.
+     * Must run on Dispatchers.IO (disk + prefs reads).
+     */
+    private suspend fun refreshUtxoSnapshot() {
+        _allUtxos.value = repository.getAllUtxos(dustFeeRateOrNull())
     }
 
     /**
@@ -1965,6 +2106,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     private fun clearSendScreenDraft() {
         _sendScreenDraft.value = SendScreenDraft()
+        _sendExternalOriginNotice.value = null
         repository.invalidatePreparedSendCache()
     }
 
@@ -1977,6 +2119,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             pendingOutgoingSats = currentWalletState.pendingOutgoingSats,
             transactionCount = currentWalletState.transactions.size,
             spendUnconfirmed = repository.getSpendUnconfirmed(),
+            // Must match the repository's cache key: otherwise changing either
+            // setting while a Send draft is alive leaves a stale dry run that the
+            // actual send no longer matches (different inputs/fee/change).
+            rbfEnabled = repository.getRbfEnabled(),
+            consolidateChange = repository.getConsolidateChange(),
         )
     }
 
@@ -2029,6 +2176,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             error = result.message,
                         )
                     _events.emit(WalletEvent.Error(result.message))
+                    // Stale inputs: resync in background so retry just works.
+                    if (repository.isStaleInputsSendError(result.message)) sync()
                 }
             }
         }
@@ -2074,6 +2223,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 result.data to recipientAmountSats
             }
             is WalletResult.Error -> {
+                // Prefer the mapped message for stale inputs (the exception
+                // carries the raw RPC dump, which must never reach the UI).
+                if (repository.isStaleInputsSendError(result.message)) {
+                    sync()
+                    throw Exception(result.message, result.exception)
+                }
                 val message = result.exception?.message?.takeIf { it.isNotBlank() } ?: result.message
                 throw Exception(message, result.exception)
             }
@@ -2316,6 +2471,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 is WalletResult.Error -> {
                     _uiState.value = _uiState.value.copy(isSending = false, sendStatus = null, error = result.message)
                     _events.emit(WalletEvent.Error(result.message))
+                    // Stale inputs: resync in background so retry just works.
+                    if (repository.isStaleInputsSendError(result.message)) sync()
                 }
             }
         }
@@ -2692,6 +2849,106 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
+     * Import an unsigned or partially signed PSBT into the offline signer and
+     * decode its review preview. Runs off the main thread; the screen shows
+     * [SignPsbtState.isDecoding] meanwhile. Replaces any previously imported
+     * PSBT. Payload bytes are never logged.
+     */
+    fun setSignerInput(data: String) {
+        val trimmed = data.trim()
+        if (trimmed.isBlank()) {
+            _signState.value =
+                _signState.value.copy(
+                    inputPsbtBase64 = null,
+                    preview = null,
+                    error = signerString(R.string.sign_error_empty),
+                )
+            return
+        }
+        viewModelScope.launch {
+            _signState.value = _signState.value.copy(isDecoding = true, error = null)
+            val preview = withContext(Dispatchers.IO) { repository.decodeSignerPreview(trimmed) }
+            _signState.value =
+                if (preview != null) {
+                    _signState.value.copy(
+                        isDecoding = false,
+                        inputPsbtBase64 = trimmed,
+                        preview = preview,
+                        previewWalletId = repository.getActiveWalletId(),
+                        error = null,
+                    )
+                } else {
+                    _signState.value.copy(
+                        isDecoding = false,
+                        inputPsbtBase64 = null,
+                        preview = null,
+                        error = signerInputErrorFor(trimmed),
+                    )
+                }
+        }
+    }
+
+    private fun signerInputErrorFor(trimmed: String): String =
+        when (SignerInputPolicy.classify(trimmed)) {
+            SignerInputKind.EMPTY -> signerString(R.string.sign_error_empty)
+            SignerInputKind.AMBIGUOUS -> signerString(R.string.sign_error_ambiguous)
+            SignerInputKind.RAW_HEX -> signerString(R.string.sign_error_raw_hex)
+            SignerInputKind.LIQUID_PSET -> signerString(R.string.sign_error_liquid_pset)
+            SignerInputKind.PSBT_CANDIDATE, SignerInputKind.UNRECOGNIZED ->
+                signerString(R.string.sign_error_unrecognized)
+        }
+
+    private fun signerString(
+        id: Int,
+        vararg formatArgs: Any,
+    ): String =
+        AppLocale.createLocalizedContext(appContext, repository.getAppLocale()).getString(id, *formatArgs)
+
+    /**
+     * Sign the imported PSBT with the active wallet's keys. Callers must gate
+     * this behind spend authorization (same as broadcast confirmation).
+     * Offline-safe: pure descriptor crypto, no network use. Never broadcasts;
+     * the signed PSBT is exported back to the online coordinator.
+     */
+    fun signImportedPsbt() {
+        val current = _signState.value
+        val input = current.inputPsbtBase64 ?: return
+        if (current.preview == null || current.isSigning) return
+        if (repository.getActiveWalletId() != current.previewWalletId) {
+            _signState.value =
+                current.copy(
+                    error = signerString(R.string.sign_error_wallet_changed),
+                )
+            return
+        }
+        viewModelScope.launch {
+            _signState.value = _signState.value.copy(isSigning = true, error = null)
+            when (val result = repository.signForeignPsbt(input, current.previewWalletId)) {
+                is WalletResult.Success -> {
+                    _signState.value =
+                        _signState.value.copy(
+                            isSigning = false,
+                            signedPsbtBase64 = result.data.signedPsbtBase64,
+                            isFinalized = result.data.isFinalized,
+                            signedTxid = result.data.txid,
+                            error = null,
+                        )
+                }
+                is WalletResult.Error -> {
+                    _signState.value = _signState.value.copy(isSigning = false, error = result.message)
+                }
+            }
+        }
+    }
+
+    /**
+     * Clear the offline signer state (e.g., when navigating away)
+     */
+    fun clearSignState() {
+        _signState.value = SignPsbtState()
+    }
+
+    /**
      * Bump fee of an unconfirmed transaction using RBF
      */
     fun bumpFee(
@@ -2877,20 +3134,22 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     refreshCurrentWalletSnapshots()
                     if (result.data && _uiState.value.isConnected) {
                         // Derivation path / address type changed: descriptors were
-                        // rebuilt and needsFullSync set — run it now like a wallet
-                        // switch does instead of leaving the wallet empty.
-                        when (val syncResult = repository.sync()) {
-                            is WalletResult.Success -> {
-                                refreshWalletLastFullSyncTime(walletId)
-                                _events.emit(WalletEvent.SyncCompleted)
-                            }
-                            is WalletResult.Error -> {
-                                if (!syncResult.message.contains("already in progress")) {
-                                    _events.emit(WalletEvent.Error(syncResult.message))
+                        // rebuilt and needsFullSync set. Subscriptions own the sync
+                        // for regular wallets; watch-address wallets have no
+                        // subscription path and sync explicitly.
+                        if (repository.isWatchAddressWallet()) {
+                            when (val syncResult = repository.sync()) {
+                                is WalletResult.Success -> {
+                                    refreshWalletLastFullSyncTime(walletId)
+                                    _events.emit(WalletEvent.SyncCompleted)
+                                }
+                                is WalletResult.Error -> {
+                                    if (!syncResult.message.contains("already in progress")) {
+                                        _events.emit(WalletEvent.Error(syncResult.message))
+                                    }
                                 }
                             }
-                        }
-                        if (!repository.isWatchAddressWallet()) {
+                        } else {
                             launchSubscriptions()
                         }
                     } else {
@@ -2964,20 +3223,23 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                         disconnectBitcoinForLightningNodeWallet()
                         _initialSyncComplete.value = true
                     } else if (_uiState.value.isConnected) {
-                        when (val syncResult = repository.sync()) {
-                            is WalletResult.Success -> {
-                                refreshWalletLastFullSyncTime(walletId)
-                                _events.emit(WalletEvent.SyncCompleted)
-                            }
-                            is WalletResult.Error -> {
-                                if (!syncResult.message.contains("already in progress")) {
-                                    _events.emit(WalletEvent.Error(syncResult.message))
+                        if (repository.isWatchAddressWallet()) {
+                            when (val syncResult = repository.sync()) {
+                                is WalletResult.Success -> {
+                                    refreshWalletLastFullSyncTime(walletId)
+                                    _events.emit(WalletEvent.SyncCompleted)
+                                }
+                                is WalletResult.Error -> {
+                                    if (!syncResult.message.contains("already in progress")) {
+                                        _events.emit(WalletEvent.Error(syncResult.message))
+                                    }
                                 }
                             }
-                        }
-                        if (repository.isWatchAddressWallet()) {
                             _initialSyncComplete.value = true
                         } else {
+                            // startRealTimeSubscriptions performs the sync (full when
+                            // needsFullSync is set, otherwise change-detected) so an
+                            // explicit repository.sync() here would run it twice.
                             launchSubscriptions()
                         }
                     } else {
@@ -3414,6 +3676,15 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             if (knownNonSp.isNotEmpty()) {
                                 put("silentPaymentKnownNonSp", org.json.JSONArray(knownNonSp))
                             }
+                            // SP scan opt-in must survive restore: without it a
+                            // restored receiver silently stops detecting new
+                            // payments. Omit defaults to keep backups small.
+                            if (repository.getSilentPaymentReceiveModeForWallet(walletId)) {
+                                put("silentPaymentReceiveMode", true)
+                            }
+                            if (repository.hasTouchedSilentPaymentReceiveModeForWallet(walletId)) {
+                                put("silentPaymentReceiveTouched", true)
+                            }
                             val arkFundingTxids = repository.getArkFundingTxidsForWallet(walletId)
                             if (arkFundingTxids.isNotEmpty()) {
                                 put("arkFundingTxids", org.json.JSONArray(arkFundingTxids))
@@ -3435,10 +3706,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             val addrLabels = repository.getAllAddressLabelsForWallet(walletId)
                             val txLabels = repository.getAllTransactionLabelsForWallet(walletId)
                             val liquidMetadata = repository.getLiquidMetadataSnapshotForWallet(walletId)
+                            val liquidAddrLabels = repository.getAllLiquidAddressLabelsForWallet(walletId)
                             val sparkAddrLabels = repository.getAllSparkAddressLabelsForWallet(walletId)
                             val sparkTxLabels = repository.getAllSparkTransactionLabelsForWallet(walletId)
                             val arkAddrLabels = repository.getAllArkAddressLabelsForWallet(walletId)
                             val arkMovementLabels = repository.getAllArkMovementLabelsForWallet(walletId)
+                            val lnNodeLabels = repository.getAllLnNodeLabelsForWallet(walletId)
+                            val lnNodeOnchainLabels = repository.getAllLnNodeOnchainLabelsForWallet(walletId)
                             // Intentionally excluded from the full backup (documented):
                             // pending LN invoices (1h TTL, ephemeral), hidden
                             // history item ids (local-only deletions), wallet
@@ -3457,6 +3731,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             put("labels", JSONObject().apply {
                                 put("addresses", JSONObject().apply { addrLabels.forEach { (k, v) -> put(k, v) } })
                                 put("transactions", JSONObject().apply { txLabels.forEach { (k, v) -> put(k, v) } })
+                                put("liquidAddresses", JSONObject().apply {
+                                    liquidAddrLabels.forEach { (k, v) -> put(k, v) }
+                                })
                                 put("liquidTransactions", JSONObject().apply {
                                     liquidMetadata.txLabels.forEach { (k, v) -> put(k, v) }
                                 })
@@ -3464,6 +3741,10 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                 put("sparkTransactions", JSONObject().apply { sparkTxLabels.forEach { (k, v) -> put(k, v) } })
                                 put("arkAddresses", JSONObject().apply { arkAddrLabels.forEach { (k, v) -> put(k, v) } })
                                 put("arkMovements", JSONObject().apply { arkMovementLabels.forEach { (k, v) -> put(k, v) } })
+                                put("lnNodeLabels", JSONObject().apply { lnNodeLabels.forEach { (k, v) -> put(k, v) } })
+                                put("lnNodeOnchainLabels", JSONObject().apply {
+                                    lnNodeOnchainLabels.forEach { (k, v) -> put(k, v) }
+                                })
                             })
                             if (!sparkMetadata.isEmpty()) {
                                 put("sparkMetadata", BackupJsonAdapters.Spark.metadataToJson(sparkMetadata))
@@ -3524,6 +3805,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             put("rbfEnabled", repository.getRbfEnabled())
                             put("requireCoinControl", repository.getRequireCoinControl())
                             put("consolidateChange", repository.getConsolidateChange())
+                            put("dustMaxSats", repository.getDustMaxSats())
+                            put("dustExcludeFromAutoSelect", repository.getDustExcludeFromAutoSelect())
                             put("psbtQrDensity", repository.getPsbtQrDensity().name)
                             put("psbtQrBrightness", repository.getPsbtQrBrightness().toDouble())
                             put("nfcEnabled", repository.isNfcEnabled())
@@ -3557,6 +3840,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                             put("lightningNodeLayer2Enabled", secureStorage.isLightningNodeLayer2Enabled())
                             put("arkServerAddress", secureStorage.getArkServerAddress())
                             put("arkEsploraAddress", secureStorage.getArkEsploraAddress())
+                            put("arkCustomEsploraAddress", secureStorage.getArkCustomEsploraAddress())
+                            put("arkAutoBoardEnabled", secureStorage.isArkAutoBoardEnabled())
+                            put("arkEsploraAutoFallback", secureStorage.getArkEsploraAutoFallback())
                             put("liquidTorEnabled", repository.isLiquidTorEnabled())
                             put("boltzApiSource", repository.getBoltzApiSource())
                             put("sideSwapApiSource", repository.getSideSwapApiSource())
@@ -4121,11 +4407,14 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         val labelsObj = walletEntry.optJSONObject("labels")
         val addrLabels = labelsObj?.optJSONObject("addresses")
         val txLabels = labelsObj?.optJSONObject("transactions")
+        val liquidAddrLabels = labelsObj?.optJSONObject("liquidAddresses")
         val liquidTxLabels = labelsObj?.optJSONObject("liquidTransactions")
         val sparkAddrLabels = labelsObj?.optJSONObject("sparkAddresses")
         val sparkTxLabels = labelsObj?.optJSONObject("sparkTransactions")
         val arkAddrLabels = labelsObj?.optJSONObject("arkAddresses")
         val arkMovementLabels = labelsObj?.optJSONObject("arkMovements")
+        val lnNodeLabels = labelsObj?.optJSONObject("lnNodeLabels")
+        val lnNodeOnchainLabels = labelsObj?.optJSONObject("lnNodeOnchainLabels")
 
         // Labels come from an untrusted backup file — sanitize control characters
         // so a crafted label can't inject line breaks into the UI.
@@ -4142,6 +4431,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 ?.let { restoredTransactionLabels[txid] = it }
         }
         repository.saveTransactionLabelsForWallet(walletId, restoredTransactionLabels)
+
+        val restoredLiquidAddressLabels = mutableMapOf<String, String>()
+        liquidAddrLabels?.keys()?.forEach { address ->
+            BitcoinUtils.sanitizeExternalLabel(liquidAddrLabels.optString(address, ""))
+                ?.let { restoredLiquidAddressLabels[address] = it }
+        }
+        repository.saveLiquidAddressLabelsForWallet(walletId, restoredLiquidAddressLabels)
 
         val restoredLiquidTransactionLabels = mutableMapOf<String, String>()
         liquidTxLabels?.keys()?.forEach { txid ->
@@ -4178,6 +4474,20 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 ?.let { restoredArkMovementLabels[movementId] = it }
         }
         repository.saveArkMovementLabelsForWallet(walletId, restoredArkMovementLabels)
+
+        val restoredLnNodeLabels = mutableMapOf<String, String>()
+        lnNodeLabels?.keys()?.forEach { ref ->
+            BitcoinUtils.sanitizeExternalLabel(lnNodeLabels.optString(ref, ""))
+                ?.let { restoredLnNodeLabels[ref] = it }
+        }
+        repository.saveLnNodeLabelsForWallet(walletId, restoredLnNodeLabels)
+
+        val restoredLnNodeOnchainLabels = mutableMapOf<String, String>()
+        lnNodeOnchainLabels?.keys()?.forEach { txid ->
+            BitcoinUtils.sanitizeExternalLabel(lnNodeOnchainLabels.optString(txid, ""))
+                ?.let { restoredLnNodeOnchainLabels[txid] = it }
+        }
+        repository.saveLnNodeOnchainLabelsForWallet(walletId, restoredLnNodeOnchainLabels)
 
         val metadataObj = walletEntry.optJSONObject("liquidMetadata")
         BackupJsonAdapters.Liquid.transactionSourcesFromMetadata(metadataObj).forEach { (txid, source) ->
@@ -4273,6 +4583,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         if (settings.has("consolidateChange")) {
             repository.setConsolidateChange(settings.getBoolean("consolidateChange"))
         }
+        if (settings.has("dustMaxSats")) {
+            repository.setDustMaxSats(settings.optLong("dustMaxSats", DustPolicy.DEFAULT_MAX_DUST_SATS))
+        }
+        if (settings.has("dustExcludeFromAutoSelect")) {
+            repository.setDustExcludeFromAutoSelect(settings.getBoolean("dustExcludeFromAutoSelect"))
+        }
         settings.optString("psbtQrDensity", "").takeIf { it.isNotBlank() }?.let { name ->
             try { repository.setPsbtQrDensity(SecureStorage.QrDensity.valueOf(name)) } catch (_: Exception) {}
         }
@@ -4310,6 +4626,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (settings.has("arkAutoDbBackupEnabled")) {
             repository.setArkAutoDbBackupEnabled(settings.getBoolean("arkAutoDbBackupEnabled"))
+        }
+        if (settings.has("arkAutoBoardEnabled")) {
+            secureStorage.setArkAutoBoardEnabled(settings.getBoolean("arkAutoBoardEnabled"))
+        }
+        if (settings.has("arkEsploraAutoFallback")) {
+            secureStorage.setArkEsploraAutoFallback(settings.getBoolean("arkEsploraAutoFallback"))
         }
         // SAF tree URI is device-local — never restore onto another install.
         // An enabled-with-no-folder state would silently no-op every backup:
@@ -4356,6 +4678,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             aspCandidate?.let(secureStorage::setArkServerAddress)
             esploraCandidate?.let(secureStorage::setArkEsploraAddress)
         }
+        restoreValidatedArkEndpoint(
+            value = settings.optString("arkCustomEsploraAddress", ""),
+            onValid = { secureStorage.setArkCustomEsploraAddress(it) },
+            debugMessage = "Skipping custom Ark Esplora URL from backup: failed validation",
+            releaseMessage = "Backup contained an invalid custom Ark Esplora URL",
+        )
 
         // These keys are exported into appSettings but were historically only
         // applied by restoreServerSettings — a user importing app settings
@@ -4471,10 +4799,17 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 )
             }
         }
-        if (settingsObj.has("liquidWatchOnly")) {
+        // A backup is untrusted input. A Liquid descriptor is only authoritative
+        // for a watch-only wallet (where it is the sole key material). For a
+        // seed/private-key wallet the descriptor must be re-derived from the
+        // seed on load; accepting a backup-provided descriptor would let a
+        // crafted backup redirect L-BTC receive addresses to the attacker.
+        val backupWalletIsWatchOnly =
+            secureStorage.getWalletMetadata(walletId)?.isWatchOnly == true
+        if (backupWalletIsWatchOnly && settingsObj.has("liquidWatchOnly")) {
             repository.setLiquidWatchOnly(walletId, settingsObj.getBoolean("liquidWatchOnly"))
         }
-        if (settingsObj.has("liquidDescriptor")) {
+        if (backupWalletIsWatchOnly && settingsObj.has("liquidDescriptor")) {
             repository.setLiquidDescriptor(walletId, settingsObj.getString("liquidDescriptor"))
         }
         if (settingsObj.has("liquidGapLimit")) {
@@ -4638,6 +4973,13 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 repository.saveKnownNonSilentPaymentMarkerForWallet(walletId, txid)
             }
         }
+        if (settingsObj.has("silentPaymentReceiveMode") || settingsObj.has("silentPaymentReceiveTouched")) {
+            repository.setSilentPaymentReceiveModeForWallet(
+                walletId,
+                settingsObj.optBoolean("silentPaymentReceiveMode", false),
+                settingsObj.optBoolean("silentPaymentReceiveTouched", false),
+            )
+        }
     }
 
     fun restoreLightningNodeWalletExtras(
@@ -4664,12 +5006,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         metadata.depositAddresses.forEach { (txid, address) ->
             repository.saveSparkDepositAddressForWallet(walletId, txid, address)
         }
-        metadata.pendingDeposits.forEach { deposit ->
-            repository.saveSparkPendingDepositForWallet(walletId, deposit)
-        }
-        metadata.onchainDepositAddress?.let { address ->
-            repository.setSparkOnchainDepositAddressForWallet(walletId, address)
-        }
+        // The on-chain deposit address is a live receive capability, not a
+        // label. A backup cannot prove it belongs to this seed, so never
+        // restore it (or attacker-chosen pending deposits) from backup input.
+        // The Spark SDK derives a fresh address on the next receive request.
+        // Pending deposits are rediscovered from the SDK on sync.
     }
 
     /**
@@ -4937,6 +5278,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Start the Tor service
      */
     fun startTor() {
+        torStopGraceJob?.cancel()
+        torStopGraceJob = null
         torManager.start()
     }
 
@@ -4944,6 +5287,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Stop the Tor service
      */
     fun stopTor() {
+        torStopGraceJob?.cancel()
+        torStopGraceJob = null
         if (!shouldKeepTorRunning()) {
             torManager.stop()
         }
@@ -5188,6 +5533,19 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     fun setConsolidateChange(enabled: Boolean) {
         repository.setConsolidateChange(enabled)
+    }
+
+    fun getDustMaxSats(): Long = repository.getDustMaxSats()
+
+    fun setDustMaxSats(sats: Long) {
+        repository.setDustMaxSats(sats)
+        refreshUtxos()
+    }
+
+    fun getDustExcludeFromAutoSelect(): Boolean = repository.getDustExcludeFromAutoSelect()
+
+    fun setDustExcludeFromAutoSelect(enabled: Boolean) {
+        repository.setDustExcludeFromAutoSelect(enabled)
     }
 
     fun getPsbtQrDensity(): SecureStorage.QrDensity = repository.getPsbtQrDensity()
@@ -5547,6 +5905,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                                         latestVersionName = release.versionName,
                                         releaseUrl = release.htmlUrl,
                                         releaseNotes = release.releaseNotes,
+                                        apkUrl = release.apkUrl,
+                                        apkSizeBytes = release.apkSizeBytes,
                                     )
                             }
                         },
@@ -5561,27 +5921,115 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             }
     }
 
-    fun dismissAppUpdatePrompt(markVersionAsSeen: Boolean = true) {
-        val prompt = _appUpdatePrompt.value ?: return
-        if (markVersionAsSeen) {
-            repository.setSeenAppUpdateVersion(prompt.latestVersionName)
-        }
+    fun dismissAppUpdatePrompt() {
         _appUpdatePrompt.value = null
+    }
+
+    /** Dismisses the prompt and stops any in-progress APK download. */
+    fun dismissAppUpdatePromptAndDownload() {
+        cancelAppUpdateDownload()
+        _appUpdatePrompt.value = null
+    }
+
+    /** Starts downloading the update APK; explicit user tap only, never automatic. */
+    fun startAppUpdateDownload() {
+        val prompt = _appUpdatePrompt.value ?: return
+        val apkUrl = prompt.apkUrl ?: return
+        if (appUpdateDownloadJob?.isActive == true) return
+        val current = _appUpdateDownload.value
+        if (current is AppUpdateDownloadState.Downloading) return
+
+        val destFile = appUpdateApkFile(prompt.latestVersionName)
+        pruneOldUpdateApks(destFile)
+        if (destFile.exists() &&
+            destFile.length() > 0L &&
+            (prompt.apkSizeBytes <= 0L || destFile.length() == prompt.apkSizeBytes) &&
+            AppUpdateInstaller.verifyDownloadedApk(appContext, destFile)
+        ) {
+            _appUpdateDownload.value = AppUpdateDownloadState.Ready(destFile)
+            return
+        }
+        destFile.delete()
+        _appUpdateDownload.value = AppUpdateDownloadState.Downloading(0f, 0L, prompt.apkSizeBytes)
+        appUpdateDownloadJob =
+            viewModelScope.launch {
+                try {
+                    val result =
+                        appUpdateDownloader.download(apkUrl, destFile) { downloaded, total ->
+                            val progress =
+                                if (total > 0) {
+                                    (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
+                                } else {
+                                    0f
+                                }
+                            _appUpdateDownload.value =
+                                AppUpdateDownloadState.Downloading(progress, downloaded, total)
+                        }
+                    _appUpdateDownload.value =
+                        result.fold(
+                            onSuccess = { AppUpdateDownloadState.Ready(it) },
+                            onFailure = { AppUpdateDownloadState.Error },
+                        )
+                } catch (cancelled: CancellationException) {
+                    _appUpdateDownload.value = AppUpdateDownloadState.Idle
+                    throw cancelled
+                }
+            }
+    }
+
+    fun cancelAppUpdateDownload() {
+        appUpdateDownloadJob?.cancel()
+        appUpdateDownloadJob = null
+        if (_appUpdateDownload.value is AppUpdateDownloadState.Downloading) {
+            _appUpdateDownload.value = AppUpdateDownloadState.Idle
+        }
+    }
+
+    /** Called when a downloaded APK fails package/signer verification: drop it and surface the error. */
+    fun markAppUpdateApkInvalid() {
+        val current = _appUpdateDownload.value
+        if (current is AppUpdateDownloadState.Ready) {
+            current.apkFile.delete()
+        }
+        _appUpdateDownload.value = AppUpdateDownloadState.Invalid
+    }
+
+    private fun appUpdateApkFile(versionName: String): File {
+        val safeName = versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        return File(File(appContext.cacheDir, "updates"), "ibis-$safeName.apk")
+    }
+
+    private fun pruneOldUpdateApks(keep: File) {
+        val dir = keep.parentFile ?: return
+        dir.listFiles()?.forEach { file ->
+            if (file.isFile && file.name != keep.name && file.name.endsWith(".apk", ignoreCase = true)) {
+                file.delete()
+            }
+        }
     }
 
     private fun updateAppUpdatePrompt(updateStatus: AppUpdateStatus) {
         when (updateStatus) {
             is AppUpdateStatus.UpdateAvailable -> {
-                val seenVersion = repository.getSeenAppUpdateVersion()?.trim()
-                _appUpdatePrompt.value =
-                    if (seenVersion == updateStatus.latestVersionName) {
-                        null
-                    } else {
-                        updateStatus
-                    }
+                val changed =
+                    lastAppUpdateVersionName != updateStatus.latestVersionName ||
+                        lastAppUpdateApkUrl != updateStatus.apkUrl
+                if (changed) {
+                    cancelAppUpdateDownload()
+                    _appUpdateDownload.value = AppUpdateDownloadState.Idle
+                }
+                lastAppUpdateVersionName = updateStatus.latestVersionName
+                lastAppUpdateApkUrl = updateStatus.apkUrl
+                _appUpdatePrompt.value = updateStatus
             }
 
-            else -> _appUpdatePrompt.value = null
+            else -> {
+                cancelAppUpdateDownload()
+                _appUpdateDownload.value = AppUpdateDownloadState.Idle
+                lastAppUpdateVersionName = null
+                lastAppUpdateApkUrl = null
+                _appUpdatePrompt.value = null
+            }
         }
     }
 
@@ -6023,7 +6471,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     fun scanWifBalances(wif: String) {
         viewModelScope.launch {
-            _sweepState.value = SweepState(isScanning = true, scanProgress = "Scanning...")
+            _sweepState.value = SweepState(isScanning = true, scanProgress = null)
             when (
                 val result =
                     repository.scanWifBalances(wif) { progress ->
@@ -6056,7 +6504,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         feeRate: Double,
     ) {
         viewModelScope.launch {
-            _sweepState.value = _sweepState.value.copy(isSweeping = true, sweepProgress = "Building transactions...")
+            _sweepState.value = _sweepState.value.copy(isSweeping = true, sweepProgress = null)
             when (
                 val result =
                     repository.sweepPrivateKey(wif, destination, feeRate) { progress ->
@@ -6164,9 +6612,15 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         private const val TAG = "WalletViewModel"
         private const val CONNECTION_TIMEOUT_CLEARNET_MS = 15_000L
-        private const val CONNECTION_TIMEOUT_TOR_MS = 30_000L
+        // Allows two in-repo Tor attempts (up to ~30s each) plus the 1.5s retry gap.
+        private const val CONNECTION_TIMEOUT_TOR_MS = 75_000L
         private const val TOR_BOOTSTRAP_TIMEOUT_MS = 60_000L
         private const val TOR_POST_BOOTSTRAP_DELAY_MS = 2_500L
+        // Short verify when Tor already reports CONNECTED (SOCKS probe only).
+        private const val TOR_READY_VERIFY_TIMEOUT_MS = 10_000L
+        // Grace before tearing down Tor after a non-Tor server is picked.
+        // Tor is always stopped when this elapses (unless needed again).
+        private const val TOR_STOP_GRACE_MS = 30_000L
         private const val PBKDF2_ITERATIONS = 600_000
         private const val HEARTBEAT_INTERVAL_MS = 60_000L
         private const val HEARTBEAT_RETRY_INTERVAL_MS = 15_000L
@@ -6215,7 +6669,25 @@ sealed class AppUpdateStatus {
         val latestVersionName: String,
         val releaseUrl: String,
         val releaseNotes: String = "",
+        val apkUrl: String? = null,
+        val apkSizeBytes: Long = 0L,
     ) : AppUpdateStatus()
+}
+
+sealed class AppUpdateDownloadState {
+    data object Idle : AppUpdateDownloadState()
+
+    data class Downloading(
+        val progress: Float,
+        val downloadedBytes: Long,
+        val totalBytes: Long,
+    ) : AppUpdateDownloadState()
+
+    data class Ready(val apkFile: File) : AppUpdateDownloadState()
+
+    data object Invalid : AppUpdateDownloadState()
+
+    data object Error : AppUpdateDownloadState()
 }
 
 /**
@@ -6340,6 +6812,24 @@ data class ManualBroadcastState(
     val error: String? = null,
     val preview: WalletRepository.ManualBroadcastPreview? = null,
     val previewInput: String? = null,
+)
+
+/**
+ * State for the offline PSBT signer (cold-storage flow).
+ * Import an unsigned/partial PSBT, review the decoded preview, sign with the
+ * loaded wallet's keys, and export the signed PSBT. Never broadcasts.
+ */
+data class SignPsbtState(
+    val isDecoding: Boolean = false,
+    val isSigning: Boolean = false,
+    val inputPsbtBase64: String? = null,
+    val preview: WalletRepository.SignerPreview? = null,
+    /** Wallet that produced [preview]; signing refuses if the active wallet changed. */
+    val previewWalletId: String? = null,
+    val signedPsbtBase64: String? = null,
+    val isFinalized: Boolean = false,
+    val signedTxid: String? = null,
+    val error: String? = null,
 )
 
 /**

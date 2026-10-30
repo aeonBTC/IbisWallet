@@ -9,9 +9,27 @@ import github.aeonbtc.ibiswallet.data.model.TransactionSearchLayer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 
 private val searchTokenDelimiterRegex = Regex("[^\\p{L}\\p{Nd}]+")
 private val searchWhitespaceRegex = Regex("\\s+")
+
+/**
+ * SimpleDateFormat is not thread-safe, so keep one instance per pattern/locale
+ * per thread. Building 2 x patterns formatters for every transaction was the
+ * dominant allocation cost of rebuilding the search index.
+ */
+private val searchDateFormatters =
+    ThreadLocal.withInitial { HashMap<Triple<String, Locale, String>, SimpleDateFormat>() }
+
+private fun searchDateFormatter(
+    pattern: String,
+    locale: Locale,
+    timeZoneId: String,
+): SimpleDateFormat =
+    searchDateFormatters.get()!!.getOrPut(Triple(pattern, locale, timeZoneId)) {
+        SimpleDateFormat(pattern, locale).apply { timeZone = TimeZone.getTimeZone(timeZoneId) }
+    }
 
 private val transactionSearchDatePatterns =
     listOf(
@@ -74,10 +92,11 @@ private fun buildDateSearchTokens(timestampSeconds: Long?): String {
     val date = Date(timestampSeconds * 1000L)
     val tokens = linkedSetOf<String>()
     val locales = linkedSetOf(Locale.getDefault(), Locale.US)
+    val timeZoneId = TimeZone.getDefault().id
 
     transactionSearchDatePatterns.forEach { pattern ->
         locales.forEach { locale ->
-            val formatted = SimpleDateFormat(pattern, locale).format(date)
+            val formatted = searchDateFormatter(pattern, locale, timeZoneId).format(date)
             tokens += expandDateTokens(tokenizeSearchValue(formatted))
         }
     }

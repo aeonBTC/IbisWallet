@@ -3,8 +3,6 @@ package github.aeonbtc.ibiswallet.util
 import android.graphics.Bitmap
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.core.graphics.createBitmap
-import androidx.core.graphics.set
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -44,16 +42,17 @@ fun generateQrBitmap(
         val sourceTop = contentBounds?.top ?: 0
         val sourceWidth = contentBounds?.width ?: size
         val sourceHeight = contentBounds?.height ?: size
-        val bitmap = createBitmap(size, size)
+        val black = Color.Black.toArgb()
+        val white = Color.White.toArgb()
+        val pixels = IntArray(size * size)
         for (x in 0 until size) {
             for (y in 0 until size) {
                 val sourceX = sourceLeft + (x * sourceWidth) / size
                 val sourceY = sourceTop + (y * sourceHeight) / size
-                bitmap[x, y] =
-                    if (bitMatrix[sourceX, sourceY]) Color.Black.toArgb() else Color.White.toArgb()
+                pixels[y * size + x] = if (bitMatrix[sourceX, sourceY]) black else white
             }
         }
-        bitmap
+        Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
     } catch (_: Exception) {
         null
     }

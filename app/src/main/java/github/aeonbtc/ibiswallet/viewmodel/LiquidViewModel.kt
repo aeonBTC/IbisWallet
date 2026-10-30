@@ -1474,6 +1474,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         swapId = restored.swapId,
                         amountSats = restored.amountSats,
                         expiresAtMs = restored.expiresAtMs ?: session.expiresAtMs,
+                        label = restored.label,
                     )
                 } else if (activeLightningInvoiceSwapId == null) {
                     activeLightningInvoiceSwapId = session.swapId
@@ -1482,6 +1483,11 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                         swapId = session.swapId,
                         amountSats = session.amountSats,
                         expiresAtMs = session.expiresAtMs,
+                        label =
+                            _pendingLightningInvoices.value
+                                .firstOrNull { it.swapId == session.swapId }
+                                ?.label
+                                ?.takeIf { it.isNotBlank() },
                     )
                 }
                 monitorLightningInvoice(session.swapId)
@@ -2925,6 +2931,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     swapId = created.swapId,
                     amountSats = amountSats,
                     expiresAtMs = created.expiresAtMs,
+                    label = created.label,
                 )
                 refreshPendingLightningInvoices()
                 monitorLightningInvoice(created.swapId)
@@ -3251,6 +3258,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 swapId = session.swapId,
                 amountSats = session.amountSats,
                 expiresAtMs = session.expiresAtMs ?: pending?.expiresAtMs,
+                label = pending?.label?.takeIf { it.isNotBlank() },
             )
             monitorLightningInvoice(session.swapId)
             refreshPendingLightningInvoices()
@@ -4015,10 +4023,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                             label = label,
                             saveRecipientLabel = false,
                         )
-                        repository.saveLiquidTransactionSource(
-                            txid = fundingTxid,
-                            source = LiquidTxSource.LIGHTNING_SEND_SWAP,
-                        )
+                        // Persist the txid immediately: if a later metadata write
+                        // throws, the catch can keep monitoring instead of
+                        // treating the funding status as unknown.
                         repository.getPendingLightningPaymentSession()?.let { session ->
                             saveLightningSession(
                                 session.copy(
@@ -4028,6 +4035,10 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                                 ),
                             )
                         }
+                        repository.saveLiquidTransactionSource(
+                            txid = fundingTxid,
+                            source = LiquidTxSource.LIGHTNING_SEND_SWAP,
+                        )
                         repository.persistLightningSendSwapDetails(
                             txid = fundingTxid,
                             swapId = executionPlan.swapId,
@@ -4073,11 +4084,87 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                 }
             } catch (e: Exception) {
                 logError("Failed to confirm Lightning payment", e)
-                deleteLightningSession()
-                presentLightningPaymentFailure(
-                    error = safeLiquidErrorMessage(e, "Payment failed"),
-                    preview = preview,
-                )
+                val pending = repository.getPendingLightningPaymentSession()
+                val fundingAttempted =
+                    pending != null &&
+                        (
+                            pending.phase == PendingLightningPaymentPhase.FUNDING ||
+                                pending.phase == PendingLightningPaymentPhase.IN_PROGRESS ||
+                                !pending.fundingTxid.isNullOrBlank()
+                        )
+                if (pending != null && fundingAttempted) {
+                    // Never delete a session after a funding attempt: the lockup
+                    // transaction may already be on-chain. If we have the txid,
+                    // keep monitoring; otherwise leave a terminal "verify" state
+                    // so the user checks history instead of double-paying.
+                    val pendingFundingTxid = pending.fundingTxid
+                    if (!pendingFundingTxid.isNullOrBlank()) {
+                        saveLightningSession(
+                            pending.copy(
+                                phase = PendingLightningPaymentPhase.IN_PROGRESS,
+                                status = "Funding broadcast. Waiting for Boltz payment...",
+                            ),
+                        )
+                        monitorPreparedLightningPayment(
+                            backend = pending.backend,
+                            swapId = pending.swapId,
+                            paymentReference = pending.paymentInput,
+                            fundingTxid = pendingFundingTxid,
+                            preview = preview,
+                        )
+                    } else {
+                        // The broadcast may have landed before the throw. Look for
+                        // the lockup payment in local history and resume monitoring
+                        // instead of inviting a second funding transaction.
+                        val reconciled =
+                            liquidState.value.transactions
+                                .asSequence()
+                                .filter { tx ->
+                                    tx.type == LiquidTxType.SEND &&
+                                        tx.walletAddress.equals(
+                                            pending.lockupAddress,
+                                            ignoreCase = true,
+                                        ) &&
+                                        tx.balanceSatoshi < 0L &&
+                                        -tx.balanceSatoshi >= pending.lockupAmountSats
+                                }
+                                .maxByOrNull { it.timestamp ?: 0L }
+                        if (reconciled != null) {
+                            val updated =
+                                pending.copy(
+                                    phase = PendingLightningPaymentPhase.IN_PROGRESS,
+                                    status = "Funding detected after an interrupted send. Monitoring...",
+                                    fundingTxid = reconciled.txid,
+                                )
+                            saveLightningSession(updated)
+                            monitorPreparedLightningPayment(
+                                backend = updated.backend,
+                                swapId = updated.swapId,
+                                paymentReference = updated.paymentInput,
+                                fundingTxid = reconciled.txid,
+                                preview = preview,
+                            )
+                        } else {
+                            saveLightningSession(
+                                pending.copy(
+                                    phase = PendingLightningPaymentPhase.FAILED,
+                                    status = "Funding status uncertain - check history before retrying",
+                                ),
+                            )
+                            presentLightningPaymentFailure(
+                                error = "Funding status uncertain - check history before retrying",
+                                preview = preview,
+                                refundAddress = pending.refundAddress,
+                            )
+                        }
+                    }
+                } else {
+                    deleteLightningSession()
+                    presentLightningPaymentFailure(
+                        error = safeLiquidErrorMessage(e, "Payment failed"),
+                        preview = preview,
+                    )
+                }
             }
         }
     }
@@ -4716,10 +4803,21 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun isLightningRefundDetected(session: PendingLightningPaymentSession): Boolean {
+        // A refund is the swap's lockup/payment amount minus at most a small
+        // fee. Requiring a meaningful fraction prevents an unrelated dust or
+        // normal payment to the refund address from failing a live swap.
+        val grossSats =
+            session.lockupAmountSats.takeIf { it > 0L }
+                ?: session.paymentAmountSats.takeIf { it > 0L }
+                ?: return false
+        val expectedSats =
+            (grossSats - session.swapFeeSats.coerceAtLeast(0L)).takeIf { it > 0L } ?: grossSats
+        val toleranceSats = maxOf(1L, expectedSats / 20L)
         return liquidState.value.transactions.any { tx ->
             tx.type == LiquidTxType.RECEIVE &&
                 tx.walletAddress.equals(session.refundAddress, ignoreCase = true) &&
-                tx.balanceSatoshi > 0L &&
+                tx.balanceSatoshi in
+                (expectedSats - toleranceSats)..(expectedSats + toleranceSats) &&
                 tx.txid != session.fundingTxid
         }
     }
@@ -5846,15 +5944,82 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     startSwapMonitor(active)
                 } catch (e: Exception) {
                     logError("Failed to execute swap", e)
+                    val fundingTracked =
+                        getTrackedPendingSwap(pendingSwap.swapId)?.takeIf { tracked ->
+                            tracked.phase == PendingSwapPhase.FUNDING ||
+                                tracked.phase == PendingSwapPhase.IN_PROGRESS ||
+                                !tracked.fundingTxid.isNullOrBlank()
+                        }
+                    if (fundingTracked != null) {
+                        // Never put a funding-started swap back into Review: a
+                        // broadcast may already exist, and re-review invites a
+                        // second funding transaction. If we have the txid, keep
+                        // monitoring; otherwise keep the session in a terminal
+                        // "verify" state so the user checks history first.
+                        clearPreparedSwap()
+                        if (!fundingTracked.fundingTxid.isNullOrBlank()) {
+                            val status = pendingSwapStatus(fundingTracked)
+                            _swapState.value = SwapState.Idle
+                            startSwapMonitor(
+                                setSwapInProgress(fundingTracked, status, phase = fundingTracked.phase),
+                            )
+                        } else {
+                            // The broadcast may have succeeded before the throw.
+                            // Reconcile from local Liquid history before declaring
+                            // the funding unknown and risking a second send.
+                            val reconciled =
+                                liquidState.value.transactions
+                                    .asSequence()
+                                    .filter { tx ->
+                                        tx.type == LiquidTxType.SEND &&
+                                            tx.walletAddress.equals(
+                                                fundingTracked.depositAddress,
+                                                ignoreCase = true,
+                                            ) &&
+                                            tx.balanceSatoshi < 0L &&
+                                            -tx.balanceSatoshi >= fundingTracked.sendAmount
+                                    }
+                                    .maxByOrNull { it.timestamp ?: 0L }
+                            if (reconciled != null) {
+                                val updated =
+                                    fundingTracked.copy(
+                                        fundingTxid = reconciled.txid,
+                                        phase = PendingSwapPhase.IN_PROGRESS,
+                                        status = "Funding detected after an interrupted send. Monitoring...",
+                                    )
+                                upsertPendingSwap(updated)
+                                val status = pendingSwapStatus(updated)
+                                _swapState.value = SwapState.Idle
+                                startSwapMonitor(
+                                    setSwapInProgress(updated, status, phase = updated.phase),
+                                )
+                            } else {
+                                upsertPendingSwap(
+                                    fundingTracked.copy(
+                                        phase = PendingSwapPhase.FAILED,
+                                        status = "Funding status uncertain - check history before retrying",
+                                    ),
+                                )
+                                _swapState.value =
+                                    SwapState.Failed(
+                                        "Funding status uncertain - check history before retrying",
+                                    )
+                            }
+                        }
+                        _events.emit(LiquidEvent.Error(e.message ?: "Swap execution interrupted"))
+                        return@withLock
+                    }
                     val prepared = getPreparedSwap()
                     if (prepared != null && prepared.swapId == pendingSwap.swapId) {
                         _swapState.value = SwapState.ReviewReady(prepared)
                         _events.emit(LiquidEvent.Error(e.message ?: "Swap execution blocked"))
                     } else {
-                        val tracked = getTrackedPendingSwap(pendingSwap.swapId)
-                        if (tracked != null) {
-                            val status = pendingSwapStatus(tracked)
-                            startSwapMonitor(setSwapInProgress(tracked, status, phase = tracked.phase))
+                        val fallbackTracked = getTrackedPendingSwap(pendingSwap.swapId)
+                        if (fallbackTracked != null) {
+                            val status = pendingSwapStatus(fallbackTracked)
+                            startSwapMonitor(
+                                setSwapInProgress(fallbackTracked, status, phase = fallbackTracked.phase),
+                            )
                         } else {
                             _swapState.value = SwapState.Failed(e.message ?: "Swap failed")
                         }
@@ -5891,6 +6056,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     status = "Sending BTC to: ${pendingSwap.depositAddress}",
                 )
             val fundingRequest = buildBitcoinSwapFundingRequest(fundingState, btcFeeRate)
+            // Persist FUNDING before broadcasting so a post-broadcast failure
+            // cannot put this swap back into Review and invite double funding.
+            upsertPendingSwap(fundingState)
             val (fundingTxid, actualSendAmount) = sendBitcoinFunding(
                 fundingRequest.recipientAddress,
                 fundingRequest.amountSats,
@@ -5933,6 +6101,7 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     selectedUtxos,
                 )
             }
+            upsertPendingSwap(fundingState)
             val fundingTxid = repository.sendLBTC(
                 address = fundingRequest.recipientAddress,
                 amountSats = fundingRequest.amountSats,
@@ -5976,6 +6145,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     status = "Sending BTC to Boltz lockup address...",
                 )
             val fundingRequest = buildBitcoinSwapFundingRequest(fundingState, btcFeeRate)
+            // See executeSideSwapPeg: persist before broadcast so the failure
+            // path cannot re-offer a funding-started swap for review.
+            upsertPendingSwap(fundingState)
             val (fundingTxid, actualSendAmount) = sendBitcoinFunding(
                 fundingRequest.recipientAddress,
                 fundingRequest.amountSats,
@@ -6027,6 +6199,9 @@ class LiquidViewModel(application: Application) : AndroidViewModel(application) 
                     selectedUtxos,
                 )
             }
+            // Persist only after the preflight checks, immediately before the
+            // broadcast. A post-broadcast throw must not re-offer Review.
+            upsertPendingSwap(fundingState)
             val fundingTxid = repository.sendLBTC(
                 address = fundingRequest.recipientAddress,
                 amountSats = fundingRequest.amountSats,

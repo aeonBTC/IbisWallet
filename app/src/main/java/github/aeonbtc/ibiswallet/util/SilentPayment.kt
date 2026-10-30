@@ -671,7 +671,8 @@ internal object SilentPayment {
                     1,
                     taggedHash("BIP0340/challenge", signature.copyOfRange(0, 32) + publicKeyXOnly + message),
                 ).mod(curveOrder)
-            val rPoint = addPoints(multiplyGenerator(s), negatePoint(multiplyPoint(point, e)!!))
+            val ePoint = multiplyPoint(point, e) ?: return@runCatching false
+            val rPoint = addPoints(multiplyGenerator(s), negatePoint(ePoint))
             rPoint != null && hasEvenY(rPoint) && rPoint.x == r
         }.getOrDefault(false)
     }
@@ -1187,11 +1188,10 @@ internal object SilentPayment {
 
     private fun String.hexToBytes(): ByteArray {
         require(length % 2 == 0) { "Invalid hex length" }
-        return chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+        return BitcoinUtils.hexToByteArray(this)
     }
 
-    private fun ByteArray.toHex(): String =
-        joinToString("") { "%02x".format(it) }
+    private fun ByteArray.toHex(): String = BitcoinUtils.bytesToHex(this)
 
     private fun compareBytesLexicographically(a: ByteArray, b: ByteArray): Int {
         val minSize = minOf(a.size, b.size)

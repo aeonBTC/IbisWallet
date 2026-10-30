@@ -1,5 +1,8 @@
 package github.aeonbtc.ibiswallet.util
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+
 /**
  * Finds the largest exact recipient amount that still fits within the wallet's
  * spendable budget once fees are paid on top.
@@ -15,6 +18,10 @@ suspend fun findMaxExactSendAmount(
     var best = 0L
 
     while (low <= high) {
+        // Each probe builds and signs a full PSBT. Cancelling a superseded
+        // max-send estimate must stop the loop promptly instead of running
+        // dozens of extra probes on a IO thread.
+        currentCoroutineContext().ensureActive()
         val mid = low + ((high - low) / 2)
         if (canSendAmount(mid)) {
             best = mid

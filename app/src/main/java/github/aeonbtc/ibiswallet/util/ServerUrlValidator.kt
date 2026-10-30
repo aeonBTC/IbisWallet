@@ -55,6 +55,34 @@ object ServerUrlValidator {
     fun normalize(url: String): String = url.trim()
 
     /**
+     * Canonical bare host for socket/TLS use. Handles bracketed and bare IPv6,
+     * strips an accidental `:port` only when it is unambiguous, and never
+     * truncates an IPv6 literal at its first colon.
+     */
+    fun canonicalHost(raw: String): String {
+        val hostAndMaybePort =
+            raw.trim()
+                .removePrefix("https://")
+                .removePrefix("http://")
+                .substringBefore('/')
+        if (hostAndMaybePort.startsWith("[")) {
+            val end = hostAndMaybePort.indexOf(']')
+            if (end > 0) return hostAndMaybePort.substring(1, end)
+        }
+        return if (hostAndMaybePort.count { it == ':' } == 1) {
+            hostAndMaybePort.substringBefore(':')
+        } else {
+            hostAndMaybePort
+        }
+    }
+
+    /** Bracketed form for a URL authority when [host] is an IPv6 literal. */
+    fun formatHostForUrl(host: String): String {
+        val bare = host.removeSurrounding("[", "]")
+        return if (bare.contains(':') && !bare.startsWith("[")) "[$bare]" else bare
+    }
+
+    /**
      * Validate a bare host (no scheme) and optional port. Used for Electrum and
      * Liquid Electrum servers, which are persisted as host + port pairs rather
      * than full URLs.

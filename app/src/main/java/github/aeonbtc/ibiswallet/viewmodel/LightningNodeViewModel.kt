@@ -9,11 +9,12 @@ import github.aeonbtc.ibiswallet.data.model.LightningNodeConfig
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionTestPhase
 import github.aeonbtc.ibiswallet.data.model.LightningNodeConnectionTestResult
 import github.aeonbtc.ibiswallet.data.model.LightningNodeEvent
+import github.aeonbtc.ibiswallet.data.model.LightningNodePayment
 import github.aeonbtc.ibiswallet.data.model.LightningNodeReceiveState
 import github.aeonbtc.ibiswallet.data.model.UtxoInfo
 import github.aeonbtc.ibiswallet.data.repository.LightningNodeRepository
 import github.aeonbtc.ibiswallet.service.ConnectivityKeepAlivePolicy
-import github.aeonbtc.ibiswallet.util.SparkNetworkMonitor
+import github.aeonbtc.ibiswallet.util.DefaultNetworkMonitor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,6 +42,9 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
     val channels = repository.channels
     val channelsLoading = repository.channelsLoading
     val channelsError = repository.channelsError
+    val peers = repository.peers
+    val peersLoading = repository.peersLoading
+    val channelOpState = repository.channelOpState
     val loadedWalletId = repository.loadedWalletId
     val isConnected = repository.isConnected
     val isConnecting = repository.isConnecting
@@ -95,7 +99,7 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
     private var isAppInBackground = false
 
     private val networkMonitor =
-        SparkNetworkMonitor(
+        DefaultNetworkMonitor(
             context = getApplication(),
             onNetworkChanged = {
                 if (!isAppInBackground || isBackgroundKeepAliveActive()) {
@@ -407,6 +411,89 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
         }
     }
 
+    fun refreshPeers() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching { repository.refreshPeers() }
+                .onFailure { if (it is CancellationException) throw it }
+        }
+    }
+
+    fun resetChannelOpState() {
+        repository.resetChannelOpState()
+    }
+
+    fun connectPeer(
+        pubkey: String,
+        host: String?,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.connectPeer(pubkey, host)
+        }
+    }
+
+    fun disconnectPeer(
+        pubkey: String,
+        force: Boolean = false,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.disconnectPeer(pubkey, force)
+        }
+    }
+
+    fun openChannel(
+        pubkey: String,
+        amountSats: Long,
+        satPerVbyte: Double?,
+        isPrivate: Boolean,
+        pushSats: Long = 0L,
+        closeAddress: String? = null,
+        peerHost: String? = null,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.openChannel(
+                pubkey = pubkey,
+                amountSats = amountSats,
+                satPerVbyte = satPerVbyte,
+                isPrivate = isPrivate,
+                pushSats = pushSats,
+                closeAddress = closeAddress,
+                peerHost = peerHost,
+            )
+        }
+    }
+
+    fun closeChannel(
+        channel: github.aeonbtc.ibiswallet.data.model.LightningNodeChannel,
+        force: Boolean,
+        satPerVbyte: Double? = null,
+        closeAddress: String? = null,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.closeChannel(
+                channel = channel,
+                force = force,
+                satPerVbyte = satPerVbyte,
+                closeAddress = closeAddress,
+            )
+        }
+    }
+
+    fun updateChannelFeePolicy(
+        channel: github.aeonbtc.ibiswallet.data.model.LightningNodeChannel,
+        baseFeeMsat: Long,
+        feeRatePpm: Long,
+        cltvDelta: Int?,
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateChannelFeePolicy(
+                channel = channel,
+                baseFeeMsat = baseFeeMsat,
+                feeRatePpm = feeRatePpm,
+                cltvDelta = cltvDelta,
+            )
+        }
+    }
+
     fun scheduleReconnect(force: Boolean = false) {
         val walletId = loadedWalletId.value ?: return
         // Don't fight an in-flight wallet switch / load for a different id.
@@ -457,9 +544,10 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
         paymentRequest: String,
         amountSats: Long? = null,
         maxFeePercent: Double? = null,
+        label: String? = null,
     ) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.prepareSend(paymentRequest, amountSats, maxFeePercent)
+            repository.prepareSend(paymentRequest, amountSats, maxFeePercent, label)
         }
     }
 
@@ -471,6 +559,22 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch(Dispatchers.IO) {
             repository.sendPrepared()
         }
+    }
+
+    fun savePaymentLabel(payment: LightningNodePayment, label: String) {
+        repository.savePaymentLabel(repository.paymentLabelRef(payment), label)
+    }
+
+    fun deletePaymentLabel(payment: LightningNodePayment) {
+        repository.deletePaymentLabel(repository.paymentLabelRef(payment))
+    }
+
+    fun saveOnchainLabel(txid: String, label: String) {
+        repository.saveOnchainLabel(txid, label)
+    }
+
+    fun deleteOnchainLabel(txid: String) {
+        repository.deleteOnchainLabel(txid)
     }
 
     fun setSendDraft(draft: SendScreenDraft) {
@@ -686,6 +790,7 @@ class LightningNodeViewModel(application: Application) : AndroidViewModel(applic
         stopOpenInvoiceWatch()
         repository.resetSendState()
         repository.resetReceiveState()
+        repository.resetChannelOpState()
         _sendDraft.value = SendScreenDraft()
         _connectionTestResult.value = null
     }

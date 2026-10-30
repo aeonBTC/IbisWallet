@@ -6,37 +6,45 @@ import android.security.keystore.KeyProperties
 import androidx.biometric.BiometricPrompt
 import github.aeonbtc.ibiswallet.data.local.SecureStorage
 import java.security.KeyStore
+import java.security.UnrecoverableKeyException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.IvParameterSpec
 
-object BiometricCrypto {
-    fun createCryptoObject(): BiometricPrompt.CryptoObject =
-        BiometricPrompt.CryptoObject(getBiometricCipher())
+/** The biometric key was permanently invalidated (e.g. a legacy enrollment-change key). */
+class BiometricKeyInvalidatedException(cause: Throwable?) :
+    IllegalStateException(
+        "Biometric key was invalidated; unlock with PIN and re-enable biometric",
+        cause,
+    )
 
-    fun createCryptoObjectForDecryption(iv: ByteArray): BiometricPrompt.CryptoObject =
-        BiometricPrompt.CryptoObject(getBiometricCipher(Cipher.DECRYPT_MODE, iv))
+/** The biometric key is absent or unreadable. */
+class BiometricKeyUnavailableException(cause: Throwable?) :
+    IllegalStateException(
+        "Biometric key is unavailable; unlock with PIN and re-enable biometric",
+        cause,
+    )
+
+object BiometricCrypto {
+    /**
+     * Enrollment cipher: may create or (for a legacy invalidated key) replace the
+     * key. This is only used from an already-unlocked session (PIN verified), so
+     * replacing the key cannot orphan a wrap that the user cannot otherwise
+     * recover. Never call this from the unlock/prewarm path.
+     */
+    fun createCryptoObjectForEnrollment(): BiometricPrompt.CryptoObject =
+        BiometricPrompt.CryptoObject(getOrCreateBiometricCipherForEnrollment())
 
     /**
-     * Get or create a KeyStore-backed AES key that requires biometric auth,
-     * and return an initialized Cipher for CryptoObject binding.
-     *
-     * The key is deliberately created with setInvalidatedByBiometricEnrollment(false):
-     * with `true`, adding or removing a fingerprint in system settings permanently
-     * destroys the key — and since the spend-secret master key is wrapped only under
-     * this key in biometric mode, that silently makes every wallet secret
-     * (mnemonics, keys, LN credentials) unrecoverable. Per-use biometric auth is
-     * still enforced via setUserAuthenticationRequired(true) with no validity window.
-     *
-     * The key must NEVER be deleted or recreated outside the confirmed
-     * KeyPermanentlyInvalidatedException recovery below — any existing biometric
-     * wrap becomes permanently undecryptable the moment the key is replaced.
+     * Unlock cipher: uses ONLY an existing key. It never creates or deletes a
+     * key, so a missing/invalidated key can never silently destroy the only
+     * copy of the biometric wrap.
      */
-    fun getBiometricCipher(
-        mode: Int = Cipher.ENCRYPT_MODE,
-        iv: ByteArray? = null,
-    ): Cipher {
+    fun createCryptoObjectForDecryption(iv: ByteArray): BiometricPrompt.CryptoObject =
+        BiometricPrompt.CryptoObject(getExistingBiometricCipherForDecryption(iv))
+
+    private fun getOrCreateBiometricCipherForEnrollment(): Cipher {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         val keyAlias = SecureStorage.BIOMETRIC_KEY_ALIAS
 
@@ -44,24 +52,55 @@ object BiometricCrypto {
             createBiometricKey(keyAlias)
         }
 
-        val cipher =
-            Cipher.getInstance(
-                "${KeyProperties.KEY_ALGORITHM_AES}/${KeyProperties.BLOCK_MODE_CBC}/${KeyProperties.ENCRYPTION_PADDING_PKCS7}",
-            )
+        val cipher = newAesCbcCipher()
         return try {
-            cipher.initKey(keyStore, keyAlias, mode, iv)
+            cipher.init(Cipher.ENCRYPT_MODE, keyStore.secretKey(keyAlias))
             cipher
         } catch (e: KeyPermanentlyInvalidatedException) {
-            // Legacy installs created the key with setInvalidatedByBiometricEnrollment(true),
-            // so a fingerprint enrollment change may have killed it while the alias still
-            // exists. Delete the stale key and recreate it so biometric unlock can be
-            // re-enrolled instead of permanently locking the user out.
+            // Enrollment is reached only after a successful PIN unlock. The old
+            // wrap is already undecryptable, but the live spend master is in the
+            // session and will be re-wrapped by enrollBiometricLock.
             keyStore.deleteEntry(keyAlias)
             createBiometricKey(keyAlias)
-            cipher.initKey(keyStore, keyAlias, mode, iv)
+            cipher.init(Cipher.ENCRYPT_MODE, keyStore.secretKey(keyAlias))
             cipher
+        } catch (e: UnrecoverableKeyException) {
+            throw BiometricKeyUnavailableException(e)
         }
     }
+
+    private fun getExistingBiometricCipherForDecryption(iv: ByteArray): Cipher {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val keyAlias = SecureStorage.BIOMETRIC_KEY_ALIAS
+        if (!keyStore.containsAlias(keyAlias)) {
+            throw BiometricKeyUnavailableException(null)
+        }
+
+        val cipher = newAesCbcCipher()
+        return try {
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                keyStore.secretKey(keyAlias),
+                IvParameterSpec(iv),
+            )
+            cipher
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            // Do not delete the key or the wrap. The user can still use PIN and
+            // re-enroll; a biometric-only install cannot be recovered without a
+            // seed/backup, but deleting the wrap would remove even that evidence.
+            throw BiometricKeyInvalidatedException(e)
+        } catch (e: UnrecoverableKeyException) {
+            throw BiometricKeyUnavailableException(e)
+        }
+    }
+
+    private fun newAesCbcCipher(): Cipher =
+        Cipher.getInstance(
+            "${KeyProperties.KEY_ALGORITHM_AES}/${KeyProperties.BLOCK_MODE_CBC}/${KeyProperties.ENCRYPTION_PADDING_PKCS7}",
+        )
+
+    private fun KeyStore.secretKey(keyAlias: String): SecretKey =
+        getKey(keyAlias, null) as SecretKey
 
     private fun createBiometricKey(keyAlias: String) {
         val keyGen =
@@ -159,18 +198,4 @@ object BiometricCrypto {
         }
     }
 
-    private fun Cipher.initKey(
-        keyStore: KeyStore,
-        keyAlias: String,
-        mode: Int,
-        iv: ByteArray?,
-    ) {
-        val secretKey = keyStore.getKey(keyAlias, null) as SecretKey
-        if (mode == Cipher.DECRYPT_MODE) {
-            require(iv != null) { "IV is required for biometric decryption" }
-            init(mode, secretKey, IvParameterSpec(iv))
-        } else {
-            init(mode, secretKey)
-        }
-    }
 }

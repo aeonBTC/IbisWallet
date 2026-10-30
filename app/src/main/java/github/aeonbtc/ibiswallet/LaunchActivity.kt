@@ -3,9 +3,11 @@ package github.aeonbtc.ibiswallet
 import android.app.ActivityOptions
 import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import github.aeonbtc.ibiswallet.data.local.SecureStorage
 
 class LaunchActivity : ComponentActivity() {
     private var hasForwardedToMain = false
@@ -14,6 +16,16 @@ class LaunchActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // The splash/task window is part of the same task as MainActivity; it
+        // must not be capturable when screenshot prevention is enabled.
+        runCatching {
+            if (SecureStorage.getInstance(this).getDisableScreenshots()) {
+                window.setFlags(
+                    WindowManager.LayoutParams.FLAG_SECURE,
+                    WindowManager.LayoutParams.FLAG_SECURE,
+                )
+            }
+        }
         window.decorView.post(::launchMainActivity)
     }
 

@@ -33,6 +33,11 @@ object ReleaseNotesFormatter {
                     val rawLine = lines[index]
                     val trimmed = rawLine.trim()
 
+                    val headingMatch = HEADING_REGEX.matchEntire(trimmed)
+                    val bulletMatch = BULLET_REGEX.matchEntire(trimmed)
+                    val numberedMatch = NUMBERED_REGEX.matchEntire(trimmed)
+                    val quoteMatch = QUOTE_REGEX.matchEntire(trimmed)
+
                     when {
                         trimmed.isEmpty() -> {
                             if (!previousWasBlank && index < lines.lastIndex) {
@@ -63,9 +68,8 @@ object ReleaseNotesFormatter {
                             previousWasBlank = false
                         }
 
-                        HEADING_REGEX.matchEntire(trimmed) != null -> {
-                            val match = HEADING_REGEX.matchEntire(trimmed)!!
-                            val text = match.groupValues[2].trim()
+                        headingMatch != null -> {
+                            val text = headingMatch.groupValues[2].trim()
                             if (!previousWasBlank) append('\n')
                             withStyle(SpanStyle(fontWeight = FontWeight.SemiBold)) {
                                 appendInlineMarkdown(text)
@@ -74,28 +78,25 @@ object ReleaseNotesFormatter {
                             previousWasBlank = false
                         }
 
-                        BULLET_REGEX.matchEntire(trimmed) != null -> {
-                            val match = BULLET_REGEX.matchEntire(trimmed)!!
-                            val text = match.groupValues[1].trim()
+                        bulletMatch != null -> {
+                            val text = bulletMatch.groupValues[1].trim()
                             append("• ")
                             appendInlineMarkdown(text)
                             append('\n')
                             previousWasBlank = false
                         }
 
-                        NUMBERED_REGEX.matchEntire(trimmed) != null -> {
-                            val match = NUMBERED_REGEX.matchEntire(trimmed)!!
-                            val number = match.groupValues[1]
-                            val text = match.groupValues[2].trim()
+                        numberedMatch != null -> {
+                            val number = numberedMatch.groupValues[1]
+                            val text = numberedMatch.groupValues[2].trim()
                             append("$number. ")
                             appendInlineMarkdown(text)
                             append('\n')
                             previousWasBlank = false
                         }
 
-                        QUOTE_REGEX.matchEntire(trimmed) != null -> {
-                            val match = QUOTE_REGEX.matchEntire(trimmed)!!
-                            val text = match.groupValues[1].trim()
+                        quoteMatch != null -> {
+                            val text = quoteMatch.groupValues[1].trim()
                             withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
                                 append("“")
                                 appendInlineMarkdown(text)

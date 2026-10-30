@@ -27,7 +27,11 @@ object ArkWalletDataPack {
      * SecureStorage on import. Absent in legacy zips (treated as empty).
      */
     const val CLAIMS_ENTRY = "ibis-ark-claims.json"
+    const val RECOVERY_ENTRY = "ibis-ark-recovery.json"
     const val DB_FILE_NAME = "db.sqlite"
+    const val MAX_BACKUP_BYTES = 128 * 1024 * 1024
+    private const val MAX_ENTRIES = 4_096
+    private const val MAX_METADATA_BYTES = 16 * 1024 * 1024
     private val SQLITE_HEADER = "SQLite format 3".toByteArray(Charsets.US_ASCII)
 
     data class Manifest(
@@ -78,6 +82,7 @@ object ArkWalletDataPack {
         historyJson: String? = null,
         /** JSON array of ArkExitClaimHistory objects (Ibis claim-ledger sidecar). */
         claimsJson: String? = null,
+        recoveryJson: String? = null,
     ): ByteArray? {
         if (!dir.isDirectory) return null
         val files = dir.walkTopDown().filter { it.isFile }.toList()
@@ -118,6 +123,11 @@ object ArkWalletDataPack {
                     file.inputStream().use { it.copyTo(zos) }
                     zos.closeEntry()
                 }
+                if (!recoveryJson.isNullOrBlank()) {
+                    zos.putNextEntry(ZipEntry(RECOVERY_ENTRY))
+                    zos.write(recoveryJson.toByteArray(Charsets.UTF_8))
+                    zos.closeEntry()
+                }
             }
             baos.toByteArray()
         } catch (_: Exception) {
@@ -130,7 +140,7 @@ object ArkWalletDataPack {
                 var entry = zis.nextEntry
                 while (entry != null) {
                     if (!entry.isDirectory && isMetaEntry(entry.name, MANIFEST_ENTRY)) {
-                        val text = zis.readBytes().toString(Charsets.UTF_8)
+                        val text = readBounded(zis, MAX_METADATA_BYTES).toString(Charsets.UTF_8)
                         zis.closeEntry()
                         return@use Manifest.fromJson(text)
                     }
@@ -164,7 +174,7 @@ object ArkWalletDataPack {
                 var entry = zis.nextEntry
                 while (entry != null) {
                     if (!entry.isDirectory && isMetaEntry(entry.name, HISTORY_ENTRY)) {
-                        val text = zis.readBytes().toString(Charsets.UTF_8)
+                        val text = readBounded(zis, MAX_METADATA_BYTES).toString(Charsets.UTF_8)
                         zis.closeEntry()
                         return@use text.takeIf { it.isNotBlank() }
                     }
@@ -183,7 +193,7 @@ object ArkWalletDataPack {
                 var entry = zis.nextEntry
                 while (entry != null) {
                     if (!entry.isDirectory && isMetaEntry(entry.name, CLAIMS_ENTRY)) {
-                        val text = zis.readBytes().toString(Charsets.UTF_8)
+                        val text = readBounded(zis, MAX_METADATA_BYTES).toString(Charsets.UTF_8)
                         zis.closeEntry()
                         return@use text.takeIf { it.isNotBlank() }
                     }
@@ -208,15 +218,23 @@ object ArkWalletDataPack {
         zipBytes: ByteArray,
     ) {
         dir.mkdirs()
+        require(zipBytes.size <= MAX_BACKUP_BYTES)
         ZipInputStream(ByteArrayInputStream(zipBytes)).use { zis ->
             var entry = zis.nextEntry
+            var count = 0
+            var extracted = 0L
+            val names = mutableSetOf<String>()
             while (entry != null) {
+                require(++count <= MAX_ENTRIES)
+                require(names.add(entry.name)) { "Duplicate Ark backup entry" }
                 if (!entry.isDirectory) {
                     // Manifest / history / claims are Ibis metadata only — not Bark files.
                     if (
                         isMetaEntry(entry.name, MANIFEST_ENTRY) ||
                         isMetaEntry(entry.name, HISTORY_ENTRY) ||
                         isMetaEntry(entry.name, CLAIMS_ENTRY)
+                            || isMetaEntry(entry.name, RECOVERY_ENTRY)
+                            || isMetaEntry(entry.name, "ibis-mailbox-scanned")
                     ) {
                         zis.closeEntry()
                         entry = zis.nextEntry
@@ -229,7 +247,16 @@ object ArkWalletDataPack {
                         error("Invalid ark backup path")
                     }
                     outFile.parentFile?.mkdirs()
-                    outFile.outputStream().use { zis.copyTo(it) }
+                    outFile.outputStream().use { output ->
+                        val buffer = ByteArray(32 * 1024)
+                        while (true) {
+                            val read = zis.read(buffer)
+                            if (read < 0) break
+                            extracted += read
+                            require(extracted <= MAX_BACKUP_BYTES) { "Ark backup exceeds extraction limit" }
+                            output.write(buffer, 0, read)
+                        }
+                    }
                 }
                 zis.closeEntry()
                 entry = zis.nextEntry
@@ -242,6 +269,28 @@ object ArkWalletDataPack {
         if (!isValidSqliteFile(db)) {
             error("Ark data zip has corrupt db.sqlite")
         }
+    }
+
+    fun readBounded(input: java.io.InputStream, limit: Int = MAX_BACKUP_BYTES): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(32 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            require(output.size().toLong() + read <= limit) { "Ark backup exceeds size limit" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray()
+    }
+
+    fun readRecoveryJson(bytes: ByteArray): String? = ZipInputStream(ByteArrayInputStream(bytes)).use { input ->
+        while (true) {
+            val entry = input.nextEntry ?: return@use null
+            if (isMetaEntry(entry.name, RECOVERY_ENTRY)) {
+                return@use readBounded(input, MAX_METADATA_BYTES).toString(Charsets.UTF_8)
+            }
+        }
+        @Suppress("UNREACHABLE_CODE") null
     }
 
     fun isValidSqliteFile(file: File): Boolean {
