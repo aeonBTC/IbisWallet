@@ -25,6 +25,17 @@ object AppUpdateInstaller {
     private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
     private const val SHA256 = "SHA-256"
 
+    /** Outcome of [verifyDownloadedApk]; each failure maps to its own UI message. */
+    enum class VerifyResult {
+        Verified,
+        FileUnreadable,
+        PackageMismatch,
+        ArchiveUnsigned,
+        InstalledInfoUnavailable,
+        SignerMismatch,
+        NotNewer,
+    }
+
     fun authority(context: Context): String = "${context.packageName}.fileprovider"
 
     fun canRequestInstalls(context: Context): Boolean = context.packageManager.canRequestPackageInstalls()
@@ -40,7 +51,6 @@ object AppUpdateInstaller {
         val installBase =
             Intent(Intent.ACTION_INSTALL_PACKAGE)
                 .setData(uri)
-                .putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         // Prefer the platform installer explicitly. An implicit ACTION_VIEW
@@ -65,23 +75,25 @@ object AppUpdateInstaller {
     }
 
     /**
-     * True only when [apkFile] parses as this app's package, is signed by a
-     * certificate that also signs the installed app, and is a strictly newer
-     * build. Fails closed on any parse error, unknown signer, package mismatch,
-     * or non-newer version.
+     * Classifies [apkFile] as installable over this app only when it parses as
+     * this app's package, is signed by a certificate that also signs the
+     * installed app, and is newer (by versionCode, or by versionName when the
+     * versionCode is unchanged so development builds stay updatable). Fails
+     * closed on any parse error, unknown signer, package mismatch, or
+     * non-newer version.
      */
-    fun verifyDownloadedApk(context: Context, apkFile: File): Boolean {
-        if (!apkFile.isFile || apkFile.length() <= 0L) return false
+    fun verifyDownloadedApk(context: Context, apkFile: File): VerifyResult {
+        if (!apkFile.isFile || apkFile.length() <= 0L) return VerifyResult.FileUnreadable
         val packageManager = context.packageManager
         val archive =
             packageManager.getPackageArchiveInfo(
                 apkFile.absolutePath,
                 signatureFlags(),
-            ) ?: return false
-        if (archive.packageName != context.packageName) return false
+            ) ?: return VerifyResult.FileUnreadable
+        if (archive.packageName != context.packageName) return VerifyResult.PackageMismatch
 
         val archiveSigners = certificateDigests(archive)
-        if (archiveSigners.isEmpty()) return false
+        if (archiveSigners.isEmpty()) return VerifyResult.ArchiveUnsigned
 
         val installed =
             runCatching {
@@ -89,19 +101,32 @@ object AppUpdateInstaller {
                     context.packageName,
                     signatureFlags(),
                 )
-            }.getOrNull() ?: return false
+            }.getOrNull() ?: return VerifyResult.InstalledInfoUnavailable
 
         val installedSigners = certificateDigests(installed)
-        if (installedSigners.none { it in archiveSigners }) return false
+        if (installedSigners.isEmpty()) return VerifyResult.InstalledInfoUnavailable
+        if (installedSigners.none { it in archiveSigners }) return VerifyResult.SignerMismatch
 
-        return versionCode(archive) > versionCode(installed)
+        return if (isNewerBuild(archive, installed)) {
+            VerifyResult.Verified
+        } else {
+            VerifyResult.NotNewer
+        }
     }
+
+    private fun isNewerBuild(archive: PackageInfo, installed: PackageInfo): Boolean =
+        isNewerBuild(
+            archiveVersionCode = versionCode(archive),
+            archiveVersionName = archive.versionName,
+            installedVersionCode = versionCode(installed),
+            installedVersionName = installed.versionName,
+        )
 
     // GET_SIGNING_CERTIFICATES only exists on API 28+; API 26-27 need the legacy GET_SIGNATURES flag.
     @Suppress("DEPRECATION")
     private fun signatureFlags(): Int =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            PackageManager.GET_SIGNING_CERTIFICATES
+            PackageManager.GET_SIGNING_CERTIFICATES or PackageManager.GET_SIGNATURES
         } else {
             PackageManager.GET_SIGNATURES
         }
@@ -116,18 +141,20 @@ object AppUpdateInstaller {
 
     @Suppress("DEPRECATION")
     private fun certificateDigests(packageInfo: PackageInfo): Set<String> {
-        val legacySignatures: Array<Signature>? = packageInfo.signatures
-        val signatures: Array<out Signature> =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val signingInfo = packageInfo.signingInfo
-                when {
-                    signingInfo == null -> legacySignatures ?: emptyArray()
-                    signingInfo.hasMultipleSigners() -> signingInfo.apkContentsSigners ?: emptyArray()
-                    else -> signingInfo.signingCertificateHistory ?: emptyArray()
-                }
-            } else {
-                legacySignatures ?: emptyArray()
+        val signatures = mutableListOf<Signature>()
+        packageInfo.signatures?.let { signatures.addAll(it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            val signingInfo = packageInfo.signingInfo
+            if (signingInfo != null) {
+                val signers =
+                    if (signingInfo.hasMultipleSigners()) {
+                        signingInfo.apkContentsSigners
+                    } else {
+                        signingInfo.signingCertificateHistory
+                    }
+                signers?.let { signatures.addAll(it) }
             }
+        }
         return signatures.mapNotNull { signature ->
             runCatching {
                 MessageDigest.getInstance(SHA256)
@@ -136,4 +163,24 @@ object AppUpdateInstaller {
             }.getOrNull()
         }.toSet()
     }
+}
+
+/**
+ * Update gating shared with the release-version prompt: a higher versionCode
+ * always wins; an equal one is accepted only when the APK's versionName is
+ * strictly newer, so a development build that shares the just-bumped
+ * versionCode can still be updated. Lower versionCodes are never accepted
+ * (the platform blocks downgrades too). Unparseable names fail closed.
+ */
+internal fun isNewerBuild(
+    archiveVersionCode: Long,
+    archiveVersionName: String?,
+    installedVersionCode: Long,
+    installedVersionName: String?,
+): Boolean {
+    if (archiveVersionCode > installedVersionCode) return true
+    if (archiveVersionCode < installedVersionCode) return false
+    val archiveVersion = AppVersion.parse(archiveVersionName) ?: return false
+    val installedVersion = AppVersion.parse(installedVersionName) ?: return false
+    return archiveVersion > installedVersion
 }

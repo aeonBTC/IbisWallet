@@ -18,6 +18,9 @@
     <string name="update_popup_downloading_format">Wird heruntergeladen… %1$d%%</string>
     <string name="update_popup_download_failed">Download fehlgeschlagen.</string>
     <string name="update_popup_invalid_download">Heruntergeladene Datei hat die Prüfung nicht bestanden.</string>
+    <string name="update_popup_invalid_package">Die heruntergeladene Datei ist keine gültige Ibis-Wallet-APK.</string>
+    <string name="update_popup_invalid_signer">Die heruntergeladene Datei ist mit einem anderen Schlüssel signiert als die installierte App.</string>
+    <string name="update_popup_invalid_version">Die heruntergeladene Datei ist nicht neuer als die installierte Version.</string>
     <string name="update_popup_changelog">Changelog</string>
     <string name="update_popup_changelog_expand">Changelog erweitern</string>
     <string name="update_popup_changelog_collapse">Changelog einklappen</string>

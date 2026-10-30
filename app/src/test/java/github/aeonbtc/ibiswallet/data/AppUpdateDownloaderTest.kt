@@ -28,4 +28,24 @@ class AppUpdateDownloaderTest : FunSpec({
     test("rejects githubusercontent as a subdomain prefix") {
         isAllowedUpdateDownloadUrl("https://githubusercontent.com.evil.com/app.apk".toHttpUrl()) shouldBe false
     }
+
+    test("parses a content range with a known total") {
+        parseContentRange("bytes 1024-2047/4096") shouldBe ContentRange(start = 1024, end = 2047, total = 4096)
+    }
+
+    test("parses a content range with an unknown total") {
+        parseContentRange("bytes 0-1023/*") shouldBe ContentRange(start = 0, end = 1023, total = null)
+    }
+
+    test("rejects malformed content ranges") {
+        parseContentRange("items 0-1/2") shouldBe null
+    }
+
+    test("rejects a content range whose end precedes its start") {
+        parseContentRange("bytes 10-9/100") shouldBe null
+    }
+
+    test("rejects a content range ending at or past the total") {
+        parseContentRange("bytes 0-100/100") shouldBe null
+    }
 })

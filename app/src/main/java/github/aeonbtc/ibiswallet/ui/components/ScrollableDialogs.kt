@@ -222,6 +222,8 @@ fun IbisConfirmDialog(
     contentPadding: PaddingValues = PaddingValues(horizontal = 18.dp, vertical = 16.dp),
     bottomSpacing: Dp = 16.dp,
     actionHeight: Dp = 40.dp,
+    /** Drops the 96dp minimum width and tightens padding so three actions fit on one row. */
+    compactActions: Boolean = false,
     titleStyle: TextStyle? = null,
     messageStyle: TextStyle? = null,
     actionTextStyle: TextStyle? = null,
@@ -237,6 +239,18 @@ fun IbisConfirmDialog(
     val resolvedTitleStyle = titleStyle ?: MaterialTheme.typography.titleMedium
     val resolvedMessageStyle = messageStyle ?: MaterialTheme.typography.bodyMedium
     val resolvedActionTextStyle = actionTextStyle ?: MaterialTheme.typography.bodyMedium
+    val actionModifier =
+        if (compactActions) {
+            Modifier.heightIn(min = actionHeight)
+        } else {
+            Modifier.widthIn(min = 96.dp).heightIn(min = actionHeight)
+        }
+    val actionContentPadding =
+        if (compactActions) {
+            PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+        } else {
+            ButtonDefaults.ContentPadding
+        }
     ScrollableDialogSurface(
         onDismissRequest = onDismissRequest,
         modifier = modifier,
@@ -257,9 +271,10 @@ fun IbisConfirmDialog(
                 if (resolvedDismissText != null && onDismissAction != null) {
                     IbisButton(
                         onClick = onDismissAction,
-                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = actionHeight),
+                        modifier = actionModifier,
                         enabled = dismissEnabled,
                         activeColor = TextSecondary,
+                        contentPadding = actionContentPadding,
                     ) {
                         Text(
                             text = resolvedDismissText,
@@ -271,15 +286,18 @@ fun IbisConfirmDialog(
                         )
                     }
 
-                    Spacer(modifier = Modifier.widthIn(min = 10.dp))
+                    if (!compactActions) {
+                        Spacer(modifier = Modifier.widthIn(min = 10.dp))
+                    }
                 }
 
                 if (neutralText != null && onNeutralAction != null) {
                     IbisButton(
                         onClick = onNeutralAction,
-                        modifier = Modifier.widthIn(min = 96.dp).heightIn(min = actionHeight),
+                        modifier = actionModifier,
                         enabled = neutralEnabled,
                         activeColor = TextSecondary,
+                        contentPadding = actionContentPadding,
                     ) {
                         Text(
                             text = neutralText,
@@ -291,15 +309,22 @@ fun IbisConfirmDialog(
                         )
                     }
 
-                    Spacer(modifier = Modifier.widthIn(min = 10.dp))
+                    if (!compactActions) {
+                        Spacer(modifier = Modifier.widthIn(min = 10.dp))
+                    }
                 }
 
                 Button(
                     onClick = onConfirm,
                     enabled = confirmEnabled,
-                    modifier = Modifier.widthIn(min = 96.dp).heightIn(min = actionHeight),
+                    modifier = actionModifier,
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
+                    contentPadding =
+                        if (compactActions) {
+                            PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                        } else {
+                            PaddingValues(horizontal = 18.dp, vertical = 8.dp)
+                        },
                     colors =
                         ButtonDefaults.buttonColors(
                             containerColor = confirmColor,

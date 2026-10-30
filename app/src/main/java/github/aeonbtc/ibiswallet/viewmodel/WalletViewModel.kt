@@ -5928,6 +5928,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     /** Dismisses the prompt and stops any in-progress APK download. */
     fun dismissAppUpdatePromptAndDownload() {
         cancelAppUpdateDownload()
+        if (_appUpdateDownload.value !is AppUpdateDownloadState.Ready) {
+            _appUpdateDownload.value = AppUpdateDownloadState.Idle
+        }
         _appUpdatePrompt.value = null
     }
 
@@ -5941,21 +5944,41 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
         val destFile = appUpdateApkFile(prompt.latestVersionName)
         pruneOldUpdateApks(destFile)
-        if (destFile.exists() &&
-            destFile.length() > 0L &&
-            (prompt.apkSizeBytes <= 0L || destFile.length() == prompt.apkSizeBytes) &&
-            AppUpdateInstaller.verifyDownloadedApk(appContext, destFile)
-        ) {
-            _appUpdateDownload.value = AppUpdateDownloadState.Ready(destFile)
-            return
-        }
-        destFile.delete()
-        _appUpdateDownload.value = AppUpdateDownloadState.Downloading(0f, 0L, prompt.apkSizeBytes)
         appUpdateDownloadJob =
             viewModelScope.launch {
+                val reusable =
+                    withContext(Dispatchers.IO) {
+                        destFile.exists() &&
+                            destFile.length() > 0L &&
+                            (prompt.apkSizeBytes <= 0L || destFile.length() == prompt.apkSizeBytes) &&
+                            AppUpdateInstaller.verifyDownloadedApk(appContext, destFile) ==
+                            AppUpdateInstaller.VerifyResult.Verified
+                    }
+                if (reusable) {
+                    _appUpdateDownload.value = AppUpdateDownloadState.Ready(destFile)
+                    return@launch
+                }
+                // Keep a shorter-than-expected file: it is a partial download and
+                // the downloader resumes it with a Range request.
+                val existingBytes = if (destFile.isFile) destFile.length() else 0L
+                val resumable =
+                    existingBytes > 0L &&
+                        (prompt.apkSizeBytes <= 0L || existingBytes < prompt.apkSizeBytes)
+                if (!resumable) {
+                    destFile.delete()
+                }
+                val startBytes = if (resumable) existingBytes else 0L
+                val startProgress =
+                    if (prompt.apkSizeBytes > 0L && startBytes > 0L) {
+                        (startBytes.toFloat() / prompt.apkSizeBytes.toFloat()).coerceIn(0f, 1f)
+                    } else {
+                        0f
+                    }
+                _appUpdateDownload.value =
+                    AppUpdateDownloadState.Downloading(startProgress, startBytes, prompt.apkSizeBytes)
                 try {
                     val result =
-                        appUpdateDownloader.download(apkUrl, destFile) { downloaded, total ->
+                        appUpdateDownloader.download(apkUrl, destFile, prompt.apkSizeBytes) { downloaded, total ->
                             val progress =
                                 if (total > 0) {
                                     (downloaded.toFloat() / total.toFloat()).coerceIn(0f, 1f)
@@ -5985,13 +6008,32 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    /** Called when a downloaded APK fails package/signer verification: drop it and surface the error. */
-    fun markAppUpdateApkInvalid() {
+    /** Called when a downloaded APK fails package/signer/version verification: drop it and surface the reason. */
+    fun markAppUpdateApkInvalid(reason: AppUpdateInstaller.VerifyResult) {
         val current = _appUpdateDownload.value
         if (current is AppUpdateDownloadState.Ready) {
             current.apkFile.delete()
         }
-        _appUpdateDownload.value = AppUpdateDownloadState.Invalid
+        _appUpdateDownload.value = AppUpdateDownloadState.Invalid(reason)
+    }
+
+    /**
+     * Verifies the downloaded APK off the main thread (archive/signature
+     * verification digests the whole file). A non-verified file is dropped so
+     * the UI can surface the exact cause.
+     */
+    suspend fun verifyReadyAppUpdate(): AppUpdateInstaller.VerifyResult {
+        val current =
+            _appUpdateDownload.value as? AppUpdateDownloadState.Ready
+                ?: return AppUpdateInstaller.VerifyResult.FileUnreadable
+        val result =
+            withContext(Dispatchers.IO) {
+                AppUpdateInstaller.verifyDownloadedApk(appContext, current.apkFile)
+            }
+        if (result != AppUpdateInstaller.VerifyResult.Verified) {
+            markAppUpdateApkInvalid(result)
+        }
+        return result
     }
 
     private fun appUpdateApkFile(versionName: String): File {
@@ -6685,7 +6727,7 @@ sealed class AppUpdateDownloadState {
 
     data class Ready(val apkFile: File) : AppUpdateDownloadState()
 
-    data object Invalid : AppUpdateDownloadState()
+    data class Invalid(val reason: AppUpdateInstaller.VerifyResult) : AppUpdateDownloadState()
 
     data object Error : AppUpdateDownloadState()
 }

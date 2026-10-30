@@ -19,6 +19,9 @@
     <string name="update_popup_downloading_format">Скачивание… %1$d%%</string>
     <string name="update_popup_download_failed">Ошибка скачивания.</string>
     <string name="update_popup_invalid_download">Скачанный файл не прошёл проверку.</string>
+    <string name="update_popup_invalid_package">Скачанный файл не является допустимым APK Ibis Wallet.</string>
+    <string name="update_popup_invalid_signer">Скачанный файл подписан другим ключом, чем установленное приложение.</string>
+    <string name="update_popup_invalid_version">Скачанный файл не новее установленной версии.</string>
     <string name="update_popup_changelog">Changelog</string>
     <string name="update_popup_changelog_expand">Развернуть changelog</string>
     <string name="update_popup_changelog_collapse">Свернуть changelog</string>

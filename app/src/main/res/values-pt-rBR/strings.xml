@@ -19,6 +19,9 @@
     <string name="update_popup_downloading_format">Baixando… %1$d%%</string>
     <string name="update_popup_download_failed">Falha no download.</string>
     <string name="update_popup_invalid_download">O arquivo baixado falhou na verificação.</string>
+    <string name="update_popup_invalid_package">O arquivo baixado não é um APK válido do Ibis Wallet.</string>
+    <string name="update_popup_invalid_signer">O arquivo baixado está assinado com uma chave diferente da do aplicativo instalado.</string>
+    <string name="update_popup_invalid_version">O arquivo baixado não é mais recente que a versão instalada.</string>
     <string name="update_popup_changelog">Changelog</string>
     <string name="update_popup_changelog_expand">Expandir changelog</string>
     <string name="update_popup_changelog_collapse">Recolher changelog</string>

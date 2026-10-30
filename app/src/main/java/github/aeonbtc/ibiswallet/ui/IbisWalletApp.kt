@@ -1225,6 +1225,7 @@ fun IbisWalletApp(
         val hasInAppApk = prompt.apkUrl != null
         val download = appUpdateDownload
         val isDownloading = download is AppUpdateDownloadState.Downloading
+        var verifyingInstall by remember(prompt.latestVersionName) { mutableStateOf(false) }
         val downloadPercent =
             (download as? AppUpdateDownloadState.Downloading)
                 ?.progress?.times(100)?.toInt() ?: 0
@@ -1261,9 +1262,10 @@ fun IbisWalletApp(
                     viewModel.dismissAppUpdatePrompt()
                 }
             },
-            confirmEnabled = !isDownloading,
+            confirmEnabled = !isDownloading && !verifyingInstall,
             properties = DialogProperties(usePlatformDefaultWidth = false),
             maxWidth = 720.dp,
+            compactActions = true,
             onConfirm = {
                 if (!hasInAppApk) {
                     openReleasePage()
@@ -1272,19 +1274,24 @@ fun IbisWalletApp(
                         is AppUpdateDownloadState.Ready -> {
                             if (!state.apkFile.exists()) {
                                 viewModel.startAppUpdateDownload()
-                            } else if (!AppUpdateInstaller.verifyDownloadedApk(context, state.apkFile)) {
-                                viewModel.markAppUpdateApkInvalid()
-                            } else {
-                                viewModel.dismissAppUpdatePrompt()
-                                runCatching {
-                                    if (!AppUpdateInstaller.canRequestInstalls(context)) {
-                                        context.startActivity(
-                                            AppUpdateInstaller.unknownSourcesIntent(context),
-                                        )
-                                    } else {
-                                        context.startActivity(
-                                            AppUpdateInstaller.installIntent(context, state.apkFile),
-                                        )
+                            } else if (!verifyingInstall) {
+                                // Verification digests the whole APK, so keep it off the main thread.
+                                verifyingInstall = true
+                                scope.launch {
+                                    val verification = viewModel.verifyReadyAppUpdate()
+                                    verifyingInstall = false
+                                    if (verification == AppUpdateInstaller.VerifyResult.Verified) {
+                                        runCatching {
+                                            if (!AppUpdateInstaller.canRequestInstalls(context)) {
+                                                context.startActivity(
+                                                    AppUpdateInstaller.unknownSourcesIntent(context),
+                                                )
+                                            } else {
+                                                context.startActivity(
+                                                    AppUpdateInstaller.installIntent(context, state.apkFile),
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1363,7 +1370,18 @@ fun IbisWalletApp(
 
                                 is AppUpdateDownloadState.Invalid -> {
                                     Text(
-                                        text = stringResource(R.string.update_popup_invalid_download),
+                                        text =
+                                            stringResource(
+                                                when (state.reason) {
+                                                    AppUpdateInstaller.VerifyResult.PackageMismatch ->
+                                                        R.string.update_popup_invalid_package
+                                                    AppUpdateInstaller.VerifyResult.SignerMismatch ->
+                                                        R.string.update_popup_invalid_signer
+                                                    AppUpdateInstaller.VerifyResult.NotNewer ->
+                                                        R.string.update_popup_invalid_version
+                                                    else -> R.string.update_popup_invalid_download
+                                                },
+                                            ),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = ErrorRed,
                                     )
