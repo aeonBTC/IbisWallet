@@ -2,7 +2,7 @@
 
 Ibis ist eine selbstverwahrte modulare Bitcoin-Wallet mit Fokus auf intuitives Design, Privatsphäre und Anpassbarkeit.
 
-Für erfahrene Nutzer konzipiert – ohne Anleitung, ohne Stützräder.
+Für erfahrene Nutzer konzipiert - ohne Anleitung, ohne Stützräder.
 
 <img width="1000" height="417" alt="5" src="https://github.com/user-attachments/assets/45dcfdaa-71c4-4698-a284-5eef054f1e25" />
 
@@ -12,14 +12,14 @@ Für erfahrene Nutzer konzipiert – ohne Anleitung, ohne Stützräder.
 
 ## Hauptfunktionen
 
-### Layer 1 — Bitcoin
+### Layer 1 - Bitcoin
 - **Multi-Wallet** - Erstellen, importieren, exportieren und wechseln Sie zwischen mehreren Wallets
 - **Multi-Seed** - Unterstützt BIP39- oder Electrum-Seed-Phrasen beim Import
 - **Würfel-Entropie** - Seeds aus Würfelwürfen erzeugen
-- **Multisig-Wallets** - Multisig-Deskriptoren importieren, PSBT-Signierung koordinieren und lokal als Co-Signer signieren
+- **Multisig-Wallets** - Native SegWit-Quoren erzeugen oder bestehende native, verschachtelte oder Legacy-Multisig-Vaults importieren, Deskriptoren importieren, PSBT-Signierung koordinieren und lokal als Co-Signer signieren
 - **Watch-only-Wallets** - xpub/zpub, Output-Deskriptoren oder eine einzelne Adresse importieren
 - **Privaten Schlüssel importieren** - Private Schlüssel fegen (sweep) oder importieren (WIF-Format)
-- **Stille Zahlungen** - Volle BIP-352-Unterstützung: Senden und Empfangen, mit Frigate-Standardserver
+- **Stille Zahlungen** - Volle BIP-352-Unterstützung - Senden und Empfangen, mit Frigate-Standardserver
 - **Signieren mit Hardware-Wallet** - Animierte QR-Codes oder .psbt-Dateien für Air-gapped-Signierung nutzen
 - **PSBT-Signierung per NFC** - PSBTs per NFC-Tap an eine Hardware-Wallet senden und die Signatur auf gleichem Weg zurückerhalten
 - **Offline-Signierer** - Ibis auf einem Offline-Telefon als Cold-Storage-Signierer für Watch-only-PSBT.
@@ -31,21 +31,19 @@ Für erfahrene Nutzer konzipiert – ohne Anleitung, ohne Stützräder.
 - **Transaktionen abbrechen** - Unbestätigte ausgehende Transaktionen per RBF abbrechen
 - **Manuelle Übertragung** - Jede signierte Raw-Transaktion direkt ans Bitcoin-Netzwerk senden
 - **Batch-Versand** - An mehrere Empfänger in einer einzigen Transaktion senden
-- **Nachrichtensignierung** - Nachrichten mit BIP137 signieren und verifizieren
+- **Nachrichtensignierung** - Mit BIP322 signieren (inklusive Taproot), BIP322- und Legacy-Signaturen verifizieren
 - **Prüfsummenhelfer** - Fehlendes Prüfsummenwort aus 11/23-Wörter-Präfix berechnen
-- **BIP329-Labels** - Standard-Wallet-Labels für Transaktionen und Adressen
+- **BIP329-Labels** - Wallet-Labels nach Branchenstandard für Transaktionen und Adressen
 - **Transaktionssuche** - Transaktionsverlauf nach Datum, Adresse oder Label durchsuchen
 - **Basiert auf** [BDK](https://bitcoindevkit.org/)
 
-### Layer 2 — Natives Lightning, Ark, Spark und Liquid
+### Layer 2 - Natives Lightning, Ark, Spark und Liquid
 - **Modulare Integration** - Wählen Sie, welches Layer 2 Sie pro Wallet aktivieren
 - **Lightning** - Remote-Node via LND (LND REST), CLN (clnrest) oder NWC (NIP-47) anbinden
 - **Ark** - Ark L2 mit VTXO-Verwaltung, Lightning-Senden und -Empfangen, Single-Transaction-Boarding und unilateralen Exits (Basiert auf [Bark](https://github.com/ark-bitcoin/bark))
 - **Spark** - Spark L2 mit Lightning- sowie On-Chain-Senden und -Empfangen, und unilateralen Exits (Basiert auf [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Vollständige Liquid-Wallet mit vertraulichen Transaktionen und USDt-Unterstützung (Basiert auf [LWK](https://github.com/Blockstream/lwk))
 - **Liquid-Watch-only-Wallets** - Liquid-Watch-only-Wallets per SLIP77-Deskriptor importieren
-- **Lightning-Zahlungen** - Bolt-11- und Bolt-12-Rechnungen oder Lightning-Adressen bezahlen
-- **Lightning-Rechnungen** - Bolt-11-Rechnungen erstellen
 - **Chain-Swaps** - Einfach zwischen L1 und L2 tauschen
 - **Coin-Auswahl** - Spezifische UTXOs für Swaps und Zahlungen auswählen
 - **BIP329-Labels** - Label-Unterstützung für Ark-, Spark- und Liquid-Transaktionen
@@ -90,7 +88,7 @@ Erfordert Android Studio mit JDK 17.
 
 **Min SDK:** 26 (Android 8.0) | **Target SDK:** 36 | **ARM** (armeabi-v7a, arm64-v8a)
 
-## Bug Bounty
+## Bug-Bounty-Programm
 
 > [!IMPORTANT]
 > **Bug-Bounty-Programm derzeit aus Geldmangel ausgesetzt.** Meldungen sind willkommen und werden anerkannt, aber bis zur Wiederaufnahme des Programms werden keine Geldprämien ausgezahlt.
@@ -99,17 +97,17 @@ Wir bieten $1,000 in BTC für kritische Schwachstellen in Ibis Wallet, die zu ei
 
 In den Umfang fallen Schwachstellen mit einem praktischen, realistischen Angriffspfad, der zu Diebstahl oder permanentem Fondsverlust führt (z. B. Remote-Kompromittierung der Wallet, Seed-Extraktion, Transaktionsmanipulation usw.).
 
-Ibis ist Beta-Software und für erfahrene Bitcoin-Nutzer gebaut. Off-Geräte-Seed-Backups sind erwartete Standardpraxis: Probleme, die durch Wiederherstellung aus der Seed vollständig behebbar sind, ohne Diebstahl durch Dritte, werden anerkannt, fallen aber nicht unter Prämien.
+Ibis ist Beta-Software und für erfahrene Bitcoin-Nutzer gebaut. Off-Geräte-Seed-Backups sind erwartete Standardpraxis - Probleme, die durch Wiederherstellung aus der Seed vollständig behebbar sind, ohne Diebstahl durch Dritte, werden anerkannt, fallen aber nicht unter Prämien.
 
 Probleme geringerer Schwere, theoretische Schwachstellen ohne praktischen Exploit-Pfad oder Funde, die nicht zu Fondsverlust führen, werden anerkannt, fallen aber grundsätzlich nicht unter Geldprämien.
 
-Bug-Bounty-Prämien: [15. August 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Bug-Bounty-Prämien - [15. August 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Hinweis
 
 Ibis wird von den aktuellsten Frontier-KI-Modellen codiert und auditiert.
 
-Audits: [29. Oktober 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v5.1.0-beta) · [15. August 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Audits - [29. Oktober 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v5.1.0-beta) · [15. August 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Spenden
 

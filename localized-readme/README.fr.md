@@ -12,11 +12,11 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 
 ## Fonctionnalités principales
 
-### Layer 1 — Bitcoin
+### Layer 1 - Bitcoin
 - **Multi-portefeuille** - Créer, importer, exporter et basculer entre plusieurs portefeuilles
 - **Multi-seed** - Prend en charge les phrases mnémoniques BIP39 ou Electrum à l'import
 - **Entropie par dés** - Générer des seeds à partir de lancers de dés
-- **Portefeuilles multisig** - Importer des descripteurs multisig, coordonner les signatures PSBT et signer localement comme cosignataire
+- **Portefeuilles multisig** - Générer des quorums SegWit natifs ou importer des coffres multisig natifs, imbriqués ou hérités existants, importer des descripteurs, coordonner les signatures PSBT et signer localement comme cosignataire
 - **Portefeuilles en lecture seule** - Importer xpub/zpub, descripteurs de sortie ou une adresse unique
 - **Importer une clé privée** - Balayer ou importer des clés privées (format WIF)
 - **Paiements silencieux** - Prise en charge complète BIP-352 : envoi et réception, avec serveur Frigate par défaut
@@ -31,22 +31,20 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 - **Annuler des transactions** - Annuler les transactions sortantes non confirmées avec RBF
 - **Diffusion manuelle** - Diffuser toute transaction brute signée directement sur le réseau Bitcoin
 - **Envoi par lots** - Envoyer à plusieurs destinataires en une seule transaction
-- **Signature de messages** - Signer et vérifier des messages avec BIP137
+- **Signature de messages** - Signer avec BIP322 (y compris Taproot), vérifier les signatures BIP322 et héritées
 - **Assistant de checksum** - Calculer le mot de checksum manquant à partir d'un préfixe de 11/23 mots
-- **Étiquettes BIP329** - Étiquettes de portefeuille standard pour les transactions et les adresses
+- **Étiquettes BIP329** - Étiquettes de portefeuille conformes au standard du secteur pour les transactions et les adresses
 - **Recherche de transactions** - Rechercher dans l'historique par date, adresse ou étiquette
 - **Basé sur** [BDK](https://bitcoindevkit.org/)
 
-### Layer 2 — Lightning natif, Ark, Spark et Liquid
+### Layer 2 - Lightning natif, Ark, Spark et Liquid
 - **Intégration modulaire** - Choisir quel Layer 2 activer pour chaque portefeuille
 - **Lightning** - Connecter un nœud distant via LND (LND REST), CLN (clnrest) ou NWC (NIP-47)
 - **Ark** - Ark L2 avec gestion des VTXO, envoi et réception Lightning, boarding en une seule transaction et sorties unilatérales (Basé sur [Bark](https://github.com/ark-bitcoin/bark))
 - **Spark** - Spark L2 avec envoi et réception Lightning et on-chain, et sorties unilatérales (Basé sur [Breez-SDK](https://github.com/breez/spark-sdk))
 - **Liquid** - Portefeuille Liquid complet avec transactions confidentielles et prise en charge USDt (Basé sur [LWK](https://github.com/Blockstream/lwk))
 - **Portefeuilles Liquid en lecture seule** - Importer des portefeuilles Liquid en lecture seule avec des descripteurs SLIP77
-- **Paiements Lightning** - Payer des factures Bolt 11 et Bolt 12, ou des adresses Lightning
-- **Factures Lightning** - Générer des factures Bolt 11
-- **Swaps on-chain** - Échanger facilement entre L1 et L2
+- **Swaps entre chaînes** - Échanger facilement entre L1 et L2
 - **Contrôle des pièces** - Sélectionner des UTXO précis pour les swaps et les paiements
 - **Étiquettes BIP329** - Étiquettes pour les transactions Ark, Spark et Liquid
 
@@ -62,7 +60,7 @@ Conçu pour les utilisateurs expérimentés : pas de tutoriels ni de petites rou
 - **Basculer la confidentialité** - Masquer tous les montants et soldes
 - **Effacer l'historique** - Effacer localement des transactions précises ou tout l'historique
 - **Verrouillage de portefeuilles** - Verrouiller des portefeuilles précis de façon indépendante
-- **Métadonnées renforcées** - Logs et erreurs d'UI assainis pour réduire les métadonnées visibles par l'OS
+- **Métadonnées renforcées** - Journaux et erreurs d'UI assainis pour réduire les métadonnées visibles par l'OS
 
 ### Connectivité et serveurs
 - **Serveurs personnalisés** - Te connecter à tes propres serveurs Electrum, explorateur de blocs et estimation des frais
@@ -90,10 +88,10 @@ Nécessite Android Studio avec JDK 17.
 
 **Min SDK:** 26 (Android 8.0) | **Target SDK:** 36 | **ARM** (armeabi-v7a, arm64-v8a)
 
-## Bug Bounty
+## Récompenses pour vulnérabilités
 
 > [!IMPORTANT]
-> **Programme bug bounty suspendu par manque de fonds.** Les rapports sont bienvenus et seront reconnus, mais aucune récompense monétaire ne sera versée jusqu'à la reprise du programme.
+> **Le programme de récompenses pour vulnérabilités est suspendu par manque de fonds.** Les rapports sont bienvenus et seront reconnus, mais aucune récompense monétaire ne sera versée jusqu'à la reprise du programme.
 
 Nous offrons $1,000 payés en BTC pour les vulnérabilités critiques d'Ibis Wallet pouvant entraîner une perte non autorisée des fonds de l'utilisateur.
 
@@ -103,7 +101,7 @@ Ibis est un logiciel en bêta conçu pour les utilisateurs Bitcoin expérimenté
 
 Les problèmes de moindre gravité, les vulnérabilités théoriques sans exploit pratique, ou les constats ne menant pas à une perte de fonds seront reconnus, mais restent en général hors du champ des récompenses monétaires.
 
-Récompenses du bug bounty : [15 août 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
+Récompenses du programme : [15 août 2026](https://github.com/aeonBTC/IbisWallet/releases/tag/v4.7.0-beta)
 
 ## Avertissement
 
